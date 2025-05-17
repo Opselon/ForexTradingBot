@@ -1,0 +1,4 @@
+﻿
+dotnet ef migrations add InitialCreate3 --project Infrastructure --startup-project WebAPI
+
+dotnet ef database update --project Infrastructure --startup-project WebAPI

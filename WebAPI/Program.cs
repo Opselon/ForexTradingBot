@@ -1,4 +1,6 @@
 ﻿using Application; // این using برای دسترسی به ServiceCollectionExtensions.AddApplicationServices ضروری است
+using Application.Interfaces;
+using Application.Services;
 using Infrastructure;
 using Infrastructure.Data; // احتمالاً برای AddInfrastructure نیاز است
 using Microsoft.OpenApi.Models;
@@ -33,7 +35,7 @@ builder.Services.Configure<Domain.Settings.TelegramSettings>(builder.Configurati
 
 builder.Services.AddApplicationServices();
 builder.Services.AddInfrastructureServices(builder.Configuration);
-
+builder.Services.AddScoped<ISignalService, SignalService>();
 
 var app = builder.Build();
 

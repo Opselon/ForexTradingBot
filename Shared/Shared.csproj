@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <Folder Include="Attributes\" />
+    <Folder Include="Utilities\" />
   </ItemGroup>
 
 </Project>

@@ -1,5 +1,6 @@
 ﻿using Domain.Enums; // برای دسترسی به TransactionType
-using System.ComponentModel.DataAnnotations; // برای اعتبارسنجی (اختیاری)
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema; // برای اعتبارسنجی (اختیاری)
 
 namespace Domain.Entities
 {
@@ -66,5 +67,70 @@ namespace Domain.Entities
         //     Timestamp = DateTime.UtcNow;
         //     // User باید توسط EF Core یا از طریق سرویس‌ها بارگذاری شود
         // }
+        /// </summary>
+        [MaxLength(100)] // طول مناسب برای شناسه‌های درگاه
+        public string? PaymentGatewayInvoiceId { get; set; }
+
+        /// <summary>
+        /// نام درگاه پرداختی که این تراکنش از طریق آن انجام شده است (مثلاً "CryptoPay", "Stripe").
+        /// این فیلد اختیاری است اما برای گزارش‌گیری و تفکیک می‌تواند مفید باشد.
+        /// </summary>
+        [MaxLength(50)]
+        public string? PaymentGatewayName { get; set; }
+
+        /// <summary>
+        /// وضعیت فعلی تراکنش.
+        /// مثال: "Pending", "Completed", "Failed", "Cancelled", "Refunded".
+        /// بهتر است برای این مورد از یک enum استفاده شود اگر تعداد وضعیت‌ها زیاد و ثابت است.
+        /// فعلاً به صورت رشته برای انعطاف‌پذیری بیشتر.
+        /// </summary>
+        [Required]
+        [MaxLength(50)]
+        public string Status { get; set; } = "Pending"; // مقدار پیش‌فرض می‌تواند "Pending" باشد
+
+        /// <summary>
+        /// تاریخ و زمانی که تراکنش واقعاً پرداخت و تکمیل شده است (به وقت UTC).
+        /// این فیلد می‌تواند null باشد اگر تراکنش هنوز در وضعیت Pending یا Failed است.
+        /// </summary>
+        public DateTime? PaidAt { get; set; }
+
+        /// <summary>
+        /// داده‌های اضافی یا Payload که به درگاه پرداخت ارسال شده یا از آن دریافت شده است.
+        /// می‌تواند برای ذخیره اطلاعات خاص درگاه یا پاسخ کامل درگاه به صورت JSON استفاده شود.
+        /// </summary>
+        public string? PaymentGatewayPayload { get; set; } // برای ذخیره داده‌های JSON مانند payload ارسالی یا پاسخ دریافتی
+
+        /// <summary>
+        /// پاسخ کامل یا بخشی از پاسخ دریافتی از درگاه پرداخت (اختیاری).
+        /// برای اهداف اشکال‌زدایی یا ممیزی می‌تواند مفید باشد.
+        /// </summary>
+        [Column(TypeName = "nvarchar(max)")] // اگر می‌خواهید JSON طولانی ذخیره کنید
+        public string? PaymentGatewayResponse { get; set; }
+
+
+        // سازنده پیش‌فرض برای EF Core
+        public Transaction() { }
+
+        // سازنده برای ایجاد یک تراکنش جدید با مقادیر ضروری
+        public Transaction(
+            Guid userId,
+            decimal amount,
+            TransactionType type,
+            string status,
+            string? description = null,
+            string? paymentGatewayInvoiceId = null,
+            string? paymentGatewayName = null)
+        {
+            Id = Guid.NewGuid();
+            UserId = userId;
+            Amount = amount;
+            Type = type;
+            Status = status;
+            Description = description;
+            PaymentGatewayInvoiceId = paymentGatewayInvoiceId;
+            PaymentGatewayName = paymentGatewayName;
+            Timestamp = DateTime.UtcNow;
+        }
+
     }
 }

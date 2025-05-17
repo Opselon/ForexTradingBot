@@ -22,6 +22,13 @@ namespace Application.Common.Interfaces
         /// <returns>موجودیت تراکنش در صورت یافتن؛ در غیر این صورت null.</returns>
         Task<Transaction?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default);
 
+
+
+        Task<Transaction?> GetByPaymentGatewayInvoiceIdAsync(string paymentGatewayInvoiceId, CancellationToken cancellationToken = default);
+
+
+
+
         /// <summary>
         /// تمام تراکنش‌های یک کاربر خاص را به صورت ناهمزمان برمی‌گرداند.
         /// </summary>

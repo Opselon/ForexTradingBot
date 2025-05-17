@@ -36,7 +36,7 @@ builder.Services.Configure<Domain.Settings.TelegramSettings>(builder.Configurati
 builder.Services.AddApplicationServices();
 builder.Services.AddInfrastructureServices(builder.Configuration);
 builder.Services.AddScoped<ISignalService, SignalService>();
-
+builder.Services.Configure<Shared.Settings.CryptoPaySettings>(builder.Configuration.GetSection(Shared.Settings.CryptoPaySettings.SectionName));
 var app = builder.Build();
 
 

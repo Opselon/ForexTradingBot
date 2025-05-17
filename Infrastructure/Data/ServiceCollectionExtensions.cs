@@ -1,5 +1,6 @@
 ﻿using Application.Common.Interfaces;      // اینترفیس‌های Repository و IAppDbContext
 using Infrastructure.Data;               // AppDbContext
+using Infrastructure.ExternalServices;
 using Infrastructure.Persistence.Repositories; // مسیر Repositoryها
 using Microsoft.EntityFrameworkCore;      // EF Core
 using Microsoft.Extensions.Configuration; // IConfiguration
@@ -72,6 +73,11 @@ namespace Infrastructure
             services.AddScoped<IAppDbContext>(
                 sp => sp.GetRequiredService<AppDbContext>());
 
+
+            // رجیستر کردن کلاینت CryptoPay با IHttpClientFactory
+            // این کار به مدیریت بهتر HttpClient instance ها کمک می‌کند.
+            services.AddHttpClient<ICryptoPayApiClient, CryptoPayApiClient>();
+
             // 5. رجیستر کردن Repositoryها
             services.AddScoped<IUserRepository, UserRepository>();
             services.AddScoped<ITokenWalletRepository, TokenWalletRepository>();
@@ -81,7 +87,7 @@ namespace Infrastructure
             services.AddScoped<IRssSourceRepository, RssSourceRepository>();
             services.AddScoped<IUserSignalPreferenceRepository, UserSignalPreferenceRepository>();
             services.AddScoped<ISignalAnalysisRepository, SignalAnalysisRepository>();
-
+            services.AddScoped<ITransactionRepository, TransactionRepository>();
             // در اینجا می‌توانید سایر سرویس‌های زیرساختی مثل IRssReader یا EmailService را هم اضافه کنید.
 
             return services;

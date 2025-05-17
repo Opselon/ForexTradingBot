@@ -300,7 +300,56 @@ namespace Infrastructure.Data
                 // فیلدهای پیشنهادی مانند LastFetchedAt و غیره نیز در اینجا پیکربندی می‌شوند
                 // entity.Property(rs => rs.LastFetchedAt).IsOptional();
             });
+            // در Infrastructure/Data/AppDbContext.cs
+            // داخل متد OnModelCreating:
 
+            modelBuilder.Entity<Transaction>(entity =>
+            {
+                entity.ToTable("Transactions");
+                entity.HasKey(t => t.Id);
+
+                entity.Property(t => t.UserId).IsRequired();
+                entity.Property(t => t.Amount)
+                    .IsRequired()
+                    .HasColumnType("decimal(18,4)"); // یا هر دقت دیگری که برای مبلغ لازم دارید
+
+                entity.Property(t => t.Type)
+                    .IsRequired()
+                    .HasConversion(new EnumToStringConverter<TransactionType>()); // ذخیره enum به عنوان رشته
+
+                entity.Property(t => t.Description).HasMaxLength(500); // توضیحات تراکنش
+                entity.Property(t => t.Timestamp).IsRequired();       // زمان ایجاد رکورد تراکنش
+
+                // --- پیکربندی فیلدهای جدید ---
+                entity.Property(t => t.PaymentGatewayInvoiceId)
+                    .HasMaxLength(100); // می‌تواند null باشد
+
+                entity.Property(t => t.PaymentGatewayName)
+                    .HasMaxLength(50); // می‌تواند null باشد
+
+                entity.Property(t => t.Status)
+                    .IsRequired()
+                    .HasMaxLength(50)
+                    .HasDefaultValue("Pending"); //  مقدار پیش‌فرض برای وضعیت
+
+                entity.Property(t => t.PaidAt); // می‌تواند null باشد
+
+                entity.Property(t => t.PaymentGatewayPayload); // می‌تواند null باشد و طولانی (بسته به نیاز nvarchar(max))
+
+                entity.Property(t => t.PaymentGatewayResponse); // می‌تواند null باشد و طولانی (بسته به نیاز nvarchar(max))
+
+
+                // تعریف ایندکس برای جستجوی سریع‌تر (اختیاری اما مفید)
+                entity.HasIndex(t => t.UserId);
+                entity.HasIndex(t => t.PaymentGatewayInvoiceId).IsUnique(false); // ممکن است منحصر به فرد نباشد اگر چندین تلاش برای یک فاکتور باشد، یا null باشد
+                entity.HasIndex(t => t.Status);
+
+                // رابطه با User (قبلاً باید وجود داشته باشد)
+                entity.HasOne(t => t.User)
+                    .WithMany(u => u.Transactions)
+                    .HasForeignKey(t => t.UserId)
+                    .OnDelete(DeleteBehavior.Cascade); // یا Restrict بسته به نیاز شما
+            });
 
             // --- Data Seeding (اختیاری) ---
             // می‌توانید داده‌های اولیه را در اینجا اضافه کنید

@@ -1,11 +1,7 @@
 ﻿using Microsoft.Extensions.Logging;
-using System; // برای ArgumentNullException
-using System.Threading;
-using System.Threading.Tasks;
 using Telegram.Bot;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
-using Telegram.Bot.Types;
 using Telegram.Bot.Types.ReplyMarkups;
 
 // namespace TelegramPanel.Infrastructure; // این خط اضافی بود یا در جای نادرست
@@ -18,7 +14,7 @@ namespace TelegramPanel.Infrastructure // ✅ namespace باید اینجا شر
         Task SendTextMessageAsync(
             long chatId,
             string text,
-            ParseMode? parseMode = null,
+            ParseMode? parseMode = ParseMode.Markdown,
             ReplyMarkup? replyMarkup = null, // ✅ این نوع باید با پارامتر SendTextMessageAsync کتابخانه مطابقت داشته باشد
             CancellationToken cancellationToken = default);
     }
@@ -37,7 +33,7 @@ namespace TelegramPanel.Infrastructure // ✅ namespace باید اینجا شر
         public async Task SendTextMessageAsync(
             long chatId,
             string text,
-            ParseMode? parseMode = null, // ✅ پارامتر parseMode دریافت می‌شود
+            ParseMode? parseMode = ParseMode.Markdown, // ✅ پارامتر parseMode دریافت می‌شود
             ReplyMarkup? replyMarkup = null,
             CancellationToken cancellationToken = default)
         {

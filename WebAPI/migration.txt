@@ -2,3 +2,30 @@
 dotnet ef migrations add InitialCreate3 --project Infrastructure --startup-project WebAPI
 
 dotnet ef database update --project Infrastructure --startup-project WebAPI
+
+
+
+
+dotnet ef migrations add UpdatedTransactionForPayment -p Infrastructure -s WebAPI
+dotnet ef migrations remove --project Infrastructure --startup-project WebAPI
+dotnet ef database update --project Infrastructure --startup-project WebAPI
+
+
+
+
+فقط اضافه کردن Migration (بدون آپدیت دیتابیس، بدون حذف قبلی)
+.\Update-EfDatabase.ps1 -MigrationName "AddUserEmailVerification" -InfrastructureProjectRelativePath "Infrastructure" -StartupProjectRelativePath "WebAPI"
+
+اضافه کردن Migration و آپدیت دیتابیس:
+.\Update-EfDatabase.ps1 -MigrationName "AddUserEmailVerification" -InfrastructureProjectRelativePath "Infrastructure" -StartupProjectRelativePath "WebAPI" -ApplyToDatabase
+
+
+حذف آخرین Migration، سپس اضافه کردن Migration جدید و آپدیت دیتابیس:
+.\Update-EfDatabase.ps1 -MigrationName "RefactorOrderTable" -InfrastructureProjectRelativePath "Infrastructure" -StartupProjectRelativePath "WebAPI" -RemovePreviousMigration -ApplyToDatabase -Confirm:$false
+
+آپدیت ابزارهای EF Core، سپس بقیه مراحل:
+.\Update-EfDatabase.ps1 -MigrationName "LatestChanges" -InfrastructureProjectRelativePath "Infrastructure" -StartupProjectRelativePath "WebAPI" -UpdateEfTools -ApplyToDatabase -Confirm:$false
+
+
+Update all
+.\Update-EfDatabase.ps1 -MigrationName "FullDevResetAndInit" `    -InfrastructureProject "Infrastructure" `    -StartupProject "WebAPI" `    -CleanBuild `    -DropAndRecreateDatabase `    -ForceConfirmDrop `    -ForceRecreateSnapshot `    -ForceConfirmDeleteSnapshot `    -ApplyToDatabase `    -Confirm:$false

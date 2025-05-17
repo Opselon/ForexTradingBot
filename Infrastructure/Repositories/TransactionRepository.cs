@@ -68,7 +68,17 @@ namespace Infrastructure.Persistence.Repositories
                 .OrderByDescending(t => t.Timestamp)
                 .ToListAsync(cancellationToken);
         }
+        public async Task<Transaction?> GetByPaymentGatewayInvoiceIdAsync(string paymentGatewayInvoiceId, CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(paymentGatewayInvoiceId))
+            {
+                return null;
+            }
 
+            return await _context.Transactions
+                .Include(t => t.User) //  بارگذاری کاربر مرتبط (اختیاری، اما ممکن است مفید باشد)
+                .FirstOrDefaultAsync(t => t.PaymentGatewayInvoiceId == paymentGatewayInvoiceId, cancellationToken);
+        }
         public async Task AddAsync(Transaction transaction, CancellationToken cancellationToken = default)
         {
             if (transaction == null) throw new ArgumentNullException(nameof(transaction));

@@ -26,49 +26,49 @@ namespace TelegramPanel.Formatters
             return result;
         }
 
- 
-            // ... (EscapeMarkdownV2 و MarkdownV2SpecialChars) ...
 
-            public static string Bold(string text, bool escapePlainText = true) // ✅ نام پارامTR صحیح است
-            {
-                var content = escapePlainText ? EscapeMarkdownV2(text) : text;
-                return $"*{content}*";
-            }
+        // ... (EscapeMarkdownV2 و MarkdownV2SpecialChars) ...
 
-            public static string Italic(string text, bool escapePlainText = true) // ✅ نام پارامتر صحیح است
-            {
-                var content = escapePlainText ? EscapeMarkdownV2(text) : text;
-                return $"_{content}_";
-            }
-
-            public static string Code(string text)
-            {
-                return $"`{text}`";
-            }
-
-            public static string Strikethrough(string text, bool escapePlainText = true) // ✅ نام پارامتر صحیح است
-            {
-                var content = escapePlainText ? EscapeMarkdownV2(text) : text;
-                return $"~{content}~";
-            }
-
-            public static string Underline(string text, bool escapePlainText = true) // ✅ نام پارامتر صحیح است
-            {
-                var content = escapePlainText ? EscapeMarkdownV2(text) : text;
-                return $"__{content}__";
-            }
-
-            public static string Link(string text, string url, bool escapeLinkText = true) // ✅ نام پارامتر صحیح است
-            {
-                var linkText = escapeLinkText ? EscapeMarkdownV2(text) : text;
-                string escapedUrl = url.Replace(")", "\\)");
-                return $"[{linkText}]({escapedUrl})";
-            }
-
-            public static string Spoiler(string text, bool escapePlainText = true) // ✅ نام پارامتر صحیح است
-            {
-                var content = escapePlainText ? EscapeMarkdownV2(text) : text;
-                return $"||{content}||";
-            }
+        public static string Bold(string text, bool escapePlainText = true) // ✅ نام پارامTR صحیح است
+        {
+            var content = escapePlainText ? EscapeMarkdownV2(text) : text;
+            return $"*{content}*";
         }
+
+        public static string Italic(string text, bool escapePlainText = true) // ✅ نام پارامتر صحیح است
+        {
+            var content = escapePlainText ? EscapeMarkdownV2(text) : text;
+            return $"_{content}_";
+        }
+
+        public static string Code(string text)
+        {
+            return $"`{text}`";
+        }
+
+        public static string Strikethrough(string text, bool escapePlainText = true) // ✅ نام پارامتر صحیح است
+        {
+            var content = escapePlainText ? EscapeMarkdownV2(text) : text;
+            return $"~{content}~";
+        }
+
+        public static string Underline(string text, bool escapePlainText = true) // ✅ نام پارامتر صحیح است
+        {
+            var content = escapePlainText ? EscapeMarkdownV2(text) : text;
+            return $"__{content}__";
+        }
+
+        public static string Link(string text, string url, bool escapeLinkText = true) // ✅ نام پارامتر صحیح است
+        {
+            var linkText = escapeLinkText ? EscapeMarkdownV2(text) : text;
+            string escapedUrl = url.Replace(")", "\\)");
+            return $"[{linkText}]({escapedUrl})";
+        }
+
+        public static string Spoiler(string text, bool escapePlainText = true) // ✅ نام پارامتر صحیح است
+        {
+            var content = escapePlainText ? EscapeMarkdownV2(text) : text;
+            return $"||{content}||";
+        }
+    }
 }

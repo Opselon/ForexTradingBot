@@ -1,6 +1,4 @@
-﻿using System;
-
-namespace Domain.Enums
+﻿namespace Domain.Enums
 {
     /// <summary>
     /// سطوح مختلف دسترسی یا عضویت کاربران در سیستم را مشخص می‌کند.

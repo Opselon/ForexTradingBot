@@ -1,10 +1,6 @@
 ﻿using Microsoft.Extensions.DependencyInjection; // برای IServiceScopeFactory یا IServiceProvider و CreateScope
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using System;
-using System.Threading;
-using System.Threading.Tasks;
-using Telegram.Bot.Types; // برای Update
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Infrastructure; // برای ITelegramUpdateProcessor
 // TelegramPanel.Queue باید namespace فعلی باشد، پس نیازی به using آن نیست

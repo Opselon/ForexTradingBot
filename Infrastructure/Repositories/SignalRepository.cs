@@ -36,7 +36,7 @@ namespace Infrastructure.Persistence.Repositories
         {
             return await _context.Signals
                 .Include(s => s.Category)
-                .OrderByDescending(s => s.CreatedAt) // مثال: مرتب‌سازی بر اساس جدیدترین
+                .OrderByDescending(s => s.PublishedAt) // مثال: مرتب‌سازی بر اساس جدیدترین
                 .ToListAsync(cancellationToken);
         }
 
@@ -45,7 +45,7 @@ namespace Infrastructure.Persistence.Repositories
             return await _context.Signals
                 .Where(predicate)
                 .Include(s => s.Category)
-                .OrderByDescending(s => s.CreatedAt)
+                .OrderByDescending(s => s.PublishedAt)
                 .ToListAsync(cancellationToken);
         }
 
@@ -53,7 +53,7 @@ namespace Infrastructure.Persistence.Repositories
         {
             return await _context.Signals
                 .Include(s => s.Category)
-                .OrderByDescending(s => s.CreatedAt)
+                .OrderByDescending(s => s.PublishedAt)
                 .Take(count)
                 .ToListAsync(cancellationToken);
         }
@@ -63,7 +63,7 @@ namespace Infrastructure.Persistence.Repositories
             return await _context.Signals
                 .Where(s => s.CategoryId == categoryId)
                 .Include(s => s.Category)
-                .OrderByDescending(s => s.CreatedAt)
+                .OrderByDescending(s => s.PublishedAt)
                 .ToListAsync(cancellationToken);
         }
 
@@ -74,7 +74,7 @@ namespace Infrastructure.Persistence.Repositories
             return await _context.Signals
                 .Where(s => s.Symbol.ToUpper() == normalizedSymbol)
                 .Include(s => s.Category)
-                .OrderByDescending(s => s.CreatedAt)
+                .OrderByDescending(s => s.PublishedAt)
                 .ToListAsync(cancellationToken);
         }
 

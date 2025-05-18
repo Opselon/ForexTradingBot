@@ -1,7 +1,4 @@
 ﻿using Microsoft.Extensions.Logging;
-using System;
-using System.Threading.Tasks;
-using System.Threading;
 using Telegram.Bot.Types;
 // using Application.Interfaces; // برای IUserService از پروژه اصلی Application
 

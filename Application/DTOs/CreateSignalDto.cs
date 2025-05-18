@@ -1,5 +1,4 @@
 ﻿using Domain.Enums; // برای SignalType
-using System;
 using System.ComponentModel.DataAnnotations;
 
 namespace Application.DTOs

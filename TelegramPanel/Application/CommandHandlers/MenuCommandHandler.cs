@@ -17,10 +17,13 @@ namespace TelegramPanel.Application.CommandHandlers
         private readonly ITelegramMessageSender _messageSender;
 
         // Callback Data constants for menu buttons
+
         public const string SignalsCallbackData = "menu_view_signals";
         public const string ProfileCallbackData = "menu_my_profile";
         public const string SubscribeCallbackData = "menu_subscribe_plans";
         public const string SettingsCallbackData = "menu_user_settings";
+
+
         #endregion
 
         #region Constructor
@@ -28,6 +31,29 @@ namespace TelegramPanel.Application.CommandHandlers
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _messageSender = messageSender ?? throw new ArgumentNullException(nameof(messageSender));
+        }
+        #endregion
+
+        #region Static Menu Markup Generation
+
+        /// <summary>
+        /// Generates the text and inline keyboard markup for the main application menu.
+        /// </summary>
+        public static (string text, InlineKeyboardMarkup keyboard) GetMainMenuMarkup()
+        {
+            var text = "Welcome to the Main Menu! Please choose an option:";
+            var inlineKeyboard = new InlineKeyboardMarkup(new[]
+            {
+                new [] {
+                    InlineKeyboardButton.WithCallbackData("📊 View Signals", SignalsCallbackData),
+                    InlineKeyboardButton.WithCallbackData("👤 My Profile", ProfileCallbackData)
+                },
+                new [] {
+                    InlineKeyboardButton.WithCallbackData("💎 Subscribe / View Plans", SubscribeCallbackData),
+                    InlineKeyboardButton.WithCallbackData("⚙️ Settings", SettingsCallbackData)
+                }
+            });
+            return (text, inlineKeyboard);
         }
         #endregion
 
@@ -80,5 +106,6 @@ namespace TelegramPanel.Application.CommandHandlers
             _logger.LogDebug("Main menu sent to ChatID {ChatId}", chatId);
         }
         #endregion
+
     }
 }

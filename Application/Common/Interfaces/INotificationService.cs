@@ -1,7 +1,5 @@
 ﻿// File: Application/Common/Interfaces/INotificationService.cs
 #region Usings
-using System.Threading;
-using System.Threading.Tasks;
 #endregion
 
 namespace Application.Common.Interfaces // ✅ Namespace: Application.Common.Interfaces

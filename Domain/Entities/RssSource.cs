@@ -1,98 +1,134 @@
-﻿using System;
+﻿// File: Domain/Entities/RssSource.cs
+#region Usings
 using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema; // برای ForeignKey
+#endregion
 
 namespace Domain.Entities
 {
     /// <summary>
-    /// موجودیتی برای نمایش یک منبع فید RSS (Really Simple Syndication).
-    /// ربات از این منابع برای جمع‌آوری اخبار، داده‌ها یا سیگنال‌های بالقوه استفاده می‌کند.
-    /// شامل اطلاعاتی مانند URL فید، نام منبع، وضعیت فعالیت و زمان ایجاد است.
+    /// Represents an RSS feed source.
+    /// The bot uses these sources to gather news, data, or potential signals.
     /// </summary>
     public class RssSource
     {
+        #region Core Properties
         /// <summary>
-        /// شناسه یکتای منبع RSS.
-        /// به عنوان کلید اصلی (Primary Key) در پایگاه داده استفاده می‌شود.
+        /// Unique identifier for the RSS source (Primary Key).
         /// </summary>
+        [Key]
         public Guid Id { get; set; }
 
         /// <summary>
-        /// آدرس URL کامل فید RSS.
-        /// این آدرس برای دسترسی و خواندن محتوای فید استفاده می‌شود.
-        /// نیازمندی: این فیلد اجباری است و باید یک URL معتبر باشد. معمولاً باید منحصر به فرد باشد تا از تکرار منابع جلوگیری شود.
+        /// Full URL of the RSS feed.
         /// </summary>
-        [Required(ErrorMessage = "آدرس URL منبع RSS الزامی است.")]
-        [Url(ErrorMessage = "آدرس URL وارد شده معتبر نیست.")]
-        [MaxLength(500, ErrorMessage = "طول آدرس URL نمی‌تواند بیش از 500 کاراکتر باشد.")]
-        //  [Index(IsUnique = true)] // برای منحصر به فرد بودن URL، معمولاً با Fluent API در DbContext تعریف می‌شود.
+        [Required(ErrorMessage = "URL is required for the RSS source.")]
+        [Url(ErrorMessage = "The URL format is invalid.")]
+        [MaxLength(2083)] // Standard max URL length
         public string Url { get; set; } = null!;
 
         /// <summary>
-        /// نام قابل خواندن برای انسان که این منبع RSS را توصیف می‌کند (مثلاً "ForexLive News", "Investing.com Economic Calendar").
-        /// برای نمایش و شناسایی آسان منبع استفاده می‌شود.
-        /// نیازمندی: این فیلد اجباری است.
+        /// Human-readable name describing this RSS source (e.g., "ForexLive News").
         /// </summary>
-        [Required(ErrorMessage = "نام منبع RSS الزامی است.")]
-        [MaxLength(150, ErrorMessage = "طول نام منبع نمی‌تواند بیش از 150 کاراکتر باشد.")]
+        [Required(ErrorMessage = "Source name is required.")]
+        [MaxLength(150)]
         public string SourceName { get; set; } = null!;
 
         /// <summary>
-        /// نشان می‌دهد که آیا این منبع RSS در حال حاضر برای جمع‌آوری داده فعال است یا خیر.
-        /// اگر `false` باشد، ربات نباید از این منبع اطلاعاتی بخواند.
-        /// مقدار پیش‌فرض `true` (فعال) است.
+        /// Indicates if this RSS source is currently active for data collection.
+        /// If false, the bot should not fetch information from this source.
         /// </summary>
         public bool IsActive { get; set; } = true;
 
         /// <summary>
-        /// تاریخ و زمان ایجاد این رکورد منبع RSS به وقت جهانی (UTC).
-        /// برای اهداف ممیزی و پیگیری استفاده می‌شود.
-        /// به صورت پیش‌فرض با زمان جاری UTC در لحظه ایجاد نمونه از کلاس مقداردهی می‌شود.
+        /// Date and time when this RSS source record was created in the system (UTC).
         /// </summary>
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
-        public DateTime? UpdatedAt { get; set; } 
+        /// <summary>
+        /// Date and time of the last update to this RSS source record (UTC).
+        /// Nullable if the record has never been updated.
+        /// </summary>
+        public DateTime? UpdatedAt { get; set; }
+        #endregion
 
-        // ملاحظات و نیازمندی‌های اضافی بالقوه:
-        // 1. LastFetchedAt (DateTime?): زمان آخرین باری که اطلاعات از این فید با موفقیت خوانده شد.
-        public DateTime? LastFetchedAt { get; set; }
-        //
-        // 2. LastFetchAttemptAt (DateTime?): زمان آخرین تلاش برای خواندن (موفق یا ناموفق).
-        //    public DateTime? LastFetchAttemptAt { get; set; }
-        //
-        // 3. FetchIntervalMinutes (int?): فاصله زمانی دلخواه (به دقیقه) برای خواندن این فید. اگر null باشد، از یک مقدار پیش‌فرض سیستمی استفاده می‌شود.
-            public int? FetchIntervalMinutes { get; set; }
-        //
-        // 4. FetchErrorCount (int): تعداد خطاهای متوالی هنگام تلاش برای خواندن این فید.
-            public int FetchErrorCount { get; set; } = 0;
-        //
-        // 5. Description (string?): توضیح کوتاهی در مورد محتوای این منبع RSS.
-            public string? Description { get; set; }
-        //
-        // 6. DefaultSignalCategoryId (Guid?): شناسه دسته‌بندی پیش‌فرض برای سیگنال‌ها/اخبار دریافتی از این منبع.
-            public Guid? DefaultSignalCategoryId { get; set; }
-            public SignalCategory? DefaultSignalCategory { get; set; }
-        //
-        // 7. ETag (string?) یا LastModified (string?): برای بهینه‌سازی فرآیند خواندن فید با استفاده از هدرهای HTTP (Conditional GET).
-            public string? ETag { get; set; }
+        #region RSS Fetching Specific Properties
+        /// <summary>
+        /// Stores the value of the 'Last-Modified' HTTP header from the last successful fetch.
+        /// Used for conditional GET requests to optimize fetching.
+        /// </summary>
+        [MaxLength(100)]
+        public string? LastModifiedHeader { get; set; } // ✅✅✅ این فیلد اضافه شد ✅✅✅
 
-        // سازنده پیش‌فرض برای EF Core
-        public RssSource() { }
+        /// <summary>
+        /// Stores the value of the 'ETag' HTTP header from the last successful fetch.
+        /// Also used for conditional GET requests.
+        /// </summary>
+        [MaxLength(255)]
+        public string? ETag { get; set; } //  این فیلد از قبل در کد شما وجود داشت
 
-        // سازنده برای ایجاد یک منبع RSS جدید
-        // public RssSource(string url, string sourceName, bool isActive = true)
-        // {
-        //     if (string.IsNullOrWhiteSpace(url))
-        //         throw new ArgumentException("URL نمی‌تواند خالی باشد.", nameof(url));
-        //     if (!Uri.TryCreate(url, UriKind.Absolute, out _)) // اعتبارسنجی اولیه URL
-        //         throw new ArgumentException("URL نامعتبر است.", nameof(url));
-        //     if (string.IsNullOrWhiteSpace(sourceName))
-        //         throw new ArgumentException("نام منبع نمی‌تواند خالی باشد.", nameof(sourceName));
+        /// <summary>
+        /// The last time an attempt was made to fetch this RSS feed (UTC), regardless of success.
+        /// </summary>
+        public DateTime? LastFetchAttemptAt { get; set; } // ✅ این فیلد را هم اضافه کنید
 
-        //     Id = Guid.NewGuid();
-        //     Url = url;
-        //     SourceName = sourceName;
-        //     IsActive = isActive;
-        //     CreatedAt = DateTime.UtcNow;
-        // }
+        /// <summary>
+        /// The last time this RSS feed was successfully fetched and its content processed (UTC).
+        /// (Renamed from your 'LastFetchedAt' for clarity, but you can keep your name if preferred)
+        /// </summary>
+        public DateTime? LastSuccessfulFetchAt { get; set; } // ✅ این فیلد را هم اضافه کنید (جایگزین LastFetchedAt)
+
+        /// <summary>
+        /// Custom fetch interval in minutes for this specific RSS source.
+        /// If null, a default system-wide interval is used.
+        /// </summary>
+        public int? FetchIntervalMinutes { get; set; } //  این فیلد از قبل در کد شما وجود داشت
+
+        /// <summary>
+        /// Count of consecutive errors encountered while trying to fetch this feed.
+        /// This can be used to temporarily disable a problematic feed or reduce its fetch frequency.
+        /// </summary>
+        public int FetchErrorCount { get; set; } = 0; //  این فیلد از قبل در کد شما وجود داشت
+
+        /// <summary>
+        /// (Optional) A brief description of the RSS source or the type of content it provides.
+        /// </summary>
+        [MaxLength(1000)]
+        public string? Description { get; set; } //  این فیلد از قبل در کد شما وجود داشت
+
+        /// <summary>
+        /// (Optional) Default Signal Category ID to associate with news items from this source.
+        /// </summary>
+        public Guid? DefaultSignalCategoryId { get; set; } //  این فیلد از قبل در کد شما وجود داشت
+        #endregion
+
+        #region Navigation Properties
+        /// <summary>
+        /// (Optional) Navigation property to the default SignalCategory.
+        /// </summary>
+        [ForeignKey(nameof(DefaultSignalCategoryId))]
+        public virtual SignalCategory? DefaultSignalCategory { get; set; } //  این فیلد از قبل در کد شما وجود داشت
+
+        /// <summary>
+        /// Collection of news items fetched from this RSS source.
+        /// This defines the "many" side of the one-to-many relationship.
+        /// </summary>
+        public virtual ICollection<NewsItem> NewsItems { get; set; } //  برای رابطه با NewsItem
+        #endregion
+
+        #region Constructor
+        /// <summary>
+        /// Default constructor required by EF Core.
+        /// Initializes collections to prevent null reference issues.
+        /// </summary>
+        public RssSource()
+        {
+            Id = Guid.NewGuid(); // Initialize Id
+            CreatedAt = DateTime.UtcNow; // Initialize CreatedAt
+            IsActive = true;
+            FetchErrorCount = 0;
+            NewsItems = new List<NewsItem>(); // Initialize collection
+        }
+        #endregion
     }
 }

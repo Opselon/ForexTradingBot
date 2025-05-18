@@ -2,17 +2,11 @@
 #region Usings
 using Application.DTOs.CryptoPay;     // ✅ برای CryptoPayInvoiceDto و CryptoPayWebhookUpdateDto
 using Application.Interfaces;         // ✅ برای IPaymentConfirmationService
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Shared.Settings;                // ✅ برای CryptoPaySettings (از پروژه Shared)
-using System;
-using System.IO;
 using System.Security.Cryptography;
 using System.Text;
-using System.Threading;
-using System.Threading.Tasks;
 #endregion
 
 namespace WebAPI.Controllers // ✅ Namespace صحیح

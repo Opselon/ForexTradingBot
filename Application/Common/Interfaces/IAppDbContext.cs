@@ -20,6 +20,9 @@ namespace Application.Common.Interfaces
         /// </summary>
         DbSet<TokenWallet> TokenWallets { get; }
 
+
+        DbSet<NewsItem> NewsItems { get; } // ✅ اضافه شد
+
         /// <summary>
         /// مجموعه داده‌ای برای موجودیت اشتراک‌ها.
         /// </summary>

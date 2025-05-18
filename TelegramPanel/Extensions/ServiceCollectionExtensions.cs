@@ -13,7 +13,6 @@ using TelegramPanel.Application.States;        // برای State های Telegram
 using TelegramPanel.Infrastructure;            // برای سرویس‌های Infrastructure خاص TelegramPanel
 using TelegramPanel.Queue;                     // برای سرویس‌های صف TelegramPanel
 using TelegramPanel.Settings;                  // برای TelegramPanelSettings
-using Scrutor;                                 // برای services.Scan(...)
 #endregion
 
 namespace TelegramPanel.Extensions

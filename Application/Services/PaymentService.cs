@@ -1,15 +1,11 @@
 ﻿using Application.Common.Interfaces; // برای ICryptoPayApiClient, IUserRepository, ISubscriptionRepository, IAppDbContext
-using Application.DTOs;
 using Application.DTOs.CryptoPay;
 using Application.Interfaces;
 using AutoMapper;
 using Domain.Entities; // برای Subscription, Transaction
 using Microsoft.Extensions.Logging;
 using Shared.Results;
-using System;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace Application.Services
 {

@@ -1,6 +1,4 @@
-﻿using System;
-
-namespace Domain.ValueObjects
+﻿namespace Domain.ValueObjects
 {
     /// <summary>
     /// یک Value Object برای نمایش مقدار یا تعداد توکن‌ها در سیستم.

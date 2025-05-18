@@ -1,66 +1,57 @@
-﻿using System;
-using System.Collections.Generic;
-using System.ComponentModel.DataAnnotations; // برای Data Annotations مانند [Required], [MaxLength]
+﻿// File: Domain/Entities/SignalCategory.cs
+#region Usings
+using System.ComponentModel.DataAnnotations;
+#endregion
 
 namespace Domain.Entities
 {
-    /// <summary>
-    /// موجودیتی برای دسته‌بندی سیگنال‌های معاملاتی.
-    /// هر سیگنال می‌تواند به یک یا چند دسته تعلق داشته باشد (اگرچه در این مدل ساده، هر سیگنال به یک دسته تعلق دارد از طریق Signal.CategoryId).
-    /// دسته‌بندی‌ها به کاربران کمک می‌کنند تا سیگنال‌های مورد علاقه خود را فیلتر و دنبال کنند.
-    /// نمونه‌ها: "جفت ارزهای اصلی فارکس"، "فلزات گرانبها"، "شاخص‌های سهام".
-    /// </summary>
     public class SignalCategory
     {
-        /// <summary>
-        /// شناسه یکتای دسته سیگنال.
-        /// به عنوان کلید اصلی (Primary Key) در پایگاه داده استفاده می‌شود.
-        /// </summary>
+        #region Core Properties
         public Guid Id { get; set; }
 
-        /// <summary>
-        /// نام دسته سیگنال.
-        /// این نام برای نمایش به کاربران و شناسایی دسته استفاده می‌شود.
-        /// نیازمندی: این فیلد اجباری است و باید منحصر به فرد باشد (در سطح پایگاه داده با یک Unique Constraint تضمین می‌شود).
-        /// </summary>
-        [Required(ErrorMessage = "نام دسته سیگنال الزامی است.")]
-        [MaxLength(100, ErrorMessage = "طول نام دسته نمی‌تواند بیش از 100 کاراکتر باشد.")]
-        //  [Index(IsUnique = true)] // اگر از EF Core با قابلیت Fluent API استفاده نمی‌کنید، این Attribute از System.ComponentModel.DataAnnotations.Schema برای نسخه‌های قدیمی‌تر یا ابزارهای دیگر است.
-        // در EF Core 5+، Unique Index معمولاً از طریق Fluent API در DbContext تعریف می‌شود.
-        public string Name { get; set; } = null!; // مقداردهی اولیه برای جلوگیری از هشدار nullability. EF Core یا سازنده باید مقدار معتبر را تضمین کنند.
+        [Required]
+        [MaxLength(100)]
+        public string Name { get; set; } = null!;
 
         /// <summary>
-        /// مجموعه‌ای از سیگنال‌هایی که به این دسته تعلق دارند.
-        /// این یک خصوصیت ناوبری برای رابطه یک-به-چند بین SignalCategory و Signal است.
-        /// (هر دسته می‌تواند چندین سیگنال داشته باشد).
-        /// به صورت پیش‌فرض به عنوان یک لیست خالی مقداردهی اولیه می‌شود تا از NullReferenceException جلوگیری شود.
+        /// (Optional) A brief description of the signal category.
         /// </summary>
-        public ICollection<Signal> Signals { get; set; } = new List<Signal>();
+        [MaxLength(500)]
+        public string? Description { get; set; } // ✅ اضافه شد
 
-        // ملاحظات و نیازمندی‌های اضافی بالقوه:
-        // 1. Description (string?): یک توضیح اختیاری برای دسته که جزئیات بیشتری در مورد آن ارائه می‌دهد.
-        // 2. ParentCategoryId (Guid?): برای پشتیبانی از دسته‌بندی‌های تودرتو (والد-فرزند).
-        //    public Guid? ParentCategoryId { get; set; }
-        //    public SignalCategory? ParentCategory { get; set; }
-        //    public ICollection<SignalCategory> SubCategories { get; set; } = new List<SignalCategory>();
-        // 3. IsActive (bool): برای فعال/غیرفعال کردن یک دسته بدون حذف آن.
-        // 4. SortOrder (int): برای تعیین ترتیب نمایش دسته‌ها به کاربر.
-        // 5. IconUrl (string?): برای نمایش یک آیکون مرتبط با دسته.
+        /// <summary>
+        /// Indicates if this category is active and should be used/displayed.
+        /// </summary>
+        public bool IsActive { get; set; } = true; //  مثال: برای فعال/غیرفعال کردن دسته‌ها
 
-        // سازنده پیش‌فرض برای EF Core
-        public SignalCategory() { }
+        /// <summary>
+        /// (Optional) Sort order for displaying categories.
+        /// </summary>
+        public int SortOrder { get; set; } = 0;
+        #endregion
 
-        // سازنده برای ایجاد یک دسته جدید با نام مشخص
-        // public SignalCategory(string name)
-        // {
-        //     if (string.IsNullOrWhiteSpace(name))
-        //         throw new ArgumentException("نام دسته نمی‌تواند خالی باشد.", nameof(name));
-        //     if (name.Length > 100)
-        //         throw new ArgumentOutOfRangeException(nameof(name), "طول نام دسته نمی‌تواند بیش از 100 کاراکتر باشد.");
+        #region Navigation Properties
+        /// <summary>
+        /// Collection of Signals belonging to this category.
+        /// </summary>
+        public virtual ICollection<Signal> Signals { get; set; } = new List<Signal>(); // ✅ virtual
 
-        //     Id = Guid.NewGuid();
-        //     Name = name;
-        //     Signals = new List<Signal>();
-        // }
+        /// <summary>
+        /// Collection of UserSignalPreferences linking users to this category.
+        /// This defines which users are interested in this category.
+        /// </summary>
+        public virtual ICollection<UserSignalPreference> UserPreferences { get; set; } = new List<UserSignalPreference>(); // ✅ اضافه شد
+        #endregion
+
+        #region Constructors
+        public SignalCategory()
+        {
+            Id = Guid.NewGuid();
+            Signals = new List<Signal>();
+            UserPreferences = new List<UserSignalPreference>();
+            IsActive = true;
+        }
+        #endregion
     }
 }

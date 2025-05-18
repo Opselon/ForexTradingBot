@@ -4,11 +4,6 @@ using Application.Interfaces;
 using AutoMapper;
 using Domain.Entities;
 using Microsoft.Extensions.Logging; // برای لاگ کردن
-using System;
-using System.Collections.Generic;
-using System.Linq; // برای Select
-using System.Threading;
-using System.Threading.Tasks;
 // using Application.Common.Exceptions;
 
 namespace Application.Services
@@ -48,7 +43,7 @@ namespace Application.Services
 
             var signal = _mapper.Map<Signal>(createSignalDto);
             signal.Id = Guid.NewGuid();
-            signal.CreatedAt = DateTime.UtcNow;
+            signal.PublishedAt = DateTime.UtcNow;
 
             await _signalRepository.AddAsync(signal, cancellationToken);
             await _context.SaveChangesAsync(cancellationToken);

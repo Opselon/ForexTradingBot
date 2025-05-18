@@ -1,21 +1,17 @@
 ﻿// File: TelegramPanel/Application/CommandHandlers/MenuCallbackQueryHandler.cs
 #region Usings
 using Application.Interfaces;
-using Application.DTOs;
 using AutoMapper;
 using Microsoft.Extensions.Logging;
-using System.Collections.Generic; // برای List<InlineKeyboardButton> در ارسال مجدد منو
 using System.Text;
-using System.Threading;
-using System.Threading.Tasks;
 using Telegram.Bot;
 using Telegram.Bot.Exceptions;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
 using TelegramPanel.Application.Interfaces;
-using TelegramPanel.Infrastructure;
 using TelegramPanel.Formatters;
+using TelegramPanel.Infrastructure;
 #endregion
 
 namespace TelegramPanel.Application.CommandHandlers
@@ -102,7 +98,7 @@ namespace TelegramPanel.Application.CommandHandlers
                 // CallbackData های مربوط به انتخاب پلن و پرداخت (که در پاسخ قبلی اضافه کردیم)
                 callbackData.StartsWith("select_plan_", StringComparison.Ordinal) || // مثال: select_plan_premium_1m
                 callbackData.StartsWith("pay_", StringComparison.Ordinal) ||          // مثال: pay_usdt_PLAN_ID
-                // CallbackData های مربوط به دکمه‌های بازگشت
+                                                                                      // CallbackData های مربوط به دکمه‌های بازگشت
                 callbackData.Equals(BackToMainMenuFromProfile, StringComparison.Ordinal) ||
                 callbackData.Equals(BackToMainMenuFromSubscribe, StringComparison.Ordinal) ||
                 callbackData.Equals(BackToMainMenuFromSettings, StringComparison.Ordinal) ||

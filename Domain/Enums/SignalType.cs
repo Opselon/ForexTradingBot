@@ -1,6 +1,4 @@
-﻿using System;
-
-namespace Domain.Enums
+﻿namespace Domain.Enums
 {
     /// <summary>
     /// انواع مختلف سیگنال‌های معاملاتی یا طبقه‌بندی آن‌ها را مشخص می‌کند.

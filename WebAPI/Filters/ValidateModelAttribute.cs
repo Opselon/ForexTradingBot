@@ -7,7 +7,6 @@
 // اگر به Microsoft.AspNetCore.Mvc.Core ارجاع ندارید، این بخش را کامنت کنید یا حذف کنید.
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
-using System.Linq;
 
 namespace Shared.Attributes
 {

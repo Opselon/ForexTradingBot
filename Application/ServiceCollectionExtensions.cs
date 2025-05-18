@@ -1,19 +1,14 @@
 ﻿#region Usings
 // using های استاندارد .NET و NuGet Packages
-using FluentValidation;                     // برای services.AddValidatorsFromAssembly()
-using MediatR;                              // برای services.AddMediatR() و IPipelineBehavior
-using Microsoft.Extensions.DependencyInjection; // برای IServiceCollection و متدهای توسعه‌دهنده DI
-using Microsoft.Extensions.Logging;         // برای ILogger (مثلاً در DummyNotificationService)
-using System;                               // برای ArgumentNullException
-using System.Reflection;                    // برای Assembly.GetExecutingAssembly()
-using System.Threading.Tasks;               // برای Task
-using System.Threading;                     // برای CancellationToken
-
 // using های مربوط به پروژه Application شما
 using Application.Common.Interfaces;       // برای اینترفیس‌های عمومی مانند IAppDbContext, INotificationService, و تمام اینترفیس‌های Repository
+using Application.Interface;                // ✅ Namespace اصلی برای پیاده‌سازی‌های سرویس (UserService, SignalService, و غیره)
 using Application.Interfaces;              // ✅ Namespace اصلی برای اینترفیس‌های سرویس (IUserService, ISignalService, و غیره)
 using Application.Services;
-using Application.Interface;                // ✅ Namespace اصلی برای پیاده‌سازی‌های سرویس (UserService, SignalService, و غیره)
+using FluentValidation;                     // برای services.AddValidatorsFromAssembly()
+using Microsoft.Extensions.DependencyInjection; // برای IServiceCollection و متدهای توسعه‌دهنده DI
+using Microsoft.Extensions.Logging;         // برای ILogger (مثلاً در DummyNotificationService)
+using System.Reflection;                    // برای Assembly.GetExecutingAssembly()
 #endregion
 
 namespace Application // ✅ Namespace ریشه پروژه Application

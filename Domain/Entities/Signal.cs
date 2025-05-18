@@ -1,157 +1,115 @@
-﻿using System;
-using System.Collections.Generic;
+﻿// File: Domain/Entities/Signal.cs
+#region Usings
+// using System.ComponentModel.DataAnnotations.Schema; // اگر از ForeignKey Attribute استفاده می‌کنید
+using Domain.Enums; // ✅ برای SignalType و SignalStatus
 using System.ComponentModel.DataAnnotations;
-using System.ComponentModel.DataAnnotations.Schema;
-using Domain.Enums; // برای دسترسی به SignalType
+#endregion
 
 namespace Domain.Entities
 {
-    /// <summary>
-    /// موجودیتی برای نمایش یک سیگنال معاملاتی.
-    /// هر سیگنال شامل اطلاعاتی مانند نوع (خرید/فروش)، نماد معاملاتی، قیمت ورود، حد ضرر، حد سود،
-    /// منبع سیگنال، دسته بندی و تحلیل‌های مرتبط با آن است.
-    /// این موجودیت هسته اصلی سیستم سیگنال‌دهی ربات است.
-    /// </summary>
     public class Signal
     {
-        /// <summary>
-        /// شناسه یکتای سیگنال.
-        /// به عنوان کلید اصلی (Primary Key) در پایگاه داده استفاده می‌شود.
-        /// </summary>
+        #region Core Properties
         public Guid Id { get; set; }
 
-        /// <summary>
-        /// نوع سیگنال، مشخص می‌کند که سیگنال برای خرید (Buy) است یا فروش (Sell).
-        /// از <see cref="Enums.SignalType"/> برای تعیین نوع استفاده می‌شود.
-        /// نیازمندی: این فیلد اجباری است.
-        /// </summary>
-        [Required(ErrorMessage = "نوع سیگنال (خرید/فروش) الزامی است.")]
-        public SignalType Type { get; set; }
+        [Required]
+        public SignalType Type { get; set; } // Buy or Sell
 
-        /// <summary>
-        /// نماد معاملاتی که سیگنال برای آن صادر شده است (مثلاً "EURUSD", "BTCUSDT", "XAUUSD").
-        /// نیازمندی: این فیلد اجباری است و باید یک فرمت استاندارد داشته باشد.
-        /// </summary>
-        [Required(ErrorMessage = "نماد معاملاتی الزامی است.")]
-        [MaxLength(50, ErrorMessage = "طول نماد معاملاتی نمی‌تواند بیش از 50 کاراکتر باشد.")]
-        //  ممکن است نیاز به اعتبارسنجی فرمت خاصی برای نمادها باشد.
+        [Required]
+        [MaxLength(50)]
         public string Symbol { get; set; } = null!;
 
-        /// <summary>
-        /// قیمت پیشنهادی برای ورود به معامله.
-        /// نیازمندی: این فیلد اجباری است و باید مقدار مثبتی داشته باشد (بسته به نوع دارایی).
-        /// </summary>
-        [Required(ErrorMessage = "قیمت ورود الزامی است.")]
-        [Range(0.00000001, double.MaxValue, ErrorMessage = "قیمت ورود باید مقدار مثبتی داشته باشد.")]
+        [Required]
         public decimal EntryPrice { get; set; }
 
-        /// <summary>
-        /// قیمت تعیین شده برای حد ضرر (Stop Loss).
-        /// در صورت رسیدن قیمت بازار به این سطح، معامله باید برای جلوگیری از ضرر بیشتر بسته شود.
-        /// نیازمندی: این فیلد اجباری است.
-        /// </summary>
-        [Required(ErrorMessage = "حد ضرر (StopLoss) الزامی است.")]
-        //  اعتبارسنجی بیشتر: برای سیگنال خرید، StopLoss باید کمتر از EntryPrice باشد و برای سیگنال فروش، بیشتر.
-        //  این منطق می‌تواند در سرویس‌ها یا در یک متد اعتبارسنجی در موجودیت پیاده‌سازی شود.
+        [Required]
         public decimal StopLoss { get; set; }
 
-        /// <summary>
-        /// قیمت تعیین شده برای حد سود (Take Profit).
-        /// در صورت رسیدن قیمت بازار به این سطح، معامله باید برای کسب سود بسته شود.
-        /// نیازمندی: این فیلد اجباری است.
-        /// </summary>
-        [Required(ErrorMessage = "حد سود (TakeProfit) الزامی است.")]
-        //  اعتبارسنجی بیشتر: برای سیگنال خرید، TakeProfit باید بیشتر از EntryPrice باشد و برای سیگنال فروش، کمتر.
+        [Required]
         public decimal TakeProfit { get; set; }
 
+        //  می‌توانید سطوح TP بیشتری اضافه کنید
+        // public decimal? TakeProfit2 { get; set; }
+        // public decimal? TakeProfit3 { get; set; }
+        #endregion
+
+        #region Additional Signal Details
         /// <summary>
-        /// منبعی که سیگنال از آنجا دریافت یا تولید شده است (مثلاً "RSS Feed X", "Manual Analyst Y", "ML Algorithm Z").
-        /// نیازمندی: این فیلد اجباری است.
-        /// پیشنهاد: برای یکپارچگی و کنترل بهتر، استفاده از یک enum (مانند SignalSourceType) یا یک موجودیت مجزا (SourceProvider) توصیه می‌شود.
+        /// The source or provider of the signal (e.g., "RSS Feed X", "Analyst Y", "AI System Z").
         /// </summary>
-        [Required(ErrorMessage = "منبع سیگنال الزامی است.")]
-        [MaxLength(100, ErrorMessage = "طول نام منبع نمی‌تواند بیش از 100 کاراکتر باشد.")]
-        public string Source { get; set; } = null!;
+        [Required]
+        [MaxLength(100)]
+        public string SourceProvider { get; set; } = null!; // ✅ تغییر نام از Source
 
         /// <summary>
-        /// شناسه دسته‌بندی که این سیگنال به آن تعلق دارد.
-        /// این یک کلید خارجی است که به شناسه دسته‌بندی سیگنال (SignalCategory.Id) اشاره دارد.
+        /// Current status of the signal (e.g., Pending, Active, ReachedTakeProfit, HitStopLoss).
         /// </summary>
-        // [ForeignKey(nameof(Category))] // می‌تواند برای وضوح بیشتر یا پیکربندی دقیق‌تر EF Core استفاده شود.
+        [Required]
+        public SignalStatus Status { get; set; } = SignalStatus.Pending; // ✅ اضافه شد
+
+        /// <summary>
+        /// The timeframe for which this signal is most relevant (e.g., "M15", "H1", "D1"). Optional.
+        /// </summary>
+        [MaxLength(10)]
+        public string? Timeframe { get; set; } // ✅ اضافه شد
+
+        /// <summary>
+        /// Additional notes, commentary, or reasoning behind the signal. Optional.
+        /// </summary>
+        [MaxLength(1000)]
+        public string? Notes { get; set; } // ✅ اضافه شد
+
+        /// <summary>
+        /// Indicates if this signal is exclusive to VIP/subscribed users.
+        /// </summary>
+        public bool IsVipOnly { get; set; } = false; // ✅ اضافه شد
+        #endregion
+
+        #region Timestamps
+        /// <summary>
+        /// Date and time when the signal was initially created or published by the source (UTC).
+        /// </summary>
+        [Required]
+        public DateTime PublishedAt { get; set; } = DateTime.UtcNow; // ✅ تغییر نام از CreatedAt
+
+        /// <summary>
+        /// Date and time of the last update to this signal's information (UTC). Nullable.
+        /// </summary>
+        public DateTime? UpdatedAt { get; set; } // ✅ اضافه شد
+
+        /// <summary>
+        /// Date and time when the signal was closed (reached TP/SL, cancelled, or expired) (UTC). Nullable.
+        /// </summary>
+        public DateTime? ClosedAt { get; set; } // ✅ اضافه شد
+        #endregion
+
+        #region Navigation Properties
+        /// <summary>
+        /// Foreign key to the SignalCategory.
+        /// </summary>
+        [Required]
         public Guid CategoryId { get; set; }
 
         /// <summary>
-        /// نویگیشن به موجودیت دسته‌بندی سیگنال (SignalCategory) که این سیگنال به آن مرتبط است.
+        /// Navigation property to the SignalCategory this signal belongs to.
         /// </summary>
         [Required]
-        public SignalCategory Category { get; set; } = null!;
+        public virtual SignalCategory Category { get; set; } = null!; // ✅ virtual برای Lazy Loading
 
         /// <summary>
-        /// تاریخ و زمان ایجاد این سیگنال به وقت جهانی (UTC).
+        /// Collection of analyses performed on this signal.
         /// </summary>
-        public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+        public virtual ICollection<SignalAnalysis> Analyses { get; set; } = new List<SignalAnalysis>(); // ✅ virtual
+        #endregion
 
-        /// <summary>
-        /// مجموعه‌ای از تحلیل‌های انجام شده برای این سیگنال.
-        /// این یک خصوصیت ناوبری برای رابطه یک-به-چند بین Signal و SignalAnalysis است.
-        /// (هر سیگنال می‌تواند چندین تحلیل داشته باشد).
-        /// </summary>
-        public ICollection<SignalAnalysis> Analyses { get; set; } = new List<SignalAnalysis>();
-
-        // ملاحظات و نیازمندی‌های اضافی بالقوه:
-        // 1. Status (enum SignalStatus): وضعیت فعلی سیگنال (مثلاً: Pending, Active, ReachedTP, HitSL, Cancelled, Expired).
-        //    public SignalStatus Status { get; set; } = SignalStatus.Pending;
-        //
-        // 2. Timeframe (string یا enum): تایم‌فریمی که سیگنال برای آن معتبر است (مثلاً "M15", "H1", "D1").
-        //    public string? Timeframe { get; set; }
-        //
-        // 3. RiskRewardRatio (decimal, ReadOnly Property): محاسبه نسبت ریسک به ریوارد.
-        //    public decimal RiskRewardRatio => (TakeProfit - EntryPrice) / (EntryPrice - StopLoss); (برای سیگنال خرید، برای فروش معکوس است و باید مدیریت شود)
-        //
-        // 4. Multiple TakeProfit Levels: اگر سیستم نیاز به چندین حد سود دارد.
-        //    public decimal? TakeProfit2 { get; set; }
-        //    public decimal? TakeProfit3 { get; set; }
-        //
-        // 5. ValidityPeriod (TimeSpan یا DateTime ExpireAt): مدت زمان اعتبار سیگنال یا تاریخ انقضا.
-        //
-        // 6. PipsToStopLoss / PipsToTakeProfit (int?): مقدار حد ضرر/سود به پیپ (اگر قابل محاسبه باشد).
-        //
-        // 7. SignalProviderId (Guid?): اگر سیگنال‌ها از ارائه‌دهندگان خاصی می‌آیند که به عنوان موجودیت مدیریت می‌شوند.
-
-        // سازنده پیش‌فرض برای EF Core
-        public Signal() { }
-
-        // سازنده برای ایجاد یک سیگنال جدید (مثال ساده)
-        // public Signal(SignalType type, string symbol, decimal entryPrice, decimal stopLoss, decimal takeProfit, string source, Guid categoryId)
-        // {
-        //     //  اعتبارسنجی‌های اولیه در اینجا انجام شود
-        //     Id = Guid.NewGuid();
-        //     Type = type;
-        //     Symbol = symbol ?? throw new ArgumentNullException(nameof(symbol));
-        //     EntryPrice = entryPrice;
-        //     StopLoss = stopLoss;
-        //     TakeProfit = takeProfit;
-        //     Source = source ?? throw new ArgumentNullException(nameof(source));
-        //     CategoryId = categoryId;
-        //     CreatedAt = DateTime.UtcNow;
-        //     Analyses = new List<SignalAnalysis>();
-        //
-        //     //  اعتبارسنجی‌های پیچیده‌تر مانند رابطه قیمت‌ها
-        //     ValidatePrices();
-        // }
-
-        // private void ValidatePrices()
-        // {
-        //     if (Type == SignalType.Buy)
-        //     {
-        //         if (StopLoss >= EntryPrice) throw new ArgumentException("برای سیگنال خرید، حد ضرر باید کمتر از قیمت ورود باشد.");
-        //         if (TakeProfit <= EntryPrice) throw new ArgumentException("برای سیگنال خرید، حد سود باید بیشتر از قیمت ورود باشد.");
-        //     }
-        //     else // Sell
-        //     {
-        //         if (StopLoss <= EntryPrice) throw new ArgumentException("برای سیگنال فروش، حد ضرر باید بیشتر از قیمت ورود باشد.");
-        //         if (TakeProfit >= EntryPrice) throw new ArgumentException("برای سیگنال فروش، حد سود باید کمتر از قیمت ورود باشد.");
-        //     }
-        // }
+        #region Constructors
+        public Signal()
+        {
+            Id = Guid.NewGuid();
+            PublishedAt = DateTime.UtcNow; //  مقداردهی اولیه
+            Status = SignalStatus.Pending;
+            Analyses = new List<SignalAnalysis>();
+        }
+        #endregion
     }
 }

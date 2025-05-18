@@ -1,6 +1,4 @@
-﻿using System;
-
-namespace Domain.Enums
+﻿namespace Domain.Enums
 {
     /// <summary>
     /// انواع مختلف تراکنش‌های مالی یا توکنی را که می‌توانند در سیستم رخ دهند، مشخص می‌کند.

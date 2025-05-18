@@ -1,8 +1,4 @@
 ﻿using Domain.Entities; // برای TokenWallet و User
-using Domain.ValueObjects; // برای TokenAmount (اگر از آن در اینترفیس استفاده می‌کنیم)
-using System;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace Application.Common.Interfaces
 {

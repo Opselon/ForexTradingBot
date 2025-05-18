@@ -1,7 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-
-namespace Application.DTOs
+﻿namespace Application.DTOs
 {
     public class SignalDto
     {

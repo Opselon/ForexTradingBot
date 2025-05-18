@@ -1,8 +1,4 @@
 ﻿using Application.DTOs; // برای UserDto, RegisterUserDto, UpdateUserDto
-using System;
-using System.Collections.Generic;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace Application.Interfaces // ✅ Namespace صحیح برای اینترفیس‌های سرویس
 {
@@ -50,7 +46,7 @@ namespace Application.Interfaces // ✅ Namespace صحیح برای اینترف
         /// <param name="userId">شناسه کاربری که باید به‌روز شود.</param>
         /// <param name="updateDto">اطلاعات جدید برای به‌روزرسانی کاربر.</param>
         /// <param name="cancellationToken">توکن برای لغو عملیات.</param>
-        Task UpdateUserAsync(Guid userId, UpdateUserDto updateDto, CancellationToken cancellationToken = default); // تغییر ورودی به UpdateUserDto
+        Task UpdateUserAsync(Guid userId, UpdateUserDto updateDto, CancellationToken cancellationToken = default);
 
         /// <summary>
         /// یک کاربر را بر اساس شناسه آن حذف می‌کند.

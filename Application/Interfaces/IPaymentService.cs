@@ -1,9 +1,5 @@
-﻿using Application.DTOs; // برای DTO های مربوط به پلن‌ها یا محصولات شما
-using Application.DTOs.CryptoPay; // برای CreateCryptoPayInvoiceRequestDto و CryptoPayInvoiceDto
+﻿using Application.DTOs.CryptoPay; // برای CreateCryptoPayInvoiceRequestDto و CryptoPayInvoiceDto
 using Shared.Results;
-using System;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace Application.Interfaces
 {

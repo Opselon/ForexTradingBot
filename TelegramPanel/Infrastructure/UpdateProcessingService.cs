@@ -1,10 +1,4 @@
-﻿using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
+﻿using Microsoft.Extensions.Logging;
 using Telegram.Bot.Types;
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Application.Pipeline; // برای TelegramPipelineDelegate

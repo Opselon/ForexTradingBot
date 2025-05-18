@@ -1,8 +1,7 @@
 ﻿using Application.DTOs; // Namespace اصلی DTO ها
+using Application.DTOs.News;
 using AutoMapper;
 using Domain.Entities;
-using Domain.Enums;
-using System.Linq; // برای Select در مپینگ UserSignalPreference
 
 namespace Application.Common.Mappings
 {
@@ -10,6 +9,15 @@ namespace Application.Common.Mappings
     {
         public MappingProfile()
         {
+
+            #region News Mappings
+            CreateMap<NewsItem, NewsItemDto>()
+                .ForMember(dest => dest.SourceName, opt => opt.MapFrom(src => src.RssSource.SourceName)) // مپ کردن نام از RssSource مرتبط
+                .ForMember(dest => dest.CreatedAtInSystem, opt => opt.MapFrom(src => src.CreatedAt));
+            //  مپینگ برای CreateNewsItemDto به NewsItem (اگر DTO برای ایجاد دارید)
+            // CreateMap<CreateNewsItemDto, NewsItem>();
+            #endregion
+
             // User Mappings
             CreateMap<User, UserDto>()
                 .ForMember(dest => dest.Level, opt => opt.MapFrom(src => src.Level.ToString()))
@@ -23,7 +31,7 @@ namespace Application.Common.Mappings
 
             // Subscription Mappings
             CreateMap<Subscription, SubscriptionDto>()
-                .ForMember(dest => dest.IsActive, opt => opt.MapFrom(src => src.IsActive)); // پراپرتی محاسباتی
+                .ForMember(dest => dest.IsActive, opt => opt.MapFrom(src => src.IsCurrentlyActive)); // پراپرتی محاسباتی
             CreateMap<CreateSubscriptionDto, Subscription>();
 
             // SignalCategory Mappings

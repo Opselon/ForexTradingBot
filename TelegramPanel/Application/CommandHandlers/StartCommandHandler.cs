@@ -1,9 +1,6 @@
 ﻿using Application.DTOs;              // برای RegisterUserDto و UserDto از پروژه اصلی Application
 using Application.Interfaces;        // برای IUserService از پروژه اصلی Application
 using Microsoft.Extensions.Logging;
-using System; // برای ArgumentNullException
-using System.Threading;
-using System.Threading.Tasks;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using TelegramPanel.Application.Interfaces; // برای ITelegramCommandHandler

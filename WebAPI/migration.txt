@@ -28,4 +28,8 @@ dotnet ef database update --project Infrastructure --startup-project WebAPI
 
 
 Update all
-.\Update-EfDatabase.ps1 -MigrationName "FullDevResetAndInit" `    -InfrastructureProject "Infrastructure" `    -StartupProject "WebAPI" `    -CleanBuild `    -DropAndRecreateDatabase `    -ForceConfirmDrop `    -ForceRecreateSnapshot `    -ForceConfirmDeleteSnapshot `    -ApplyToDatabase `    -Confirm:$false
+.\Update-EfDatabase.ps1 -MigrationName "FullDevResetAndInit" `    -InfrastructureProject "Infrastructure" `    -StartupProject "WebAPI" `    -CleanBuild `    -DropAndRecreateDatabase `    -ForceConfirmDrop `    -ForceRecreateSnapshot `-ForceConfirmDeleteSnapshot `    -ApplyToDatabase `    -Confirm:$false
+
+
+
+.\Update-EfDatabase.ps1 -MigrationName "ReinitUserAndTokenWallett" -InfrastructureProject "Infrastructure" -StartupProject "WebAPI" -CleanBuild -ForceRecreateSnapshot -ForceConfirmDeleteSnapshot -ApplyToDatabase -DropAndRecreateDatabase -Confirm:$false

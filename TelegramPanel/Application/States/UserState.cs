@@ -1,7 +1,4 @@
 ﻿using System.Collections.Concurrent; // برای ConcurrentDictionary
-using System.Collections.Generic;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace TelegramPanel.Application.States // ✅ Namespace صحیح
 {

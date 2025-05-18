@@ -1,104 +1,84 @@
-﻿using System;
-using System.Collections.Generic;
-using System.ComponentModel.DataAnnotations; // برای توضیحات بیشتر در مورد اعتبارسنجی‌های احتمالی (اختیاری)
-using Domain.Enums; // برای دسترسی به UserLevel
+﻿// File: Domain/Entities/User.cs
+#region Usings
+using Domain.Enums;
+using System.ComponentModel.DataAnnotations;
+#endregion
 
 namespace Domain.Entities
 {
-    /// <summary>
-    /// موجودیت اصلی برای نمایش اطلاعات کاربر در سیستم.
-    /// این کلاس شامل اطلاعات هویتی، سطح دسترسی، کیف پول، اشتراک‌ها، تراکنش‌ها و تنظیمات برگزیده کاربر است.
-    /// </summary>
     public class User
     {
-        /// <summary>
-        /// شناسه یکتای کاربر در سیستم.
-        /// به عنوان کلید اصلی (Primary Key) در پایگاه داده استفاده می‌شود.
-        /// </summary>
+        #region Core Properties
         public Guid Id { get; set; }
-
-        /// <summary>
-        /// نام کاربری انتخاب شده توسط کاربر.
-        /// می‌تواند برای نمایش یا ورود (در صورت وجود پنل وب) استفاده شود.
-        /// این فیلد اجباری است و انتظار می‌رود هنگام ایجاد کاربر مقداردهی شود.
-        /// </summary>
-        [Required] // مثال: اگر از DataAnnotations برای اعتبارسنجی استفاده می‌کنید
+        [Required]
         public string Username { get; set; } = null!;
-
-        /// <summary>
-        /// شناسه یکتای کاربر در تلگرام.
-        /// این شناسه برای شناسایی کاربر و ارسال پیام از طریق ربات تلگرام حیاتی است.
-        /// این فیلد اجباری است و انتظار می‌رود هنگام ثبت‌نام کاربر از طریق تلگرام مقداردهی شود.
-        /// </summary>
         [Required]
         public string TelegramId { get; set; } = null!;
-
-        /// <summary>
-        /// آدرس ایمیل کاربر.
-        /// می‌تواند برای اطلاع‌رسانی‌ها، بازیابی حساب (در صورت وجود) یا به عنوان یک شناسه جایگزین استفاده شود.
-        /// این فیلد اجباری است و انتظار می‌رود هنگام ایجاد کاربر مقداردهی شود.
-        /// </summary>
-        [EmailAddress] // مثال
+        [EmailAddress]
         [Required]
         public string Email { get; set; } = null!;
-
-        /// <summary>
-        /// سطح دسترسی کاربر (مانند رایگان، پولی).
-        /// برای کنترل دسترسی به امکانات مختلف ربات استفاده می‌شود.
-        /// مقدار پیش‌فرض <see cref="UserLevel.Free"/> است.
-        /// </summary>
         public UserLevel Level { get; set; } = UserLevel.Free;
-
-        /// <summary>
-        /// نویگیشن به موجودیت کیف پول توکن کاربر.
-        /// برای مدیریت توکن‌ها یا اعتبارات کاربر در سیستم استفاده می‌شود (در صورت پیاده‌سازی چنین مکانیزمی).
-        /// انتظار می‌رود این موجودیت مرتبط هنگام ایجاد کاربر ایجاد یا پیوند داده شود.
-        /// </summary>
-        public TokenWallet TokenWallet { get; set; } = null!; // این باید در زمان ایجاد کاربر، مدیریت شود که null نباشد.
-
-        /// <summary>
-        /// لیستی از اشتراک‌های کاربر.
-        /// یک کاربر می‌تواند چندین اشتراک فعال یا منقضی شده داشته باشد.
-        /// به صورت پیش‌فرض به عنوان یک لیست خالی مقداردهی اولیه می‌شود تا از NullReferenceException جلوگیری شود.
-        /// </summary>
-        public List<Subscription> Subscriptions { get; set; } = new();
-
-        /// <summary>
-        /// لیستی از تراکنش‌های مالی یا توکنی کاربر.
-        /// برای نگهداری سابقه پرداخت‌ها، خرید توکن یا استفاده از آن‌ها استفاده می‌شود.
-        /// به صورت پیش‌فرض به عنوان یک لیست خالی مقداردهی اولیه می‌شود.
-        /// </summary>
-        public List<Transaction> Transactions { get; set; } = new();
-
-        /// <summary>
-        /// مجموعه‌ای از تنظیمات برگزیده کاربر برای سیگنال‌ها.
-        /// به کاربر اجازه می‌دهد تا انواع سیگنال‌هایی را که مایل به دریافت آن‌ها است، شخصی‌سازی کند.
-        /// (رابطه یک به چند با <see cref="UserSignalPreference"/>)
-        /// به صورت پیش‌فرض به عنوان یک لیست خالی مقداردهی اولیه می‌شود.
-        /// </summary>
-        public ICollection<UserSignalPreference> Preferences { get; set; } = new List<UserSignalPreference>();
-
-        /// <summary>
-        /// تاریخ و زمان ایجاد حساب کاربری به وقت جهانی (UTC).
-        /// برای اهداف ممیزی و پیگیری استفاده می‌شود.
-        /// به صورت پیش‌فرض با زمان جاری UTC در لحظه ایجاد نمونه از کلاس مقداردهی می‌شود.
-        /// </summary>
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
-        // سازنده‌ها و متدها در صورت نیاز می‌توانند در اینجا اضافه شوند.
-        // برای مثال، یک سازنده که مقادیر اولیه ضروری را دریافت کند:
-        // public User(string username, string telegramId, string email)
-        // {
-        //     Id = Guid.NewGuid();
-        //     Username = username ?? throw new ArgumentNullException(nameof(username));
-        //     TelegramId = telegramId ?? throw new ArgumentNullException(nameof(telegramId));
-        //     Email = email ?? throw new ArgumentNullException(nameof(email));
-        //     Level = UserLevel.Free;
-        //     TokenWallet = new TokenWallet(); // یا روش مناسب دیگر برای مقداردهی اولیه
-        //     Subscriptions = new List<Subscription>();
-        //     Transactions = new List<Transaction>();
-        //     Preferences = new List<UserSignalPreference>();
-        //     CreatedAt = DateTime.UtcNow;
-        // }
+        /// <summary>
+        /// Date and time of the last update to the user's record (UTC).
+        /// </summary>
+        public DateTime? UpdatedAt { get; set; } // ✅ این باید وجود داشته باشد
+        #endregion
+
+        #region Notification Settings
+        /// <summary>
+        /// Indicates if the user wants to receive general notifications from the bot.
+        /// </summary>
+        public bool EnableGeneralNotifications { get; set; } = true; // ✅ این باید وجود داشته باشد
+
+        /// <summary>
+        /// Indicates if the user (if VIP) wants to receive notifications for VIP signals.
+        /// </summary>
+        public bool EnableVipSignalNotifications { get; set; } = true; // ✅ این باید وجود داشته باشد
+
+        /// <summary>
+        /// Indicates if the user wants to receive notifications for new RSS news/articles.
+        /// </summary>
+        public bool EnableRssNewsNotifications { get; set; } = true; // ✅ این باید وجود داشته باشد
+        #endregion
+
+        #region Language Preference
+        /// <summary>
+        /// User's preferred language for bot interaction (e.g., "en", "fa").
+        /// </summary>
+        [MaxLength(10)]
+        public string PreferredLanguage { get; set; } = "en"; // ✅ اضافه شد برای بخش تنظیمات زبان
+        #endregion
+
+        #region Navigation Properties
+        public TokenWallet TokenWallet { get; set; } = null!;
+        public List<Subscription> Subscriptions { get; set; } = new();
+        public List<Transaction> Transactions { get; set; } = new();
+        public ICollection<UserSignalPreference> Preferences { get; set; } = new List<UserSignalPreference>();
+        #endregion
+
+        #region Constructors
+        public User()
+        {
+            Id = Guid.NewGuid();
+            CreatedAt = DateTime.UtcNow;
+            Subscriptions = new List<Subscription>();
+            Transactions = new List<Transaction>();
+            Preferences = new List<UserSignalPreference>();
+            EnableGeneralNotifications = true;
+            EnableVipSignalNotifications = false; // پیش‌فرض برای کاربر جدید
+            EnableRssNewsNotifications = true;
+            PreferredLanguage = "en";
+        }
+
+        public User(string username, string telegramId, string email) : this()
+        {
+            Username = username?.Trim() ?? throw new ArgumentNullException(nameof(username));
+            TelegramId = telegramId ?? throw new ArgumentNullException(nameof(telegramId));
+            Email = email?.Trim().ToLowerInvariant() ?? throw new ArgumentNullException(nameof(email));
+            // TokenWallet در سازنده UserService مقداردهی می‌شود یا در یک متد جداگانه پس از SaveChanges اولیه User
+        }
+        #endregion
     }
 }

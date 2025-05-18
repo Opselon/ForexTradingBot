@@ -1,7 +1,5 @@
 ﻿using Application.DTOs.CryptoPay; // برای CryptoPayInvoiceDto
 using Shared.Results;             // برای Result
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace Application.Interfaces // ✅ Namespace صحیح
 {

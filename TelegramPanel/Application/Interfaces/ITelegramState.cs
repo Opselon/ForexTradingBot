@@ -1,6 +1,4 @@
 ﻿using Telegram.Bot.Types;
-using System.Threading.Tasks;
-using System.Threading;
 
 namespace TelegramPanel.Application.Interfaces
 {

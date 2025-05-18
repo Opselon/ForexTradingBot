@@ -1,12 +1,11 @@
-﻿using System;
-using Microsoft.EntityFrameworkCore.Migrations;
+﻿using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
 namespace Infrastructure.Migrations
 {
     /// <inheritdoc />
-    public partial class FullDevResetAndInit : Migration
+    public partial class ReinitUserAndTokenWallett : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
@@ -16,7 +15,10 @@ namespace Infrastructure.Migrations
                 columns: table => new
                 {
                     Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
-                    Name = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false)
+                    Name = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false),
+                    Description = table.Column<string>(type: "nvarchar(500)", maxLength: 500, nullable: true),
+                    IsActive = table.Column<bool>(type: "bit", nullable: false),
+                    SortOrder = table.Column<int>(type: "int", nullable: false)
                 },
                 constraints: table =>
                 {
@@ -32,7 +34,12 @@ namespace Infrastructure.Migrations
                     TelegramId = table.Column<string>(type: "nvarchar(50)", maxLength: 50, nullable: false),
                     Email = table.Column<string>(type: "nvarchar(200)", maxLength: 200, nullable: false),
                     Level = table.Column<string>(type: "nvarchar(max)", nullable: false),
-                    CreatedAt = table.Column<DateTime>(type: "datetime2", nullable: false)
+                    CreatedAt = table.Column<DateTime>(type: "datetime2", nullable: false),
+                    UpdatedAt = table.Column<DateTime>(type: "datetime2", nullable: true),
+                    EnableGeneralNotifications = table.Column<bool>(type: "bit", nullable: false, defaultValue: true),
+                    EnableVipSignalNotifications = table.Column<bool>(type: "bit", nullable: false, defaultValue: false),
+                    EnableRssNewsNotifications = table.Column<bool>(type: "bit", nullable: false, defaultValue: true),
+                    PreferredLanguage = table.Column<string>(type: "nvarchar(10)", maxLength: 10, nullable: false, defaultValue: "en")
                 },
                 constraints: table =>
                 {
@@ -46,15 +53,15 @@ namespace Infrastructure.Migrations
                     Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
                     Url = table.Column<string>(type: "nvarchar(500)", maxLength: 500, nullable: false),
                     SourceName = table.Column<string>(type: "nvarchar(150)", maxLength: 150, nullable: false),
-                    IsActive = table.Column<bool>(type: "bit", nullable: false),
+                    IsActive = table.Column<bool>(type: "bit", nullable: false, defaultValue: true),
                     CreatedAt = table.Column<DateTime>(type: "datetime2", nullable: false),
                     UpdatedAt = table.Column<DateTime>(type: "datetime2", nullable: true),
                     LastFetchedAt = table.Column<DateTime>(type: "datetime2", nullable: true),
                     FetchIntervalMinutes = table.Column<int>(type: "int", nullable: true),
-                    FetchErrorCount = table.Column<int>(type: "int", nullable: false),
-                    Description = table.Column<string>(type: "nvarchar(max)", nullable: true),
+                    FetchErrorCount = table.Column<int>(type: "int", nullable: false, defaultValue: 0),
+                    Description = table.Column<string>(type: "nvarchar(1000)", maxLength: 1000, nullable: true),
                     DefaultSignalCategoryId = table.Column<Guid>(type: "uniqueidentifier", nullable: true),
-                    ETag = table.Column<string>(type: "nvarchar(max)", nullable: true)
+                    ETag = table.Column<string>(type: "nvarchar(255)", maxLength: 255, nullable: true)
                 },
                 constraints: table =>
                 {
@@ -63,7 +70,8 @@ namespace Infrastructure.Migrations
                         name: "FK_RssSources_SignalCategories_DefaultSignalCategoryId",
                         column: x => x.DefaultSignalCategoryId,
                         principalTable: "SignalCategories",
-                        principalColumn: "Id");
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.SetNull);
                 });
 
             migrationBuilder.CreateTable(
@@ -76,9 +84,15 @@ namespace Infrastructure.Migrations
                     EntryPrice = table.Column<decimal>(type: "decimal(18,8)", nullable: false),
                     StopLoss = table.Column<decimal>(type: "decimal(18,8)", nullable: false),
                     TakeProfit = table.Column<decimal>(type: "decimal(18,8)", nullable: false),
-                    Source = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false),
-                    CategoryId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
-                    CreatedAt = table.Column<DateTime>(type: "datetime2", nullable: false)
+                    SourceProvider = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false),
+                    Status = table.Column<string>(type: "nvarchar(max)", nullable: false, defaultValue: "Pending"),
+                    Timeframe = table.Column<string>(type: "nvarchar(10)", maxLength: 10, nullable: true),
+                    Notes = table.Column<string>(type: "nvarchar(1000)", maxLength: 1000, nullable: true),
+                    IsVipOnly = table.Column<bool>(type: "bit", nullable: false, defaultValue: false),
+                    PublishedAt = table.Column<DateTime>(type: "datetime2", nullable: false),
+                    UpdatedAt = table.Column<DateTime>(type: "datetime2", nullable: true),
+                    ClosedAt = table.Column<DateTime>(type: "datetime2", nullable: true),
+                    CategoryId = table.Column<Guid>(type: "uniqueidentifier", nullable: false)
                 },
                 constraints: table =>
                 {
@@ -99,7 +113,10 @@ namespace Infrastructure.Migrations
                     UserId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
                     StartDate = table.Column<DateTime>(type: "datetime2", nullable: false),
                     EndDate = table.Column<DateTime>(type: "datetime2", nullable: false),
-                    CreatedAt = table.Column<DateTime>(type: "datetime2", nullable: false)
+                    Status = table.Column<string>(type: "nvarchar(50)", maxLength: 50, nullable: false),
+                    ActivatingTransactionId = table.Column<Guid>(type: "uniqueidentifier", nullable: true),
+                    CreatedAt = table.Column<DateTime>(type: "datetime2", nullable: false),
+                    UpdatedAt = table.Column<DateTime>(type: "datetime2", nullable: true)
                 },
                 constraints: table =>
                 {
@@ -118,7 +135,9 @@ namespace Infrastructure.Migrations
                 {
                     Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
                     UserId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
-                    Balance = table.Column<decimal>(type: "decimal(18,4)", nullable: false),
+                    Balance = table.Column<decimal>(type: "decimal(18,8)", nullable: false, defaultValue: 0m),
+                    IsActive = table.Column<bool>(type: "bit", nullable: false, defaultValue: true),
+                    CreatedAt = table.Column<DateTime>(type: "datetime2", nullable: false),
                     UpdatedAt = table.Column<DateTime>(type: "datetime2", nullable: false)
                 },
                 constraints: table =>
@@ -164,14 +183,14 @@ namespace Infrastructure.Migrations
                 name: "UserSignalPreferences",
                 columns: table => new
                 {
-                    Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
                     UserId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
                     CategoryId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
+                    Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
                     CreatedAt = table.Column<DateTime>(type: "datetime2", nullable: false)
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_UserSignalPreferences", x => x.Id);
+                    table.PrimaryKey("PK_UserSignalPreferences", x => new { x.UserId, x.CategoryId });
                     table.ForeignKey(
                         name: "FK_UserSignalPreferences_SignalCategories_CategoryId",
                         column: x => x.CategoryId,
@@ -193,7 +212,8 @@ namespace Infrastructure.Migrations
                     Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
                     SignalId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
                     AnalystName = table.Column<string>(type: "nvarchar(150)", maxLength: 150, nullable: false),
-                    Notes = table.Column<string>(type: "nvarchar(2000)", maxLength: 2000, nullable: false),
+                    AnalysisText = table.Column<string>(type: "nvarchar(max)", nullable: false),
+                    SentimentScore = table.Column<double>(type: "float", nullable: true),
                     CreatedAt = table.Column<DateTime>(type: "datetime2", nullable: false)
                 },
                 constraints: table =>
@@ -240,6 +260,11 @@ namespace Infrastructure.Migrations
                 column: "Symbol");
 
             migrationBuilder.CreateIndex(
+                name: "IX_Subscriptions_EndDate",
+                table: "Subscriptions",
+                column: "EndDate");
+
+            migrationBuilder.CreateIndex(
                 name: "IX_Subscriptions_UserId",
                 table: "Subscriptions",
                 column: "UserId");
@@ -259,6 +284,11 @@ namespace Infrastructure.Migrations
                 name: "IX_Transactions_Status",
                 table: "Transactions",
                 column: "Status");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_Transactions_Timestamp",
+                table: "Transactions",
+                column: "Timestamp");
 
             migrationBuilder.CreateIndex(
                 name: "IX_Transactions_UserId",
@@ -287,11 +317,6 @@ namespace Infrastructure.Migrations
                 name: "IX_UserSignalPreferences_CategoryId",
                 table: "UserSignalPreferences",
                 column: "CategoryId");
-
-            migrationBuilder.CreateIndex(
-                name: "IX_UserSignalPreferences_UserId",
-                table: "UserSignalPreferences",
-                column: "UserId");
         }
 
         /// <inheritdoc />

@@ -1,12 +1,10 @@
 ﻿using Microsoft.Extensions.Logging;
 using System.Text; // برای StringBuilder
-using System.Threading;
-using System.Threading.Tasks;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using TelegramPanel.Application.Interfaces;
-using TelegramPanel.Infrastructure;
 using TelegramPanel.Formatters; // برای TelegramMessageFormatter
+using TelegramPanel.Infrastructure;
 
 namespace TelegramPanel.Application.CommandHandlers
 {

@@ -1,6 +1,4 @@
-﻿using System;
-
-namespace Application.DTOs
+﻿namespace Application.DTOs
 {
     public class SignalAnalysisDto
     {

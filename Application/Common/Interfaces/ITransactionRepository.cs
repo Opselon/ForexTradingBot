@@ -1,10 +1,5 @@
 ﻿using Domain.Entities; // برای Transaction و User
 using Domain.Enums;   // برای TransactionType
-using System;
-using System.Collections.Generic;
-using System.Linq.Expressions;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace Application.Common.Interfaces
 {

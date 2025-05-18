@@ -5,15 +5,9 @@ using Application.DTOs;             // برای CreateSubscriptionDto
 using Application.DTOs.CryptoPay;   // برای CryptoPayInvoiceDto
 using Application.Interface;
 using Application.Interfaces;       // برای IPaymentConfirmationService, ISubscriptionService, IUserService
-using Domain.Entities;              // برای Transaction
 using Microsoft.Extensions.Logging;
 using Shared.Results;               // برای Result
-using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 // ❌ حذف using های مربوط به Telegram.Bot و TelegramPanel.Formatters
 #endregion
 

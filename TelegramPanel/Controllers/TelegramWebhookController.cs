@@ -2,11 +2,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using System; // برای ArgumentNullException و Exception
-using System.IO; // اگر زمانی نیاز به خواندن مستقیم Stream داشتید (فعلاً لازم نیست)
-using System.Text.Json; // اگر زمانی نیاز به سریالایز/دی‌سریالایز دستی داشتید (فعلاً لازم نیست)
-using System.Threading;
-using System.Threading.Tasks;
 using Telegram.Bot.Types; // برای Update
 // using Telegram.Bot.Types.ReplyMarkups; // در این کنترلر مستقیماً استفاده نمی‌شود، اما ممکن است در جای دیگر لازم باشد
 using TelegramPanel.Queue;    // برای ITelegramUpdateChannel

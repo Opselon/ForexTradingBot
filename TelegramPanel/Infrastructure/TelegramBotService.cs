@@ -2,14 +2,11 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using System;
-using System.Threading;
-using System.Threading.Tasks;
 using Telegram.Bot;
+using Telegram.Bot.Exceptions;  // ✅ برای ApiRequestException
 using Telegram.Bot.Polling; // ✅ برای IUpdateHandler, DefaultUpdateHandlerOptions
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums; // ✅ برای UpdateType
-using Telegram.Bot.Exceptions;  // ✅ برای ApiRequestException
 using TelegramPanel.Queue;
 using TelegramPanel.Settings;
 

@@ -2,11 +2,7 @@
 #region Usings
 using Application.Common.Interfaces; // ✅ برای INotificationService (از پروژه Application)
 using Microsoft.Extensions.Logging;
-using System;
-using System.Threading;
-using System.Threading.Tasks;
 using Telegram.Bot.Types.Enums;   // ✅ برای ParseMode
-using TelegramPanel.Formatters;   // ✅ برای TelegramMessageFormatter
 // ITelegramMessageSender باید در همین namespace یا یک using صحیح داشته باشد.
 // فرض می‌کنیم ITelegramMessageSender در TelegramPanel.Infrastructure تعریف شده.
 #endregion

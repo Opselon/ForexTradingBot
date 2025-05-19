@@ -1,7 +1,11 @@
 ﻿using Application.Common.Interfaces;      // اینترفیس‌های Repository و IAppDbContext
+using Application.Interfaces;
+using Application.Services;
 using Infrastructure.Data;               // AppDbContext
 using Infrastructure.ExternalServices;
-using Infrastructure.Persistence.Repositories; // مسیر Repositoryها
+using Infrastructure.Hangfire;
+using Infrastructure.Persistence.Repositories;
+using Infrastructure.Services; // مسیر Repositoryها
 using Microsoft.EntityFrameworkCore;      // EF Core
 using Microsoft.Extensions.Configuration; // IConfiguration
 using Microsoft.Extensions.DependencyInjection; // IServiceCollection
@@ -77,8 +81,22 @@ namespace Infrastructure
             // رجیستر کردن کلاینت CryptoPay با IHttpClientFactory
             // این کار به مدیریت بهتر HttpClient instance ها کمک می‌کند.
             services.AddHttpClient<ICryptoPayApiClient, CryptoPayApiClient>();
+            services.AddScoped<IRssFetchingCoordinatorService, RssFetchingCoordinatorService>();
+            services.AddHttpClient(RssReaderService.HttpClientNamedClient, client => // استفاده از ثابت نام کلاینت
+                {
+                    client.DefaultRequestHeaders.UserAgent.ParseAdd(RssReaderService.DefaultUserAgent); // استفاده از ثابت UserAgent
+                    client.Timeout = TimeSpan.FromSeconds(RssReaderService.DefaultHttpClientTimeoutSeconds); // استفاده از ثابت Timeout
+                })
+                //  می‌توانید Handler های بیشتری برای Polly یا موارد دیگر در اینجا اضافه کنید اگر Policy را اینجا مدیریت می‌کنید
+                // .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = true, AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate })
+                // .AddPolicyHandler(GetRetryPolicy()); //  مثال
+                ;
 
-            // 5. رجیستر کردن Repositoryها
+            // 5. رجیستر کردن Repository
+            services.AddScoped<INewsItemRepository, NewsItemRepository>();
+            services.AddScoped<IRssReaderService, RssReaderService>();
+            services.AddSingleton<INotificationJobScheduler, HangfireNotificationJobScheduler>();
+            services.AddScoped<INotificationDispatchService, NotificationDispatchService>();
             services.AddScoped<IUserRepository, UserRepository>();
             services.AddScoped<ITokenWalletRepository, TokenWalletRepository>();
             services.AddScoped<ISubscriptionRepository, SubscriptionRepository>();

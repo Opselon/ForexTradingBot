@@ -132,7 +132,18 @@ namespace Domain.Entities // ✅ Namespace صحیح
         //  می‌توانید در آینده روابط دیگری اضافه کنید، مثلاً با SignalCategory یا User (اگر کاربر بتواند خبری را بوکمارک کند)
         // public Guid? AssociatedSignalCategoryId { get; set; }
         // public virtual SignalCategory? AssociatedSignalCategory { get; set; }
+
+
+        public bool IsVipOnly { get; set; } = false; // ✅ برای اخبار VIP
+        public Guid? AssociatedSignalCategoryId { get; set; } // ✅ برای دسته‌بندی خبر
+        public virtual SignalCategory? AssociatedSignalCategory { get; set; } // نویگیشن
+
+
+
         #endregion
+
+
+
 
         #region Constructor
         /// <summary>

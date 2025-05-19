@@ -32,4 +32,4 @@ Update all
 
 
 
-.\Update-EfDatabase.ps1 -MigrationName "ReinitUserAndTokenWallett" -InfrastructureProject "Infrastructure" -StartupProject "WebAPI" -CleanBuild -ForceRecreateSnapshot -ForceConfirmDeleteSnapshot -ApplyToDatabase -DropAndRecreateDatabase -Confirm:$false
+.\Update-EfDatabase.ps1 -MigrationName "ReinitUserAndTokenWallettT" -InfrastructureProject "Infrastructure" -StartupProject "WebAPI" -CleanBuild -ForceRecreateSnapshot -ForceConfirmDeleteSnapshot -ApplyToDatabase -DropAndRecreateDatabase -Confirm:$false

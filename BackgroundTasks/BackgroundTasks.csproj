@@ -8,8 +8,10 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Hangfire" Version="1.8.18" />
-    <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.4" />
+    <PackageReference Include="Hangfire" Version="1.8.20" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.5" />
+    <PackageReference Include="Polly" Version="8.5.2" />
+    <PackageReference Include="Polly.Core" Version="8.5.2" />
     <PackageReference Include="Quartz" Version="3.14.0" />
     <PackageReference Include="Telegram.Bot" Version="22.5.1" />
   </ItemGroup>
@@ -17,5 +19,6 @@
   <ItemGroup>
     <ProjectReference Include="..\Application\Application.csproj" />
     <ProjectReference Include="..\Infrastructure\Infrastructure.csproj" />
+    <ProjectReference Include="..\TelegramPanel\TelegramPanel.csproj" />
   </ItemGroup>
 </Project>

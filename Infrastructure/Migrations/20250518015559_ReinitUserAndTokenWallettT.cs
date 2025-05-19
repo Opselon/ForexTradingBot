@@ -1,11 +1,12 @@
-﻿using Microsoft.EntityFrameworkCore.Migrations;
+﻿using System;
+using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
 namespace Infrastructure.Migrations
 {
     /// <inheritdoc />
-    public partial class ReinitUserAndTokenWallett : Migration
+    public partial class ReinitUserAndTokenWallettT : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
@@ -51,17 +52,19 @@ namespace Infrastructure.Migrations
                 columns: table => new
                 {
                     Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
-                    Url = table.Column<string>(type: "nvarchar(500)", maxLength: 500, nullable: false),
+                    Url = table.Column<string>(type: "nvarchar(2083)", maxLength: 2083, nullable: false),
                     SourceName = table.Column<string>(type: "nvarchar(150)", maxLength: 150, nullable: false),
                     IsActive = table.Column<bool>(type: "bit", nullable: false, defaultValue: true),
-                    CreatedAt = table.Column<DateTime>(type: "datetime2", nullable: false),
+                    CreatedAt = table.Column<DateTime>(type: "datetime2", nullable: false, defaultValueSql: "GETUTCDATE()"),
                     UpdatedAt = table.Column<DateTime>(type: "datetime2", nullable: true),
-                    LastFetchedAt = table.Column<DateTime>(type: "datetime2", nullable: true),
+                    LastModifiedHeader = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: true),
+                    ETag = table.Column<string>(type: "nvarchar(255)", maxLength: 255, nullable: true),
+                    LastFetchAttemptAt = table.Column<DateTime>(type: "datetime2", nullable: true),
+                    LastSuccessfulFetchAt = table.Column<DateTime>(type: "datetime2", nullable: true),
                     FetchIntervalMinutes = table.Column<int>(type: "int", nullable: true),
                     FetchErrorCount = table.Column<int>(type: "int", nullable: false, defaultValue: 0),
                     Description = table.Column<string>(type: "nvarchar(1000)", maxLength: 1000, nullable: true),
-                    DefaultSignalCategoryId = table.Column<Guid>(type: "uniqueidentifier", nullable: true),
-                    ETag = table.Column<string>(type: "nvarchar(255)", maxLength: 255, nullable: true)
+                    DefaultSignalCategoryId = table.Column<Guid>(type: "uniqueidentifier", nullable: true)
                 },
                 constraints: table =>
                 {
@@ -206,6 +209,46 @@ namespace Infrastructure.Migrations
                 });
 
             migrationBuilder.CreateTable(
+                name: "NewsItems",
+                columns: table => new
+                {
+                    Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
+                    Title = table.Column<string>(type: "nvarchar(500)", maxLength: 500, nullable: false),
+                    Link = table.Column<string>(type: "nvarchar(2083)", maxLength: 2083, nullable: false),
+                    Summary = table.Column<string>(type: "nvarchar(max)", nullable: true),
+                    FullContent = table.Column<string>(type: "nvarchar(max)", nullable: true),
+                    ImageUrl = table.Column<string>(type: "nvarchar(2083)", maxLength: 2083, nullable: true),
+                    PublishedDate = table.Column<DateTime>(type: "datetime2", nullable: false),
+                    CreatedAt = table.Column<DateTime>(type: "datetime2", nullable: false),
+                    LastProcessedAt = table.Column<DateTime>(type: "datetime2", nullable: true),
+                    SourceName = table.Column<string>(type: "nvarchar(150)", maxLength: 150, nullable: true),
+                    SourceItemId = table.Column<string>(type: "nvarchar(500)", maxLength: 500, nullable: true),
+                    SentimentScore = table.Column<double>(type: "float", nullable: true),
+                    SentimentLabel = table.Column<string>(type: "nvarchar(50)", maxLength: 50, nullable: true),
+                    DetectedLanguage = table.Column<string>(type: "nvarchar(10)", maxLength: 10, nullable: true),
+                    AffectedAssets = table.Column<string>(type: "nvarchar(500)", maxLength: 500, nullable: true),
+                    RssSourceId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
+                    IsVipOnly = table.Column<bool>(type: "bit", nullable: false, defaultValue: false),
+                    AssociatedSignalCategoryId = table.Column<Guid>(type: "uniqueidentifier", nullable: true)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_NewsItems", x => x.Id);
+                    table.ForeignKey(
+                        name: "FK_NewsItems_RssSources_RssSourceId",
+                        column: x => x.RssSourceId,
+                        principalTable: "RssSources",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.Cascade);
+                    table.ForeignKey(
+                        name: "FK_NewsItems_SignalCategories_AssociatedSignalCategoryId",
+                        column: x => x.AssociatedSignalCategoryId,
+                        principalTable: "SignalCategories",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.SetNull);
+                });
+
+            migrationBuilder.CreateTable(
                 name: "SignalAnalyses",
                 columns: table => new
                 {
@@ -228,9 +271,31 @@ namespace Infrastructure.Migrations
                 });
 
             migrationBuilder.CreateIndex(
+                name: "IX_NewsItems_AssociatedSignalCategoryId",
+                table: "NewsItems",
+                column: "AssociatedSignalCategoryId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_NewsItems_Link",
+                table: "NewsItems",
+                column: "Link");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_NewsItems_RssSourceId_SourceItemId",
+                table: "NewsItems",
+                columns: new[] { "RssSourceId", "SourceItemId" },
+                unique: true,
+                filter: "[SourceItemId] IS NOT NULL");
+
+            migrationBuilder.CreateIndex(
                 name: "IX_RssSources_DefaultSignalCategoryId",
                 table: "RssSources",
                 column: "DefaultSignalCategoryId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_RssSources_SourceName",
+                table: "RssSources",
+                column: "SourceName");
 
             migrationBuilder.CreateIndex(
                 name: "IX_RssSources_Url",
@@ -323,7 +388,7 @@ namespace Infrastructure.Migrations
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropTable(
-                name: "RssSources");
+                name: "NewsItems");
 
             migrationBuilder.DropTable(
                 name: "SignalAnalyses");
@@ -339,6 +404,9 @@ namespace Infrastructure.Migrations
 
             migrationBuilder.DropTable(
                 name: "UserSignalPreferences");
+
+            migrationBuilder.DropTable(
+                name: "RssSources");
 
             migrationBuilder.DropTable(
                 name: "Signals");

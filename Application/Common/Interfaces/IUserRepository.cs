@@ -97,6 +97,16 @@ namespace Application.Common.Interfaces
         /// <returns>True اگر کاربر وجود داشته باشد، در غیر این صورت false.</returns>
         Task<bool> ExistsByTelegramIdAsync(string telegramId, CancellationToken cancellationToken = default);
 
+
+        Task<IEnumerable<User>> GetUsersWithNotificationSettingAsync(
+            Expression<Func<User, bool>> notificationPredicate,
+            CancellationToken cancellationToken = default);
+
+
+        Task<IEnumerable<User>> GetUsersForNewsNotificationAsync(
+            Guid? newsItemSignalCategoryId,
+            bool isNewsItemVipOnly,
+            CancellationToken cancellationToken = default);
         // متدهای دیگری که ممکن است نیاز داشته باشید:
         // Task<User?> GetUserWithSubscriptionsAsync(Guid userId, CancellationToken cancellationToken = default);
         // Task<User?> GetUserWithTokenWalletAsync(Guid userId, CancellationToken cancellationToken = default);

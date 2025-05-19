@@ -54,6 +54,14 @@ namespace Infrastructure.Persistence.Configurations
                    .WithMany(rs => rs.NewsItems)
                    .HasForeignKey(ni => ni.RssSourceId)
                    .OnDelete(DeleteBehavior.Cascade); // یا Restrict/SetNull
+
+            builder.Property(ni => ni.IsVipOnly).HasDefaultValue(false);
+            builder.Property(ni => ni.AssociatedSignalCategoryId);
+            builder.HasOne(ni => ni.AssociatedSignalCategory)
+                .WithMany() // فرض: SignalCategory نویگیشن برعکس به NewsItem ندارد
+                .HasForeignKey(ni => ni.AssociatedSignalCategoryId)
+                .OnDelete(DeleteBehavior.SetNull);
+
         }
     }
 }

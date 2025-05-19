@@ -22,7 +22,6 @@ namespace TelegramPanel.Application.CommandHandlers
         public const string ProfileCallbackData = "menu_my_profile";
         public const string SubscribeCallbackData = "menu_subscribe_plans";
         public const string SettingsCallbackData = "menu_user_settings";
-        public const string MarketAnalysisCallback = "market_analysis";
 
 
         #endregion
@@ -38,27 +37,23 @@ namespace TelegramPanel.Application.CommandHandlers
         #region Static Menu Markup Generation
 
         /// <summary>
-        /// Generates the inline keyboard markup for the main application menu.
+        /// Generates the text and inline keyboard markup for the main application menu.
         /// </summary>
-        public static InlineKeyboardMarkup GetMainMenuKeyboard()
+        public static (string text, InlineKeyboardMarkup keyboard) GetMainMenuMarkup()
         {
-            return new InlineKeyboardMarkup(new[]
+            var text = "Welcome to the Main Menu! Please choose an option:";
+            var inlineKeyboard = new InlineKeyboardMarkup(new[]
             {
-                new [] // Row 1
-                {
-                    InlineKeyboardButton.WithCallbackData("📈 Gold Signals", SignalsCallbackData),
-                    InlineKeyboardButton.WithCallbackData("📊 Market Analysis", MarketAnalysisCallback)
+                new [] {
+                    InlineKeyboardButton.WithCallbackData("📊 View Signals", SignalsCallbackData),
+                    InlineKeyboardButton.WithCallbackData("👤 My Profile", ProfileCallbackData)
                 },
-                new [] // Row 2
-                {
-                    InlineKeyboardButton.WithCallbackData("💎 VIP Signals", SubscribeCallbackData),
+                new [] {
+                    InlineKeyboardButton.WithCallbackData("💎 Subscribe / View Plans", SubscribeCallbackData),
                     InlineKeyboardButton.WithCallbackData("⚙️ Settings", SettingsCallbackData)
-                },
-                new [] // Row 3
-                {
-                    InlineKeyboardButton.WithCallbackData("📱 My Profile", ProfileCallbackData)
                 }
             });
+            return (text, inlineKeyboard);
         }
         #endregion
 
@@ -83,14 +78,28 @@ namespace TelegramPanel.Application.CommandHandlers
 
             _logger.LogInformation("Handling /menu command for ChatID {ChatId}, UserID {UserId}", chatId, userId);
 
-            var text = "🌟 *Main Menu*\n\nChoose an option below:";
+            var text = "Welcome to the Main Menu! Please choose an option:";
 
-            var inlineKeyboard = GetMainMenuKeyboard();
+            var inlineKeyboard = new InlineKeyboardMarkup(new[]
+            {
+                // Row 1
+                new []
+                {
+                    InlineKeyboardButton.WithCallbackData("📈 View Signals", SignalsCallbackData),
+                    InlineKeyboardButton.WithCallbackData("👤 My Profile", ProfileCallbackData),
+                },
+                // Row 2
+                new []
+                {
+                    InlineKeyboardButton.WithCallbackData("💎 Subscribe", SubscribeCallbackData),
+                    InlineKeyboardButton.WithCallbackData("⚙️ Settings", SettingsCallbackData),
+                }
+                // You can add more rows or buttons here
+            });
 
             await _messageSender.SendTextMessageAsync(
                 chatId: chatId,
                 text: text,
-                parseMode: ParseMode.MarkdownV2,
                 replyMarkup: inlineKeyboard,
                 cancellationToken: cancellationToken);
 

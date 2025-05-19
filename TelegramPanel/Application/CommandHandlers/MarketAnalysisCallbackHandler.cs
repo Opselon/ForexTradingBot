@@ -1,4 +1,5 @@
-﻿using Microsoft.Extensions.Logging;
+﻿using System.Text;
+using Microsoft.Extensions.Logging;
 using Telegram.Bot.Exceptions;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
@@ -15,6 +16,7 @@ namespace TelegramPanel.Application.CommandHandlers
         private readonly ILogger<MarketAnalysisCallbackHandler> _logger;
         private readonly ITelegramMessageSender _messageSender;
         private readonly IMarketDataService _marketDataService;
+
         private const string MarketAnalysisCallback = "market_analysis";
         private const string RefreshMarketDataCallback = "refresh_market_data";
         private const string SelectCurrencyCallback = "select_currency";
@@ -114,10 +116,7 @@ namespace TelegramPanel.Application.CommandHandlers
             var rows = SupportedSymbols
                 .Select((pair, i) => new { pair, i })
                 .GroupBy(x => x.i / 3)
-                .Select(g =>
-                    g.Select(x =>
-                        InlineKeyboardButton.WithCallbackData(x.pair.Label,
-                            $"{SelectCurrencyCallback}:{x.pair.Symbol}")).ToArray())
+                .Select(g => g.Select(x => InlineKeyboardButton.WithCallbackData(x.pair.Label, $"{SelectCurrencyCallback}:{x.pair.Symbol}")).ToArray())
                 .ToArray();
 
             var keyboard = new InlineKeyboardMarkup(rows);
@@ -131,8 +130,7 @@ namespace TelegramPanel.Application.CommandHandlers
                 cancellationToken);
         }
 
-        private async Task ShowMarketAnalysis(long chatId, int messageId, string symbol,
-            CancellationToken cancellationToken)
+        private async Task ShowMarketAnalysis(long chatId, int messageId, string symbol, CancellationToken cancellationToken)
         {
             try
             {
@@ -219,7 +217,6 @@ namespace TelegramPanel.Application.CommandHandlers
                         "📊 Technical View",
                         $"technical_view:{symbol}")
                 },
-
                 new[]
                 {
                     InlineKeyboardButton.WithCallbackData(

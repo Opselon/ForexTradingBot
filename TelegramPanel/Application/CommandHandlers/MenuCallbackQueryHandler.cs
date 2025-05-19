@@ -476,12 +476,24 @@ namespace TelegramPanel.Application.CommandHandlers
         private async Task ShowMainMenuAsync(long chatId, int messageIdToEdit, CancellationToken cancellationToken)
         {
             _logger.LogInformation("Showing main menu again for ChatID {ChatId}", chatId);
-            var text = "🌟 *Main Menu*\n\nChoose an option below:"; // Standardized Markdown text
+            var text = "Welcome to the Main Menu! Please choose an option:";
 
-            var inlineKeyboard = MenuCommandHandler.GetMainMenuKeyboard(); // Use the standardized keyboard
+            var inlineKeyboard = new InlineKeyboardMarkup(new[]
+            {
+                new []
+                {
+                    InlineKeyboardButton.WithCallbackData("📈 View Signals", MenuCommandHandler.SignalsCallbackData),
+                    InlineKeyboardButton.WithCallbackData("👤 My Profile", MenuCommandHandler.ProfileCallbackData),
+                },
+                new []
+                {
+                    InlineKeyboardButton.WithCallbackData("💎 Subscribe", MenuCommandHandler.SubscribeCallbackData),
+                    InlineKeyboardButton.WithCallbackData("⚙️ Settings", MenuCommandHandler.SettingsCallbackData),
+                }
+            });
 
             //  ویرایش پیام قبلی برای نمایش مجدد منو
-            await EditMessageOrSendNewAsync(chatId, messageIdToEdit, text, inlineKeyboard, ParseMode.MarkdownV2, cancellationToken: cancellationToken);
+            await EditMessageOrSendNewAsync(chatId, messageIdToEdit, text, inlineKeyboard, cancellationToken: cancellationToken);
         }
 
 
@@ -510,7 +522,7 @@ namespace TelegramPanel.Application.CommandHandlers
                     chatId: chatId,
                     messageId: messageId,
                     text: text,
-                    parseMode: parseMode, // Pass through the parseMode
+                    parseMode: ParseMode.Markdown, // 
                     replyMarkup: (InlineKeyboardMarkup?)replyMarkup,
                     cancellationToken: cancellationToken
                 );

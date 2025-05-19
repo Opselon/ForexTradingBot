@@ -33,4 +33,4 @@ namespace TelegramPanel.Infrastructure.Settings
         public string Category { get; set; }
         public bool IsActive { get; set; } = true;
     }
-}
+} 

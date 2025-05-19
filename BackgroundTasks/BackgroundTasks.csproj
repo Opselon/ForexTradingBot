@@ -21,8 +21,4 @@
     <ProjectReference Include="..\Infrastructure\Infrastructure.csproj" />
     <ProjectReference Include="..\TelegramPanel\TelegramPanel.csproj" />
   </ItemGroup>
-
-  <ItemGroup>
-    <Folder Include="Jobs\" />
-  </ItemGroup>
 </Project>

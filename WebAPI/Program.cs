@@ -17,7 +17,7 @@ using Application.Common.Interfaces;
 using Application.Interfaces; // برای IRssFetchingCoordinatorService (جهت زمان‌بندی Job در Hangfire)
 // using Application.Interfaces;          // معمولاً اینترفیس‌های Application مستقیماً اینجا نیاز نیستند مگر برای موارد خاص
 // using Application.Services;            // و نه پیاده‌سازی‌های آن
-using BackgroundTasks;
+using BackgroundTasks;                    // برای متد توسعه‌دهنده AddBackgroundTasksServices (اگر تعریف کرده‌اید)
 using Hangfire;                             // برای پیکربندی‌های Hangfire مانند CompatibilityLevel, RecurringJob, Cron
 using Hangfire.Dashboard;                   // برای DashboardOptions, IDashboardAuthorizationFilter
 using Hangfire.MemoryStorage;             // برای UseMemoryStorage (Storage پیش‌فرض برای توسعه)

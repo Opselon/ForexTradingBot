@@ -149,7 +149,7 @@ namespace TelegramPanel.Infrastructure.Services
                 await _botClient.AnswerCallbackQuery(callbackQuery.Id, cancellationToken: cancellationToken);
                  _logger.LogInformation("Successfully updated market analysis for {Symbol}. CallbackQueryID: {CallbackQueryId}", symbol, callbackQuery.Id);
             }
-            catch (MarketDataException mde)
+            catch (MarketDataService.MarketDataException mde)
             {
                 _logger.LogWarning(mde, "MarketDataService error for symbol {Symbol}. CallbackQueryID: {CallbackQueryId}", symbol, callbackQuery.Id);
                  await _botClient.AnswerCallbackQuery(callbackQuery.Id, $"Could not fetch market data for {symbol}: {mde.Message}", cancellationToken: cancellationToken);

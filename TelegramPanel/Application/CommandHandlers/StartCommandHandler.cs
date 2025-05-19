@@ -174,23 +174,7 @@ namespace TelegramPanel.Application.CommandHandlers
                                "• 💼 Portfolio tracking\n\n") +
                               "Type /menu to see available options or /help for more information.";
 
-            var keyboard = new InlineKeyboardMarkup(new[]
-            {
-                new []
-                {
-                    InlineKeyboardButton.WithCallbackData("📈 Gold Signals", MenuCommandHandler.SignalsCallbackData),
-                    InlineKeyboardButton.WithCallbackData("📊 Market Analysis", "market_analysis")
-                },
-                new []
-                {
-                    InlineKeyboardButton.WithCallbackData("💎 VIP Signals", MenuCommandHandler.SubscribeCallbackData),
-                    InlineKeyboardButton.WithCallbackData("⚙️ Settings", MenuCommandHandler.SettingsCallbackData)
-                },
-                new []
-                {
-                    InlineKeyboardButton.WithCallbackData("📱 My Profile", MenuCommandHandler.ProfileCallbackData)
-                }
-            });
+            var keyboard = MenuCommandHandler.GetMainMenuKeyboard();
 
             await _messageSender.SendTextMessageAsync(
                 chatId,

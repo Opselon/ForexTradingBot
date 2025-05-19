@@ -1,5 +1,4 @@
-﻿
-#region Usings
+﻿#region Usings
 using Application.Common.Interfaces; // ✅ فقط برای INotificationService (اینترفیس عمومی)
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -10,9 +9,11 @@ using TelegramPanel.Application.Interfaces;    // برای اینترفیس‌ه
 using TelegramPanel.Application.Pipeline;      // برای Middleware های TelegramPanel
 using TelegramPanel.Application.Services;      // برای سرویس‌های TelegramPanel مانند TelegramStateMachine
 using TelegramPanel.Application.States;        // برای State های TelegramPanel
-using TelegramPanel.Infrastructure;            // برای سرویس‌های Infrastructure خاص TelegramPanel
+using TelegramPanel.Infrastructure;
+using TelegramPanel.Infrastructure.Services; // برای سرویس‌های Infrastructure خاص TelegramPanel
 using TelegramPanel.Queue;                     // برای سرویس‌های صف TelegramPanel
 using TelegramPanel.Settings;                  // برای TelegramPanelSettings
+
 #endregion
 
 namespace TelegramPanel.Extensions
@@ -39,6 +40,7 @@ namespace TelegramPanel.Extensions
             services.AddSingleton<ITelegramUpdateChannel, TelegramUpdateChannel>();
             services.AddScoped<ITelegramMessageSender, TelegramMessageSender>(); // پیاده‌سازی در TelegramPanel.Infrastructure
             services.AddScoped<ITelegramUpdateProcessor, UpdateProcessingService>(); // پیاده‌سازی در TelegramPanel.Infrastructure
+            services.AddScoped<IMarketDataService, MarketDataService>(); // Registering MarketDataService
 
             // ------------------- 4. رجیستر کردن Middleware های TelegramPanel -------------------
             services.AddScoped<ITelegramMiddleware, LoggingMiddleware>();     // پیاده‌سازی در TelegramPanel.Application.Pipeline
@@ -48,6 +50,13 @@ namespace TelegramPanel.Extensions
             services.Scan(scan => scan
                 .FromAssemblyOf<StartCommandHandler>() // از اسمبلی TelegramPanel.Application
                 .AddClasses(classes => classes.AssignableTo<ITelegramCommandHandler>())
+                .AsImplementedInterfaces()
+                .WithScopedLifetime());
+
+            // ------------------- 5.1. Registering TelegramPanel Callback Query Handlers -------------------
+            services.Scan(scan => scan
+                .FromAssemblyOf<StartCommandHandler>() // Assumes handlers are in the same assembly, e.g., TelegramPanel.Application
+                .AddClasses(classes => classes.AssignableTo<ITelegramCallbackQueryHandler>())
                 .AsImplementedInterfaces()
                 .WithScopedLifetime());
 

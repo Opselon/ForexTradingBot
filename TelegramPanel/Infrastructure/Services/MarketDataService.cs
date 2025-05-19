@@ -1,12 +1,6 @@
-using System;
-using System.Collections.Generic;
-using System.Net.Http;
-using System.Net.Http.Json;
-using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using System.Text.Json;
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Infrastructure.Settings;
 
@@ -16,72 +10,99 @@ namespace TelegramPanel.Infrastructure.Services
     {
         private readonly ILogger<MarketDataService> _logger;
         private readonly IHttpClientFactory _httpClientFactory;
-        private readonly MarketDataSettings _settings;
         private readonly CurrencyInfoSettings _currencySettings;
+        private static readonly Random _random = new Random();
 
         public MarketDataService(
             ILogger<MarketDataService> logger,
             IHttpClientFactory httpClientFactory,
-            IOptions<MarketDataSettings> settings,
             IOptions<CurrencyInfoSettings> currencySettings)
         {
             _logger = logger;
             _httpClientFactory = httpClientFactory;
-            _settings = settings.Value;
             _currencySettings = currencySettings.Value;
         }
 
         public async Task<MarketData> GetMarketDataAsync(string symbol, CancellationToken cancellationToken = default)
         {
-            try
+            _logger.LogInformation("Attempting to fetch or generate market data for {Symbol}", symbol);
+            var currencyInfo = GetCurrencyInfo(symbol);
+            decimal price;
+            bool fetchedLivePrice = false;
+
+            // Try to fetch live Forex data from Frankfurter.app
+            if (!symbol.Equals("XAUUSD", StringComparison.OrdinalIgnoreCase) && symbol.Length == 6) // Assuming standard 6-char Forex symbols like EURUSD
             {
-                // Get the appropriate HTTP client
-                var client = _httpClientFactory.CreateClient(GetProviderForSymbol(symbol));
-
-                // Get currency information
-                var currencyInfo = GetCurrencyInfo(symbol);
-
-                // Make the API request
-                var price = await GetPriceAsync(client, symbol, cancellationToken);
-
-                // Calculate technical indicators
-                var (rsi, macd, support, resistance) = await CalculateTechnicalIndicatorsAsync(symbol, price, cancellationToken);
-
-                // Generate market insights
-                var insights = await GenerateMarketInsightsAsync(symbol, price, rsi, macd);
-
-                return new MarketData
+                try
                 {
-                    Symbol = symbol,
-                    CurrencyName = currencyInfo.Name,
-                    Description = currencyInfo.Description,
-                    Price = price,
-                    Change24h = await Calculate24hChangeAsync(symbol, price, cancellationToken),
-                    Volume = await GetVolumeAsync(symbol, cancellationToken),
-                    RSI = rsi,
-                    MACD = macd,
-                    Support = support,
-                    Resistance = resistance,
-                    Insights = insights,
-                    LastUpdated = DateTime.UtcNow,
-                    Volatility = await CalculateVolatilityAsync(symbol, cancellationToken),
-                    Trend = DetermineTrend(price, support, resistance),
-                    MarketSentiment = DetermineMarketSentiment(rsi, macd)
-                };
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error fetching market data for {Symbol}", symbol);
-                throw new MarketDataException($"Failed to fetch market data for {symbol}", ex);
-            }
-        }
+                    string baseCurrency = symbol.Substring(0, 3);
+                    string quoteCurrency = symbol.Substring(3, 3);
+                    var client = _httpClientFactory.CreateClient("FrankfurterApiClient");
+                    var response = await client.GetAsync($"latest?from={baseCurrency}&to={quoteCurrency}", cancellationToken);
+                    response.EnsureSuccessStatusCode();
+                    
+                    using var jsonStream = await response.Content.ReadAsStreamAsync(cancellationToken);
+                    var frankfurterResponse = await JsonSerializer.DeserializeAsync<FrankfurterResponse>(jsonStream, cancellationToken: cancellationToken);
 
-        private string GetProviderForSymbol(string symbol)
-        {
-            // Logic to determine which provider to use based on the symbol
-            return symbol.StartsWith("XAU") || symbol.StartsWith("XAG") 
-                ? "MetalPriceApi" 
-                : "ExchangerateHost";
+                    if (frankfurterResponse?.Rates != null && frankfurterResponse.Rates.TryGetValue(quoteCurrency, out var rate))
+                    {
+                        price = rate;
+                        fetchedLivePrice = true;
+                        _logger.LogInformation("Successfully fetched live Forex price for {Symbol} from frankfurter.app: {Price}", symbol, price);
+                    }
+                    else
+                    {
+                        _logger.LogWarning("Could not parse rate for {QuoteCurrency} from frankfurter.app response for {Symbol}. Falling back to random.", quoteCurrency, symbol);
+                        price = GetRandomizedPrice(symbol); // Fallback to random if parsing fails
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error fetching live Forex price for {Symbol} from frankfurter.app. Falling back to random.", symbol);
+                    price = GetRandomizedPrice(symbol); // Fallback to random on error
+                }
+            }
+            else
+            {
+                // For XAUUSD or other non-standard symbols, use randomized price
+                _logger.LogInformation("Using randomized price for {Symbol}.", symbol);
+                price = GetRandomizedPrice(symbol);
+            }
+
+            decimal change24h = Math.Round((decimal)(_random.NextDouble() * 2 - 1), 2); // -1.00% to +1.00%
+            string trend = DetermineTrend(change24h);
+            string marketSentiment = DetermineMarketSentiment(trend);
+
+            var marketData = new MarketData
+            {
+                Symbol = symbol,
+                CurrencyName = currencyInfo.Name,
+                Description = currencyInfo.Description,
+                Price = Math.Round(price, 5),
+                Change24h = change24h,
+                Volume = 0, // N/A
+                RSI = 0,    // Placeholder for your calculation
+                MACD = "N/A", // Placeholder for your calculation
+                Support = 0, // Placeholder for your calculation
+                Resistance = 0, // Placeholder for your calculation
+                Insights = new List<string>
+                {
+                    fetchedLivePrice
+                        ? $"Live price for {currencyInfo.Name} is {price:N5}."
+                        : $"Simulated price for {currencyInfo.Name} is {price:N5}.",
+                    $"""
+                     The short-term trend (simulated) appears to be {trend.ToLower()}.
+                     Market sentiment is generally {marketSentiment.ToLower()}.
+                     """,
+                    "Note: This analysis is based on simplified data for demonstration."
+                },
+                LastUpdated = DateTime.UtcNow,
+                Volatility = Math.Round((decimal)(_random.NextDouble() * 1 + 0.1), 2), // Random Volatility %
+                Trend = trend,
+                MarketSentiment = marketSentiment
+            };
+
+            return marketData;
         }
 
         private Settings.CurrencyDetails GetCurrencyInfo(string symbol)
@@ -91,84 +112,63 @@ namespace TelegramPanel.Infrastructure.Services
                 return info;
             }
 
-            _logger.LogWarning("Currency information not found for symbol {Symbol}. Returning default.", symbol);
+            _logger.LogWarning("Currency information not found for symbol {Symbol} in CurrencyInfoSettings. Returning default.", symbol);
+            string baseCurrency = symbol.Length >= 3 ? symbol.Substring(0, 3) : symbol;
+            string quoteCurrency = symbol.Length >= 6 ? symbol.Substring(3, 3) : "USD";
+            
             return new Settings.CurrencyDetails
             {
-                Name = symbol,
-                Description = "Unknown currency pair",
-                Category = "Unknown",
-                IsActive = false
+                Name = $"{baseCurrency}/{quoteCurrency}",
+                Description = $"Standard {baseCurrency} to {quoteCurrency} exchange rate.",
+                Category = "Forex",
+                IsActive = true
             };
         }
 
-        private async Task<decimal> GetPriceAsync(HttpClient client, string symbol, CancellationToken cancellationToken)
+        private decimal GetRandomizedPrice(string symbol)
         {
-            var response = await client.GetAsync($"latest?base={symbol.Substring(0, 3)}&symbols={symbol.Substring(3, 3)}", cancellationToken);
-            response.EnsureSuccessStatusCode();
-
-            var json = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
-            return json.GetProperty("rates").GetProperty(symbol.Substring(3, 3)).GetDecimal();
+            if (symbol.Contains("JPY"))
+            {
+                return (decimal)(_random.NextDouble() * 100 + 100); // e.g., 100-200 for JPY pairs
+            }
+            else if (symbol.Contains("XAU")) // Gold
+            {
+                return (decimal)(_random.NextDouble() * 500 + 1800); // e.g., 1800-2300 for XAUUSD
+            }
+            else
+            {
+                return (decimal)(_random.NextDouble() * 0.5 + 0.8); // e.g., 0.8-1.3 for most other Forex pairs
+            }
         }
 
-        private async Task<(decimal rsi, string macd, decimal support, decimal resistance)> CalculateTechnicalIndicatorsAsync(
-            string symbol, decimal price, CancellationToken cancellationToken)
+        private string DetermineTrend(decimal change24h)
         {
-            // Implementation of technical indicators calculation
-            var rsi = 50 + (decimal)(new Random().NextDouble() * 40 - 20);
-            var macd = rsi > 60 ? "Bullish" : rsi < 40 ? "Bearish" : "Neutral";
-            var support = Math.Round(price * 0.995m, 5);
-            var resistance = Math.Round(price * 1.005m, 5);
-
-            return (rsi, macd, support, resistance);
+            string trend;
+            if (change24h > 0.1m) trend = "Weak Uptrend";
+            else if (change24h < -0.1m) trend = "Weak Downtrend";
+            else trend = "Sideways";
+            if (change24h > 0.5m) trend = "Strong Uptrend";
+            if (change24h < -0.5m) trend = "Strong Downtrend";
+            return trend;
         }
 
-        private async Task<List<string>> GenerateMarketInsightsAsync(
-            string symbol, decimal price, decimal rsi, string macd)
+        private string DetermineMarketSentiment(string trend)
         {
-            var insights = new List<string>();
-            var currencyInfo = GetCurrencyInfo(symbol);
-
-            insights.Add($"{currencyInfo.Name} is currently trading at {price:N5}");
-
-            if (rsi > 70) insights.Add("RSI indicates overbought conditions");
-            if (rsi < 30) insights.Add("RSI indicates oversold conditions");
-            if (macd == "Bullish") insights.Add("MACD shows bullish momentum");
-            if (macd == "Bearish") insights.Add("MACD shows bearish momentum");
-
-            return insights;
+            string marketSentiment;
+            if (trend.Contains("Uptrend")) marketSentiment = "Bullish";
+            else if (trend.Contains("Downtrend")) marketSentiment = "Bearish";
+            else marketSentiment = "Neutral";
+            return marketSentiment;
         }
+    }
 
-        private async Task<decimal> Calculate24hChangeAsync(string symbol, decimal currentPrice, CancellationToken cancellationToken)
-        {
-            return Math.Round((decimal)(new Random().NextDouble() * 2 - 1), 4);
-        }
-
-        private async Task<decimal> GetVolumeAsync(string symbol, CancellationToken cancellationToken)
-        {
-            return Math.Round((decimal)(new Random().NextDouble() * 100000000), 0);
-        }
-
-        private async Task<decimal> CalculateVolatilityAsync(string symbol, CancellationToken cancellationToken)
-        {
-            return Math.Round((decimal)(new Random().NextDouble() * 0.009 + 0.001), 4);
-        }
-
-        private string DetermineTrend(decimal price, decimal support, decimal resistance)
-        {
-            if (price > resistance) return "Strong Uptrend";
-            if (price < support) return "Strong Downtrend";
-            if (price > (support + resistance) / 2) return "Weak Uptrend";
-            return "Weak Downtrend";
-        }
-
-        private string DetermineMarketSentiment(decimal rsi, string macd)
-        {
-            if (rsi > 70 && macd == "Bullish") return "Extremely Bullish";
-            if (rsi < 30 && macd == "Bearish") return "Extremely Bearish";
-            if (rsi > 60 && macd == "Bullish") return "Bullish";
-            if (rsi < 40 && macd == "Bearish") return "Bearish";
-            return "Neutral";
-        }
+    // Helper class for deserializing frankfurter.app response
+    internal class FrankfurterResponse
+    {
+        public decimal Amount { get; set; }
+        public string Base { get; set; }
+        public DateTime Date { get; set; }
+        public Dictionary<string, decimal> Rates { get; set; }
     }
 
     public class MarketDataException : Exception

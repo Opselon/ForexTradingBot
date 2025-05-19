@@ -6,6 +6,7 @@ using Telegram.Bot.Types.Enums;
 using TelegramPanel.Application.Interfaces; // برای ITelegramCommandHandler
 using TelegramPanel.Formatters;         // برای TelegramMessageFormatter
 using TelegramPanel.Infrastructure;       // برای ITelegramMessageSender
+using Telegram.Bot.Types.ReplyMarkups;
 
 namespace TelegramPanel.Application.CommandHandlers
 {
@@ -66,12 +67,41 @@ namespace TelegramPanel.Application.CommandHandlers
                 if (existingUser != null)
                 {
                     _logger.LogInformation("Existing user {Username} (TelegramID: {TelegramId}) initiated /start.", existingUser.Username, telegramUserId);
-                    var welcomeBackMessage = $"Welcome back, {TelegramMessageFormatter.Bold(existingUser.Username)}!\n" +
-                                             "You are already registered. How can I assist you today?\n" +
-                                             "Type /menu to see available options or /help for more information.";
+                    var welcomeBackMessage = $"🎉 *Welcome back, {TelegramMessageFormatter.Bold(existingUser.Username)}!*\n\n" +
+                                           "🌟 *Gold Market Trading Bot*\n\n" +
+                                           "Your trusted companion for gold trading signals and market analysis.\n\n" +
+                                           "📊 *Available Features:*\n" +
+                                           "• 📈 Real-time gold price alerts\n" +
+                                           "• 💎 Professional trading signals\n" +
+                                           "• 📰 Market analysis and insights\n" +
+                                           "• 💼 Portfolio tracking\n" +
+                                           "• 🔔 Customizable notifications\n\n" +
+                                           "Type /menu to see available options or /help for more information.";
 
-                    // استفاده از MarkdownV2 با escape کردن کاراکترهای خاص
-                    await _messageSender.SendTextMessageAsync(chatId, welcomeBackMessage, ParseMode.MarkdownV2, cancellationToken: cancellationToken);
+                    var keyboard = new InlineKeyboardMarkup(new[]
+                    {
+                        new []
+                        {
+                            InlineKeyboardButton.WithCallbackData("📈 Gold Signals", MenuCommandHandler.SignalsCallbackData),
+                            InlineKeyboardButton.WithCallbackData("📊 Market Analysis", "market_analysis")
+                        },
+                        new []
+                        {
+                            InlineKeyboardButton.WithCallbackData("💎 VIP Signals", MenuCommandHandler.SubscribeCallbackData),
+                            InlineKeyboardButton.WithCallbackData("⚙️ Settings", MenuCommandHandler.SettingsCallbackData)
+                        },
+                        new []
+                        {
+                            InlineKeyboardButton.WithCallbackData("📱 My Profile", MenuCommandHandler.ProfileCallbackData)
+                        }
+                    });
+
+                    await _messageSender.SendTextMessageAsync(
+                        chatId, 
+                        welcomeBackMessage, 
+                        ParseMode.MarkdownV2, 
+                        replyMarkup: keyboard,
+                        cancellationToken: cancellationToken);
 
                     // پاک کردن وضعیت کاربر اگر در مکالمه‌ای بوده (اگر _stateMachine تزریق شده باشد)
                     if (_stateMachine != null)
@@ -99,10 +129,40 @@ namespace TelegramPanel.Application.CommandHandlers
                     _logger.LogInformation("User {Username} (ID: {UserId}, TelegramID: {TelegramId}) registered successfully with email {Email}.",
                         newUser.Username, newUser.Id, newUser.TelegramId, emailForRegistration);
 
-                    var welcomeMessage = $"Hello {TelegramMessageFormatter.Bold(newUser.Username)}! 👋\n" +
-                                         "Welcome to Forex Signal Bot. You have been successfully registered.\n" +
-                                         "Type /menu to explore features or /help for assistance.";
-                    await _messageSender.SendTextMessageAsync(chatId, welcomeMessage, ParseMode.MarkdownV2, cancellationToken: cancellationToken);
+                    var welcomeMessage = $"Hello {TelegramMessageFormatter.Bold(newUser.Username)}! 👋\n\n" +
+                                       "🌟 *Welcome to Gold Market Trading Bot*\n\n" +
+                                       "Your trusted companion for gold trading signals and market analysis.\n\n" +
+                                       "📊 *Available Features:*\n" +
+                                       "• Real-time gold price alerts\n" +
+                                       "• Professional trading signals\n" +
+                                       "• Market analysis and insights\n" +
+                                       "• Portfolio tracking\n\n" +
+                                       "Type /menu to explore features or /help for assistance.";
+
+                    var keyboard = new InlineKeyboardMarkup(new[]
+                    {
+                        new []
+                        {
+                            InlineKeyboardButton.WithCallbackData("📈 Gold Signals", MenuCommandHandler.SignalsCallbackData),
+                            InlineKeyboardButton.WithCallbackData("📊 Market Analysis", "market_analysis")
+                        },
+                        new []
+                        {
+                            InlineKeyboardButton.WithCallbackData("💎 VIP Signals", MenuCommandHandler.SubscribeCallbackData),
+                            InlineKeyboardButton.WithCallbackData("⚙️ Settings", MenuCommandHandler.SettingsCallbackData)
+                        },
+                        new []
+                        {
+                            InlineKeyboardButton.WithCallbackData("📱 My Profile", MenuCommandHandler.ProfileCallbackData)
+                        }
+                    });
+
+                    await _messageSender.SendTextMessageAsync(
+                        chatId, 
+                        welcomeMessage, 
+                        ParseMode.MarkdownV2, 
+                        replyMarkup: keyboard,
+                        cancellationToken: cancellationToken);
                 }
             }
             catch (Exception ex)

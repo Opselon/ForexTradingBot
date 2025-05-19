@@ -3,77 +3,69 @@ namespace TelegramPanel.Formatters
 {
     public static class TelegramMessageFormatter
     {
-        // Special characters that need to be escaped in Markdown
-        private static readonly char[] MarkdownSpecialChars = { '_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!' };
+        // کاراکترهایی که در MarkdownV2 باید escape شوند (به جز خود بک‌اسلش که اولویت دارد)
+        private static readonly char[] MarkdownV2SpecialChars = { '_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!' };
 
         /// <summary>
-        /// Escapes text for Markdown formatting
+        /// Escapes text for Telegram MarkdownV2.
+        /// IMPORTANT: This method should be applied to plain text BEFORE applying Markdown formatting characters like *, _, `.
         /// </summary>
         public static string EscapeMarkdownV2(string text)
         {
             if (string.IsNullOrEmpty(text)) return string.Empty;
 
             var result = text;
-            // First escape backslash to avoid interference with other escapes
+            // 1. ابتدا خود بک‌اسلش را escape کنید تا در مراحل بعد با escape های دیگر تداخل پیدا نکند.
             result = result.Replace("\\", "\\\\");
 
-            // Then escape other special characters
-            foreach (var escChar in MarkdownSpecialChars)
+            // 2. سپس سایر کاراکترهای خاص را escape کنید.
+            foreach (var escChar in MarkdownV2SpecialChars)
             {
                 result = result.Replace(escChar.ToString(), "\\" + escChar);
             }
             return result;
         }
 
-        /// <summary>
-        /// Formats text as bold using Markdown syntax
-        /// </summary>
-        public static string Bold(string text, bool escapePlainText = true)
+
+        // ... (EscapeMarkdownV2 و MarkdownV2SpecialChars) ...
+
+        public static string Bold(string text, bool escapePlainText = true) // ✅ نام پارامTR صحیح است
         {
             var content = escapePlainText ? EscapeMarkdownV2(text) : text;
             return $"*{content}*";
         }
 
-        /// <summary>
-        /// Formats text as italic using Markdown syntax
-        /// </summary>
-        public static string Italic(string text, bool escapePlainText = true)
+        public static string Italic(string text, bool escapePlainText = true) // ✅ نام پارامتر صحیح است
         {
             var content = escapePlainText ? EscapeMarkdownV2(text) : text;
             return $"_{content}_";
         }
 
-        /// <summary>
-        /// Formats text as code using Markdown syntax
-        /// </summary>
         public static string Code(string text)
         {
             return $"`{text}`";
         }
 
-        /// <summary>
-        /// Formats text as strikethrough using Markdown syntax
-        /// </summary>
-        public static string Strikethrough(string text, bool escapePlainText = true)
+        public static string Strikethrough(string text, bool escapePlainText = true) // ✅ نام پارامتر صحیح است
         {
             var content = escapePlainText ? EscapeMarkdownV2(text) : text;
             return $"~{content}~";
         }
 
-        /// <summary>
-        /// Creates a Markdown link
-        /// </summary>
-        public static string Link(string text, string url, bool escapeLinkText = true)
+        public static string Underline(string text, bool escapePlainText = true) // ✅ نام پارامتر صحیح است
+        {
+            var content = escapePlainText ? EscapeMarkdownV2(text) : text;
+            return $"__{content}__";
+        }
+
+        public static string Link(string text, string url, bool escapeLinkText = true) // ✅ نام پارامتر صحیح است
         {
             var linkText = escapeLinkText ? EscapeMarkdownV2(text) : text;
             string escapedUrl = url.Replace(")", "\\)");
             return $"[{linkText}]({escapedUrl})";
         }
 
-        /// <summary>
-        /// Creates a spoiler text using Markdown syntax
-        /// </summary>
-        public static string Spoiler(string text, bool escapePlainText = true)
+        public static string Spoiler(string text, bool escapePlainText = true) // ✅ نام پارامتر صحیح است
         {
             var content = escapePlainText ? EscapeMarkdownV2(text) : text;
             return $"||{content}||";

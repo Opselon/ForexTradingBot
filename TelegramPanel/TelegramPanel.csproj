@@ -9,19 +9,11 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Core" Version="2.3.0" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.5" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.5" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.5" />
-    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="9.0.5" />
     <PackageReference Include="Microsoft.Extensions.Logging" Version="9.0.5" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.5" />
-    <PackageReference Include="Microsoft.Extensions.Http" Version="9.0.5" />
-    <PackageReference Include="System.Net.Http.Json" Version="9.0.5" />
     <PackageReference Include="Scrutor" Version="6.0.1" />
     <PackageReference Include="System.Threading.Channels" Version="9.0.5" />
     <PackageReference Include="Telegram.Bot" Version="22.5.1" />
-    <PackageReference Include="Hangfire" Version="1.8.7" />
-    <PackageReference Include="Hangfire.Core" Version="1.8.7" />
-    <PackageReference Include="Hangfire.AspNetCore" Version="1.8.7" />
   </ItemGroup>
 
   <ItemGroup>

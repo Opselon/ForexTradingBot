@@ -2,29 +2,19 @@
 
 #region Usings
 // Standard .NET & NuGet
-using Microsoft.Extensions.Logging;
-using Polly;
-using Polly.Retry;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Net.Http; // برای HttpRequestException
-using System.Threading;
-using System.Threading.Tasks;
-
-// Telegram.Bot
-using Telegram.Bot.Exceptions;
-using Telegram.Bot.Types.Enums;         // ✅✅ برای ParseMode ✅✅
-using Telegram.Bot.Types.ReplyMarkups; // برای InlineKeyboardMarkup, InlineKeyboardButton
-
 // Project specific
 using Application.Common.Interfaces;    // برای INotificationSendingService (اینترفیسی که این کلاس پیاده‌سازی می‌کند)
 using Application.DTOs.Notifications;   // برای NotificationJobPayload, NotificationButton
 using Application.Interfaces;
+using Polly;
+using Polly.Retry;
 using Shared.Extensions;
+// Telegram.Bot
+using Telegram.Bot.Exceptions;
 using Telegram.Bot.Types;
+using Telegram.Bot.Types.Enums;         // ✅✅ برای ParseMode ✅✅
+using Telegram.Bot.Types.ReplyMarkups; // برای InlineKeyboardMarkup, InlineKeyboardButton
 using TelegramPanel.Application.CommandHandlers; // ✅ برای IUserService (از پروژه Application اصلی)
-
 // ✅✅ Using های مربوط به TelegramPanel (نیاز به ارجاع پروژه BackgroundTasks به TelegramPanel) ✅✅
 using TelegramPanel.Formatters;         // ✅ برای TelegramMessageFormatter
 using TelegramPanel.Infrastructure;     // ✅ برای ITelegramMessageSender
@@ -259,7 +249,7 @@ namespace BackgroundTasks.Services
                                 parseMode: parseMode,
                                 finalKeyboard,
                                 ct, // CancellationToken از Polly context
-                                // disableWebPagePreview: true // 📛 حذف شد
+                                    // disableWebPagePreview: true // 📛 حذف شد
                                 linkPreviewOptions: defaultLinkPreviewOptions // ✅ استفاده از پارامتر جدید
                             );
                         }, pollyContext, jobCancellationToken);

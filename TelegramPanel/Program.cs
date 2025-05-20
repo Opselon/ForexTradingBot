@@ -17,4 +17,4 @@ public class Program
                 // Add market data services
                 services.AddMarketDataServices(hostContext.Configuration);
             });
-} 
+}

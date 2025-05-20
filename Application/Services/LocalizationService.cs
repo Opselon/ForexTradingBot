@@ -1,6 +1,6 @@
-using System.Globalization;
 using Application.Common.Interfaces;
 using Application.Interfaces;
+using System.Globalization;
 
 namespace Application.Services
 {
@@ -45,8 +45,8 @@ namespace Application.Services
             // Get user's preferred language
             var user = await _userService.GetUserByIdAsync(userId);
             //var cultureInfo = !string.IsNullOrEmpty(user?.PreferredLanguage) 
-           //     ? new CultureInfo(user.PreferredLanguage) 
-             //   : CultureInfo.CurrentUICulture;
+            //     ? new CultureInfo(user.PreferredLanguage) 
+            //   : CultureInfo.CurrentUICulture;
 
             return null;
         }
@@ -63,4 +63,4 @@ namespace Application.Services
             return args.Length > 0 ? string.Format(format, args) : format;
         }
     }
-} 
+}

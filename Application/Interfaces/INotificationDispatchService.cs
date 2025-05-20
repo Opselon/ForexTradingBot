@@ -1,6 +1,5 @@
 ﻿// File: Application/Interfaces/INotificationDispatchService.cs
 #region Usings
-using Domain.Entities; // برای NewsItem
 #endregion
 
 namespace Application.Interfaces

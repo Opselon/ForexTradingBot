@@ -4,7 +4,6 @@ using Telegram.Bot.Exceptions;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
-using System.Net.Http.Json;
 
 // namespace TelegramPanel.Infrastructure; // این خط اضافی بود یا در جای نادرست
 

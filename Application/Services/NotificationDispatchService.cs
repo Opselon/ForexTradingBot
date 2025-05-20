@@ -70,10 +70,10 @@ namespace Application.Services
             }
 
             using (_logger.BeginScope(new Dictionary<string, object?>
-                   {
-                       ["NewsItemId"] = newsItem.Id,
-                       ["NewsTitle"] = newsItem.Title.Truncate(50)
-                   }))
+            {
+                ["NewsItemId"] = newsItem.Id,
+                ["NewsTitle"] = newsItem.Title.Truncate(50)
+            }))
             {
                 _logger.LogInformation("Starting notification dispatch for news item.");
 
@@ -213,30 +213,30 @@ namespace Application.Services
     #endregion
 }
 
-    //  در IUserRepository (Application/Common/Interfaces/IUserRepository.cs) باید متدی شبیه به این اضافه شود:
-    /*
-    public interface IUserRepository
-    {
-        // ... سایر متدها ...
-        Task<IEnumerable<User>> GetUsersWithNotificationSettingAsync(
-            Expression<Func<User, bool>> notificationPredicate, //  مثلاً u => u.EnableRssNewsNotifications
-            CancellationToken cancellationToken = default);
+//  در IUserRepository (Application/Common/Interfaces/IUserRepository.cs) باید متدی شبیه به این اضافه شود:
+/*
+public interface IUserRepository
+{
+    // ... سایر متدها ...
+    Task<IEnumerable<User>> GetUsersWithNotificationSettingAsync(
+        Expression<Func<User, bool>> notificationPredicate, //  مثلاً u => u.EnableRssNewsNotifications
+        CancellationToken cancellationToken = default);
 
-        //  یا یک متد اختصاصی‌تر:
-        Task<IEnumerable<User>> GetUsersForRssNewsNotificationAsync(Guid? relevantCategoryId, bool? isVipContent, CancellationToken cancellationToken);
-    }
-    */
+    //  یا یک متد اختصاصی‌تر:
+    Task<IEnumerable<User>> GetUsersForRssNewsNotificationAsync(Guid? relevantCategoryId, bool? isVipContent, CancellationToken cancellationToken);
+}
+*/
 
-    //  در پیاده‌سازی UserRepository (Infrastructure/Persistence/Repositories/UserRepository.cs):
-    /*
-    public async Task<IEnumerable<User>> GetUsersWithNotificationSettingAsync(
-        Expression<Func<User, bool>> notificationPredicate,
-        CancellationToken cancellationToken = default)
-    {
-        return await _context.Users
-            .Where(u => u.IsActive) //  فقط کاربران فعال (اگر فیلد IsActive دارید)
-            .Where(notificationPredicate)
-            .ToListAsync(cancellationToken);
-    }
-    */
-    
+//  در پیاده‌سازی UserRepository (Infrastructure/Persistence/Repositories/UserRepository.cs):
+/*
+public async Task<IEnumerable<User>> GetUsersWithNotificationSettingAsync(
+    Expression<Func<User, bool>> notificationPredicate,
+    CancellationToken cancellationToken = default)
+{
+    return await _context.Users
+        .Where(u => u.IsActive) //  فقط کاربران فعال (اگر فیلد IsActive دارید)
+        .Where(notificationPredicate)
+        .ToListAsync(cancellationToken);
+}
+*/
+

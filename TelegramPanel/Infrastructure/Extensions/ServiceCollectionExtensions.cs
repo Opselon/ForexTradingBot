@@ -1,12 +1,8 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using System;
-using System.Net.Http;
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Infrastructure.Services;
 using TelegramPanel.Infrastructure.Settings;
-using Microsoft.Extensions.Logging;
-using Polly;
 
 namespace TelegramPanel.Infrastructure.Extensions
 {
@@ -63,4 +59,4 @@ namespace TelegramPanel.Infrastructure.Extensions
             return services;
         }
     }
-} 
+}

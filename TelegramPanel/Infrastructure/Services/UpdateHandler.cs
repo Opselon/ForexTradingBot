@@ -1,12 +1,9 @@
-using System;
-using System.Threading;
-using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Telegram.Bot;
+using Telegram.Bot.Exceptions;
 using Telegram.Bot.Polling;
 using Telegram.Bot.Types;
 using TelegramPanel.Application.Interfaces;
-using Telegram.Bot.Exceptions;
 
 namespace TelegramPanel.Infrastructure.Services
 {
@@ -34,6 +31,14 @@ namespace TelegramPanel.Infrastructure.Services
                 else if (update.Message != null)
                 {
                     _logger.LogInformation("Received message: {MessageType} from chat {ChatId}", update.Message.Type, update.Message.Chat.Id);
+
+                    // Example of handling a message with multiple concurrent asynchronous operations
+                    var processingTask = ProcessMessageTextAsync(update.Message, cancellationToken);
+                    var analyticsTask = NotifyAnalyticsAsync(update.Message, cancellationToken);
+
+                    await Task.WhenAll(processingTask, analyticsTask);
+
+                    _logger.LogInformation("Finished processing message {MessageId}", update.Message.MessageId);
                 }
                 else
                 {
@@ -58,5 +63,24 @@ namespace TelegramPanel.Infrastructure.Services
             _logger.LogError(exception, errorMessage);
             return Task.CompletedTask;
         }
+
+        // Helper methods for demonstrating concurrent message processing
+        private async Task ProcessMessageTextAsync(Message message, CancellationToken cancellationToken)
+        {
+            // Simulate asynchronous work for processing message text
+            _logger.LogInformation("Starting to process text for message {MessageId}", message.MessageId);
+            await Task.Delay(100, cancellationToken); // Simulate I/O bound operation
+            // TODO: Replace with actual message text processing logic
+            _logger.LogInformation("Finished processing text for message {MessageId}", message.MessageId);
+        }
+
+        private async Task NotifyAnalyticsAsync(Message message, CancellationToken cancellationToken)
+        {
+            // Simulate asynchronous work for sending analytics
+            _logger.LogInformation("Starting to notify analytics for message {MessageId}", message.MessageId);
+            await Task.Delay(150, cancellationToken); // Simulate I/O bound operation
+            // TODO: Replace with actual analytics notification logic
+            _logger.LogInformation("Finished notifying analytics for message {MessageId}", message.MessageId);
+        }
     }
-} 
+}

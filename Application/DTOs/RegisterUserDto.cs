@@ -2,23 +2,42 @@
 
 namespace Application.DTOs
 {
+    #region Register User DTO
+
+    /// <summary>
+    /// Data transfer object for user registration.
+    /// </summary>
     public class RegisterUserDto
     {
-        [Required(ErrorMessage = "نام کاربری الزامی است.")]
-        [StringLength(100, MinimumLength = 3, ErrorMessage = "نام کاربری باید بین 3 تا 100 کاراکتر باشد.")]
+        /// <summary>
+        /// Gets or sets the username.
+        /// </summary>
+        [Required(ErrorMessage = "Username is required.")]
+        [StringLength(100, MinimumLength = 3, ErrorMessage = "Username must be between 3 and 100 characters.")]
         public string Username { get; set; } = string.Empty;
 
-        [Required(ErrorMessage = "ایمیل الزامی است.")]
-        [EmailAddress(ErrorMessage = "فرمت ایمیل نامعتبر است.")]
-        [StringLength(200, ErrorMessage = "طول ایمیل نمی‌تواند بیش از 200 کاراکتر باشد.")]
+        /// <summary>
+        /// Gets or sets the email address.
+        /// </summary>
+        [Required(ErrorMessage = "Email is required.")]
+        [EmailAddress(ErrorMessage = "Invalid email format.")]
+        [StringLength(200, ErrorMessage = "Email length cannot exceed 200 characters.")]
         public string Email { get; set; } = string.Empty;
 
-        [Required(ErrorMessage = "شناسه تلگرام الزامی است.")]
-        [StringLength(50, ErrorMessage = "طول شناسه تلگرام نمی‌تواند بیش از 50 کاراکتر باشد.")]
+        /// <summary>
+        /// Gets or sets the Telegram ID.
+        /// </summary>
+        [Required(ErrorMessage = "Telegram ID is required.")]
+        [StringLength(50, ErrorMessage = "Telegram ID length cannot exceed 50 characters.")]
         public string TelegramId { get; set; } = string.Empty;
 
-        // [Required(ErrorMessage = "رمز عبور الزامی است.")]
-        // [StringLength(100, MinimumLength = 6, ErrorMessage = "رمز عبور باید حداقل 6 کاراکتر باشد.")]
-        // public string Password { get; set; } = string.Empty; // برای پنل وب احتمالی
+        // /// <summary>
+        // /// Gets or sets the password. (For a potential web panel)
+        // /// </summary>
+        // [Required(ErrorMessage = "Password is required.")]
+        // [StringLength(100, MinimumLength = 6, ErrorMessage = "Password must be at least 6 characters.")]
+        // public string Password { get; set; } = string.Empty; // For a potential web panel
     }
+
+    #endregion
 }

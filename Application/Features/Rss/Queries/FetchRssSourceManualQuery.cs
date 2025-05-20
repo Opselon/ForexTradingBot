@@ -1,10 +1,8 @@
 ﻿// File: Application/Features/Rss/Queries/FetchRssSourceManualQuery.cs
 #region Usings
+using Application.DTOs.News; // برای NewsItemDto
 using MediatR; // برای IRequest
 using Shared.Results; // برای Result
-using System;
-using System.Collections.Generic; // برای IEnumerable
-using Application.DTOs.News; // برای NewsItemDto
 #endregion
 
 namespace Application.Features.Rss.Queries

@@ -22,7 +22,7 @@ namespace TelegramPanel.Application.CommandHandlers
         public const string ProfileCallbackData = "menu_my_profile";
         public const string SubscribeCallbackData = "menu_subscribe_plans";
         public const string SettingsCallbackData = "menu_user_settings";
-
+        public const string MarketAnalysisData = "market_analysis";
 
         #endregion
 
@@ -46,7 +46,8 @@ namespace TelegramPanel.Application.CommandHandlers
             {
                 new [] {
                     InlineKeyboardButton.WithCallbackData("📊 View Signals", SignalsCallbackData),
-                    InlineKeyboardButton.WithCallbackData("👤 My Profile", ProfileCallbackData)
+                    InlineKeyboardButton.WithCallbackData("👤 My Profile", ProfileCallbackData),
+                    InlineKeyboardButton.WithCallbackData("📊 Market Analysis", MarketAnalysisData) 
                 },
                 new [] {
                     InlineKeyboardButton.WithCallbackData("💎 Subscribe / View Plans", SubscribeCallbackData),
@@ -60,16 +61,18 @@ namespace TelegramPanel.Application.CommandHandlers
         #region ITelegramCommandHandler Implementation
         public bool CanHandle(Update update)
         {
+            // THIS IS THE CORRECTED LOGIC FOR A COMMAND HANDLER
             return update.Type == UpdateType.Message &&
                    update.Message?.Text?.Trim().Equals("/menu", StringComparison.OrdinalIgnoreCase) == true;
         }
 
         public async Task HandleAsync(Update update, CancellationToken cancellationToken = default)
         {
-            var message = update.Message;
-            if (message == null)
+            // This logic correctly handles the /menu command by sending the menu.
+            var message = update.Message; // This is now guaranteed to be from a Message update.
+            if (message == null) // Should not happen if CanHandle is correct, but good practice.
             {
-                _logger.LogWarning("MenuCommand: Message is null in UpdateID {UpdateId}.", update.Id);
+                _logger.LogWarning("MenuCommand: Message is null in UpdateID {UpdateId}, despite CanHandle passing.", update.Id);
                 return;
             }
 
@@ -78,32 +81,17 @@ namespace TelegramPanel.Application.CommandHandlers
 
             _logger.LogInformation("Handling /menu command for ChatID {ChatId}, UserID {UserId}", chatId, userId);
 
-            var text = "Welcome to the Main Menu! Please choose an option:";
-
-            var inlineKeyboard = new InlineKeyboardMarkup(new[]
-            {
-                // Row 1
-                new []
-                {
-                    InlineKeyboardButton.WithCallbackData("📈 View Signals", SignalsCallbackData),
-                    InlineKeyboardButton.WithCallbackData("👤 My Profile", ProfileCallbackData),
-                },
-                // Row 2
-                new []
-                {
-                    InlineKeyboardButton.WithCallbackData("💎 Subscribe", SubscribeCallbackData),
-                    InlineKeyboardButton.WithCallbackData("⚙️ Settings", SettingsCallbackData),
-                }
-                // You can add more rows or buttons here
-            });
+            // Use the static GetMainMenuMarkup method
+            var (text, inlineKeyboard) = GetMainMenuMarkup();
 
             await _messageSender.SendTextMessageAsync(
                 chatId: chatId,
-                text: text,
+                text: text, // Use the text from GetMainMenuMarkup
+                parseMode: ParseMode.MarkdownV2, // Assuming text might have Markdown
                 replyMarkup: inlineKeyboard,
                 cancellationToken: cancellationToken);
 
-            _logger.LogDebug("Main menu sent to ChatID {ChatId}", chatId);
+            _logger.LogDebug("Main menu sent to ChatID {ChatId} via /menu command.", chatId);
         }
         #endregion
 

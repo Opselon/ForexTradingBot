@@ -1,11 +1,7 @@
 ﻿// File: Application/Common/Interfaces/INewsItemRepository.cs
 #region Usings
 using Domain.Entities; // برای NewsItem
-using System;
-using System.Collections.Generic;
 using System.Linq.Expressions; // برای Expression
-using System.Threading;
-using System.Threading.Tasks;
 #endregion
 
 namespace Application.Common.Interfaces
@@ -16,6 +12,31 @@ namespace Application.Common.Interfaces
     /// </summary>
     public interface INewsItemRepository
     {
+
+        #region Enhanced Search Operations
+        /// <summary>
+        /// Searches for news items based on keywords, date range, and pagination.
+        /// </summary>
+        /// <param name="keywords">A collection of keywords to search for in title and description.</param>
+        /// <param name="sinceDate">The start date (inclusive) for the news items' publish date.</param>
+        /// <param name="untilDate">The end date (inclusive) for the news items' publish date.</param>
+        /// <param name="pageNumber">The page number to retrieve (1-based).</param>
+        /// <param name="pageSize">The number of items per page.</param>
+        /// <param name="matchAllKeywords">If true, news items must contain all keywords. If false (default), any keyword match is sufficient.</param>
+        /// <param name="isUserVip">Indicates if the user is a VIP, which might affect filtering (e.g., access to VIP-only news).</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>A tuple containing a list of <see cref="NewsItem"/> for the current page and the total count of matching items across all pages for the given criteria.</returns>
+        Task<(List<NewsItem> Items, int TotalCount)> SearchNewsAsync(
+            IEnumerable<string> keywords,
+            DateTime sinceDate,
+            DateTime untilDate,
+            int pageNumber,
+            int pageSize,
+            bool matchAllKeywords = false,
+            bool isUserVip = false, // Added to potentially filter VIP news
+            CancellationToken cancellationToken = default);
+        #endregion
+
         #region Read Operations
         /// <summary>
         /// Gets a specific news item by its unique identifier.
@@ -24,6 +45,7 @@ namespace Application.Common.Interfaces
         /// <param name="cancellationToken">A token to observe for cancellation requests.</param>
         /// <returns>The <see cref="NewsItem"/> if found; otherwise, null.</returns>
         Task<NewsItem?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default);
+
 
         /// <summary>
         /// Gets a specific news item by its RssSourceId and its unique identifier within that source (SourceItemId).

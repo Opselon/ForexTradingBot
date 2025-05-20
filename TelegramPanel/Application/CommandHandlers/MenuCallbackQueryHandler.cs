@@ -16,7 +16,7 @@ using TelegramPanel.Infrastructure;
 
 namespace TelegramPanel.Application.CommandHandlers
 {
-    public class MenuCallbackQueryHandler : ITelegramCommandHandler
+    public class MenuCallbackQueryHandler : ITelegramCommandHandler, ITelegramCallbackQueryHandler
     {
         #region Private Fields
         private readonly ILogger<MenuCallbackQueryHandler> _logger;
@@ -79,30 +79,29 @@ namespace TelegramPanel.Application.CommandHandlers
         #region ITelegramCommandHandler Implementation
         public bool CanHandle(Update update)
         {
-            // ۱. بررسی اینکه آیا آپدیت از نوع CallbackQuery است و داده (Data) دارد.
             if (update.Type != UpdateType.CallbackQuery || update.CallbackQuery?.Data == null)
             {
                 return false;
             }
 
-            // ۲. دریافت داده CallbackQuery برای خوانایی بهتر.
             string callbackData = update.CallbackQuery.Data;
 
-            // ۳. بررسی اینکه آیا callbackData با یکی از مقادیر مورد انتظار ما مطابقت دارد.
-            // استفاده از StringComparison.Ordinal برای مقایسه دقیق و سریع رشته‌ها.
-            return
-                callbackData.Equals(MenuCommandHandler.SignalsCallbackData, StringComparison.Ordinal) ||
-                callbackData.Equals(MenuCommandHandler.ProfileCallbackData, StringComparison.Ordinal) ||
-                callbackData.Equals(MenuCommandHandler.SubscribeCallbackData, StringComparison.Ordinal) || // این CallbackData باید در MenuCommandHandler تعریف شده باشد
-                callbackData.Equals(MenuCommandHandler.SettingsCallbackData, StringComparison.Ordinal) ||
-                // CallbackData های مربوط به انتخاب پلن و پرداخت (که در پاسخ قبلی اضافه کردیم)
-                callbackData.StartsWith("select_plan_", StringComparison.Ordinal) || // مثال: select_plan_premium_1m
-                callbackData.StartsWith("pay_", StringComparison.Ordinal) ||          // مثال: pay_usdt_PLAN_ID
-                                                                                      // CallbackData های مربوط به دکمه‌های بازگشت
+            _logger.LogTrace("MenuCBQHandler.CanHandle: Checking callbackData '{CallbackData}' against known prefixes.", callbackData);
+
+            bool canHandleIt =
+                callbackData.Equals(MenuCommandHandler.SignalsCallbackData, StringComparison.Ordinal) || // "menu_view_signals"
+                callbackData.Equals(MenuCommandHandler.ProfileCallbackData, StringComparison.Ordinal) || // "menu_my_profile"
+                callbackData.Equals(MenuCommandHandler.SubscribeCallbackData, StringComparison.Ordinal) || // "menu_subscribe_plans"
+                callbackData.Equals(MenuCommandHandler.SettingsCallbackData, StringComparison.Ordinal) || // "menu_user_settings"
+                callbackData.StartsWith("select_plan_", StringComparison.Ordinal) ||
+                callbackData.StartsWith("pay_", StringComparison.Ordinal) ||
                 callbackData.Equals(BackToMainMenuFromProfile, StringComparison.Ordinal) ||
                 callbackData.Equals(BackToMainMenuFromSubscribe, StringComparison.Ordinal) ||
                 callbackData.Equals(BackToMainMenuFromSettings, StringComparison.Ordinal) ||
                 callbackData.Equals(GeneralBackToMainMenuCallback, StringComparison.Ordinal);
+
+            _logger.LogTrace("MenuCBQHandler.CanHandle for '{CallbackData}': Result = {Result}", callbackData, canHandleIt);
+            return canHandleIt;
         }
 
         public async Task HandleAsync(Update update, CancellationToken cancellationToken = default)
@@ -167,6 +166,7 @@ namespace TelegramPanel.Application.CommandHandlers
                                 _logger.LogInformation("User requested to go back to main menu.");
                                 await ShowMainMenuAsync(chatId, messageId, cancellationToken);
                                 break;
+
                             default:
                                 _logger.LogWarning("Unhandled CallbackQuery data: {CallbackData}", callbackData);
                                 await _messageSender.SendTextMessageAsync(chatId, "Sorry, this option is not recognized or is under development.", cancellationToken: cancellationToken);
@@ -298,7 +298,7 @@ namespace TelegramPanel.Application.CommandHandlers
             _logger.LogInformation("Showing subscription plans to ChatID {ChatId}.", chatId);
 
             //  اطلاعات پلن‌ها باید از یک منبع معتبر (سرویس، دیتابیس، کانفیگ) خوانده شود.
-            //  فعلاً متن و قیمت‌ها به صورت ثابت تعریف شده‌اند.
+            //  فعلاً متن و قیمت‌ها به صورت ثابت تعریف شده‌اند. 
             var plansText = TelegramMessageFormatter.Bold("💎 Available Subscription Plans:", escapePlainText: false) + "\n\n" +
                             $"1. {TelegramMessageFormatter.Bold("Premium Monthly")} - Access to all signals and features for 30 days. " +
                             $"(Price: ~$10 USD)\n\n" +

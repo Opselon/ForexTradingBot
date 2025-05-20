@@ -10,6 +10,8 @@ namespace Application.DTOs.Notifications // ✅ Namespace: Application.DTOs.Noti
     /// </summary>
     public class NotificationButton
     {
+        #region Properties
+
         /// <summary>
         /// The text displayed on the button.
         /// </summary>
@@ -27,5 +29,7 @@ namespace Application.DTOs.Notifications // ✅ Namespace: Application.DTOs.Noti
         /// If false, an inline button with callback data will be created.
         /// </summary>
         public bool IsUrl { get; set; } = false;
+
+        #endregion
     }
 }

@@ -1,7 +1,6 @@
 ﻿// File: BackgroundTasks/DependencyInjection.cs
 using Application.Common.Interfaces;    // برای INotificationSendingService
 using BackgroundTasks.Services;         // برای NotificationSendingService
-using Microsoft.Extensions.DependencyInjection;
 
 namespace BackgroundTasks
 {

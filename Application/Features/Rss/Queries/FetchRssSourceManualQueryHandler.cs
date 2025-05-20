@@ -2,15 +2,10 @@
 #region Usings
 using Application.Common.Interfaces; // برای IRssSourceRepository, IRssReaderService
 using Application.DTOs.News;         // برای NewsItemDto
+using Domain.Entities; // برای RssSource
 using MediatR;                       // برای IRequestHandler
 using Microsoft.Extensions.Logging;
 using Shared.Results;                // برای Result
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
-using Domain.Entities; // برای RssSource
 #endregion
 
 namespace Application.Features.Rss.Queries

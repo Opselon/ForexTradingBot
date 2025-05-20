@@ -1,6 +1,5 @@
 ﻿using Application.Common.Interfaces; // برای IUserRepository و IAppDbContext
 using Domain.Entities;
-using Domain.Enums;
 using Microsoft.EntityFrameworkCore; // برای متدهای EF Core مانند FirstOrDefaultAsync, ToListAsync و ...
 using System.Linq.Expressions;
 
@@ -27,7 +26,7 @@ namespace Infrastructure.Persistence.Repositories
            bool isNewsItemVipOnly,
            CancellationToken cancellationToken = default)
         {
-  
+
 
             // شروع با کوئری پایه: کاربرانی که نوتیفیکیشن اخبار RSS را فعال کرده‌اند.
             // و همچنین کاربران فعال سیستم (اگر فیلد IsActive در User دارید، آن را هم اضافه کنید)
@@ -38,7 +37,7 @@ namespace Infrastructure.Persistence.Repositories
             // مرحله ۱: فیلتر بر اساس VIP بودن خبر و اشتراک کاربر
             if (isNewsItemVipOnly)
             {
-             
+
                 // کاربر باید یک اشتراک فعال داشته باشد که به او دسترسی VIP می‌دهد.
                 // این منطق باید با ساختار جدول Subscriptions و Plans شما هماهنگ باشد.
                 // فرض می‌کنیم یک پلن VIP، PlanId خاصی دارد یا یک فیلد IsVip در Subscription.
@@ -62,7 +61,7 @@ namespace Infrastructure.Persistence.Repositories
             // مرحله ۲: فیلتر بر اساس دسته‌بندی خبر و تنظیمات برگزیده کاربر
             if (newsItemSignalCategoryId.HasValue)
             {
-     
+
                 // کاربر باید:
                 //  الف) هیچ تنظیمات برگزیده‌ای برای دسته‌بندی نداشته باشد (یعنی تمام دسته‌بندی‌ها را می‌خواهد دریافت کند)، یا
                 //  ب) دسته‌بندی خبر در لیست تنظیمات برگزیده او باشد.
@@ -121,7 +120,7 @@ namespace Infrastructure.Persistence.Repositories
             //  برای این مثال، فرض می‌کنیم هر اشتراک فعالی (که قبلاً در کوئری فیلتر شده) کافی است
             //  (این یعنی isNewsItemVipOnly فقط بررسی می‌کند که کاربر اشتراک دارد یا نه، نه نوع آن را)
             //  این باید با دقت بیشتری بر اساس نیاز شما پیاده‌سازی شود.
-           // _logger.LogDebug("IsConsideredVipSubscription: Checking subscription ID {SubscriptionId}. Logic needs to be implemented based on your plan structure.", subscription.Id);
+            // _logger.LogDebug("IsConsideredVipSubscription: Checking subscription ID {SubscriptionId}. Logic needs to be implemented based on your plan structure.", subscription.Id);
             //  فعلاً به عنوان placeholder، هر اشتراک فعالی را VIP در نظر می‌گیریم (این باید تغییر کند)
             return true; //  ⚠️ Placeholder - این را با منطق واقعی تشخیص VIP جایگزین کنید!
         }

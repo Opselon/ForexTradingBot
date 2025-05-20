@@ -13,11 +13,20 @@ namespace BackgroundTasks
         {
             while (!stoppingToken.IsCancellationRequested)
             {
-                if (_logger.IsEnabled(LogLevel.Information))
+                try
                 {
-                    _logger.LogInformation("Worker running at: {time}", DateTimeOffset.Now);
+                    if (_logger.IsEnabled(LogLevel.Information))
+                    {
+                        _logger.LogInformation("Worker running at: {time}", DateTimeOffset.Now);
+                    }
+
+                    // Add your main processing logic here
+                    await Task.Yield(); // Allow other tasks to run if needed
                 }
-                await Task.Delay(1000, stoppingToken);
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error occurred while processing");
+                }
             }
         }
     }

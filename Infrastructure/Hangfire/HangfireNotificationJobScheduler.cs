@@ -2,9 +2,7 @@
 #region Usings
 using Application.Common.Interfaces; // ✅ برای INotificationJobScheduler
 using Hangfire;                      // ✅ برای BackgroundJob.Enqueue (نیاز به بسته NuGet Hangfire.Core)
-using System;
 using System.Linq.Expressions;
-using System.Threading.Tasks;
 #endregion
 
 namespace Infrastructure.Hangfire // ✅ Namespace صحیح

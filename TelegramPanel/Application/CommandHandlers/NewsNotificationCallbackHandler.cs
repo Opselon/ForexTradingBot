@@ -4,18 +4,11 @@ using Application.Common.Interfaces; // برای IUserSignalPreferenceRepository
 using Application.Interfaces;        // برای IUserService
 using Domain.Entities;
 using Microsoft.Extensions.Logging;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
 using Telegram.Bot;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
-using Telegram.Bot.Types.ReplyMarkups; // برای InlineKeyboardMarkup
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Formatters;
-using TelegramPanel.Infrastructure;
 #endregion
 
 namespace TelegramPanel.Application.CommandHandlers

@@ -1,18 +1,20 @@
-﻿
-#region Usings
-using Application.Common.Interfaces; // ✅ فقط برای INotificationService (اینترفیس عمومی)
+﻿#region Usings
+using Application.Common.Interfaces; // For INotificationService
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Telegram.Bot;
-using TelegramPanel.Application.CommandHandlers; // برای FromAssemblyOf<StartCommandHandler>() و سایر Handler های TelegramPanel
-using TelegramPanel.Application.Interfaces;    // برای اینترفیس‌های خاص TelegramPanel
-using TelegramPanel.Application.Pipeline;      // برای Middleware های TelegramPanel
-using TelegramPanel.Application.Services;      // برای سرویس‌های TelegramPanel مانند TelegramStateMachine
-using TelegramPanel.Application.States;        // برای State های TelegramPanel
-using TelegramPanel.Infrastructure;            // برای سرویس‌های Infrastructure خاص TelegramPanel
-using TelegramPanel.Queue;                     // برای سرویس‌های صف TelegramPanel
-using TelegramPanel.Settings;                  // برای TelegramPanelSettings
+using TelegramPanel.Application.CommandHandlers; // For marker types like StartCommandHandler, MenuCommandHandler
+using TelegramPanel.Application.Interfaces;    // For ITelegram...Handler interfaces
+using TelegramPanel.Application.Pipeline;
+using TelegramPanel.Application.Services;
+using TelegramPanel.Application.States;
+using TelegramPanel.Infrastructure;         // For concrete service implementations if any are directly used here (less common)
+using TelegramPanel.Infrastructure.Services; // For concrete service implementations like TelegramMessageSender
+using TelegramPanel.Queue;
+using TelegramPanel.Settings;
+// using Scrutor; // Scrutor is available via IServiceCollection extensions, no direct using needed here
+
 #endregion
 
 namespace TelegramPanel.Extensions
@@ -21,10 +23,10 @@ namespace TelegramPanel.Extensions
     {
         public static IServiceCollection AddTelegramPanelServices(this IServiceCollection services, IConfiguration configuration)
         {
-            // ------------------- 1. پیکربندی Settings خاص TelegramPanel -------------------
+            // 1. Configure Settings
             services.Configure<TelegramPanelSettings>(configuration.GetSection(TelegramPanelSettings.SectionName));
 
-            // ------------------- 2. رجیستر کردن کلاینت تلگرام (ITelegramBotClient) -------------------
+            // 2. Register ITelegramBotClient
             services.AddSingleton<ITelegramBotClient>(serviceProvider =>
             {
                 var settings = serviceProvider.GetRequiredService<IOptions<TelegramPanelSettings>>().Value;
@@ -35,46 +37,58 @@ namespace TelegramPanel.Extensions
                 return new TelegramBotClient(settings.BotToken);
             });
 
-            // ------------------- 3. رجیستر کردن سرویس‌های پایه TelegramPanel -------------------
+            // 3. Register Core TelegramPanel Services
             services.AddSingleton<ITelegramUpdateChannel, TelegramUpdateChannel>();
-            services.AddScoped<ITelegramMessageSender, TelegramMessageSender>(); // پیاده‌سازی در TelegramPanel.Infrastructure
-            services.AddScoped<ITelegramUpdateProcessor, UpdateProcessingService>(); // پیاده‌سازی در TelegramPanel.Infrastructure
+            services.AddScoped<ITelegramMessageSender, TelegramMessageSender>(); // Or TelegramMessageSenderWithHangfire
+            services.AddScoped<ITelegramUpdateProcessor, UpdateProcessingService>();
+            services.AddScoped<IMarketDataService, MarketDataService>();
 
-            // ------------------- 4. رجیستر کردن Middleware های TelegramPanel -------------------
-            services.AddScoped<ITelegramMiddleware, LoggingMiddleware>();     // پیاده‌سازی در TelegramPanel.Application.Pipeline
-            services.AddScoped<ITelegramMiddleware, AuthenticationMiddleware>();// پیاده‌سازی در TelegramPanel.Application.Pipeline
+            // 4. Register Middleware
+            services.AddScoped<ITelegramMiddleware, LoggingMiddleware>();
+            services.AddScoped<ITelegramMiddleware, AuthenticationMiddleware>();
 
-            // ------------------- 5. رجیستر کردن Command Handler های TelegramPanel با Scrutor -------------------
+            // --- ✅ CONSOLIDATED HANDLER REGISTRATION ---
+            // Assuming ALL your command and callback query handlers for this panel
+            // are in the same assembly as StartCommandHandler.
+            // If not, you'll need separate scans per assembly.
+
+            // 5. Register ALL ITelegramCommandHandler implementations from the assembly
             services.Scan(scan => scan
-                .FromAssemblyOf<StartCommandHandler>() // از اسمبلی TelegramPanel.Application
+                .FromAssemblyOf<StartCommandHandler>() // Scans the assembly of StartCommandHandler
                 .AddClasses(classes => classes.AssignableTo<ITelegramCommandHandler>())
-                .AsImplementedInterfaces()
+                .AsImplementedInterfaces() // Registers them as ITelegramCommandHandler
                 .WithScopedLifetime());
 
-            // ------------------- 6. رجیستر کردن State Machine و State های TelegramPanel -------------------
-            services.AddSingleton<IUserConversationStateService, InMemoryUserConversationStateService>(); // پیاده‌سازی در TelegramPanel.Application.States
-            services.AddScoped<ITelegramStateMachine, TelegramStateMachine>();         // پیاده‌سازی در TelegramPanel.Application.Services
+            // 5.1. Register ALL ITelegramCallbackQueryHandler implementations from the SAME assembly
             services.Scan(scan => scan
-                .FromAssemblyOf<TelegramStateMachine>() // از اسمبلی TelegramPanel.Application
+                .FromAssemblyOf<StartCommandHandler>() // Scans the assembly of StartCommandHandler again (or use another marker from same assembly)
+                .AddClasses(classes => classes.AssignableTo<ITelegramCallbackQueryHandler>())
+                .AsImplementedInterfaces() // Registers them as ITelegramCallbackQueryHandler
+                .WithScopedLifetime());
+            // This will pick up:
+            // - MenuCommandHandler (if it implements ITelegramCallbackQueryHandler)
+            // - MarketAnalysisCallbackHandler (if it implements ITelegramCallbackQueryHandler)
+            // - FundamentalAnalysisCallbackHandler (if it implements ITelegramCallbackQueryHandler)
+            // - Any other callback handlers in that assembly.
+
+            // REMOVE explicit registration if covered by scan:
+            // services.AddScoped<ITelegramCallbackQueryHandler, FundamentalAnalysisCallbackHandler>(); // This is now redundant if scan works
+
+            // ------------------- 6. Register State Machine & States -------------------
+            services.AddSingleton<IUserConversationStateService, InMemoryUserConversationStateService>();
+            services.AddScoped<ITelegramStateMachine, TelegramStateMachine>();
+            services.Scan(scan => scan
+                .FromAssemblyOf<TelegramStateMachine>()
                 .AddClasses(classes => classes.AssignableTo<ITelegramState>().Where(c => !c.IsAbstract && c.IsClass))
                 .AsImplementedInterfaces()
                 .WithScopedLifetime());
-            //  اگر IdleState دارید و با Scan پیدا نمی‌شود، دستی رجیستر کنید:
-            //  services.AddScoped<ITelegramState, IdleState>(); // پیاده‌سازی در TelegramPanel.Application.States
 
-            // ------------------- 7. رجیستر کردن پیاده‌سازی واقعی INotificationService -------------------
-            // این پیاده‌سازی، از ITelegramMessageSender (که در همین لایه TelegramPanel است) استفاده می‌کند.
-            // این رجیستری، پیاده‌سازی DummyNotificationService را که در AddApplicationServices رجیستر شده بود، override می‌کند.
-            services.AddScoped<INotificationService, TelegramNotificationService>(); // پیاده‌سازی در TelegramPanel.Infrastructure
+            // ------------------- 7. Register INotificationService Implementation -------------------
+            services.AddScoped<INotificationService, TelegramNotificationService>();
 
-            // ------------------- 8. رجیستر کردن سرویس‌های Hosted برای TelegramPanel -------------------
+            // ------------------- 8. Register Hosted Services -------------------
             services.AddHostedService<TelegramBotService>();
             services.AddHostedService<UpdateQueueConsumerService>();
-
-            // 📛📛📛 حذف رجیستری‌های مربوط به سرویس‌های Application اصلی از اینجا 📛📛📛
-            // services.AddScoped<ISubscriptionService, SubscriptionService>(); //  نباید اینجا باشد
-            // services.AddScoped<IPaymentService, PaymentService>(); //  نباید اینجا باشد
-            // services.AddScoped<IPaymentConfirmationService, PaymentConfirmationService>(); //  نباید اینجا باشد
 
             return services;
         }

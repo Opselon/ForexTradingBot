@@ -34,11 +34,30 @@ namespace TelegramPanel.Infrastructure // ✅ namespace باید اینجا شر
         Task SendTextMessageAsync(
             long chatId,
             string text,
-            ParseMode? parseMode = null,
+            ParseMode? parseMode = ParseMode.Markdown,
             ReplyMarkup? replyMarkup = null,
             CancellationToken cancellationToken = default,
-            // bool disableWebPagePreview = false); // 📛 حذف این پارامتر
-            LinkPreviewOptions? linkPreviewOptions = null); // ✅ پارامتر جدید و کامل‌تر
+            LinkPreviewOptions? linkPreviewOptions = null);
+
+        /// <summary>
+        /// Edits an existing message in a Telegram chat.
+        /// </summary>
+        /// <param name="chatId">Target chat ID.</param>
+        /// <param name="messageId">ID of the message to edit.</param>
+        /// <param name="text">New text content for the message.</param>
+        /// <param name="parseMode">Optional parse mode (Markdown/HTML).</param>
+        /// <param name="replyMarkup">Optional inline keyboard markup.</param>
+        /// <param name="cancellationToken">Cancellation token for the operation.</param>
+        /// <returns>A Task representing the asynchronous operation.</returns>
+        Task EditMessageTextAsync(
+            long chatId,
+            int messageId,
+            string text,
+            ParseMode? parseMode = ParseMode.Markdown,
+            InlineKeyboardMarkup? replyMarkup = null,
+            CancellationToken cancellationToken = default);
+
+        Task AnswerCallbackQueryAsync(string callbackQueryId, string? text = null, bool showAlert = false, string? url = null, int cacheTime = 0, CancellationToken cancellationToken = default);
     }
 
     public class TelegramMessageSender : ITelegramMessageSender
@@ -96,7 +115,7 @@ namespace TelegramPanel.Infrastructure // ✅ namespace باید اینجا شر
         public async Task SendTextMessageAsync(
             long chatId,
             string text,
-            ParseMode? parseMode = ParseMode.Markdown, // ✅ پارامتر parseMode دریافت می‌شود
+            ParseMode? parseMode = ParseMode.Markdown,
             ReplyMarkup? replyMarkup = null,
             CancellationToken cancellationToken = default,
             LinkPreviewOptions? linkPreviewOptions = null)
@@ -106,12 +125,13 @@ namespace TelegramPanel.Infrastructure // ✅ namespace باید اینجا شر
                 string logText = text.Length > 100 ? text.Substring(0, 100) + "..." : text;
                 _logger.LogDebug("Attempting to send text message to ChatID {ChatId}. Text (partial): '{Text}'", chatId, logText);
 
-                await _botClient.SendMessage( // ✅ استفاده از نام متد صحیح
+                await _botClient.SendMessage(
                     chatId: new ChatId(chatId),
                     text: text,
+                    parseMode: ParseMode.Markdown,
                     replyMarkup: replyMarkup,
-                    disableNotification: false, // مثال برای پارامترهای دیگر (اختیاری)
-                    protectContent: false,      // مثال برای پارامترهای دیگر (اختیاری)
+                    disableNotification: false,
+                    protectContent: false,
                     linkPreviewOptions: linkPreviewOptions,
                     cancellationToken: cancellationToken);
 
@@ -120,8 +140,66 @@ namespace TelegramPanel.Infrastructure // ✅ namespace باید اینجا شر
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error sending text message to ChatID {ChatId}. Text (partial): '{Text}'", chatId, text.Length > 100 ? text.Substring(0, 100) + "..." : text);
-                // می‌توانید خطا را دوباره throw کنید یا مدیریت کنید
-                // throw; // اگر می‌خواهید لایه بالاتر خطا را مدیریت کند
+                throw; // Let Polly or Hangfire handle the retry
+            }
+        }
+
+        public async Task EditMessageTextAsync(
+            long chatId,
+            int messageId,
+            string text,
+            ParseMode? parseMode = ParseMode.Markdown,
+            InlineKeyboardMarkup? replyMarkup = null,
+            CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                string logText = text.Length > 100 ? text.Substring(0, 100) + "..." : text;
+                _logger.LogDebug("Attempting to edit message. ChatID: {ChatId}, MessageID: {MessageId}, NewText (partial): '{Text}'", chatId, messageId, logText);
+
+                await _botClient.EditMessageText(
+                    chatId: new ChatId(chatId),
+                    messageId: messageId,
+                    text: text,
+                    parseMode: ParseMode.Markdown,
+                    replyMarkup: replyMarkup,
+                    cancellationToken: cancellationToken);
+
+                _logger.LogInformation("Successfully edited message. ChatID: {ChatId}, MessageID: {MessageId}", chatId, messageId);
+            }
+            catch (ApiRequestException ex) when (
+                ex.Message.Contains("message is not modified", StringComparison.OrdinalIgnoreCase) ||
+                ex.Message.Contains("message to edit not found", StringComparison.OrdinalIgnoreCase) ||
+                ex.Message.Contains("chat not found", StringComparison.OrdinalIgnoreCase) ||
+                ex.Message.Contains("bad request", StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogWarning("Failed to edit message. ChatID: {ChatId}, MessageID: {MessageId}. Telegram API Error: {ApiErrorMessage}",
+                    chatId, messageId, ex.Message);
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unexpected error editing message. ChatID: {ChatId}, MessageID: {MessageId}", chatId, messageId);
+                throw;
+            }
+        }
+
+        public async Task AnswerCallbackQueryAsync(string callbackQueryId, string? text = null, bool showAlert = false, string? url = null, int cacheTime = 0, CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                await _botClient.AnswerCallbackQuery(
+                    callbackQueryId: callbackQueryId,
+                    text: text,
+                    showAlert: showAlert,
+                    url: url,
+                    cacheTime: cacheTime,
+                    cancellationToken: cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error answering callback query {CallbackQueryId}", callbackQueryId);
+                throw;
             }
         }
     }

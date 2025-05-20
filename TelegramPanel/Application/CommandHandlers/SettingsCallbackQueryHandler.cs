@@ -33,7 +33,7 @@ namespace TelegramPanel.Application.CommandHandlers
     /// - (Future) Access language settings and privacy options.
     /// It interacts with user data, conversation state, and sends messages back to the user.
     /// </summary>
-    public class SettingsCallbackQueryHandler : ITelegramCommandHandler
+    public class SettingsCallbackQueryHandler : ITelegramCallbackQueryHandler
     {
         #region Private Readonly Fields
         private readonly ILogger<SettingsCallbackQueryHandler> _logger;
@@ -752,10 +752,7 @@ namespace TelegramPanel.Application.CommandHandlers
             */
 
             // Last row: Back to the main settings menu
-            keyboardRows.Add(new[]
-            {
-                InlineKeyboardButton.WithCallbackData("⬅️ Back to Settings Menu", SettingsCommandHandler.ShowSettingsMenuCallback)
-            });
+            keyboardRows.Add(new[] { InlineKeyboardButton.WithCallbackData("⬅️ Back to Settings Menu", SettingsCommandHandler.ShowSettingsMenuCallback) });
 
             var inlineKeyboard = new InlineKeyboardMarkup(keyboardRows);
 

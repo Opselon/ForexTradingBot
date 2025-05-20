@@ -2,18 +2,8 @@
 
 #region Usings
 // Using های استاندارد .NET و NuGet Packages
-using Microsoft.AspNetCore.Builder;         // برای WebApplicationBuilder, WebApplication, IApplicationBuilder
-using Microsoft.Extensions.DependencyInjection; // برای IServiceCollection, ServiceProviderServiceExtensions
-using Microsoft.Extensions.Hosting;           // برای IHostBuilder, IHostApplicationLifetime, HostingAbstractionsHostExtensions
-using Microsoft.Extensions.Logging;           // برای ILogger, LogLevel
-using Microsoft.OpenApi.Models;             // برای OpenApiInfo
-using Serilog;                              // برای Log, LoggerConfiguration, UseSerilog
-using System;                               // برای Environment, Guid, TimeSpan, Exception
-using System.Threading;                     // برای CancellationToken
-
 // Using های مربوط به پروژه‌های شما
 using Application;                          // برای متد توسعه‌دهنده AddApplicationServices
-using Application.Common.Interfaces;
 using Application.Interfaces; // برای IRssFetchingCoordinatorService (جهت زمان‌بندی Job در Hangfire)
 // using Application.Interfaces;          // معمولاً اینترفیس‌های Application مستقیماً اینجا نیاز نیستند مگر برای موارد خاص
 // using Application.Services;            // و نه پیاده‌سازی‌های آن
@@ -23,6 +13,9 @@ using Hangfire.Dashboard;                   // برای DashboardOptions, IDashb
 using Hangfire.MemoryStorage;             // برای UseMemoryStorage (Storage پیش‌فرض برای توسعه)
 // using Hangfire.SqlServer;              // اگر از SQL Server برای Hangfire استفاده می‌کنید
 using Infrastructure;                     // برای متد توسعه‌دهنده AddInfrastructureServices
+using Microsoft.EntityFrameworkCore;
+using Microsoft.OpenApi.Models;             // برای OpenApiInfo
+using Serilog;                              // برای Log, LoggerConfiguration, UseSerilog
 using Shared.Settings;                    // برای CryptoPaySettings (از پروژه Shared)
 using TelegramPanel.Extensions;           // برای متد توسعه‌دهنده AddTelegramPanelServices
 // using WebAPI.Filters; //  Namespace برای HangfireNoAuthFilter (اگر در این مسیر است و استفاده می‌کنید)

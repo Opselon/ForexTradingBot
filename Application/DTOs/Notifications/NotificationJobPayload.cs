@@ -1,6 +1,7 @@
 ﻿// File: Application/DTOs/Notifications/NotificationJobPayload.cs
 #region Usings
-using System.Collections.Generic; // برای List<NotificationButton>
+using System;
+using System.Collections.Generic;
 #endregion
 
 namespace Application.DTOs.Notifications // ✅ Namespace: Application.DTOs.Notifications
@@ -11,10 +12,22 @@ namespace Application.DTOs.Notifications // ✅ Namespace: Application.DTOs.Noti
     /// </summary>
     public class NotificationJobPayload
     {
+        #region Properties
 
-        public Guid? NewsItemSignalCategoryId { get; set; } // ✅ شناسه دسته‌بندی خبر (اگر دارد)
-        public string? NewsItemSignalCategoryName { get; set; } // ✅ نام دسته‌بندی خبر (برای نمایش در پیام)
-        public Guid NewsItemId { get; set; } // ✅ شناسه خود خبر برای ساخت CallbackData های خاص
+        /// <summary>
+        /// Gets or sets the unique identifier of the news item's signal category, if applicable.
+        /// </summary>
+        public Guid? NewsItemSignalCategoryId { get; set; }
+
+        /// <summary>
+        /// Gets or sets the name of the news item's signal category, used for display purposes in the notification message.
+        /// </summary>
+        public string? NewsItemSignalCategoryName { get; set; }
+
+        /// <summary>
+        /// Gets or sets the unique identifier of the news item itself, used for constructing specific callback data.
+        /// </summary>
+        public Guid NewsItemId { get; set; }
 
         /// <summary>
         /// The Telegram User ID of the recipient.
@@ -52,10 +65,20 @@ namespace Application.DTOs.Notifications // ✅ Namespace: Application.DTOs.Noti
         /// </summary>
         public Dictionary<string, string>? CustomData { get; set; }
 
+        #endregion
+
+        #region Constructor
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="NotificationJobPayload"/> class.
+        /// Initializes <see cref="Buttons"/> and <see cref="CustomData"/> to new instances.
+        /// </summary>
         public NotificationJobPayload()
         {
             Buttons = new List<NotificationButton>();
             CustomData = new Dictionary<string, string>();
         }
+
+        #endregion
     }
 }

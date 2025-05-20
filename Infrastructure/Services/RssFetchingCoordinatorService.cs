@@ -5,11 +5,6 @@ using Application.Interfaces;        // ✅ برای IRssFetchingCoordinatorServ
 using Domain.Entities;               // ✅ برای RssSource (در متد ProcessSingleFeedWithLoggingAsync)
 using Hangfire;
 using Microsoft.Extensions.Logging;
-using System;
-using System.Collections.Generic;    // ✅ برای Dictionary
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
 #endregion
 
 namespace Infrastructure.Services // ✅ Namespace صحیح

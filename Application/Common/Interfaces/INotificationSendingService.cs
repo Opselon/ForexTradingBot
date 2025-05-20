@@ -1,8 +1,6 @@
 ﻿// File: Application/Common/Interfaces/INotificationSendingService.cs
 #region Usings
 using Application.DTOs.Notifications; // برای NotificationJobPayload
-using System.Threading;
-using System.Threading.Tasks;
 #endregion
 
 namespace Application.Common.Interfaces // ✅ Namespace: Application.Common.Interfaces

@@ -37,6 +37,88 @@
 *   **User Management**: Secure registration and profile management.
 *   **Admin Panel (via API - Future)**: Endpoints for managing users, RSS sources, signals, and system settings.
 
-##  архитектура (Architecture)
+##   (Architecture)
 
 This project strictly adheres to the principles of **Clean Architecture** and incorporates elements of **Domain-Driven Design (DDD)** to ensure maintainability, testability, and scalability.
+
+
+*   **`Domain`**: The core of the application, containing business entities, enums, and value objects. It has no dependencies on other layers.
+*   **`Application`**: Contains the application-specific business logic (use cases, implemented as Commands/Queries with MediatR), DTOs, interfaces for services and repositories, and mappers (AutoMapper). Depends only on `Domain` (and potentially a `Shared` library).
+*   **`Infrastructure`**: Implements interfaces defined in the `Application` layer. Handles data persistence (EF Core, Repositories), interaction with external services (CryptoPay API, RSS feed fetching), and background job scheduling (Hangfire). Depends on `Application` and `Domain`.
+*   **`TelegramPanel`**: A presentation layer specifically for Telegram bot interactions. It includes Telegram-specific command handlers, inline keyboard logic, message formatters, and hosted services for the bot. Depends on the `Application` layer.
+*   **`BackgroundTasks`**: Houses the implementation of background job handlers (e.g., `NotificationSendingService`) invoked by Hangfire. Depends on `Application` and potentially `TelegramPanel` (for sending messages).
+*   **`WebAPI`**: The main entry point of the application (ASP.NET Core). Hosts the Telegram Webhook endpoint, CryptoPay Webhook endpoint, potentially an admin API, and the Hangfire Dashboard. Configures and runs the entire application. Depends on `Application`, `Infrastructure`, `TelegramPanel`, and `BackgroundTasks`.
+*   **`Shared`**: (Optional but recommended) A common library for cross-cutting concerns like custom exceptions, result patterns, string extensions, and localization resources. Has no project dependencies.
+
+## 🛠️ Technologies & Stack
+
+*   **Backend Framework**: .NET 9, ASP.NET Core
+*   **Database**: Entity Framework Core 9 (configurable for SQL Server or PostgreSQL)
+*   **Telegram Integration**: `Telegram.Bot` library
+*   **Background Jobs**: `Hangfire` (with MemoryStorage for dev, configurable for SQL/Postgres)
+*   **Logging**: `Serilog`
+*   **API Documentation**: `Swagger (OpenAPI)`
+*   **Mapping**: `AutoMapper`
+*   **Validation**: `FluentValidation`
+*   **MediatR**: For CQRS/Mediator pattern in the Application layer
+*   **HTTP Client Resilience**: `Polly` for retry policies
+*   **HTML Parsing**: `HtmlAgilityPack`
+*   **RSS/Atom Parsing**: `System.ServiceModel.Syndication`
+*   **Cryptocurrency Payments**: Crypto Pay API
+*   **Containerization (Planned)**: Docker
+
+## 📂 Project Structure (High-Level)
+
+
+## 🚀 Getting Started
+
+**(Placeholder for setup and running instructions - to be filled in by the developer)**
+
+1.  **Prerequisites**:
+    *   .NET 9 SDK (or specified version)
+    *   SQL Server / PostgreSQL instance (or use `MemoryStorage` for Hangfire/EF Core for initial dev)
+    *   ngrok (for testing Webhooks locally)
+2.  **Configuration**:
+    *   Clone the repository.
+    *   Create `appsettings.Development.json` in the `WebAPI` project.
+    *   Add your **Telegram Bot Token** (from BotFather) to `TelegramPanel:BotToken`.
+    *   Add your **CryptoPay API Token** (from @CryptoBot) to `CryptoPay:ApiToken`.
+    *   Configure your database `ConnectionStrings:DefaultConnection`.
+    *   (If using Webhook) Set up ngrok and update `TelegramPanel:WebhookAddress`.
+3.  **Database Migration**:
+    *   Use the provided PowerShell script (`Update-EfDatabase.ps1` or `Manage-EfMigrations.ps1`) or `dotnet ef` commands:
+        ```powershell
+        # From the root of the solution
+        dotnet ef migrations add InitialCreate -p src/Infrastructure -s src/WebAPI
+        dotnet ef database update -p src/Infrastructure -s src/WebAPI
+        ```
+4.  **Run the Application**:
+    *   Set `WebAPI` as the startup project and run.
+    *   Access the Hangfire dashboard at `/hangfire`.
+    *   Interact with your bot on Telegram!
+
+## 🔧 Key Modules & Functionality
+
+*   **`RssReaderService` (Infrastructure)**: Fetches, parses, and stores news items from RSS feeds, handling conditional GETs and duplicate prevention.
+*   **`NotificationDispatchService` (Application)**: Identifies target users for news/signals and enqueues notification jobs.
+*   **`NotificationSendingService` (BackgroundTasks)**: A Hangfire job handler that sends queued notifications to users via Telegram, managing rate limits and retries.
+*   **`UserService` (Application)**: Manages user registration, profile updates, and retrieval.
+*   **`SubscriptionService` & `PaymentService` (Application)**: Handle subscription logic and integration with the CryptoPay API for creating payment invoices.
+*   **`PaymentConfirmationService` (Application)**: Processes successful payment webhooks from CryptoPay to activate subscriptions.
+*   **Telegram Command Handlers (TelegramPanel)**: Specific handlers for Telegram commands like `/start`, `/menu`, `/settings`, and callback queries from inline buttons.
+*   **`TelegramBotService` (TelegramPanel)**: Manages the bot's connection to Telegram (Polling or Webhook setup).
+*   **`UpdateProcessingService` (TelegramPanel)**: Core of the Telegram update handling, managing a middleware pipeline and routing updates.
+
+## 🤝 Contributing
+
+**(Placeholder - Add guidelines if this becomes an open project)**
+Contributions are welcome! Please read the contributing guidelines (TODO) before submitting pull requests.
+
+## 📄 License
+
+**(Placeholder - Choose a license, e.g., MIT)**
+This project is licensed under the MIT License - see the LICENSE.md (TODO) file for details.
+
+---
+
+*This README provides a high-level overview. Detailed documentation for each module and API can be found within the codebase comments and (eventually) dedicated documentation files.*

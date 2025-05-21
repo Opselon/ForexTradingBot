@@ -75,6 +75,7 @@ namespace TelegramPanel.Extensions
 
             // Register Forwarding Services
             services.AddScoped<IForwardingJobActions, ForwardingJobActions>();
+            services.AddScoped<MessageForwardingService>();
 
             // This will pick up:
             // - MenuCommandHandler (if it implements ITelegramCallbackQueryHandler)

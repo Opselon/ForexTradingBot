@@ -27,6 +27,7 @@
   <ItemGroup>
     <Folder Include="Application\Commands\" />
     <Folder Include="Auth\" />
+    <Folder Include="Infrastructure\NewFolder\" />
     <Folder Include="Polling\" />
   </ItemGroup>
 

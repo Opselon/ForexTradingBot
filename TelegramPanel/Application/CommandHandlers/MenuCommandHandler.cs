@@ -6,6 +6,7 @@ using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Infrastructure;
+using TelegramPanel.Infrastructure.Helpers;
 #endregion
 
 namespace TelegramPanel.Application.CommandHandlers
@@ -41,20 +42,25 @@ namespace TelegramPanel.Application.CommandHandlers
         /// </summary>
         public static (string text, InlineKeyboardMarkup keyboard) GetMainMenuMarkup()
         {
-            var text = "Welcome to the Main Menu! Please choose an option:";
-            var inlineKeyboard = new InlineKeyboardMarkup(new[]
-            {
-                new [] {
-                    InlineKeyboardButton.WithCallbackData("📊 View Signals", SignalsCallbackData),
-                    InlineKeyboardButton.WithCallbackData("👤 My Profile", ProfileCallbackData),
-                    InlineKeyboardButton.WithCallbackData("📊 Market Analysis", MarketAnalysisData) 
+            var text = "Main Menu! Please choose an option:";
+            // استفاده از MarkupBuilder
+            var keyboard = MarkupBuilder.CreateInlineKeyboard(
+                new[] // ردیف اول
+                {
+            InlineKeyboardButton.WithCallbackData("📈 View Signals", SignalsCallbackData),
+            InlineKeyboardButton.WithCallbackData("📊 Market Analysis", MarketAnalysisData)
                 },
-                new [] {
-                    InlineKeyboardButton.WithCallbackData("💎 Subscribe / View Plans", SubscribeCallbackData),
-                    InlineKeyboardButton.WithCallbackData("⚙️ Settings", SettingsCallbackData)
+                new[] // ردیف دوم
+                {
+            InlineKeyboardButton.WithCallbackData("💎 Subscribe / Plans", SubscribeCallbackData)
+                },
+                new[] // ردیف سوم
+                {
+            InlineKeyboardButton.WithCallbackData("⚙️ Settings", SettingsCallbackData),
+            InlineKeyboardButton.WithCallbackData("👤 My Profile", ProfileCallbackData)
                 }
-            });
-            return (text, inlineKeyboard);
+            );
+            return (text, keyboard);
         }
         #endregion
 
@@ -82,7 +88,7 @@ namespace TelegramPanel.Application.CommandHandlers
             _logger.LogInformation("Handling /menu command for ChatID {ChatId}, UserID {UserId}", chatId, userId);
 
             // Use the static GetMainMenuMarkup method
-            var (text, inlineKeyboard) = GetMainMenuMarkup();
+            var (text, inlineKeyboard) = MenuCommandHandler.GetMainMenuMarkup(); //  اطمینان حاصل کنید که GetMainMenuMarkup اصلاح شده است
 
             await _messageSender.SendTextMessageAsync(
                 chatId: chatId,

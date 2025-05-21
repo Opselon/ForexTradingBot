@@ -12,6 +12,7 @@ using Telegram.Bot.Types.ReplyMarkups;
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Formatters;
 using TelegramPanel.Infrastructure;
+using TelegramPanel.Infrastructure.Helpers;
 #endregion
 
 namespace TelegramPanel.Application.CommandHandlers
@@ -194,7 +195,8 @@ namespace TelegramPanel.Application.CommandHandlers
             if (!Guid.TryParse(planIdString, out Guid selectedPlanId))
             {
                 _logger.LogWarning("Invalid PlanID format in callback data: {CallbackData}", callbackData);
-                await EditMessageOrSendNewAsync(chatId, messageIdToEdit, "Invalid plan selection. Please try again.", null, ParseMode.MarkdownV2, cancellationToken);
+                // EditMessageOrSendNewAsync باید ParseMode را از DefaultParseMode بگیرد یا به آن پاس داده شود
+                await EditMessageOrSendNewAsync(chatId, messageIdToEdit, "Invalid plan selection. Please try again.", null, ParseMode.Markdown, cancellationToken);
                 return;
             }
 
@@ -203,16 +205,20 @@ namespace TelegramPanel.Application.CommandHandlers
                                         "Selected Plan";
             _logger.LogInformation("UserID {TelegramUserId} selected PlanID: {PlanId} ({PlanName})", telegramUserId, selectedPlanId, planNameForDisplay);
 
-            var paymentOptionsText = $"You have selected: {TelegramMessageFormatter.Bold(planNameForDisplay, escapePlainText: false)}.\n\n" +
+            // استفاده از DefaultParseMode برای TelegramMessageFormatter
+            var paymentOptionsText = $"You have selected: {TelegramMessageFormatter.Bold(planNameForDisplay)}.\n\n" + // اطمینان از escapePlainText صحیح
                                      "Please choose your preferred cryptocurrency for payment:";
-            var paymentKeyboard = new InlineKeyboardMarkup(new[]
-            {
-                new [] { InlineKeyboardButton.WithCallbackData("💳 Pay with USDT", $"{PayWithCryptoPrefix}usdt_for_plan_{selectedPlanId}") },
-                new [] { InlineKeyboardButton.WithCallbackData("💳 Pay with TON", $"{PayWithCryptoPrefix}ton_for_plan_{selectedPlanId}") },
-                new [] { InlineKeyboardButton.WithCallbackData("💳 Pay with BTC", $"{PayWithCryptoPrefix}btc_for_plan_{selectedPlanId}") },
-                new [] { InlineKeyboardButton.WithCallbackData("⬅️ Change Plan", MenuCommandHandler.SubscribeCallbackData) }
-            });
-            await EditMessageOrSendNewAsync(chatId, messageIdToEdit, paymentOptionsText, paymentKeyboard, ParseMode.MarkdownV2, cancellationToken);
+
+            // ساخت paymentKeyboard با MarkupBuilder
+            var paymentKeyboard = MarkupBuilder.CreateInlineKeyboard(
+     new[] { InlineKeyboardButton.WithCallbackData("💳 Pay with USDT", $"{PayWithCryptoPrefix}usdt_for_plan_{selectedPlanId}") },
+     new[] { InlineKeyboardButton.WithCallbackData("💳 Pay with TON", $"{PayWithCryptoPrefix}ton_for_plan_{selectedPlanId}") },
+     new[] { InlineKeyboardButton.WithCallbackData("💳 Pay with BTC", $"{PayWithCryptoPrefix}btc_for_plan_{selectedPlanId}") },
+     new[] { InlineKeyboardButton.WithCallbackData("⬅️ Change Plan", MenuCommandHandler.SubscribeCallbackData) }
+ );
+
+            // پاس دادن DefaultParseMode به EditMessageOrSendNewAsync
+            await EditMessageOrSendNewAsync(chatId, messageIdToEdit, paymentOptionsText, paymentKeyboard, ParseMode.Markdown, cancellationToken);
         }
 
 
@@ -259,11 +265,8 @@ namespace TelegramPanel.Application.CommandHandlers
                                      $"Invoice ID: {TelegramMessageFormatter.Code(invoice.InvoiceId.ToString())}\n" +
                                      $"Status: {TelegramMessageFormatter.Italic(invoice.Status ?? "Unknown")}\n\n" +
                                      "This link may expire. Please complete your payment promptly.";
-                var paymentLinkKeyboard = new InlineKeyboardMarkup(new[]
-                {
-                    InlineKeyboardButton.WithUrl($"🚀 Pay with {selectedCryptoAsset} Now", invoice.BotInvoiceUrl!),
-                    InlineKeyboardButton.WithCallbackData("⬅️ Back to Main Menu", BackToMainMenuGeneral)
-                });
+                var paymentLinkKeyboard = MarkupBuilder.CreateInlineKeyboard(new[] { InlineKeyboardButton.WithUrl($"🚀 Pay with {selectedCryptoAsset} Now", invoice.BotInvoiceUrl!) },
+                                                                             new[] { InlineKeyboardButton.WithCallbackData("⬅️ Back to Main Menu", BackToMainMenuGeneral) });
                 await _botClient.SendMessage(chatId, paymentMessage, ParseMode.Markdown, replyMarkup: paymentLinkKeyboard, cancellationToken: cancellationToken);
                 //  می‌توانید پیام "در حال پردازش" را حذف کنید
                 // await _botClient.DeleteMessageAsync(chatId, messageIdToEdit, cancellationToken);
@@ -306,13 +309,11 @@ namespace TelegramPanel.Application.CommandHandlers
                             $"(Price: ~$25 USD)\n\n" +
                             "Select a plan to proceed with payment options:";
 
-            var plansKeyboard = new InlineKeyboardMarkup(new[]
-            {
-                //  CallbackData باید شامل یک شناسه منحصر به فرد برای هر پلن باشد.
-                new [] { InlineKeyboardButton.WithCallbackData("🌟 Premium Monthly", $"{SelectPlanPrefix}{PremiumMonthlyPlanId}") },
-                new [] { InlineKeyboardButton.WithCallbackData("✨ Premium Quarterly", $"{SelectPlanPrefix}{PremiumQuarterlyPlanId}") },
-                new [] { InlineKeyboardButton.WithCallbackData("⬅️ Back to Main Menu", BackToMainMenuGeneral) }
-            });
+            var plansKeyboard = MarkupBuilder.CreateInlineKeyboard(
+             new[] { InlineKeyboardButton.WithCallbackData("🌟 Premium Monthly", $"{SelectPlanPrefix}{PremiumMonthlyPlanId}") },
+             new[] { InlineKeyboardButton.WithCallbackData("✨ Premium Quarterly", $"{SelectPlanPrefix}{PremiumQuarterlyPlanId}") },
+             new[] { InlineKeyboardButton.WithCallbackData("⬅️ Back to Main Menu", BackToMainMenuGeneral) }
+         );
 
             await EditMessageOrSendNewAsync(chatId, messageIdToEdit, plansText, plansKeyboard, ParseMode.Markdown, cancellationToken);
         }
@@ -343,9 +344,17 @@ namespace TelegramPanel.Application.CommandHandlers
                 sb.AppendLine("No active signals available at the moment. Please check back later!");
             }
 
-            var backKeyboard = new InlineKeyboardMarkup(InlineKeyboardButton.WithCallbackData("⬅️ Back to Main Menu", GeneralBackToMainMenuCallback));
+            var backKeyboard = MarkupBuilder.CreateInlineKeyboard(
+        InlineKeyboardButton.WithCallbackData("⬅️ Back to Main Menu", GeneralBackToMainMenuCallback)
+        );
+
             await EditMessageOrSendNewAsync(chatId, messageIdToEdit, sb.ToString(), backKeyboard, ParseMode.Markdown, cancellationToken);
         }
+
+        // مثال برای ShowSubscriptionPlansAsync
+
+
+        
 
         private async Task HandleMyProfileAsync(long chatId, long telegramUserId, int messageIdToEdit, CancellationToken cancellationToken)
         {
@@ -395,7 +404,8 @@ namespace TelegramPanel.Application.CommandHandlers
                 sb.AppendLine("Subscription: No active subscription.");
             }
 
-            var backKeyboard = new InlineKeyboardMarkup(InlineKeyboardButton.WithCallbackData("⬅️ Back to Main Menu", GeneralBackToMainMenuCallback));
+            var backKeyboard = MarkupBuilder.CreateInlineKeyboard(
+     InlineKeyboardButton.WithCallbackData("⬅️ Back to Main Menu", GeneralBackToMainMenuCallback) );
             await EditMessageOrSendNewAsync(chatId, messageIdToEdit, sb.ToString(), backKeyboard, ParseMode.MarkdownV2, cancellationToken);
         }
 
@@ -409,12 +419,11 @@ namespace TelegramPanel.Application.CommandHandlers
                             "▫️ *Premium Tier* (Quarterly): Same as monthly premium with a discount.\n\n" +
                             "Please select a plan to learn more or subscribe:";
 
-            var plansKeyboard = new InlineKeyboardMarkup(new[]
-            {
-                new [] { InlineKeyboardButton.WithCallbackData("🌟 Premium Monthly", "subscribe_premium_1m") }, // callback data برای هر پلن
-                new [] { InlineKeyboardButton.WithCallbackData("✨ Premium Quarterly", "subscribe_premium_3m") },
-                new [] { InlineKeyboardButton.WithCallbackData("⬅️ Back to Main Menu", GeneralBackToMainMenuCallback) }
-            });
+            var plansKeyboard = MarkupBuilder.CreateInlineKeyboard(
+      new[] { InlineKeyboardButton.WithCallbackData("🌟 Premium Monthly", "subscribe_premium_1m") },
+      new[] { InlineKeyboardButton.WithCallbackData("✨ Premium Quarterly", "subscribe_premium_3m") },
+      new[] { InlineKeyboardButton.WithCallbackData("⬅️ Back to Main Menu", GeneralBackToMainMenuCallback) }
+  );
 
             await EditMessageOrSendNewAsync(chatId, messageIdToEdit, plansText, plansKeyboard, ParseMode.Markdown, cancellationToken);
         }
@@ -439,20 +448,11 @@ namespace TelegramPanel.Application.CommandHandlers
                                    "Please choose a category to configure:";
 
             // دکمه‌های منوی تنظیمات (اینها باید با ثابت‌های CallbackData در SettingsCommandHandler و SettingsCallbackQueryHandler مطابقت داشته باشند)
-            var settingsKeyboard = new InlineKeyboardMarkup(new[]
-            {
-                // دکمه برای رفتن به تنظیمات برگزیده دسته‌بندی سیگنال
-                new [] { InlineKeyboardButton.WithCallbackData("📊 My Signal Preferences", SettingsCommandHandler.PrefsSignalCategoriesCallback) },
-                // دکمه برای رفتن به تنظیمات نوتیفیکیشن
-                new [] { InlineKeyboardButton.WithCallbackData("🔔 Notification Settings", SettingsCommandHandler.PrefsNotificationsCallback) },
-                // دکمه برای مشاهده اطلاعات اشتراک
-                new [] { InlineKeyboardButton.WithCallbackData("⭐ My Subscription", SettingsCommandHandler.MySubscriptionInfoCallback) },
-                //  می‌توانید دکمه‌های اختیاری دیگری اضافه کنید:
-                // new [] { InlineKeyboardButton.WithCallbackData("📜 Signal History", SettingsCommandHandler.SignalHistoryCallback) },
-                // new [] { InlineKeyboardButton.WithCallbackData("📢 Public Signals", SettingsCommandHandler.PublicSignalsCallback) },
-                // دکمه بازگشت به منوی اصلی (که توسط همین MenuCallbackQueryHandler پردازش می‌شود)
-                new [] { InlineKeyboardButton.WithCallbackData("⬅️ Back to Main Menu", BackToMainMenuGeneral) } // استفاده از ثابت همین کلاس
-            });
+            var settingsKeyboard = MarkupBuilder.CreateInlineKeyboard(
+     new[] { InlineKeyboardButton.WithCallbackData("📊 My Signal Preferences", SettingsCommandHandler.PrefsSignalCategoriesCallback) },
+     new[] { InlineKeyboardButton.WithCallbackData("🔔 Notification Settings", SettingsCommandHandler.PrefsNotificationsCallback) },
+     new[] { InlineKeyboardButton.WithCallbackData("⭐ My Subscription", SettingsCommandHandler.MySubscriptionInfoCallback) },
+     new[] { InlineKeyboardButton.WithCallbackData("⬅️ Back to Main Menu", BackToMainMenuGeneral)});
 
             // ویرایش پیام قبلی (که دکمه‌های منوی اصلی را داشت) با منوی تنظیمات جدید
             await EditMessageOrSendNewAsync(

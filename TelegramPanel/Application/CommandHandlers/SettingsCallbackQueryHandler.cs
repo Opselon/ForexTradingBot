@@ -19,7 +19,8 @@ using Telegram.Bot.Types.ReplyMarkups; // برای InlineKeyboardMarkup, InlineK
 using TelegramPanel.Application.Interfaces; // برای ITelegramCommandHandler, ITelegramStateMachine
 using TelegramPanel.Application.States;   // برای IUserConversationStateService, UserConversationState
 using TelegramPanel.Formatters;           // برای TelegramMessageFormatter
-using TelegramPanel.Infrastructure;       // برای ITelegramMessageSender
+using TelegramPanel.Infrastructure;
+using TelegramPanel.Infrastructure.Helpers;       // برای ITelegramMessageSender
 #endregion
 
 namespace TelegramPanel.Application.CommandHandlers
@@ -255,6 +256,11 @@ namespace TelegramPanel.Application.CommandHandlers
         /// </summary>
         private async Task ShowSignalCategoryPreferencesAsync(Domain.Entities.User userEntity, long chatId, int messageIdToEdit, CancellationToken cancellationToken)
         {
+
+
+
+
+
             _logger.LogInformation("UserID {SystemUserId} (TelegramID: {TelegramId}): Displaying signal category preferences.", userEntity.Id, userEntity.TelegramId);
 
             var allCategories = (await _categoryRepository.GetAllAsync(cancellationToken))
@@ -297,14 +303,17 @@ namespace TelegramPanel.Application.CommandHandlers
                        "You will receive signals from your chosen categories.\n" +
                        TelegramMessageFormatter.Italic("Note: Access to VIP category signals requires an active VIP subscription.", escapePlainText: false) + "\n\n" +
                        "Press 'Save Preferences' when you are done.";
+            var keyboardRowArrays = new List<InlineKeyboardButton[]>(); //  
 
-            var keyboardRows = new List<IEnumerable<InlineKeyboardButton>>();
-            // Add "Select All" / "Deselect All" buttons
-            keyboardRows.Add(new[]
-            {
-                InlineKeyboardButton.WithCallbackData("✅ Select All", SelectAllSignalCategoriesCallback),
-                InlineKeyboardButton.WithCallbackData("⬜ Deselect All", DeselectAllSignalCategoriesCallback)
-            });
+            // دکمه‌های Select All / Deselect All
+            keyboardRowArrays.Add(new[]
+{
+    InlineKeyboardButton.WithCallbackData("✅ Select All", SelectAllSignalCategoriesCallback),
+    InlineKeyboardButton.WithCallbackData("⬜ Deselect All", DeselectAllSignalCategoriesCallback)
+});
+            // ...
+            // await EditMessageOrSendNewAsync(chatId, messageIdToEdit, text, new InlineKeyboardMarkup(keyboardRows), ...);
+            // به جای خط بالا، از MarkupBuilder استفاده کنید اگر keyboardRows از نوع IEnumerable<IEnumerable<...>> است:
 
             foreach (var category in allCategories)
             {
@@ -313,13 +322,16 @@ namespace TelegramPanel.Application.CommandHandlers
                 //  string categoryDisplayName = category.IsVip ? $"🌟 {category.Name} (VIP)" : category.Name;
                 string categoryDisplayName = category.Name; // Assuming Name is already good for display
                 string buttonText = $"{(isSelected ? "✅" : "⬜")} {TelegramMessageFormatter.EscapeMarkdownV2(categoryDisplayName)}";
-                keyboardRows.Add(new[] { InlineKeyboardButton.WithCallbackData(buttonText, $"{ToggleSignalCategoryPrefix}{category.Id}") });
+                keyboardRowArrays.Add(new[] { InlineKeyboardButton.WithCallbackData(buttonText, $"{ToggleSignalCategoryPrefix}{category.Id}") });
             }
 
-            keyboardRows.Add(new[] { InlineKeyboardButton.WithCallbackData("💾 Save Preferences", SaveSignalPreferencesCallback) });
-            keyboardRows.Add(new[] { InlineKeyboardButton.WithCallbackData("⬅️ Back to Settings Menu", SettingsCommandHandler.ShowSettingsMenuCallback) });
+            keyboardRowArrays.Add(new[] { InlineKeyboardButton.WithCallbackData("💾 Save Preferences", SaveSignalPreferencesCallback) });
+            keyboardRowArrays.Add(new[] { InlineKeyboardButton.WithCallbackData("⬅️ Back to Settings Menu", SettingsCommandHandler.ShowSettingsMenuCallback) });
 
-            await EditMessageOrSendNewAsync(chatId, messageIdToEdit, text, new InlineKeyboardMarkup(keyboardRows), ParseMode.MarkdownV2, cancellationToken);
+            var finalKeyboard = MarkupBuilder.CreateInlineKeyboard(keyboardRowArrays.ToArray());
+
+
+            await EditMessageOrSendNewAsync(chatId, messageIdToEdit, text, finalKeyboard, ParseMode.Markdown, cancellationToken);
         }
 
         /// <summary>
@@ -471,10 +483,10 @@ namespace TelegramPanel.Application.CommandHandlers
             bool isVipUser = IsUserVip(activeSubscription);
 
             //  ایجاد لیست ردیف‌های دکمه
-            var keyboardRows = new List<IEnumerable<InlineKeyboardButton>>(); // ✅ نوع صحیح
+            var keyboardRowList = new List<List<InlineKeyboardButton>>();
 
             // ردیف اول: General Bot Updates
-            keyboardRows.Add(new[] { InlineKeyboardButton.WithCallbackData(
+            keyboardRowList.Add(new List<InlineKeyboardButton> { InlineKeyboardButton.WithCallbackData(
         $"{(userEntity.EnableGeneralNotifications ? "✅" : "⬜")} General Bot Updates",
         $"{ToggleNotificationPrefix}{NotificationTypeGeneral}")
     });
@@ -482,29 +494,30 @@ namespace TelegramPanel.Application.CommandHandlers
             // ردیف دوم: VIP Signal Alerts (شرطی)
             if (isVipUser)
             {
-                keyboardRows.Add(new[] { InlineKeyboardButton.WithCallbackData(
+                keyboardRowList.Add(new List<InlineKeyboardButton> { InlineKeyboardButton.WithCallbackData(
             $"{(userEntity.EnableVipSignalNotifications ? "✅" : "⬜")} ✨ VIP Signal Alerts",
             $"{ToggleNotificationPrefix}{NotificationTypeVipSignal}")
         });
             }
             else
             {
-                keyboardRows.Add(new[] { InlineKeyboardButton.WithCallbackData(
+                keyboardRowList.Add(new List<InlineKeyboardButton> { InlineKeyboardButton.WithCallbackData(
             "💎 Enable VIP Signal Alerts (Upgrade Required)",
             MenuCommandHandler.SubscribeCallbackData) // لینک به صفحه اشتراک
         });
             }
 
             // ردیف سوم: RSS News Updates
-            keyboardRows.Add(new[] { InlineKeyboardButton.WithCallbackData(
+            keyboardRowList.Add(new List<InlineKeyboardButton> { InlineKeyboardButton.WithCallbackData(
         $"{(userEntity.EnableRssNewsNotifications ? "✅" : "⬜")} RSS News Updates",
         $"{ToggleNotificationPrefix}{NotificationTypeRssNews}")
     });
-
+            var finalKeyboard = new InlineKeyboardMarkup(keyboardRowList);
             // ردیف چهارم: Back to Settings Menu
-            keyboardRows.Add(new[] { InlineKeyboardButton.WithCallbackData("⬅️ Back to Settings Menu", SettingsCommandHandler.ShowSettingsMenuCallback) });
+            keyboardRowList.Add(new List<InlineKeyboardButton> { InlineKeyboardButton.WithCallbackData("⬅️ Back to Settings Menu", SettingsCommandHandler.ShowSettingsMenuCallback) });
 
-            await EditMessageOrSendNewAsync(chatId, messageIdToEdit, text, new InlineKeyboardMarkup(keyboardRows), ParseMode.MarkdownV2, cancellationToken);
+            await EditMessageOrSendNewAsync(chatId, messageIdToEdit, text, finalKeyboard, ParseMode.Markdown, cancellationToken);
+
         }
 
         /// <summary>
@@ -617,19 +630,21 @@ namespace TelegramPanel.Application.CommandHandlers
             }
 
             //  ایجاد لیست ردیف‌های دکمه
-            var keyboardRows = new List<IEnumerable<InlineKeyboardButton>>(); // ✅ نوع صحیح
+            var keyboardRowList = new List<List<InlineKeyboardButton>>();
 
             // ردیف اول: دکمه مدیریت/خرید اشتراک
-            keyboardRows.Add(new[] { InlineKeyboardButton.WithCallbackData(
+            keyboardRowList.Add(new List<InlineKeyboardButton> { InlineKeyboardButton.WithCallbackData(
         userDto.ActiveSubscription != null ? "🔄 Manage / Renew Subscription" : "💎 View Subscription Plans",
         MenuCommandHandler.SubscribeCallbackData
     )});
 
+            var finalKeyboard = new InlineKeyboardMarkup(keyboardRowList);
             // ردیف دوم: دکمه بازگشت
-            keyboardRows.Add(new[] { InlineKeyboardButton.WithCallbackData("⬅️ Back to Settings Menu", SettingsCommandHandler.ShowSettingsMenuCallback) });
+            keyboardRowList.Add(new List<InlineKeyboardButton> { InlineKeyboardButton.WithCallbackData("⬅️ Back to Settings Menu", SettingsCommandHandler.ShowSettingsMenuCallback) });
 
-            await EditMessageOrSendNewAsync(chatId, messageIdToEdit, sb.ToString(), new InlineKeyboardMarkup(keyboardRows), ParseMode.MarkdownV2, cancellationToken);
+            await EditMessageOrSendNewAsync(chatId, messageIdToEdit, sb.ToString(), finalKeyboard, ParseMode.Markdown, cancellationToken);
         }
+
         #endregion
 
         #region Language & Privacy Settings Methods (Placeholders - To be fully implemented)
@@ -643,14 +658,10 @@ namespace TelegramPanel.Application.CommandHandlers
             var text = TelegramMessageFormatter.Bold("🌐 Language Settings", escapePlainText: false) + "\n\n" +
                        $"Your current language is: {TelegramMessageFormatter.Bold(userEntity.PreferredLanguage.ToUpperInvariant())}\n" +
                        "Select your preferred language for the bot interface:";
-
-            var keyboard = new InlineKeyboardMarkup(new[]
-            {
-                // Add "🔹" or similar to indicate current selection
+            var keyboard = MarkupBuilder.CreateInlineKeyboard(
                 new[] { InlineKeyboardButton.WithCallbackData($"{(userEntity.PreferredLanguage == "en" ? "🔹 " : "")}🇬🇧 English", $"{SelectLanguagePrefix}en") },
-                // new[] { InlineKeyboardButton.WithCallbackData($"{(userEntity.PreferredLanguage == "fa" ? "🔹 " : "")}🇮🇷 فارسی (Persian)", $"{SelectLanguagePrefix}fa") },
                 new[] { InlineKeyboardButton.WithCallbackData("⬅️ Back to Settings Menu", SettingsCommandHandler.ShowSettingsMenuCallback) }
-            });
+            );
             await EditMessageOrSendNewAsync(chatId, messageIdToEdit, text, keyboard, ParseMode.MarkdownV2, cancellationToken);
         }
 
@@ -752,12 +763,12 @@ namespace TelegramPanel.Application.CommandHandlers
             */
 
             // Last row: Back to the main settings menu
-            keyboardRows.Add(new[] { InlineKeyboardButton.WithCallbackData("⬅️ Back to Settings Menu", SettingsCommandHandler.ShowSettingsMenuCallback) });
-
-            var inlineKeyboard = new InlineKeyboardMarkup(keyboardRows);
-
-            // Edit the previous message or send a new one with the privacy settings information.
-            await EditMessageOrSendNewAsync(chatId, messageIdToEdit, textBuilder.ToString(), inlineKeyboard, ParseMode.MarkdownV2, cancellationToken);
+            var keyboardRowArrays = new List<InlineKeyboardButton[]>();
+            keyboardRowArrays.Add(new[] { InlineKeyboardButton.WithUrl("📜 View Privacy Policy Online", privacyPolicyUrl) });
+            keyboardRowArrays.Add(new[] { InlineKeyboardButton.WithCallbackData("⬅️ Back to Settings Menu", SettingsCommandHandler.ShowSettingsMenuCallback) });
+            var finalKeyboard = MarkupBuilder.CreateInlineKeyboard(keyboardRowArrays.ToArray());
+            // await EditMessageOrSendNewAsync(chatId, messageIdToEdit, textBuilder.ToString(), inlineKeyboard, ...); // قبلی
+            await EditMessageOrSendNewAsync(chatId, messageIdToEdit, textBuilder.ToString(), finalKeyboard, ParseMode.Markdown, cancellationToken);
         }
         #endregion
 

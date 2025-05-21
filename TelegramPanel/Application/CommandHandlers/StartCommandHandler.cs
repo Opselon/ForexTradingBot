@@ -7,7 +7,8 @@ using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
 using TelegramPanel.Application.Interfaces; // برای ITelegramCommandHandler
 using TelegramPanel.Formatters;         // برای TelegramMessageFormatter
-using TelegramPanel.Infrastructure;       // برای ITelegramMessageSender
+using TelegramPanel.Infrastructure;
+using TelegramPanel.Infrastructure.Helpers;       // برای ITelegramMessageSender
 
 namespace TelegramPanel.Application.CommandHandlers
 {
@@ -224,38 +225,33 @@ namespace TelegramPanel.Application.CommandHandlers
                               "• 📰 Market analysis and insights\n" +
                               (isExistingUser ? "• 💼 Portfolio tracking\n• 🔔 Customizable notifications\n\n" :
                                "• 💼 Portfolio tracking\n\n") +
-                              "Use the menu below or type /help for more information."; // Updated to reflect menu usage
+                              "Use the menu below or type /help for more information.";
 
-            // --- UPDATED KEYBOARD for /start ---
-            var keyboard = new InlineKeyboardMarkup(new[]
-            {
-            // Row 1
-            new []
-            {
-                InlineKeyboardButton.WithCallbackData("📈 Gold Signals", MenuCommandHandler.SignalsCallbackData), // Existing
-                InlineKeyboardButton.WithCallbackData("📊 Market Analysis", "market_analysis")                     // Existing (handled by MarketAnalysisCallbackHandler)
-            },
-            // Row 2
-            new []
-            {
-                InlineKeyboardButton.WithCallbackData("💎 Subscribe", MenuCommandHandler.SubscribeCallbackData), // <<<< NEW/MODIFIED for subscribe
-                InlineKeyboardButton.WithCallbackData("⚙️ Settings", MenuCommandHandler.SettingsCallbackData)     // Existing
-            },
-            // Row 3
-            new []
-            {
-                InlineKeyboardButton.WithCallbackData("👤 My Profile", MenuCommandHandler.ProfileCallbackData) // Existing
-                // You could add another button here if desired, e.g., Help
-                // InlineKeyboardButton.WithCallbackData("❓ Help", "menu_help_info") // Example for a help button
-            }
-            // You can add more rows for other primary actions
-        });
+            var keyboard = MarkupBuilder.CreateInlineKeyboard(
+           new[] // ردیف اول
+           {
+            InlineKeyboardButton.WithCallbackData("📈 Gold Signals", MenuCommandHandler.SignalsCallbackData),
+            InlineKeyboardButton.WithCallbackData("📊 Market Analysis", "market_analysis")
+           },
+           new[] // ردیف دوم
+           {
+            InlineKeyboardButton.WithCallbackData("💎 Subscribe", MenuCommandHandler.SubscribeCallbackData),
+            InlineKeyboardButton.WithCallbackData("⚙️ Settings", MenuCommandHandler.SettingsCallbackData)
+           },
+           new[] // ردیف سوم
+           {
+            InlineKeyboardButton.WithCallbackData("👤 My Profile", MenuCommandHandler.ProfileCallbackData)
+           }
+       );
+
+
+         
 
             await _messageSender.SendTextMessageAsync(
                 chatId,
                 messageBody,
                 ParseMode.MarkdownV2,
-                replyMarkup: keyboard,
+                replyMarkup: keyboard, // Now keyboard is constructed with Lists
                 cancellationToken: cancellationToken);
         }
     }

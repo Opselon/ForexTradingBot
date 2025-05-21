@@ -16,8 +16,12 @@ using Infrastructure;                     // برای متد توسعه‌دهن
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Models;             // برای OpenApiInfo
 using Serilog;                              // برای Log, LoggerConfiguration, UseSerilog
+using Shared.Helpers;
 using Shared.Settings;                    // برای CryptoPaySettings (از پروژه Shared)
-using TelegramPanel.Extensions;           // برای متد توسعه‌دهنده AddTelegramPanelServices
+using TelegramPanel.Application.Interfaces;
+using TelegramPanel.Extensions;
+using TelegramPanel.Infrastructure;
+using static TelegramPanel.Infrastructure.ActualTelegramMessageActions;           // برای متد توسعه‌دهنده AddTelegramPanelServices
 // using WebAPI.Filters; //  Namespace برای HangfireNoAuthFilter (اگر در این مسیر است و استفاده می‌کنید)
 #endregion
 
@@ -109,13 +113,15 @@ try
 
     builder.Services.AddBackgroundTasksServices();     // رجیستر کردن سرویس‌های پس‌زمینه (مانند Job Handler های Hangfire)
     Log.Information("BackgroundTasks layer services registered.");
-
+    SqlServiceManager.EnsureSqlServicesRunning();
     //  ❌❌ یادآوری: رجیستری‌های تکراری یا جابجا شده باید از اینجا حذف شده باشند ❌❌
     //  MediatR باید در AddApplicationServices با اسمبلی لایه Application رجیستر شود.
     //  ISignalService و سایر سرویس‌های لایه Application باید در AddApplicationServices رجیستر شوند.
     #endregion
 
     #region Configure Hangfire
+
+
     // ------------------- ۵. پیکربندی Hangfire برای اجرای کارهای پس‌زمینه -------------------
     builder.Services.AddHangfire(hangfireConfiguration => hangfireConfiguration
         .SetDataCompatibilityLevel(CompatibilityLevel.Version_180) //  استفاده از آخرین سطح سازگاری
@@ -137,7 +143,8 @@ try
     */
     );
     Log.Information("Hangfire services (with MemoryStorage for development) added.");
-
+    builder.Services.AddScoped<IActualTelegramMessageActions, ActualTelegramMessageActions>();
+    builder.Services.AddScoped<ITelegramMessageSender, HangfireRelayTelegramMessageSender>();
     // اضافه کردن سرور Hangfire که مسئول برداشتن و اجرای Job ها از صف است.
     builder.Services.AddHangfireServer(options =>
     {

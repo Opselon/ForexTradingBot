@@ -237,7 +237,8 @@ namespace TelegramPanel.Infrastructure.Services
             {
                 var callbackData = update.CallbackQuery.Data;
                 // Example: if this handler is *only* for a specific set of callbacks
-                // that are NOT handled by MarketAnalysisCallbackHandler or FundamentalAnalysisCallbackHandler.
+                // that are NOT handled by MarketAnalysisCallbackHandler or
+                // .
                 // Let's assume it was handling "change_currency" as per its original code.
                 if (callbackData == "change_currency") // Example prefix
                 {

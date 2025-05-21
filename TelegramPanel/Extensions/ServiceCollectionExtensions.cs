@@ -13,6 +13,7 @@ using TelegramPanel.Infrastructure;         // For concrete service implementati
 using TelegramPanel.Infrastructure.Services; // For concrete service implementations like TelegramMessageSender
 using TelegramPanel.Queue;
 using TelegramPanel.Settings;
+using static TelegramPanel.Infrastructure.ActualTelegramMessageActions;
 // using Scrutor; // Scrutor is available via IServiceCollection extensions, no direct using needed here
 
 #endregion
@@ -39,7 +40,7 @@ namespace TelegramPanel.Extensions
 
             // 3. Register Core TelegramPanel Services
             services.AddSingleton<ITelegramUpdateChannel, TelegramUpdateChannel>();
-            services.AddScoped<ITelegramMessageSender, TelegramMessageSender>(); // Or TelegramMessageSenderWithHangfire
+         
             services.AddScoped<ITelegramUpdateProcessor, UpdateProcessingService>();
             services.AddScoped<IMarketDataService, MarketDataService>();
 
@@ -64,7 +65,12 @@ namespace TelegramPanel.Extensions
                 .FromAssemblyOf<StartCommandHandler>() // Scans the assembly of StartCommandHandler again (or use another marker from same assembly)
                 .AddClasses(classes => classes.AssignableTo<ITelegramCallbackQueryHandler>())
                 .AsImplementedInterfaces() // Registers them as ITelegramCallbackQueryHandler
-                .WithScopedLifetime());
+            .WithScopedLifetime());
+
+            services.AddScoped<IActualTelegramMessageActions, ActualTelegramMessageActions>(); // << ثبت صحیح برای اجرای واقعی
+                                                                                               // سپس ITelegramMessageSender که جاب‌ها را به Hangfire رله می‌کند
+            services.AddScoped<ITelegramMessageSender, HangfireRelayTelegramMessageSender>(); // << ثبت صحیح برای انکیو کردن
+
             // This will pick up:
             // - MenuCommandHandler (if it implements ITelegramCallbackQueryHandler)
             // - MarketAnalysisCallbackHandler (if it implements ITelegramCallbackQueryHandler)

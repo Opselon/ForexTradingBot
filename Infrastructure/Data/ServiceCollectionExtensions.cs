@@ -93,6 +93,7 @@ namespace Infrastructure
                 ;
 
             // 5. رجیستر کردن Repository
+
             services.AddScoped<INewsItemRepository, NewsItemRepository>();
             services.AddScoped<IRssReaderService, RssReaderService>();
             services.AddSingleton<INotificationJobScheduler, HangfireNotificationJobScheduler>();

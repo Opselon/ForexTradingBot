@@ -9,7 +9,8 @@ using Telegram.Bot.Types.ReplyMarkups; // برای InlineKeyboardMarkup, InlineK
 // Using های مربوط به پروژه TelegramPanel
 using TelegramPanel.Application.Interfaces; // برای ITelegramCommandHandler
 using TelegramPanel.Formatters;           // برای TelegramMessageFormatter (ابزار فرمت‌بندی متن)
-using TelegramPanel.Infrastructure;       // برای ITelegramMessageSender (سرویس ارسال پیام)
+using TelegramPanel.Infrastructure;
+using TelegramPanel.Infrastructure.Helpers;       // برای ITelegramMessageSender (سرویس ارسال پیام)
 #endregion
 
 namespace TelegramPanel.Application.CommandHandlers
@@ -153,29 +154,21 @@ namespace TelegramPanel.Application.CommandHandlers
 
             // ساخت دکمه‌های Inline برای منوی تنظیمات.
             // هر دکمه یک متن نمایشی و یک CallbackData دارد که هنگام کلیک ارسال می‌شود.
-            var keyboard = new InlineKeyboardMarkup(new[] // آرایه‌ای از ردیف‌های دکمه
-            {
-                // ردیف اول دکمه‌ها
-                new []
-                {
-                    InlineKeyboardButton.WithCallbackData("📊 My Signal Preferences", PrefsSignalCategoriesCallback),
-                    InlineKeyboardButton.WithCallbackData("🔔 Notification Settings", PrefsNotificationsCallback)
-                },
-                // ردیف دوم دکمه‌ها
-                new []
-                {
-                    InlineKeyboardButton.WithCallbackData("⭐ My Subscription & Billing", MySubscriptionInfoCallback)
-                    // می‌توانید دکمه‌های اختیاری زیر را بعداً از کامنت خارج و پیاده‌سازی کنید:
-                    // , InlineKeyboardButton.WithCallbackData("📜 Signal History / Performance", SignalHistoryCallback)
-                    // , InlineKeyboardButton.WithCallbackData("📢 View Public Signals", PublicSignalsCallback)
-                },
-                // ردیف سوم: دکمه بازگشت به منوی اصلی برنامه
-                new []
-                {
-                    // CallbackData این دکمه باید توسط MenuCallbackQueryHandler پردازش شود.
-                    InlineKeyboardButton.WithCallbackData("⬅️ Back to Main Menu", MenuCallbackQueryHandler.BackToMainMenuGeneral)
-                }
-            });
+            var keyboard = MarkupBuilder.CreateInlineKeyboard(
+      new[] // ردیف اول
+      {
+            InlineKeyboardButton.WithCallbackData("📊 My Signal Preferences", PrefsSignalCategoriesCallback),
+            InlineKeyboardButton.WithCallbackData("🔔 Notification Settings", PrefsNotificationsCallback)
+      },
+      new[] // ردیف دوم
+      {
+            InlineKeyboardButton.WithCallbackData("⭐ My Subscription & Billing", MySubscriptionInfoCallback)
+      },
+      new[] // ردیف سوم
+      {
+            InlineKeyboardButton.WithCallbackData("⬅️ Back to Main Menu", MenuCallbackQueryHandler.BackToMainMenuGeneral)
+      }
+  );
 
             return (text, keyboard);
         }

@@ -38,6 +38,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Application\Application.csproj" />
+    <ProjectReference Include="..\TelegramPanel\TelegramPanel.csproj" />
   </ItemGroup>
 
   <ItemGroup>

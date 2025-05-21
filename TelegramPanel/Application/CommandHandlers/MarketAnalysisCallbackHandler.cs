@@ -4,6 +4,7 @@ using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Infrastructure;
+using TelegramPanel.Infrastructure.Helpers;
 
 namespace TelegramPanel.Application.CommandHandlers
 {
@@ -186,27 +187,48 @@ namespace TelegramPanel.Application.CommandHandlers
         }
 
 
-        private async Task ShowCurrencySelectionMenu(long chatId, int messageId, CancellationToken cancellationToken)
+     // File: TelegramPanel/Application/CommandHandlers/MarketAnalysisCallbackHandler.cs
+// ...
+private async Task ShowCurrencySelectionMenu(long chatId, int messageId, CancellationToken cancellationToken)
+    {
+        // 3 columns per row
+        // این بخش rows را به صورت IEnumerable<InlineKeyboardButton[]> یا InlineKeyboardButton[][] می‌سازد
+        var buttonRowsArray = SupportedSymbols
+            .Select((pair, i) => new { pair, i })
+            .GroupBy(x => x.i / 3) // گروه بندی برای ردیف‌ها
+            .Select(group => group.Select(item => // هر گروه یک ردیف است
+                InlineKeyboardButton.WithCallbackData(item.pair.Label, $"{SelectCurrencyCallback}:{item.pair.Symbol}"))
+                .ToArray()) // هر ردیف را به آرایه‌ای از دکمه‌ها تبدیل می‌کند
+            .ToArray(); // کل ردیف‌ها را به آرایه‌ای از آرایه‌ها تبدیل می‌کند (InlineKeyboardButton[][])
+
+        // اضافه کردن دکمه "Back to Main Menu"
+        // ابتدا یک ردیف جدید برای دکمه بازگشت می‌سازیم
+        var backButtonRow = new[] // این یک آرایه تکی از دکمه‌ها است
         {
-            // 3 columns per row
-            var rows = SupportedSymbols
-                .Select((pair, i) => new { pair, i })
-                .GroupBy(x => x.i / 3)
-                .Select(g => g.Select(x => InlineKeyboardButton.WithCallbackData(x.pair.Label, $"{SelectCurrencyCallback}:{x.pair.Symbol}")).ToArray())
-                .ToArray();
+        InlineKeyboardButton.WithCallbackData("⬅️ Back to Main Menu", MenuCallbackQueryHandler.BackToMainMenuGeneral)
+    };
 
-            var keyboard = new InlineKeyboardMarkup(rows);
+        // ترکیب ردیف‌های دکمه‌های ارز با ردیف دکمه بازگشت
+        // این کار یک InlineKeyboardButton[][] می‌سازد
+        var allButtonRowsArray = buttonRowsArray.Concat(new[] { backButtonRow }).ToArray();
 
-            await _messageSender.EditMessageTextAsync(
-                chatId,
-                messageId,
-                "💱 *Select a Forex Pair for Analysis:*\n\nChoose from the most popular currency pairs:",
-                ParseMode.Markdown,
-                keyboard,
-                cancellationToken);
-        }
 
-        private async Task ShowMarketAnalysis(long chatId, int messageId, string symbol, bool isRefresh, string callbackQueryId, CancellationToken cancellationToken)
+        // استفاده از MarkupBuilder برای ساخت کیبورد نهایی
+        // اورلودی که params InlineKeyboardButton[][] می‌گیرد، استفاده خواهد شد.
+        var keyboard = MarkupBuilder.CreateInlineKeyboard(allButtonRowsArray);
+
+
+        await _messageSender.EditMessageTextAsync(
+            chatId,
+            messageId,
+            "💱 *Select a Forex Pair for Analysis:*\n\nChoose from the most popular currency pairs:",
+            ParseMode.Markdown, // یا هر ParseMode ای که استفاده می‌کنید
+            keyboard, // پاس دادن کیبورد ساخته شده توسط MarkupBuilder
+            cancellationToken); // CancellationToken فراموش نشود اگر متد EditMessageTextAsync شما آن را می‌پذیرد
+    }
+
+
+    private async Task ShowMarketAnalysis(long chatId, int messageId, string symbol, bool isRefresh, string callbackQueryId, CancellationToken cancellationToken)
         {
             // ... (loading message edit as before)
             string loadingMessage = isRefresh
@@ -320,30 +342,29 @@ namespace TelegramPanel.Application.CommandHandlers
 
         private InlineKeyboardMarkup GetMarketAnalysisKeyboard(string symbol)
         {
-            return new InlineKeyboardMarkup(new[]
-            {
-                new[]
-                {
-                    InlineKeyboardButton.WithCallbackData(
-                        "🔄 Refresh Analysis",
-                        $"{RefreshMarketDataCallback}:{symbol}")
-                },
-                new[]
-                {
-                    InlineKeyboardButton.WithCallbackData(
-                        "💱 Change Currency", // This button should take user back to the currency selection menu
-                        MarketAnalysisCallback), // <<< --- THIS IS THE KEY CHANGE FOR "CHANGE CURRENCY" BUTTON
-                    InlineKeyboardButton.WithCallbackData(
-                        "📰 Fundamental News", // Changed from "Technical View" based on recent context
-                        $"{FundamentalAnalysisCallbackHandler.ViewFundamentalAnalysisPrefix}:{symbol}")
-                },
-                new[]
-                {
-                    InlineKeyboardButton.WithCallbackData(
-                        "🏠 Back to Main Menu",
-                        "show_main_menu") // Assuming 'show_main_menu' is handled elsewhere
-                }
-            });
+            return MarkupBuilder.CreateInlineKeyboard(
+        new[] // ردیف اول
+        {
+            InlineKeyboardButton.WithCallbackData(
+                "🔄 Refresh Analysis",
+                $"{RefreshMarketDataCallback}:{symbol}")
+        },
+        new[] // ردیف دوم
+        {
+            InlineKeyboardButton.WithCallbackData(
+                "💱 Change Currency",
+                MarketAnalysisCallback),
+            InlineKeyboardButton.WithCallbackData(
+                "📰 Fundamental News",
+                $"{FundamentalAnalysisCallbackHandler.ViewFundamentalAnalysisPrefix}:{symbol}")
+        },
+        new[] // ردیف سوم
+        {
+            InlineKeyboardButton.WithCallbackData(
+                "🏠 Back to Main Menu",
+                MenuCallbackQueryHandler.BackToMainMenuGeneral)
+        }
+    );
         }
 
         private string GetRSIInterpretation(decimal rsi)

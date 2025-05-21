@@ -6,6 +6,7 @@ using Telegram.Bot.Types.ReplyMarkups;
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Formatters;
 using TelegramPanel.Infrastructure;
+using TelegramPanel.Infrastructure.Helpers;
 
 namespace TelegramPanel.Application.CommandHandlers
 {
@@ -75,24 +76,23 @@ namespace TelegramPanel.Application.CommandHandlers
             commandsText.AppendLine(TelegramMessageFormatter.Italic("Tip: Use /help for detailed information about each command"));
 
             // Create inline keyboard for quick access to main features
-            var keyboard = new InlineKeyboardMarkup(new[]
-            {
-                new []
-                {
-                    InlineKeyboardButton.WithCallbackData("📊 View Signals", MenuCommandHandler.SignalsCallbackData),
-                    InlineKeyboardButton.WithCallbackData("👤 My Profile", MenuCommandHandler.ProfileCallbackData)
-                },
-                new []
-                {
-                    InlineKeyboardButton.WithCallbackData("💎 Subscribe", MenuCommandHandler.SubscribeCallbackData),
-                    InlineKeyboardButton.WithCallbackData("⚙️ Settings", MenuCommandHandler.SettingsCallbackData)
-                }
-            });
+            var keyboard = MarkupBuilder.CreateInlineKeyboard(
+         new[]
+         {
+            InlineKeyboardButton.WithCallbackData("📊 View Signals", MenuCommandHandler.SignalsCallbackData),
+            InlineKeyboardButton.WithCallbackData("👤 My Profile", MenuCommandHandler.ProfileCallbackData)
+         },
+         new[]
+         {
+            InlineKeyboardButton.WithCallbackData("💎 Subscribe", MenuCommandHandler.SubscribeCallbackData),
+            InlineKeyboardButton.WithCallbackData("⚙️ Settings", MenuCommandHandler.SettingsCallbackData)
+         }
+     );
 
             await _messageSender.SendTextMessageAsync(
                 chatId,
                 commandsText.ToString(),
-                ParseMode.MarkdownV2,
+                ParseMode.Markdown, // یا V2
                 replyMarkup: keyboard,
                 cancellationToken: cancellationToken);
         }

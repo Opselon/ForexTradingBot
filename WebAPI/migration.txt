@@ -33,3 +33,14 @@ Update all
 
 
 .\Update-EfDatabase.ps1 -MigrationName "ReinitUserAndTokenWallettT" -InfrastructureProject "Infrastructure" -StartupProject "WebAPI" -CleanBuild -ForceRecreateSnapshot -ForceConfirmDeleteSnapshot -ApplyToDatabase -DropAndRecreateDatabase -Confirm:$false
+
+
+
+Get-Service | Where-Object { $_.Name -like "*SQL*" -or $_.DisplayName -like "*SQL*" } | ForEach-Object {
+    if ($_.Status -eq 'Stopped') {
+        Write-Host "[ACTION] Starting $($_.Name)..."
+        Start-Service $_.Name
+    } else {
+        Write-Host "[OK] $($_.Name) is already running."
+    }
+}

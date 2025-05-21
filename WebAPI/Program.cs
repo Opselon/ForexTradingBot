@@ -13,15 +13,12 @@ using Hangfire.Dashboard;                   // برای DashboardOptions, IDashb
 using Hangfire.MemoryStorage;             // برای UseMemoryStorage (Storage پیش‌فرض برای توسعه)
 // using Hangfire.SqlServer;              // اگر از SQL Server برای Hangfire استفاده می‌کنید
 using Infrastructure;                     // برای متد توسعه‌دهنده AddInfrastructureServices
-using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Models;             // برای OpenApiInfo
 using Serilog;                              // برای Log, LoggerConfiguration, UseSerilog
 using Shared.Helpers;
 using Shared.Settings;                    // برای CryptoPaySettings (از پروژه Shared)
-using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Extensions;
 using TelegramPanel.Infrastructure;
-using static TelegramPanel.Infrastructure.ActualTelegramMessageActions;           // برای متد توسعه‌دهنده AddTelegramPanelServices
 // using WebAPI.Filters; //  Namespace برای HangfireNoAuthFilter (اگر در این مسیر است و استفاده می‌کنید)
 #endregion
 
@@ -90,6 +87,11 @@ try
     // مپ کردن بخش "TelegramSettings" از appsettings.json به کلاس Domain.Settings.TelegramSettings
     // این کلاس می‌تواند شامل تنظیمات عمومی تلگرام مانند AdminUserId باشد.
     builder.Services.Configure<Domain.Settings.TelegramSettings>(builder.Configuration.GetSection("TelegramSettings"));
+
+    // Configure TelegramUserApiSettings
+    builder.Services.Configure<Infrastructure.Settings.TelegramUserApiSettings>(builder.Configuration.GetSection("TelegramUserApi"));
+    builder.Services.AddSingleton<Application.Common.Interfaces.ITelegramUserApiClient, Infrastructure.Services.TelegramUserApiClient>();
+    builder.Services.AddHostedService<Infrastructure.Services.TelegramUserApiInitializationService>();
 
     // مپ کردن بخش CryptoPaySettings.SectionName (که "CryptoPay" است) از appsettings.json به کلاس Shared.Settings.CryptoPaySettings
     builder.Services.Configure<CryptoPaySettings>(builder.Configuration.GetSection(CryptoPaySettings.SectionName));

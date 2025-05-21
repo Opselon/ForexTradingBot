@@ -1,7 +1,5 @@
 ﻿// File: Application/DTOs/Notifications/NotificationJobPayload.cs
 #region Usings
-using System;
-using System.Collections.Generic;
 #endregion
 
 namespace Application.DTOs.Notifications // ✅ Namespace: Application.DTOs.Notifications

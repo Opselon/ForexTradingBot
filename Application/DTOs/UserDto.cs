@@ -1,5 +1,4 @@
 ﻿using Domain.Enums;
-using System;
 
 namespace Application.DTOs
 {

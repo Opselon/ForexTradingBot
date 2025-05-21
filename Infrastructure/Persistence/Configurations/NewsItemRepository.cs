@@ -4,7 +4,6 @@ using Application.Common.Interfaces; // برای INewsItemRepository و IAppDbCo
 using Domain.Entities;               // برای NewsItem
 using Microsoft.EntityFrameworkCore; // برای متدهای EF Core مانند FindAsync, ToListAsync, AnyAsync, Include
 using Microsoft.Extensions.Logging;  // برای ILogger (اختیاری اما مفید برای لاگ کردن در Repository)
-using Polly;
 using Shared.Extensions;
 using System.Linq.Expressions; // برای Expression
 #endregion
@@ -256,7 +255,7 @@ namespace Infrastructure.Persistence.Repositories
 
 
 
-     
+
 
 
 

@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations; // For potential future validation
 
 namespace TelegramPanel.Infrastructure.Settings

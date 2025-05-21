@@ -45,7 +45,7 @@ namespace TelegramPanel.Infrastructure
                 await _botClient.SendMessage(
                     chatId: new ChatId(chatId),
                     text: text,
-                    parseMode:  ParseMode.Markdown,
+                    parseMode: ParseMode.Markdown,
                     replyMarkup: replyMarkup,
                     disableNotification: disableNotification,
                     linkPreviewOptions: linkPreviewOptions,

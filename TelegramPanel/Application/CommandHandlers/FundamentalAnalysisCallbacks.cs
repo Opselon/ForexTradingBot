@@ -1,26 +1,19 @@
 ﻿// File: TelegramPanel/Application/CommandHandlers/FundamentalAnalysisCallbackHandler.cs
+using Application.Common.Interfaces;          // For INewsItemRepository, IUserRepository (adjust if these are elsewhere)
+using Domain.Entities;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using System;
-using System.Collections.Generic;
-using System.Globalization;
-using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
-using System.Threading;
-using System.Threading.Tasks;
 using Telegram.Bot.Exceptions;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
-
 // Corrected Using Directives based on your entity locations
 using TelegramPanel.Application.Interfaces;     // For ITelegramCallbackQueryHandler, ITelegramMessageSender
-using Application.Common.Interfaces;          // For INewsItemRepository, IUserRepository (adjust if these are elsewhere)
-using Domain.Entities;
 using TelegramPanel.Infrastructure; // For User, NewsItem, Subscription (adjust if these are elsewhere)
-using TelegramPanel.Infrastructure.Settings;
 using TelegramPanel.Infrastructure.Helpers;  // For CurrencyInfoSettings, CurrencyDetails
+using TelegramPanel.Infrastructure.Settings;
 
 // Assuming MarketAnalysisCallbackHandler itself is in TelegramPanel.Application.CommandHandlers
 // and constants from it might be referenced if public static.
@@ -410,7 +403,7 @@ namespace TelegramPanel.Application.CommandHandlers
         private InlineKeyboardMarkup GetErrorStateKeyboard(string symbol)
         {
             var retrySymbol = (symbol != "N/A" && !string.IsNullOrEmpty(symbol)) ? symbol : GetCurrencyDisplayName("EURUSD");
- 
+
 
             // اصلاح شده با MarkupBuilder:
             return MarkupBuilder.CreateInlineKeyboard(

@@ -13,7 +13,9 @@ using TelegramPanel.Infrastructure;         // For concrete service implementati
 using TelegramPanel.Infrastructure.Services; // For concrete service implementations like TelegramMessageSender
 using TelegramPanel.Queue;
 using TelegramPanel.Settings;
-using static TelegramPanel.Infrastructure.ActualTelegramMessageActions;
+using Application.Features.Forwarding.Interfaces;
+using Application.Features.Forwarding.Services;
+using Infrastructure.Settings;
 // using Scrutor; // Scrutor is available via IServiceCollection extensions, no direct using needed here
 
 #endregion
@@ -26,6 +28,7 @@ namespace TelegramPanel.Extensions
         {
             // 1. Configure Settings
             services.Configure<TelegramPanelSettings>(configuration.GetSection(TelegramPanelSettings.SectionName));
+            services.Configure<List<ForwardingRule>>(configuration.GetSection("ForwardingRules"));
 
             // 2. Register ITelegramBotClient
             services.AddSingleton<ITelegramBotClient>(serviceProvider =>
@@ -40,7 +43,6 @@ namespace TelegramPanel.Extensions
 
             // 3. Register Core TelegramPanel Services
             services.AddSingleton<ITelegramUpdateChannel, TelegramUpdateChannel>();
-         
             services.AddScoped<ITelegramUpdateProcessor, UpdateProcessingService>();
             services.AddScoped<IMarketDataService, MarketDataService>();
 
@@ -70,6 +72,9 @@ namespace TelegramPanel.Extensions
             services.AddScoped<IActualTelegramMessageActions, ActualTelegramMessageActions>(); // << ثبت صحیح برای اجرای واقعی
                                                                                                // سپس ITelegramMessageSender که جاب‌ها را به Hangfire رله می‌کند
             services.AddScoped<ITelegramMessageSender, HangfireRelayTelegramMessageSender>(); // << ثبت صحیح برای انکیو کردن
+
+            // Register Forwarding Services
+            services.AddScoped<IForwardingJobActions, ForwardingJobActions>();
 
             // This will pick up:
             // - MenuCommandHandler (if it implements ITelegramCallbackQueryHandler)

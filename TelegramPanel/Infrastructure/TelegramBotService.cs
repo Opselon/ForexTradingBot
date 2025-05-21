@@ -60,6 +60,9 @@ namespace TelegramPanel.Infrastructure
             bool useWebhookMode = false;
             bool webhookSuccessfullySet = false;
 
+            // Always try to delete webhook first to ensure clean state
+            await TryDeleteWebhookAsync(_cancellationTokenSourceForPolling.Token, "Ensuring clean state before starting bot service.");
+
             if (useWebhookMode)
             {
                 #region Webhook Setup Attempt
@@ -105,8 +108,7 @@ namespace TelegramPanel.Infrastructure
             else // UseWebhook is false or WebhookAddress is not configured
             {
                 _logger.LogInformation("Webhook usage is disabled or WebhookAddress is not configured in settings. Bot will use polling.");
-                // اطمینان از اینکه هیچ Webhook فعالی وجود ندارد قبل از شروع Polling.
-                await TryDeleteWebhookAsync(_cancellationTokenSourceForPolling.Token, "Ensuring no previous Webhook is active before starting Polling mode.");
+                // No need to delete webhook here as we already did it above
             }
 
             // اگر تنظیم Webhook ناموفق بود یا از ابتدا برای Polling پیکربندی شده بود
@@ -116,6 +118,14 @@ namespace TelegramPanel.Infrastructure
                 _logger.LogInformation("Starting Polling for bot {BotUsername}...", me.Username);
                 try
                 {
+                    // Double check webhook is deleted before starting polling
+                    var webhookInfo = await _botClient.GetWebhookInfo(cancellationToken: _cancellationTokenSourceForPolling.Token);
+                    if (!string.IsNullOrEmpty(webhookInfo.Url))
+                    {
+                        _logger.LogWarning("Webhook still active at {WebhookUrl}. Attempting to delete before starting polling.", webhookInfo.Url);
+                        await _botClient.DeleteWebhook(dropPendingUpdates: true, cancellationToken: _cancellationTokenSourceForPolling.Token);
+                    }
+
                     var allowedUpdatesForPolling = _settings.AllowedUpdates?.ToArray() ?? Array.Empty<UpdateType>();
                     var receiverOptions = new ReceiverOptions
                     {

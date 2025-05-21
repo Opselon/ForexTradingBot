@@ -1,6 +1,4 @@
 ﻿// File: TelegramPanel/Infrastructure/Helpers/MarkupBuilder.cs (یا یک مسیر مناسب دیگر)
-using System.Collections.Generic;
-using System.Linq;
 using Telegram.Bot.Types.ReplyMarkups;
 
 namespace TelegramPanel.Infrastructure.Helpers // یا یک namespace مناسب دیگر

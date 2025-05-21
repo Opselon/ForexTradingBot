@@ -1,14 +1,6 @@
 ﻿using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using System;
-using System.Collections.Generic;
-using System.Globalization;
-using System.Linq;
-using System.Net.Http;
 using System.Text.Json;
-using System.Text.Json.Nodes;
-using System.Threading;
-using System.Threading.Tasks;
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Infrastructure.Settings;
 
@@ -448,9 +440,9 @@ namespace TelegramPanel.Infrastructure.Services
             string quoteC = symbol.Length >= 6 ? symbol.Substring(3, 3) : "USD";
             return new CurrencyDetails { Name = $"{baseC}/{quoteC}", Description = $"Data for {baseC}/{quoteC}.", Category = "Forex", IsActive = true, BaseAsset = baseC, QuoteAsset = quoteC, CoinGeckoId = null, CoinGeckoPriceCurrency = "usd", DisplayDecimalPlaces = (baseC == "JPY" || quoteC == "JPY") ? 2 : 4 };
         }
-    
-    // Helper class for deserializing frankfurter.app response
-    internal class FrankfurterResponse
+
+        // Helper class for deserializing frankfurter.app response
+        internal class FrankfurterResponse
         {
             public decimal Amount { get; set; }
             public string Base { get; set; }

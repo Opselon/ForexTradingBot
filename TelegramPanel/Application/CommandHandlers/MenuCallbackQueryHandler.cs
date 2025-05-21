@@ -354,7 +354,7 @@ namespace TelegramPanel.Application.CommandHandlers
         // مثال برای ShowSubscriptionPlansAsync
 
 
-        
+
 
         private async Task HandleMyProfileAsync(long chatId, long telegramUserId, int messageIdToEdit, CancellationToken cancellationToken)
         {
@@ -405,7 +405,7 @@ namespace TelegramPanel.Application.CommandHandlers
             }
 
             var backKeyboard = MarkupBuilder.CreateInlineKeyboard(
-     InlineKeyboardButton.WithCallbackData("⬅️ Back to Main Menu", GeneralBackToMainMenuCallback) );
+     InlineKeyboardButton.WithCallbackData("⬅️ Back to Main Menu", GeneralBackToMainMenuCallback));
             await EditMessageOrSendNewAsync(chatId, messageIdToEdit, sb.ToString(), backKeyboard, ParseMode.MarkdownV2, cancellationToken);
         }
 
@@ -452,7 +452,7 @@ namespace TelegramPanel.Application.CommandHandlers
      new[] { InlineKeyboardButton.WithCallbackData("📊 My Signal Preferences", SettingsCommandHandler.PrefsSignalCategoriesCallback) },
      new[] { InlineKeyboardButton.WithCallbackData("🔔 Notification Settings", SettingsCommandHandler.PrefsNotificationsCallback) },
      new[] { InlineKeyboardButton.WithCallbackData("⭐ My Subscription", SettingsCommandHandler.MySubscriptionInfoCallback) },
-     new[] { InlineKeyboardButton.WithCallbackData("⬅️ Back to Main Menu", BackToMainMenuGeneral)});
+     new[] { InlineKeyboardButton.WithCallbackData("⬅️ Back to Main Menu", BackToMainMenuGeneral) });
 
             // ویرایش پیام قبلی (که دکمه‌های منوی اصلی را داشت) با منوی تنظیمات جدید
             await EditMessageOrSendNewAsync(

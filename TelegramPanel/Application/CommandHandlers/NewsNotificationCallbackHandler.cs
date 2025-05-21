@@ -13,7 +13,7 @@ using TelegramPanel.Formatters;
 
 namespace TelegramPanel.Application.CommandHandlers
 {
-    public class NewsNotificationCallbackHandler : ITelegramCallbackQueryHandler 
+    public class NewsNotificationCallbackHandler : ITelegramCallbackQueryHandler
     {
         #region Private Readonly Fields
         private readonly ILogger<NewsNotificationCallbackHandler> _logger;

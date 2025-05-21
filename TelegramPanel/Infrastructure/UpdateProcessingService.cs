@@ -116,7 +116,7 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
             if (!userId.HasValue)
             {
                 _logger.LogWarning("Cannot route Update ID: {UpdateId}. UserID is missing from the update object.", update.Id);
-                return; // Cannot process state or user-specific commands without UserID.
+                return;
             }
 
             // Priority 1: Check and process with the State Machine

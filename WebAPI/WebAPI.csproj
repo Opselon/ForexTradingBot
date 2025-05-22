@@ -7,21 +7,22 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="FluentValidation" />
-    <PackageReference Include="Hangfire.AspNetCore" />
-    <PackageReference Include="Hangfire.Core" />
-    <PackageReference Include="Hangfire.SqlServer" />
-    <PackageReference Include="MediatR" />
-    <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
+    <PackageReference Include="FluentValidation" Version="12.0.0" />
+    <PackageReference Include="Hangfire.AspNetCore" Version="1.8.20" />
+    <PackageReference Include="Hangfire.Core" Version="1.8.20" />
+    <PackageReference Include="Hangfire.MemoryStorage" Version="1.8.1.1" />
+    <PackageReference Include="Hangfire.SqlServer" Version="1.8.20" />
+    <PackageReference Include="MediatR" Version="12.5.0" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="9.0.4" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="9.0.5">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
-    <PackageReference Include="Microsoft.Extensions.Http.Polly" />
-    <PackageReference Include="Serilog.AspNetCore" />
-    <PackageReference Include="Swashbuckle.AspNetCore" />
-    <PackageReference Include="Telegram.Bot" />
-    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
+    <PackageReference Include="Microsoft.Extensions.Http.Polly" Version="9.0.5" />
+    <PackageReference Include="Serilog.AspNetCore" Version="9.0.0" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="8.1.1" />
+    <PackageReference Include="Telegram.Bot" Version="22.5.1" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="9.0.5" />
   </ItemGroup>
 
   <ItemGroup>

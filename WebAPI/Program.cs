@@ -13,6 +13,7 @@ using Application.Interfaces; // برای IRssFetchingCoordinatorService (جهت
 using BackgroundTasks;                    // برای متد توسعه‌دهنده AddBackgroundTasksServices (اگر تعریف کرده‌اید)
 using Hangfire;                             // برای پیکربندی‌های Hangfire مانند CompatibilityLevel, RecurringJob, Cron
 using Hangfire.Dashboard;                   // برای DashboardOptions, IDashboardAuthorizationFilter
+using Hangfire.MemoryStorage;             // برای UseMemoryStorage (Storage پیش‌فرض برای توسعه)
 using Hangfire.PostgreSql;
 // using Hangfire.SqlServer;              // اگر از SQL Server برای Hangfire استفاده می‌کنید
 using Infrastructure;                     // برای متد توسعه‌دهنده AddInfrastructureServices
@@ -142,7 +143,7 @@ try
 
     // ------------------- ۵. پیکربندی Hangfire برای اجرای کارهای پس‌زمینه -------------------
     builder.Services.AddHangfire(config => config
-        .SetDataCompatibilityLevel(CompatibilityLevel.Version_170)
+        .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
         .UseSimpleAssemblyNameTypeSerializer()
         .UseRecommendedSerializerSettings()
         .UsePostgreSqlStorage(builder.Configuration.GetConnectionString("Hangfire")

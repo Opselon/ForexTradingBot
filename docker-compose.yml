@@ -1,0 +1,68 @@
+version: '3.8'
+
+services:
+  webapi:
+    build:
+      context: .
+      dockerfile: WebAPI/Dockerfile
+    ports:
+      - "5000:80"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ConnectionStrings__DefaultConnection=Server=postgres;Port=5432;Database=myappdb;User Id=postgres;Password=re110121;
+      - Hangfire__ConnectionString=Server=postgres;Port=5432;Database=myappdb;User Id=postgres;Password=re110121;
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - forex-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  backgroundtasks:
+    build:
+      context: .
+      dockerfile: BackgroundTasks/Dockerfile
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ConnectionStrings__DefaultConnection=Server=postgres;Port=5432;Database=myappdb;User Id=postgres;Password=re110121;
+      - Hangfire__ConnectionString=Server=postgres;Port=5432;Database=myappdb;User Id=postgres;Password=re110121;
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - forex-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=re110121
+      - POSTGRES_DB=myappdb
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - forex-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d myappdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+  forex-network:
+    driver: bridge
+
+volumes:
+  postgres-data:
+    driver: local 

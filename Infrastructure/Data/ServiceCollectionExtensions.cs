@@ -10,7 +10,9 @@ using Microsoft.EntityFrameworkCore;      // EF Core
 using Microsoft.Extensions.Configuration; // IConfiguration
 using Microsoft.Extensions.DependencyInjection; // IServiceCollection
 using Hangfire;
-using Hangfire.SqlServer;
+using Hangfire.PostgreSql;
+using Domain.Features.Forwarding.Repositories;
+using Infrastructure.Features.Forwarding.Repositories;
 
 namespace Infrastructure
 {
@@ -27,69 +29,44 @@ namespace Infrastructure
             this IServiceCollection services,
             IConfiguration configuration)
         {
-            // 1. خواندن تنظیمات مربوط به DatabaseProvider
-            var dbProvider = configuration
-                .GetValue<string>("DatabaseProvider")?
-                .ToLowerInvariant()
-                ?? throw new InvalidOperationException(
-                    "DatabaseProvider is not configured.");
-
-            // 2. خواندن Connection String
+            // 1. Configure PostgreSQL
             var connectionString = configuration
                 .GetConnectionString("DefaultConnection")
                 ?? throw new InvalidOperationException(
                     "DefaultConnection is not configured.");
 
-            // 3. پیکربندی DbContext بر اساس Provider
-            switch (dbProvider)
-            {
-                case "sqlserver":
-                    services.AddDbContext<AppDbContext>(opts =>
-                        opts.UseSqlServer(connectionString, sql =>
-                        {
-                            // مشخص کردن اسمبلی حاوی Migrationها
-                            sql.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName);
-                            // فعال کردن retry برای افزایش پایداری
-                            sql.EnableRetryOnFailure(
-                                maxRetryCount: 5,
-                                maxRetryDelay: TimeSpan.FromSeconds(30),
-                                errorNumbersToAdd: null);
-                        }));
-                    break;
+            services.AddDbContext<AppDbContext>(opts =>
+                opts.UseNpgsql(connectionString, npgsql =>
+                {
+                    npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName);
+                    npgsql.EnableRetryOnFailure(
+                        maxRetryCount: 5,
+                        maxRetryDelay: TimeSpan.FromSeconds(30),
+                        errorCodesToAdd: null);
+                }));
 
-                case "postgres":
-                case "postgresql":
-                    services.AddDbContext<AppDbContext>(opts =>
-                        opts.UseNpgsql(connectionString, npgsql =>
-                        {
-                            npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName);
-                            npgsql.EnableRetryOnFailure(
-                                maxRetryCount: 5,
-                                maxRetryDelay: TimeSpan.FromSeconds(30),
-                                errorCodesToAdd: null);
-                        }));
-                    break;
-
-                default:
-                    throw new NotSupportedException(
-                        $"Unsupported DatabaseProvider: '{dbProvider}'.");
-            }
-
-            // 4. رجیستر IAppDbContext برای استفاده در لایه Application
+            // 2. Register IAppDbContext
             services.AddScoped<IAppDbContext>(
                 sp => sp.GetRequiredService<AppDbContext>());
 
-            // Add Hangfire services
+            // 3. Configure Hangfire with PostgreSQL
+            var hangfireConnectionString = configuration.GetConnectionString("Hangfire")
+                ?? configuration.GetConnectionString("DefaultConnection")
+                ?? throw new InvalidOperationException("Hangfire connection string is not configured.");
+
             services.AddHangfire(config => config
                 .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
                 .UseSimpleAssemblyNameTypeSerializer()
                 .UseRecommendedSerializerSettings()
-                .UseSqlServerStorage(connectionString));
+                .UsePostgreSqlStorage(hangfireConnectionString));
 
-            // Add the processing server as IHostedService
             services.AddHangfireServer();
 
-
+            // 4. Register Repositories
+            services.AddScoped<IUserRepository, UserRepository>();
+            services.AddScoped<ISubscriptionRepository, SubscriptionRepository>();
+            services.AddScoped<INewsItemRepository, NewsItemRepository>();
+            services.AddScoped<IForwardingRuleRepository, ForwardingRuleRepository>();
 
             // رجیستر کردن کلاینت CryptoPay با IHttpClientFactory
             // این کار به مدیریت بهتر HttpClient instance ها کمک می‌کند.
@@ -105,19 +82,10 @@ namespace Infrastructure
                 // .AddPolicyHandler(GetRetryPolicy()); //  مثال
                 ;
 
-            // 5. رجیستر کردن Repository
-            services.AddSingleton<ITelegramUserApiClient, TelegramUserApiClient>();
-            services.AddSingleton<TelegramUserApiClient>();
-            services.AddHostedService<TelegramUserApiInitializationService>();
-       
-
-            services.AddScoped<INewsItemRepository, NewsItemRepository>();
             services.AddScoped<IRssReaderService, RssReaderService>();
             services.AddSingleton<INotificationJobScheduler, HangfireNotificationJobScheduler>();
             services.AddScoped<INotificationDispatchService, NotificationDispatchService>();
-            services.AddScoped<IUserRepository, UserRepository>();
             services.AddScoped<ITokenWalletRepository, TokenWalletRepository>();
-            services.AddScoped<ISubscriptionRepository, SubscriptionRepository>();
             services.AddScoped<ISignalRepository, SignalRepository>();
             services.AddScoped<ISignalCategoryRepository, SignalCategoryRepository>();
             services.AddScoped<IRssSourceRepository, RssSourceRepository>();

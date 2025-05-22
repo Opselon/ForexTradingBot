@@ -54,19 +54,37 @@ namespace Domain.Entities // ✅ Namespace صحیح
         /// </summary>
         [MaxLength(2083)]
         public string? ImageUrl { get; set; } //  نامی که شما استفاده کردید
-        #endregion
 
-        #region Source and Timing Information
+        /// <summary>
+        /// (Optional) A unique identifier for this news item as provided by its original source (e.g., 'guid' or 'id' tag in an RSS item).
+        /// This is crucial for preventing duplicate entries when re-fetching feeds, especially if PublishDate or Link might change slightly.
+        /// It should be unique in combination with RssSourceId.
+        /// </summary>
+        [MaxLength(500)] //  طول مناسب برای شناسه‌های خارجی
+        public string? SourceItemId { get; set; } // ✅✅✅ این فیلد اضافه شد ✅✅✅
+
         /// <summary>
         /// The original publication date of the news item from the source (UTC).
         /// </summary>
-        public DateTime PublishedDate { get; set; } //  نامی که شما استفاده کردید (قبلاً DateTime? بود، اگر همیشه مقدار دارد Required کنید)
+        public DateTime PublishedDate { get; set; }
+        #endregion
 
+        #region Source and Timing Information
         /// <summary>
         /// Date and time when this news item was fetched and added to our system (UTC).
         /// </summary>
         [Required]
         public DateTime CreatedAt { get; set; } //  نامی که شما استفاده کردید (زمان ورود به سیستم ما)
+
+        /// <summary>
+        /// Date and time when this news item was last updated in our system (UTC).
+        /// </summary>
+        public DateTime? UpdatedAt { get; set; }
+
+        /// <summary>
+        /// The original publication date of the news item from the source (UTC).
+        /// </summary>
+        public DateTime PublishedAt { get; set; }
 
         /// <summary>
         /// (Optional) Date and time when this news item was last processed by any system job (e.g., sent as notification, analyzed by AI) (UTC).
@@ -81,25 +99,15 @@ namespace Domain.Entities // ✅ Namespace صحیح
         public string? SourceName { get; set; } // ✅✅✅ این فیلد اضافه شد ✅✅✅
 
         /// <summary>
-        /// A unique identifier for this news item as provided by its original source (e.g., 'guid' or 'id' tag in an RSS item).
-        /// This is crucial for preventing duplicate entries when re-fetching feeds, especially if PublishDate or Link might change slightly.
-        /// It should be unique in combination with RssSourceId.
-        /// </summary>
-        [MaxLength(500)] //  طول مناسب برای شناسه‌های خارجی
-        public string? SourceItemId { get; set; } // ✅✅✅ این فیلد اضافه شد ✅✅✅
-        #endregion
-
-        #region Analysis and Categorization
-        /// <summary>
-        /// (Optional) Sentiment score if an analysis has been performed (e.g., -1.0 for very negative to 1.0 for very positive).
-        /// </summary>
-        public double? SentimentScore { get; set; } //  نامی که شما استفاده کردید
-
-        /// <summary>
         /// (Optional) A textual label for the sentiment (e.g., "Positive", "Negative", "Neutral").
         /// </summary>
         [MaxLength(50)]
         public string? SentimentLabel { get; set; } //  نامی که شما استفاده کردید
+
+        /// <summary>
+        /// (Optional) The numerical sentiment score of the news item (e.g., -1.0 to 1.0).
+        /// </summary>
+        public double? SentimentScore { get; set; }
 
         /// <summary>
         /// (Optional) The detected language of the news item (e.g., "en", "fa").

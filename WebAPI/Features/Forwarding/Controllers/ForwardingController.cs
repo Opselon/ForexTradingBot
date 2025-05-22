@@ -2,11 +2,12 @@ using Application.Features.Forwarding.Services;
 using Domain.Features.Forwarding.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using WebAPI.Models;
 
 namespace WebAPI.Features.Forwarding.Controllers
 {
     [ApiController]
-    [Route("api/[controller]")]
+    [Route("api/v1/[controller]")]
     [Authorize]
     public class ForwardingController : ControllerBase
     {
@@ -119,11 +120,5 @@ namespace WebAPI.Features.Forwarding.Controllers
                 return StatusCode(500, "An error occurred while processing the message");
             }
         }
-    }
-
-    public class ProcessMessageRequest
-    {
-        public long SourceChannelId { get; set; }
-        public long MessageId { get; set; }
     }
 } 

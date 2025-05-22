@@ -5,14 +5,14 @@ namespace Domain.Features.Forwarding.Entities
 {
     public class ForwardingRule
     {
-        public string RuleName { get; private set; }
-        public bool IsEnabled { get; private set; }
-        public long SourceChannelId { get; private set; }
-        public IReadOnlyList<long> TargetChannelIds { get; private set; }
-        public MessageEditOptions EditOptions { get; private set; }
-        public MessageFilterOptions FilterOptions { get; private set; }
+        public string RuleName { get; set; }
+        public bool IsEnabled { get; set; }
+        public long SourceChannelId { get; set; }
+        public IReadOnlyList<long> TargetChannelIds { get; set; }
+        public MessageEditOptions EditOptions { get; set; }
+        public MessageFilterOptions FilterOptions { get; set; }
 
-        private ForwardingRule() { } // For EF Core
+        public ForwardingRule() { } // For EF Core
 
         public ForwardingRule(
             string ruleName,

@@ -8,14 +8,16 @@ services:
     ports:
       - "80:80"
     environment:
-      - ASPNETCORE_ENVIRONMENT=Development
-      - ConnectionStrings__DefaultConnection=Host=db;Database=forextrading;Username=postgres;Password=your_password
-      - TelegramBot__Token=${TELEGRAM_BOT_TOKEN}
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ConnectionStrings__DefaultConnection=Host=db;Database=forextrading;Username=postgres;Password=re110121
+      - TelegramBot__Token=7101564106:AAHbHL5hhGJK7aIKH7RGEX2ZG4nGvMHOmIE
       - TELEGRAM_SESSION_PATH=/app/telegram-sessions
     volumes:
-      - telegram-sessions:/app/telegram-sessions
+      - ../telegram-sessions:/app/telegram-sessions
+      - ../data-protection:/app/data-protection
     depends_on:
       - db
+      - redis
     networks:
       - forex-network
 
@@ -24,7 +26,7 @@ services:
     environment:
       - POSTGRES_DB=forextrading
       - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=your_password
+      - POSTGRES_PASSWORD=re110121
     ports:
       - "5432:5432"
     volumes:
@@ -32,12 +34,31 @@ services:
     networks:
       - forex-network
 
-  hangfire:
+  redis:
     image: redis:7
     ports:
       - "6379:6379"
     networks:
       - forex-network
+
+  backgroundtasks:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ConnectionStrings__DefaultConnection=Host=db;Database=forextrading;Username=postgres;Password=re110121
+      - TelegramBot__Token=7101564106:AAHbHL5hhGJK7aIKH7RGEX2ZG4nGvMHOmIE
+      - TELEGRAM_SESSION_PATH=/app/telegram-sessions
+    volumes:
+      - ../telegram-sessions:/app/telegram-sessions
+      - ../data-protection:/app/data-protection
+    depends_on:
+      - db
+      - redis
+    networks:
+      - forex-network
+    command: dotnet BackgroundTasks.dll
 
 networks:
   forex-network:

@@ -4,60 +4,40 @@ services:
   webapi:
     build:
       context: .
-      dockerfile: WebAPI/Dockerfile
+      dockerfile: Dockerfile
     ports:
-      - "5000:80"
+      - "80:80"
     environment:
-      - ASPNETCORE_ENVIRONMENT=Production
-      - ConnectionStrings__DefaultConnection=Server=postgres;Port=5432;Database=myappdb;User Id=postgres;Password=re110121;
-      - Hangfire__ConnectionString=Server=postgres;Port=5432;Database=myappdb;User Id=postgres;Password=re110121;
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - forex-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost/health"]
-      interval: 30s
-      timeout: 3s
-      retries: 3
-
-  backgroundtasks:
-    build:
-      context: .
-      dockerfile: BackgroundTasks/Dockerfile
-    environment:
-      - ASPNETCORE_ENVIRONMENT=Production
-      - ConnectionStrings__DefaultConnection=Server=postgres;Port=5432;Database=myappdb;User Id=postgres;Password=re110121;
-      - Hangfire__ConnectionString=Server=postgres;Port=5432;Database=myappdb;User Id=postgres;Password=re110121;
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - forex-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost/health"]
-      interval: 30s
-      timeout: 3s
-      retries: 3
-
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=re110121
-      - POSTGRES_DB=myappdb
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__DefaultConnection=Host=db;Database=forextrading;Username=postgres;Password=your_password
+      - TelegramBot__Token=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_SESSION_PATH=/app/telegram-sessions
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - telegram-sessions:/app/telegram-sessions
+    depends_on:
+      - db
+    networks:
+      - forex-network
+
+  db:
+    image: postgres:16
+    environment:
+      - POSTGRES_DB=forextrading
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=your_password
     ports:
       - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
     networks:
       - forex-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d myappdb"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+
+  hangfire:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    networks:
+      - forex-network
 
 networks:
   forex-network:
@@ -65,4 +45,6 @@ networks:
 
 volumes:
   postgres-data:
+    driver: local
+  telegram-sessions:
     driver: local 

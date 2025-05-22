@@ -55,7 +55,7 @@ namespace Infrastructure
                 ?? throw new InvalidOperationException("Hangfire connection string is not configured.");
 
             services.AddHangfire(config => config
-                .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+                .SetDataCompatibilityLevel(CompatibilityLevel.Version_170)
                 .UseSimpleAssemblyNameTypeSerializer()
                 .UseRecommendedSerializerSettings()
                 .UsePostgreSqlStorage(hangfireConnectionString));

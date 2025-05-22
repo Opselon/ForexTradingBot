@@ -4,6 +4,9 @@
 // Using های استاندارد .NET و NuGet Packages
 // Using های مربوط به پروژه‌های شما
 using Application;                          // برای متد توسعه‌دهنده AddApplicationServices
+using Application.Features.Forwarding.Interfaces;
+using Application.Features.Forwarding.Services;
+using Application.Features.Forwarding.Extensions;
 using Application.Interfaces; // برای IRssFetchingCoordinatorService (جهت زمان‌بندی Job در Hangfire)
 // using Application.Interfaces;          // معمولاً اینترفیس‌های Application مستقیماً اینجا نیاز نیستند مگر برای موارد خاص
 // using Application.Services;            // و نه پیاده‌سازی‌های آن
@@ -13,6 +16,8 @@ using Hangfire.Dashboard;                   // برای DashboardOptions, IDashb
 using Hangfire.MemoryStorage;             // برای UseMemoryStorage (Storage پیش‌فرض برای توسعه)
 // using Hangfire.SqlServer;              // اگر از SQL Server برای Hangfire استفاده می‌کنید
 using Infrastructure;                     // برای متد توسعه‌دهنده AddInfrastructureServices
+using Infrastructure.Services;
+using Infrastructure.Settings;
 using Microsoft.OpenApi.Models;             // برای OpenApiInfo
 using Serilog;                              // برای Log, LoggerConfiguration, UseSerilog
 using Shared.Helpers;
@@ -20,6 +25,7 @@ using Shared.Settings;                    // برای CryptoPaySettings (از پ
 using TelegramPanel.Extensions;
 using TelegramPanel.Infrastructure;
 // using WebAPI.Filters; //  Namespace برای HangfireNoAuthFilter (اگر در این مسیر است و استفاده می‌کنید)
+using Infrastructure.Features.Forwarding.Extensions;
 #endregion
 
 // ------------------- پیکربندی اولیه لاگر Serilog (Bootstrap Logger) -------------------
@@ -104,17 +110,27 @@ try
     // این متدها باید در فایل‌های DependencyInjection.cs (یا ServiceCollectionExtensions.cs) هر لایه تعریف شده باشند.
     // ترتیب فراخوانی: ابتدا لایه‌های پایه (Application, Infrastructure)، سپس لایه‌های Presentation یا خاص (TelegramPanel, BackgroundTasks).
 
-    builder.Services.AddApplicationServices();         // رجیستر کردن سرویس‌های لایه Application (سرویس‌های کسب‌وکار، MediatR, AutoMapper, FluentValidation)
-    Log.Information("Application layer services registered.");
+    builder.Services.AddApplicationServices();
+    Log.Information("Application services registered.");
 
-    builder.Services.AddInfrastructureServices(builder.Configuration); // رجیستر کردن سرویس‌های لایه Infrastructure (DbContext, Repositories, کلاینت‌های خارجی)
-    Log.Information("Infrastructure layer services registered.");
+    builder.Services.AddInfrastructureServices(builder.Configuration);
+    Log.Information("Infrastructure services registered.");
 
-    builder.Services.AddTelegramPanelServices(builder.Configuration); // رجیستر کردن سرویس‌های خاص پنل تلگرام (کلاینت تلگرام، Handler ها، Middleware ها، صف آپدیت)
-    Log.Information("TelegramPanel layer services registered.");
+    builder.Services.AddForwardingInfrastructure();
+    Log.Information("Forwarding infrastructure services registered.");
 
-    builder.Services.AddBackgroundTasksServices();     // رجیستر کردن سرویس‌های پس‌زمینه (مانند Job Handler های Hangfire)
-    Log.Information("BackgroundTasks layer services registered.");
+    builder.Services.AddTelegramPanelServices(builder.Configuration);
+    Log.Information("Telegram panel services registered.");
+
+    builder.Services.AddBackgroundTasksServices();
+    Log.Information("Background tasks services registered.");
+
+    builder.Services.AddForwardingServices();
+    Log.Information("Forwarding services registered.");
+
+    builder.Services.AddForwardingOrchestratorServices();
+    Log.Information("Forwarding orchestrator services registered.");
+
     SqlServiceManager.EnsureSqlServicesRunning();
     //  ❌❌ یادآوری: رجیستری‌های تکراری یا جابجا شده باید از اینجا حذف شده باشند ❌❌
     //  MediatR باید در AddApplicationServices با اسمبلی لایه Application رجیستر شود.
@@ -125,43 +141,22 @@ try
 
 
     // ------------------- ۵. پیکربندی Hangfire برای اجرای کارهای پس‌زمینه -------------------
-    builder.Services.AddHangfire(hangfireConfiguration => hangfireConfiguration
-        .SetDataCompatibilityLevel(CompatibilityLevel.Version_180) //  استفاده از آخرین سطح سازگاری
+    builder.Services.AddHangfire(config => config
+        .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
         .UseSimpleAssemblyNameTypeSerializer()
         .UseRecommendedSerializerSettings()
-        //  برای توسعه و تست، MemoryStorage مناسب است. داده‌ها با ریستارت برنامه از بین می‌روند.
-        .UseMemoryStorage(new MemoryStorageOptions { JobExpirationCheckInterval = TimeSpan.FromMinutes(5) })
-    // .UseConsole() // (اختیاری) برای نمایش لاگ‌های داخلی Hangfire در کنسول
-    //  برای محیط Production، باید از یک Storage پایدار مانند SQL Server یا PostgreSQL استفاده کنید.
-    //  مثال برای SQL Server (نیاز به Connection String و بسته NuGet Hangfire.SqlServer):
-    /*
-    .UseSqlServerStorage(builder.Configuration.GetConnectionString("HangfireConnection"), new SqlServerStorageOptions {
-        CommandBatchMaxTimeout = TimeSpan.FromMinutes(5),
-        SlidingInvisibilityTimeout = TimeSpan.FromMinutes(5),
-        QueuePollInterval = TimeSpan.FromSeconds(15), //  فاصله زمانی بررسی صف‌ها
-        UseRecommendedIsolationLevel = true,
-        DisableGlobalLocks = true //  برای بهبود عملکرد در SQL Server 2012+ با یک سرور
-    })
-    */
-    );
-    Log.Information("Hangfire services (with MemoryStorage for development) added.");
+        .UseSqlServerStorage(builder.Configuration.GetConnectionString("DefaultConnection")));
+    builder.Services.AddHangfireServer();
+    Log.Information("Hangfire services (with SQL Server for production) added.");
+    builder.Services.Configure<List<Infrastructure.Settings.ForwardingRule>>( // <<< Fully qualified
+      builder.Configuration.GetSection("ForwardingRules"));
     builder.Services.AddScoped<IActualTelegramMessageActions, ActualTelegramMessageActions>();
     builder.Services.AddScoped<ITelegramMessageSender, HangfireRelayTelegramMessageSender>();
-    // اضافه کردن سرور Hangfire که مسئول برداشتن و اجرای Job ها از صف است.
-    builder.Services.AddHangfireServer(options =>
-    {
-        options.ServerName = $"Hangfire.ForexBot.{Environment.MachineName}:{Guid.NewGuid().ToString("N")[..6]}"; // نام منحصر به فرد برای هر نمونه سرور
-        options.WorkerCount = Math.Max(Environment.ProcessorCount, 4) * 2; // تعداد Worker Thread ها (حداقل ۸، قابل تنظیم)
-        options.Queues = new[] { "default", "critical", "rss_processing", "notifications" }; // صف‌های پردازشی مورد استفاده
-        options.SchedulePollingInterval = TimeSpan.FromSeconds(15); // فرکانس بررسی Job های زمان‌بندی شده توسط Scheduler
-        options.ShutdownTimeout = TimeSpan.FromSeconds(30); // حداکثر زمان انتظار برای تکمیل Job های در حال اجرا هنگام خاموش شدن
-    });
-    Log.Information("Hangfire Server configured with {WorkerCount} workers and queues: {Queues}.", Math.Max(Environment.ProcessorCount, 4) * 2, string.Join(", ", new[] { "default", "critical", "rss_processing", "notifications" }));
+    builder.Services.AddScoped<IForwardingJobActions, ForwardingJobActions>();
     #endregion
 
     // ------------------- ساخت WebApplication instance -------------------
     var app = builder.Build(); //  ساخت برنامه با تمام سرویس‌های پیکربندی شده
-
     // ------------------- دریافت لاگر از DI برای استفاده در ادامه Program.cs -------------------
     //  این لاگر، لاگری است که توسط UseSerilog پیکربندی شده است.
     var programLogger = app.Services.GetRequiredService<ILogger<Program>>(); //  استفاده از ILogger<Program> برای لاگ‌های مختص Program.cs
@@ -200,11 +195,13 @@ try
 
     app.UseSerilogRequestLogging(); //  لاگ کردن تمام درخواست‌های HTTP ورودی با جزئیات (توسط Serilog)
 
-    // app.UseRouting(); //  در .NET 6+ این به طور خودکار قبل از MapControllers/UseEndpoints فراخوانی می‌شود.
-
-    //  اگر از سیستم احراز هویت و سطوح دسترسی داخلی ASP.NET Core استفاده می‌کنید، این Middleware ها را فعال کنید.
-    // app.UseAuthentication(); //  ابتدا احراز هویت
-    // app.UseAuthorization();  //  سپس بررسی سطوح دسترسی
+    app.UseRouting();
+    app.UseAuthorization();
+    app.UseEndpoints(endpoints =>
+    {
+        endpoints.MapControllers();
+        endpoints.MapHangfireDashboard();
+    });
 
     programLogger.LogInformation("HTTP request pipeline configured.");
     #endregion
@@ -261,6 +258,11 @@ try
     // ------------------- مپ کردن کنترلرها و اجرای برنامه -------------------
     app.MapControllers(); //  مسیردهی درخواست‌ها به Action های کنترلرها
     programLogger.LogInformation("Application setup complete. Starting web host now...");
+    using (var scope = app.Services.CreateScope())
+    {
+        var orchestrator = scope.ServiceProvider.GetRequiredService<UserApiForwardingOrchestrator>();
+        // Use orchestrator if needed
+    }
     app.Run(); //  شروع به گوش دادن به درخواست‌های HTTP و اجرای برنامه
     #endregion
 }

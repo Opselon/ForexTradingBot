@@ -3,6 +3,7 @@ using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums; // Required for Task
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Application.Pipeline; // برای TelegramPipelineDelegate
+using TelegramPanel.Infrastructure.Services;
 
 namespace TelegramPanel.Infrastructure // یا Application اگر در آن لایه است
 {
@@ -16,21 +17,19 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
         #region Fields
 
         private readonly ILogger<UpdateProcessingService> _logger;
-        private readonly IServiceProvider _serviceProvider; // برای resolve کردن سرویس‌های Scoped مانند ITelegramMessageSender در صورت نیاز مستقیم
-        private readonly IReadOnlyList<ITelegramMiddleware> _middlewares; // Middleware های رجیستر شده، به ترتیب اجرا
+        private readonly IServiceProvider _serviceProvider;
+        private readonly IReadOnlyList<ITelegramMiddleware> _middlewares;
         private readonly IEnumerable<ITelegramCommandHandler> _commandHandlers;
         private readonly ITelegramStateMachine _stateMachine;
-        private readonly ITelegramMessageSender _messageSender; // برای ارسال پیام‌های پیش‌فرض یا خطا
+        private readonly ITelegramMessageSender _messageSender;
         private readonly IEnumerable<ITelegramCallbackQueryHandler> _callbackQueryHandlers;
-        #endregion
 
-        #region Constructor
         public UpdateProcessingService(
             ILogger<UpdateProcessingService> logger,
             IServiceProvider serviceProvider,
             IEnumerable<ITelegramMiddleware> middlewares,
             IEnumerable<ITelegramCommandHandler> commandHandlers,
-            IEnumerable<ITelegramCallbackQueryHandler> callbackQueryHandlers, // <-- ADD THIS
+            IEnumerable<ITelegramCallbackQueryHandler> callbackQueryHandlers,
             ITelegramStateMachine stateMachine,
             ITelegramMessageSender messageSender)
         {
@@ -38,7 +37,7 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
             _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
             _middlewares = middlewares?.Reverse().ToList().AsReadOnly() ?? throw new ArgumentNullException(nameof(middlewares));
             _commandHandlers = commandHandlers ?? throw new ArgumentNullException(nameof(commandHandlers));
-            _callbackQueryHandlers = callbackQueryHandlers ?? throw new ArgumentNullException(nameof(callbackQueryHandlers)); // <-- ADD THIS
+            _callbackQueryHandlers = callbackQueryHandlers ?? throw new ArgumentNullException(nameof(callbackQueryHandlers));
             _stateMachine = stateMachine ?? throw new ArgumentNullException(nameof(stateMachine));
             _messageSender = messageSender ?? throw new ArgumentNullException(nameof(messageSender));
         }

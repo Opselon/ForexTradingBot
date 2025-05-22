@@ -32,6 +32,7 @@ namespace Infrastructure.Data
         public DbSet<SignalAnalysis> SignalAnalyses => Set<SignalAnalysis>();
         public DbSet<TokenWallet> TokenWallets => Set<TokenWallet>();
         public DbSet<NewsItem> NewsItems => Set<NewsItem>();
+        public DbSet<Domain.Features.Forwarding.Entities.ForwardingRule> ForwardingRules => Set<Domain.Features.Forwarding.Entities.ForwardingRule>();
 
         /// <summary>
         /// ذخیره تغییرات انجام شده در DbContext به صورت ناهمزمان.

@@ -15,7 +15,7 @@ using TelegramPanel.Queue;
 using TelegramPanel.Settings;
 using Application.Features.Forwarding.Interfaces;
 using Application.Features.Forwarding.Services;
-using Infrastructure.Settings;
+using Domain.Features.Forwarding.Entities;
 // using Scrutor; // Scrutor is available via IServiceCollection extensions, no direct using needed here
 
 #endregion

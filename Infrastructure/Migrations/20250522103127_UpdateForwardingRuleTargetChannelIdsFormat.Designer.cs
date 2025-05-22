@@ -12,8 +12,8 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20250518015559_ReinitUserAndTokenWallettT")]
-    partial class ReinitUserAndTokenWallettT
+    [Migration("20250522103127_UpdateForwardingRuleTargetChannelIdsFormat")]
+    partial class UpdateForwardingRuleTargetChannelIdsFormat
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -525,6 +525,27 @@ namespace Infrastructure.Migrations
                     b.ToTable("UserSignalPreferences", (string)null);
                 });
 
+            modelBuilder.Entity("Domain.Features.Forwarding.Entities.ForwardingRule", b =>
+                {
+                    b.Property<string>("RuleName")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<bool>("IsEnabled")
+                        .HasColumnType("bit");
+
+                    b.Property<long>("SourceChannelId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("TargetChannelIds")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("RuleName");
+
+                    b.ToTable("ForwardingRules", (string)null);
+                });
+
             modelBuilder.Entity("Domain.Entities.NewsItem", b =>
                 {
                     b.HasOne("Domain.Entities.SignalCategory", "AssociatedSignalCategory")
@@ -625,6 +646,136 @@ namespace Infrastructure.Migrations
                     b.Navigation("Category");
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("Domain.Features.Forwarding.Entities.ForwardingRule", b =>
+                {
+                    b.OwnsOne("Domain.Features.Forwarding.ValueObjects.MessageEditOptions", "EditOptions", b1 =>
+                        {
+                            b1.Property<string>("ForwardingRuleRuleName")
+                                .HasColumnType("nvarchar(100)");
+
+                            b1.Property<string>("AppendText")
+                                .HasColumnType("nvarchar(max)");
+
+                            b1.Property<string>("CustomFooter")
+                                .HasColumnType("nvarchar(max)");
+
+                            b1.Property<bool>("DropAuthor")
+                                .HasColumnType("bit");
+
+                            b1.Property<bool>("DropMediaCaptions")
+                                .HasColumnType("bit");
+
+                            b1.Property<bool>("NoForwards")
+                                .HasColumnType("bit");
+
+                            b1.Property<string>("PrependText")
+                                .HasColumnType("nvarchar(max)");
+
+                            b1.Property<bool>("RemoveLinks")
+                                .HasColumnType("bit");
+
+                            b1.Property<bool>("RemoveSourceForwardHeader")
+                                .HasColumnType("bit");
+
+                            b1.Property<bool>("StripFormatting")
+                                .HasColumnType("bit");
+
+                            b1.HasKey("ForwardingRuleRuleName");
+
+                            b1.ToTable("ForwardingRules");
+
+                            b1.WithOwner()
+                                .HasForeignKey("ForwardingRuleRuleName");
+
+                            b1.OwnsMany("Domain.Features.Forwarding.ValueObjects.TextReplacementRule", "TextReplacements", b2 =>
+                                {
+                                    b2.Property<string>("MessageEditOptionsForwardingRuleRuleName")
+                                        .HasColumnType("nvarchar(100)");
+
+                                    b2.Property<int>("Id")
+                                        .ValueGeneratedOnAdd()
+                                        .HasColumnType("int");
+
+                                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b2.Property<int>("Id"));
+
+                                    b2.Property<string>("Find")
+                                        .IsRequired()
+                                        .HasColumnType("nvarchar(max)");
+
+                                    b2.Property<bool>("IsRegex")
+                                        .HasColumnType("bit");
+
+                                    b2.Property<int>("RegexOptions")
+                                        .HasColumnType("int");
+
+                                    b2.Property<string>("ReplaceWith")
+                                        .IsRequired()
+                                        .HasColumnType("nvarchar(max)");
+
+                                    b2.HasKey("MessageEditOptionsForwardingRuleRuleName", "Id");
+
+                                    b2.ToTable("TextReplacementRule");
+
+                                    b2.WithOwner()
+                                        .HasForeignKey("MessageEditOptionsForwardingRuleRuleName");
+                                });
+
+                            b1.Navigation("TextReplacements");
+                        });
+
+                    b.OwnsOne("Domain.Features.Forwarding.ValueObjects.MessageFilterOptions", "FilterOptions", b1 =>
+                        {
+                            b1.Property<string>("ForwardingRuleRuleName")
+                                .HasColumnType("nvarchar(100)");
+
+                            b1.Property<string>("AllowedMessageTypes")
+                                .HasColumnType("nvarchar(max)");
+
+                            b1.Property<string>("AllowedMimeTypes")
+                                .HasColumnType("nvarchar(max)");
+
+                            b1.Property<string>("AllowedSenderUserIds")
+                                .HasColumnType("nvarchar(max)");
+
+                            b1.Property<string>("BlockedSenderUserIds")
+                                .HasColumnType("nvarchar(max)");
+
+                            b1.Property<string>("ContainsText")
+                                .HasColumnType("nvarchar(max)");
+
+                            b1.Property<bool>("ContainsTextIsRegex")
+                                .HasColumnType("bit");
+
+                            b1.Property<int>("ContainsTextRegexOptions")
+                                .HasColumnType("int");
+
+                            b1.Property<bool>("IgnoreEditedMessages")
+                                .HasColumnType("bit");
+
+                            b1.Property<bool>("IgnoreServiceMessages")
+                                .HasColumnType("bit");
+
+                            b1.Property<int?>("MaxMessageLength")
+                                .HasColumnType("int");
+
+                            b1.Property<int?>("MinMessageLength")
+                                .HasColumnType("int");
+
+                            b1.HasKey("ForwardingRuleRuleName");
+
+                            b1.ToTable("ForwardingRules");
+
+                            b1.WithOwner()
+                                .HasForeignKey("ForwardingRuleRuleName");
+                        });
+
+                    b.Navigation("EditOptions")
+                        .IsRequired();
+
+                    b.Navigation("FilterOptions")
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Domain.Entities.RssSource", b =>

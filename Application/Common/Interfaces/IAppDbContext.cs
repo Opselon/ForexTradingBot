@@ -58,6 +58,10 @@ namespace Application.Common.Interfaces
         /// </summary>
         DbSet<SignalAnalysis> SignalAnalyses { get; }
 
+        /// <summary>
+        /// مجموعه داده‌ای برای موجودیت قوانین انتقال.
+        /// </summary>
+        DbSet<Domain.Features.Forwarding.Entities.ForwardingRule> ForwardingRules { get; }
 
         // سایر متدها و خصوصیات DbContext که ممکن است لایه Application به آن‌ها نیاز داشته باشد:
         // Microsoft.EntityFrameworkCore.ChangeTracking.ChangeTracker ChangeTracker { get; }

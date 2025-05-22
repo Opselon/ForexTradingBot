@@ -1,9 +1,7 @@
 ﻿// File: src/Infrastructure/Services/HangfireJobScheduler.cs
 using Application.Common.Interfaces;
 using Hangfire;
-using System;
 using System.Linq.Expressions;
-using System.Threading.Tasks;
 
 namespace Infrastructure.Services
 {

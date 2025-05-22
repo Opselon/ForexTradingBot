@@ -1,9 +1,3 @@
-﻿using Application.Common.Interfaces;
-using Application.Features.Forwarding.Interfaces;
-using Domain.Features.Forwarding.Entities;
-using Domain.Features.Forwarding.ValueObjects;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -11,86 +5,64 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
-using TL; // Correct namespace for Message, Photo, Document, AND ALL MessageEntity* types
-using Hangfire;
+using Application.Common.Interfaces;
+using Domain.Features.Forwarding.Entities;
+using Domain.Features.Forwarding.ValueObjects;
+using Microsoft.Extensions.Logging;
+using TL;
 
 namespace Application.Features.Forwarding.Services
 {
-    public class ForwardingJobActions : IForwardingJobActions
+    public class MessageProcessingService
     {
-        private readonly ILogger<ForwardingJobActions> _logger;
+        private readonly ILogger<MessageProcessingService> _logger;
         private readonly ITelegramUserApiClient _userApiClient;
-        private readonly List<ForwardingRule> _allRules;
-        private const int MaxRetries = 3;
-        private const int RetryDelaySeconds = 5;
 
-        public ForwardingJobActions(
-            ILogger<ForwardingJobActions> logger,
-            ITelegramUserApiClient userApiClient,
-            IOptions<List<ForwardingRule>> rulesOptions)
+        public MessageProcessingService(
+            ILogger<MessageProcessingService> logger,
+            ITelegramUserApiClient userApiClient)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _userApiClient = userApiClient ?? throw new ArgumentNullException(nameof(userApiClient));
-            _allRules = rulesOptions?.Value ?? new List<ForwardingRule>();
-            if (!_allRules.Any())
-            {
-                _logger.LogWarning("ForwardingJobActions initialized with zero forwarding rules.");
-            }
         }
 
-        [AutomaticRetry(Attempts = MaxRetries)]
         public async Task ProcessAndRelayMessageAsync(
             int sourceMessageId,
             long rawSourcePeerId,
             long targetChannelId,
-            string ruleName,
+            ForwardingRule rule,
             CancellationToken cancellationToken)
         {
-            _logger.LogInformation("Job: Starting ProcessAndRelay for MsgID {SourceMsgId} from RawSourcePeer {RawSourcePeerId} to Target {TargetChannelId} via Rule '{RuleName}'",
-                sourceMessageId, rawSourcePeerId, targetChannelId, ruleName);
+            _logger.LogInformation(
+                "Processing message {SourceMsgId} from {RawSourcePeerId} to {TargetChannelId} via rule '{RuleName}'",
+                sourceMessageId, rawSourcePeerId, targetChannelId, rule.RuleName);
 
-            var rule = _allRules.FirstOrDefault(r => r.RuleName == ruleName && r.IsEnabled);
-            if (rule == null)
+            var fromPeer = await _userApiClient.ResolvePeerAsync(rawSourcePeerId);
+            var toPeer = await _userApiClient.ResolvePeerAsync(targetChannelId);
+
+            if (fromPeer == null || toPeer == null)
             {
-                _logger.LogError("Job: Enabled Rule '{RuleName}' not found. Cannot process message {SourceMsgId}.", ruleName, sourceMessageId);
-                throw new InvalidOperationException($"Enabled rule '{ruleName}' not found");
+                _logger.LogError(
+                    "Could not resolve FromPeer (RawId: {RawSourcePeerId}) or ToPeer (TargetId: {TargetChannelId}) for MsgID {SourceMsgId}.",
+                    rawSourcePeerId, targetChannelId, sourceMessageId);
+                return;
             }
 
-            try
+            bool needsCustomSend = rule.EditOptions != null &&
+                                   (!string.IsNullOrEmpty(rule.EditOptions.PrependText) ||
+                                    !string.IsNullOrEmpty(rule.EditOptions.AppendText) ||
+                                    (rule.EditOptions.TextReplacements != null && rule.EditOptions.TextReplacements.Any()) ||
+                                    rule.EditOptions.RemoveLinks ||
+                                    rule.EditOptions.StripFormatting ||
+                                    !string.IsNullOrEmpty(rule.EditOptions.CustomFooter));
+
+            if (needsCustomSend && rule.EditOptions != null)
             {
-                var fromPeer = await _userApiClient.ResolvePeerAsync(rawSourcePeerId);
-                var toPeer = await _userApiClient.ResolvePeerAsync(targetChannelId);
-
-                if (fromPeer == null || toPeer == null)
-                {
-                    _logger.LogError("Job: Could not resolve FromPeer (RawId: {RawSourcePeerId}) or ToPeer (TargetId: {TargetChannelId}) for MsgID {SourceMsgId}.",
-                        rawSourcePeerId, targetChannelId, sourceMessageId);
-                    throw new InvalidOperationException("Could not resolve source or target peer");
-                }
-
-                bool needsCustomSend = rule.EditOptions != null &&
-                                       (!string.IsNullOrEmpty(rule.EditOptions.PrependText) ||
-                                        !string.IsNullOrEmpty(rule.EditOptions.AppendText) ||
-                                        (rule.EditOptions.TextReplacements != null && rule.EditOptions.TextReplacements.Any()) ||
-                                        rule.EditOptions.RemoveLinks ||
-                                        rule.EditOptions.StripFormatting ||
-                                        !string.IsNullOrEmpty(rule.EditOptions.CustomFooter)
-                                       );
-
-                if (needsCustomSend && rule.EditOptions != null)
-                {
-                    await ProcessCustomSendAsync(fromPeer, toPeer, sourceMessageId, rule, cancellationToken);
-                }
-                else
-                {
-                    await ProcessSimpleForwardAsync(fromPeer, toPeer, sourceMessageId, rule, cancellationToken);
-                }
+                await ProcessCustomSendAsync(fromPeer, toPeer, sourceMessageId, rule, cancellationToken);
             }
-            catch (Exception ex)
+            else
             {
-                _logger.LogError(ex, "Job: Error processing message {SourceMsgId} from {RawSourcePeerId} to {TargetChannelId}",
-                    sourceMessageId, rawSourcePeerId, targetChannelId);
-                throw; // Let Hangfire handle the retry
+                await ProcessSimpleForwardAsync(fromPeer, toPeer, sourceMessageId, rule, cancellationToken);
             }
         }
 
@@ -104,16 +76,19 @@ namespace Application.Features.Forwarding.Services
             var messagesBase = await _userApiClient.GetMessagesAsync(fromPeer, sourceMessageId);
             if (messagesBase is not Messages_Messages { messages: var msgList } || !msgList.Any())
             {
-                _logger.LogWarning("Job: Could not retrieve original message {SourceMsgId} from {RawSourcePeerId} for custom send.",
+                _logger.LogWarning(
+                    "Could not retrieve original message {SourceMsgId} from {RawSourcePeerId} for custom send.",
                     sourceMessageId, fromPeer.ID);
-                throw new InvalidOperationException("Could not retrieve original message");
+                return;
             }
 
             var originalMessage = msgList.FirstOrDefault(m => m.ID == sourceMessageId) as Message;
             if (originalMessage == null)
             {
-                _logger.LogWarning("Job: Retrieved message {SourceMsgId} is not of type TL.Message or not found.", sourceMessageId);
-                throw new InvalidOperationException("Invalid message type");
+                _logger.LogWarning(
+                    "Retrieved message {SourceMsgId} is not of type TL.Message or not found.",
+                    sourceMessageId);
+                return;
             }
 
             string newCaption = originalMessage.message ?? "";
@@ -124,19 +99,7 @@ namespace Application.Features.Forwarding.Services
             InputMedia? finalMediaToSend = null;
             if (originalMessage.media != null)
             {
-                if (originalMessage.media is MessageMediaPhoto mmp && mmp.photo is Photo p)
-                {
-                    finalMediaToSend = new InputMediaPhoto { id = new InputPhoto { id = p.id, access_hash = p.access_hash, file_reference = p.file_reference } };
-                }
-                else if (originalMessage.media is MessageMediaDocument mmd && mmd.document is Document d)
-                {
-                    finalMediaToSend = new InputMediaDocument { id = new InputDocument { id = d.id, access_hash = d.access_hash, file_reference = d.file_reference } };
-                }
-                else
-                {
-                    _logger.LogWarning("Job: Media type {MediaType} not fully supported for custom send with media preservation. Message media will not be re-sent.",
-                        originalMessage.media.GetType().Name);
-                }
+                finalMediaToSend = CreateInputMedia(originalMessage.media);
             }
 
             await _userApiClient.SendMessageAsync(
@@ -146,7 +109,8 @@ namespace Application.Features.Forwarding.Services
                 media: finalMediaToSend,
                 noWebpage: rule.EditOptions.RemoveLinks);
 
-            _logger.LogInformation("Job: Custom message sent for original MsgID {SourceMsgId} to Target {TargetChannelId} via Rule '{RuleName}'.",
+            _logger.LogInformation(
+                "Custom message sent for original MsgID {SourceMsgId} to Target {TargetChannelId} via Rule '{RuleName}'.",
                 sourceMessageId, toPeer.ID, rule.RuleName);
         }
 
@@ -164,7 +128,8 @@ namespace Application.Features.Forwarding.Services
                 dropAuthor: rule.EditOptions?.RemoveSourceForwardHeader ?? false,
                 noForwards: rule.EditOptions?.RemoveSourceForwardHeader ?? false);
 
-            _logger.LogInformation("Job: Message {SourceMsgId} forwarded to Target {TargetChannelId} via Rule '{RuleName}'.",
+            _logger.LogInformation(
+                "Message {SourceMsgId} forwarded to Target {TargetChannelId} via Rule '{RuleName}'.",
                 sourceMessageId, toPeer.ID, rule.RuleName);
         }
 
@@ -241,6 +206,22 @@ namespace Application.Features.Forwarding.Services
             return (finalText, currentEntities?.ToArray());
         }
 
+        private InputMedia? CreateInputMedia(MessageMedia media)
+        {
+            return media switch
+            {
+                MessageMediaPhoto mmp when mmp.photo is Photo p => new InputMediaPhoto
+                {
+                    id = new InputPhoto { id = p.id, access_hash = p.access_hash, file_reference = p.file_reference }
+                },
+                MessageMediaDocument mmd when mmd.document is Document d => new InputMediaDocument
+                {
+                    id = new InputDocument { id = d.id, access_hash = d.access_hash, file_reference = d.file_reference }
+                },
+                _ => null
+            };
+        }
+
         private MessageEntity CloneEntityWithOffset(MessageEntity oldEntity, int offsetDelta)
         {
             int newOffset = oldEntity.Offset + offsetDelta;
@@ -267,7 +248,9 @@ namespace Application.Features.Forwarding.Services
 
         private MessageEntity DefaultCaseHandler(MessageEntity oldEntity, int offsetDelta)
         {
-            _logger.LogWarning("CloneEntityWithOffset: Unhandled entity type {EntityType}. Original entity returned. Offset adjustment WILL BE INCORRECT if text was prepended.", oldEntity.GetType().Name);
+            _logger.LogWarning(
+                "CloneEntityWithOffset: Unhandled entity type {EntityType}. Original entity returned. Offset adjustment WILL BE INCORRECT if text was prepended.",
+                oldEntity.GetType().Name);
             try
             {
                 if (Activator.CreateInstance(oldEntity.GetType()) is MessageEntity newGenericEntity)
@@ -284,4 +267,4 @@ namespace Application.Features.Forwarding.Services
             return oldEntity;
         }
     }
-}
+} 

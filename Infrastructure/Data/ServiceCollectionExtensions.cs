@@ -9,6 +9,8 @@ using Infrastructure.Services; // مسیر Repositoryها
 using Microsoft.EntityFrameworkCore;      // EF Core
 using Microsoft.Extensions.Configuration; // IConfiguration
 using Microsoft.Extensions.DependencyInjection; // IServiceCollection
+using Hangfire;
+using Hangfire.SqlServer;
 
 namespace Infrastructure
 {
@@ -77,6 +79,17 @@ namespace Infrastructure
             services.AddScoped<IAppDbContext>(
                 sp => sp.GetRequiredService<AppDbContext>());
 
+            // Add Hangfire services
+            services.AddHangfire(config => config
+                .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+                .UseSimpleAssemblyNameTypeSerializer()
+                .UseRecommendedSerializerSettings()
+                .UseSqlServerStorage(connectionString));
+
+            // Add the processing server as IHostedService
+            services.AddHangfireServer();
+
+
 
             // رجیستر کردن کلاینت CryptoPay با IHttpClientFactory
             // این کار به مدیریت بهتر HttpClient instance ها کمک می‌کند.
@@ -93,6 +106,10 @@ namespace Infrastructure
                 ;
 
             // 5. رجیستر کردن Repository
+            services.AddSingleton<ITelegramUserApiClient, TelegramUserApiClient>();
+            services.AddSingleton<TelegramUserApiClient>();
+            services.AddHostedService<TelegramUserApiInitializationService>();
+       
 
             services.AddScoped<INewsItemRepository, NewsItemRepository>();
             services.AddScoped<IRssReaderService, RssReaderService>();

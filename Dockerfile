@@ -16,9 +16,13 @@ RUN dotnet restore "WebAPI/WebAPI.csproj"
 # Copy the rest of the code
 COPY . .
 
-# Build and publish
+# Build and publish WebAPI
 RUN dotnet build "WebAPI/WebAPI.csproj" -c Release -o /app/build
-RUN dotnet publish "WebAPI/WebAPI.csproj" -c Release -o /app/publish
+RUN dotnet publish "WebAPI/WebAPI.csproj" -c Release -o /app/publish/webapi
+
+# Build and publish BackgroundTasks
+RUN dotnet build "BackgroundTasks/BackgroundTasks.csproj" -c Release -o /app/build-tasks
+RUN dotnet publish "BackgroundTasks/BackgroundTasks.csproj" -c Release -o /app/publish/tasks
 
 # Runtime stage
 FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS final
@@ -33,7 +37,8 @@ RUN mkdir -p /app/telegram-sessions && \
     chown -R appuser:appuser /app
 
 # Copy published files
-COPY --from=build /app/publish .
+COPY --from=build /app/publish/webapi /app/webapi
+COPY --from=build /app/publish/tasks /app/tasks
 
 # Set secure permissions
 RUN chown -R appuser:appuser /app && \
@@ -51,4 +56,4 @@ ENV DOTNET_RUNNING_IN_CONTAINER=true
 USER appuser
 
 EXPOSE 80
-ENTRYPOINT ["dotnet", "WebAPI.dll"] 
+ENTRYPOINT ["dotnet", "WebAPI/WebAPI.dll"] 

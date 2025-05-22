@@ -18,6 +18,7 @@ services:
       - redis
     networks:
       - forex-network
+    working_dir: /app/webapi
 
   db:
     image: postgres:16
@@ -40,7 +41,9 @@ services:
       - forex-network
 
   backgroundtasks:
-    image: ${REGISTRY:-ghcr.io}/${GITHUB_REPOSITORY:-Opselon/ForexTradingBot}:${GITHUB_REF_NAME:-master}
+    build:
+      context: .
+      dockerfile: Dockerfile
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
       - ConnectionStrings__DefaultConnection=Host=db;Database=forextrading;Username=postgres;Password=re110121
@@ -54,6 +57,7 @@ services:
       - redis
     networks:
       - forex-network
+    working_dir: /app/tasks
     command: dotnet BackgroundTasks.dll
 
 networks:

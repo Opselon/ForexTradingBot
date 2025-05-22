@@ -2,6 +2,9 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using System.Net;
+using System.Net.Security;
+using System.Security.Cryptography.X509Certificates;
 using Telegram.Bot;
 using Telegram.Bot.Exceptions;  // ✅ برای ApiRequestException
 using Telegram.Bot.Polling; // ✅ برای IUpdateHandler, DefaultUpdateHandlerOptions
@@ -30,6 +33,43 @@ namespace TelegramPanel.Infrastructure
             _botClient = botClient ?? throw new ArgumentNullException(nameof(botClient));
             _settings = settingsOptions?.Value ?? throw new ArgumentNullException(nameof(settingsOptions));
             _updateChannel = updateChannel ?? throw new ArgumentNullException(nameof(updateChannel));
+
+            // Configure SSL/TLS
+            ConfigureSslTls();
+        }
+
+        private void ConfigureSslTls()
+        {
+            try
+            {
+                // Configure TLS 1.2
+                ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
+
+                // Configure SSL/TLS certificate validation
+                ServicePointManager.ServerCertificateValidationCallback = (sender, certificate, chain, sslPolicyErrors) =>
+                {
+                    if (sslPolicyErrors == SslPolicyErrors.None)
+                        return true;
+
+                    // Log certificate validation errors
+                    _logger.LogWarning("SSL Certificate Validation Error: {SslPolicyErrors}", sslPolicyErrors);
+                    
+                    // For development, you might want to accept all certificates
+                    // In production, you should implement proper certificate validation
+                    #if DEBUG
+                    return true;
+                    #else
+                    return false;
+                    #endif
+                };
+
+                // Configure default proxy settings
+                WebRequest.DefaultWebProxy = null; // Disable proxy by default
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error configuring SSL/TLS settings");
+            }
         }
 
         public async Task StartAsync(CancellationToken hostCancellationToken)
@@ -41,8 +81,33 @@ namespace TelegramPanel.Infrastructure
             try
             {
                 _logger.LogInformation("Attempting to connect to Telegram and get bot information...");
-                me = await _botClient.GetMe(cancellationToken: _cancellationTokenSourceForPolling.Token);
-                _logger.LogInformation("Successfully connected. Bot Service starting for: {BotUsername} (ID: {BotId})", me.Username, me.Id);
+                
+                // Add retry logic for initial connection
+                int maxRetries = 3;
+                int currentRetry = 0;
+                bool connected = false;
+
+                while (!connected && currentRetry < maxRetries)
+                {
+                    try
+                    {
+                        me = await _botClient.GetMe(cancellationToken: _cancellationTokenSourceForPolling.Token);
+                        connected = true;
+                        _logger.LogInformation("Successfully connected. Bot Service starting for: {BotUsername} (ID: {BotId})", me.Username, me.Id);
+                    }
+                    catch (HttpRequestException ex) when (currentRetry < maxRetries - 1)
+                    {
+                        currentRetry++;
+                        _logger.LogWarning(ex, "Connection attempt {CurrentRetry} of {MaxRetries} failed. Retrying in 5 seconds...", currentRetry, maxRetries);
+                        await Task.Delay(5000, _cancellationTokenSourceForPolling.Token);
+                    }
+                }
+
+                if (!connected)
+                {
+                    _logger.LogCritical("Failed to connect to Telegram API after {MaxRetries} attempts. Bot service will not start.", maxRetries);
+                    return;
+                }
             }
             catch (OperationCanceledException)
             {

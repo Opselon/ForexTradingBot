@@ -5,7 +5,20 @@
       "commandName": "Project",
       "dotnetRunMessages": true,
       "environmentVariables": {
-        "DOTNET_ENVIRONMENT": "Development"
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ConnectionStrings__DefaultConnection": "Server=localhost;Port=5432;Database=myappdb;User Id=postgres;Password=re110121;",
+        "Hangfire__ConnectionString": "Server=localhost;Port=5432;Database=myappdb;User Id=postgres;Password=re110121;"
+      }
+    },
+    "Docker": {
+      "commandName": "Docker",
+      "launchBrowser": false,
+      "publishAllPorts": true,
+      "useSSL": false,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ConnectionStrings__DefaultConnection": "Server=postgres;Port=5432;Database=myappdb;User Id=postgres;Password=re110121;",
+        "Hangfire__ConnectionString": "Server=postgres;Port=5432;Database=myappdb;User Id=postgres;Password=re110121;"
       }
     }
   }

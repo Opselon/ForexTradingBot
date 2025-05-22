@@ -9,11 +9,12 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using System.Collections.Generic;
+using WebAPI.Models;
 
 namespace WebAPI.Controllers
 {
     [ApiController]
-    [Route("api/[controller]")]
+    [Route("api/v2/[controller]")]
     [Authorize]
     public class ForwardingController : ControllerBase
     {
@@ -26,7 +27,7 @@ namespace WebAPI.Controllers
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
-        [HttpPost("process")]
+        [HttpPost("process/background")]
         public IActionResult ProcessMessage([FromBody] ProcessMessageRequest request)
         {
             if (request == null)
@@ -136,11 +137,5 @@ namespace WebAPI.Controllers
                 return StatusCode(500, "Error deleting forwarding rule");
             }
         }
-    }
-
-    public class ProcessMessageRequest
-    {
-        public long SourceChannelId { get; set; }
-        public long MessageId { get; set; }
     }
 } 

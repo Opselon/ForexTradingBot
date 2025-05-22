@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Npgsql.Replication.PgOutput.Messages;
 using System.Collections.Concurrent;
+using System.Net.Sockets;
 using TL;        // For core Telegram types
 #endregion
 
@@ -332,110 +333,119 @@ namespace Infrastructure.Services
                 };
 
                 _logger.LogInformation("Connecting User API (Session: {SessionPath})...", _settings.SessionPath);
-                try
+                
+                // Add retry logic for connection
+                int maxRetries = 3;
+                int currentRetry = 0;
+                TimeSpan retryDelay = TimeSpan.FromSeconds(5);
+                bool connected = false;
+
+                while (!connected && currentRetry < maxRetries)
                 {
-                    User loggedInUser = await _client.LoginUserIfNeeded();
-                    _logger.LogInformation("User API Logged in: {User}", loggedInUser?.ToString());
-                    
-                    // Pre-fetch and cache dialogs
-                    var dialogs = await _client.Messages_GetAllDialogs();
-                    dialogs.CollectUsersChats(_userCache, _chatCache);
-
-                    // Update expiry caches
-                    int usersTransferred = 0;
-                    if (_userCache != null && _userCache.Any()) // Check if _userCache is not null and has items
+                    try
                     {
-                        _logger.LogDebug("Refreshing user cache. Found {UserCacheCount} users in simple cache.", _userCache.Count);
-                        foreach (var userEntry in _userCache) // Changed 'user' to 'userEntry' for clarity if 'user' is a type name
-                        {
-                            // Assuming userEntry.Key is the user identifier (e.g., long userId)
-                            // Assuming userEntry.Value is the user object
-                            _userCacheWithExpiry[userEntry.Key] = (userEntry.Value, DateTime.UtcNow.Add(_cacheExpiration));
-                            usersTransferred++;
-                            _logger.LogTrace("Transferred user {UserId} to expiry cache. New expiry: {ExpiryTime}",
-                                userEntry.Key, _userCacheWithExpiry[userEntry.Key].Item2);
-                        }
-                        _logger.LogInformation("Successfully transferred {UsersTransferredCount} users to expiry cache.", usersTransferred);
-                    }
-                    else
-                    {
-                        _logger.LogInformation("User cache (_userCache) is null or empty. No users to transfer.");
-                    }
-
-                    int chatsTransferred = 0;
-                    if (_chatCache != null && _chatCache.Any()) // Check if _chatCache is not null and has items
-                    {
-                        _logger.LogDebug("Refreshing chat cache. Found {ChatCacheCount} chats in simple cache.", _chatCache.Count);
-                        foreach (var chatEntry in _chatCache) // Changed 'chat' to 'chatEntry' for clarity
-                        {
-                            // Assuming chatEntry.Key is the chat identifier (e.g., long chatId)
-                            // Assuming chatEntry.Value is the chat object
-                            _chatCacheWithExpiry[chatEntry.Key] = (chatEntry.Value, DateTime.UtcNow.Add(_cacheExpiration));
-                            chatsTransferred++;
-                            _logger.LogTrace("Transferred chat {ChatId} to expiry cache. New expiry: {ExpiryTime}",
-                                chatEntry.Key, _chatCacheWithExpiry[chatEntry.Key].Item2);
-                        }
-                        _logger.LogInformation("Successfully transferred {ChatsTransferredCount} chats to expiry cache.", chatsTransferred);
-                    }
-                    else
-                    {
-                        _logger.LogInformation("Chat cache (_chatCache) is null or empty. No chats to transfer.");
-                    }
-                }
-                catch (RpcException e) when (e.Code == 401 && (e.Message.Contains("SESSION_PASSWORD_NEEDED") || e.Message.Contains("account_password_input_needed")))
-                {
-                    _logger.LogWarning("User API: 2FA needed. Password requested via ConfigProvider.");
-                    User loggedInUser = await _client.LoginUserIfNeeded();
-                    _logger.LogInformation("User API Logged in with 2FA: {User}", loggedInUser?.ToString());
-                }
-                catch (RpcException e) when (e.Message.StartsWith("PHONE_MIGRATE_"))
-                {
-                    if (int.TryParse(e.Message.Split('_').Last(), out int dcNumber))
-                    {
-                        _logger.LogWarning("User API: Phone number needs to be migrated to DC{DCNumber}. Reconnecting...", dcNumber);
-
-                        if (_client != null) // Check if _client exists before trying to use it or dispose
-                        {
-                            _client.OnUpdates -= HandleUpdatesBaseAsync;
-                            _client.Dispose();
-                            _client = null;
-                        }
-
-                        // Create new client with the correct DC
-                        _logger.LogInformation("Creating new WTelegram.Client instance for DC{DCNumber}.", dcNumber);
-                        _client = new WTelegram.Client(ConfigProvider);// <<< UNCOMMENTED & CORRECTED: dcToUse parameter
-
-                        _client.OnUpdates += async updates => // Re-attach event handler
-                        {
-                            _logger.LogCritical("[USER_API_ON_UPDATES_TRIGGERED_DC_MIGRATE] Raw updates object of type: {UpdateType} from WTelegram.Client (after DC Migrate)", updates.GetType().FullName);
-                            if (updates is UpdatesBase updatesBase)
-                            {
-                                await HandleUpdatesBaseAsync(updatesBase);
-                            }
-                            else
-                            {
-                                _logger.LogWarning("[USER_API_ON_UPDATES_TRIGGERED_DC_MIGRATE] Received 'updates' that is NOT UpdatesBase. Type: {UpdateType}", updates.GetType().FullName);
-                            }
-                        };
-
-                        _logger.LogInformation("Re-attempting login after DC migration to DC{DCNumber}...", dcNumber);
-                        User loggedInUser = await _client.LoginUserIfNeeded(); // Try logging in again with the new client
-                        _logger.LogInformation("User API Logged in on DC{DCNumber}: {User}", dcNumber, loggedInUser?.ToString());
-                        // You should also re-fetch dialogs here if migration happens
+                        User loggedInUser = await _client.LoginUserIfNeeded();
+                        _logger.LogInformation("User API Logged in: {User}", loggedInUser?.ToString());
+                        
+                        // Pre-fetch and cache dialogs
                         var dialogs = await _client.Messages_GetAllDialogs();
                         dialogs.CollectUsersChats(_userCache, _chatCache);
-                        // And update expiry caches
+
+                        // Update expiry caches
+                        int usersTransferred = 0;
+                        if (_userCache != null && _userCache.Any())
+                        {
+                            _logger.LogDebug("Refreshing user cache. Found {UserCacheCount} users in simple cache.", _userCache.Count);
+                            foreach (var userEntry in _userCache)
+                            {
+                                _userCacheWithExpiry[userEntry.Key] = (userEntry.Value, DateTime.UtcNow.Add(_cacheExpiration));
+                                usersTransferred++;
+                                _logger.LogTrace("Transferred user {UserId} to expiry cache. New expiry: {ExpiryTime}",
+                                    userEntry.Key, _userCacheWithExpiry[userEntry.Key].Item2);
+                            }
+                            _logger.LogInformation("Successfully transferred {UsersTransferredCount} users to expiry cache.", usersTransferred);
+                        }
+                        connected = true;
                     }
-                    else
+                    catch (IOException ex) when (ex.InnerException is SocketException socketEx && socketEx.SocketErrorCode == SocketError.ConnectionReset)
                     {
-                        _logger.LogError("User API: Failed to parse DC number from migration error: {ErrorMessage}", e.Message);
-                        throw; // Rethrow if parsing DC fails
+                        currentRetry++;
+                        _logger.LogWarning(ex, "Connection attempt {CurrentRetry} of {MaxRetries} failed due to connection reset. Retrying in {RetryDelay} seconds...", 
+                            currentRetry, maxRetries, retryDelay.TotalSeconds);
+                        
+                        if (currentRetry < maxRetries)
+                        {
+                            await Task.Delay(retryDelay, cancellationToken);
+                            retryDelay = TimeSpan.FromSeconds(Math.Min(retryDelay.TotalSeconds * 2, 30)); // Exponential backoff with max 30 seconds
+                        }
+                    }
+                    catch (RpcException e) when (e.Code == 401 && (e.Message.Contains("SESSION_PASSWORD_NEEDED") || e.Message.Contains("account_password_input_needed")))
+                    {
+                        _logger.LogWarning("User API: 2FA needed. Password requested via ConfigProvider.");
+                        User loggedInUser = await _client.LoginUserIfNeeded();
+                        _logger.LogInformation("User API Logged in with 2FA: {User}", loggedInUser?.ToString());
+                        connected = true;
+                    }
+                    catch (RpcException e) when (e.Message.StartsWith("PHONE_MIGRATE_"))
+                    {
+                        if (int.TryParse(e.Message.Split('_').Last(), out int dcNumber))
+                        {
+                            _logger.LogWarning("User API: Phone number needs to be migrated to DC{DCNumber}. Reconnecting...", dcNumber);
+
+                            if (_client != null)
+                            {
+                                _client.OnUpdates -= HandleUpdatesBaseAsync;
+                                _client.Dispose();
+                                _client = null;
+                            }
+
+                            _logger.LogInformation("Creating new WTelegram.Client instance for DC{DCNumber}.", dcNumber);
+                            _client = new WTelegram.Client(ConfigProvider);
+
+                            _client.OnUpdates += async updates =>
+                            {
+                                if (updates is UpdatesBase updatesBase)
+                                {
+                                    await HandleUpdatesBaseAsync(updatesBase);
+                                }
+                            };
+
+                            _logger.LogInformation("Re-attempting login after DC migration to DC{DCNumber}...", dcNumber);
+                            User loggedInUser = await _client.LoginUserIfNeeded();
+                            _logger.LogInformation("User API Logged in on DC{DCNumber}: {User}", dcNumber, loggedInUser?.ToString());
+                            
+                            var dialogs = await _client.Messages_GetAllDialogs();
+                            dialogs.CollectUsersChats(_userCache, _chatCache);
+                            connected = true;
+                        }
+                        else
+                        {
+                            _logger.LogError("User API: Failed to parse DC number from migration error: {ErrorMessage}", e.Message);
+                            throw;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        currentRetry++;
+                        _logger.LogWarning(ex, "Connection attempt {CurrentRetry} of {MaxRetries} failed. Retrying in {RetryDelay} seconds...", 
+                            currentRetry, maxRetries, retryDelay.TotalSeconds);
+                        
+                        if (currentRetry < maxRetries)
+                        {
+                            await Task.Delay(retryDelay, cancellationToken);
+                            retryDelay = TimeSpan.FromSeconds(Math.Min(retryDelay.TotalSeconds * 2, 30)); // Exponential backoff with max 30 seconds
+                        }
+                        else
+                        {
+                            _logger.LogCritical(ex, "User API: Failed to connect/login after {MaxRetries} attempts.");
+                            throw;
+                        }
                     }
                 }
-                catch (Exception ex)
+
+                if (!connected)
                 {
-                    _logger.LogCritical(ex, "User API: Failed to connect/login.");
-                    throw;
+                    throw new IOException("Failed to establish connection to Telegram API after multiple attempts.");
                 }
             }
             finally
@@ -446,7 +456,6 @@ namespace Infrastructure.Services
                 }
                 catch (ObjectDisposedException)
                 {
-                    // If the semaphore is disposed, create a new one
                     _connectionLock = new SemaphoreSlim(1, 1);
                 }
             }

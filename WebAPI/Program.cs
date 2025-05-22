@@ -14,6 +14,7 @@ using BackgroundTasks;                    // برای متد توسعه‌دهن
 using Hangfire;                             // برای پیکربندی‌های Hangfire مانند CompatibilityLevel, RecurringJob, Cron
 using Hangfire.Dashboard;                   // برای DashboardOptions, IDashboardAuthorizationFilter
 using Hangfire.MemoryStorage;             // برای UseMemoryStorage (Storage پیش‌فرض برای توسعه)
+using Hangfire.PostgreSql;
 // using Hangfire.SqlServer;              // اگر از SQL Server برای Hangfire استفاده می‌کنید
 using Infrastructure;                     // برای متد توسعه‌دهنده AddInfrastructureServices
 using Infrastructure.Services;
@@ -145,7 +146,8 @@ try
         .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
         .UseSimpleAssemblyNameTypeSerializer()
         .UseRecommendedSerializerSettings()
-        .UseSqlServerStorage(builder.Configuration.GetConnectionString("DefaultConnection")));
+        .UsePostgreSqlStorage(builder.Configuration.GetConnectionString("Hangfire")
+            ?? builder.Configuration.GetConnectionString("DefaultConnection")));
     builder.Services.AddHangfireServer();
     Log.Information("Hangfire services (with SQL Server for production) added.");
     builder.Services.Configure<List<Infrastructure.Settings.ForwardingRule>>( // <<< Fully qualified

@@ -19,6 +19,19 @@ namespace Domain.Entities
         [MaxLength(50)]
         public string Symbol { get; set; } = null!;
 
+        /// <summary>
+        /// The title or headline of the signal.
+        /// </summary>
+        [Required]
+        [MaxLength(200)]
+        public string Title { get; set; } = null!;
+
+        /// <summary>
+        /// Detailed description or explanation of the signal.
+        /// </summary>
+        [MaxLength(1000)]
+        public string? Description { get; set; }
+
         [Required]
         public decimal EntryPrice { get; set; }
 

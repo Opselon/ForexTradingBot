@@ -1,9 +1,16 @@
 <Project>
   <PropertyGroup>
     <ExcludeAppSettings Condition="'$(ExcludeAppSettings)' == ''">false</ExcludeAppSettings>
+    <CopyAppSettings Condition="'$(CopyAppSettings)' == ''">true</CopyAppSettings>
   </PropertyGroup>
   
   <ItemGroup Condition="'$(ExcludeAppSettings)' == 'true'">
     <Content Remove="**/appsettings*.json" />
+    <None Remove="**/appsettings*.json" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(CopyAppSettings)' == 'false'">
+    <Content Remove="**/appsettings*.json" />
+    <None Remove="**/appsettings*.json" />
   </ItemGroup>
 </Project> 

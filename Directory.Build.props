@@ -1,7 +1,11 @@
 <Project>
   <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
     <ExcludeAppSettings Condition="'$(ExcludeAppSettings)' == ''">false</ExcludeAppSettings>
     <CopyAppSettings Condition="'$(CopyAppSettings)' == ''">true</CopyAppSettings>
+    <GenerateRuntimeConfigurationFiles Condition="'$(GenerateRuntimeConfigurationFiles)' == ''">false</GenerateRuntimeConfigurationFiles>
   </PropertyGroup>
   
   <ItemGroup Condition="'$(ExcludeAppSettings)' == 'true'">
@@ -12,5 +16,12 @@
   <ItemGroup Condition="'$(CopyAppSettings)' == 'false'">
     <Content Remove="**/appsettings*.json" />
     <None Remove="**/appsettings*.json" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="9.0.5" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="9.0.5" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="9.0.5" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Tools" Version="9.0.5" />
   </ItemGroup>
 </Project> 

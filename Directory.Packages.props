@@ -1,0 +1,37 @@
+<Project>
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="9.0.5" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Relational" Version="9.0.5" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.SqlServer" Version="9.0.5" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Tools" Version="9.0.5" />
+    <PackageVersion Include="Hangfire" Version="1.8.7" />
+    <PackageVersion Include="Hangfire.PostgreSql" Version="0.5.0" />
+    <PackageVersion Include="Hangfire.Console" Version="1.4.3" />
+    <PackageVersion Include="Hangfire.Dashboard.BasicAuthentication" Version="1.2.0" />
+    <PackageVersion Include="Hangfire.AspNetCore" Version="1.8.7" />
+    <PackageVersion Include="Hangfire.Core" Version="1.8.7" />
+    <PackageVersion Include="Hangfire.SqlServer" Version="1.8.7" />
+    <PackageVersion Include="Hangfire.MemoryStorage" Version="1.8.7" />
+    <PackageVersion Include="Hangfire.Storage.SQLite" Version="1.8.7" />
+    <PackageVersion Include="Hangfire.Storage.Redis" Version="1.8.7" />
+    <PackageVersion Include="Hangfire.Storage.MongoDB" Version="1.8.7" />
+    <PackageVersion Include="Hangfire.Storage.PostgreSql" Version="1.8.7" />
+    <PackageVersion Include="Hangfire.Storage.MySql" Version="1.8.7" />
+    <PackageVersion Include="Hangfire.Storage.Oracle" Version="1.8.7" />
+    <PackageVersion Include="Hangfire.Storage.SQLite.Core" Version="1.8.7" />
+    <PackageVersion Include="Hangfire.Storage.SQLite.Microsoft" Version="1.8.7" />
+    <PackageVersion Include="Hangfire.Storage.SQLite.Microsoft.Extensions.DependencyInjection" Version="1.8.7" />
+    <PackageVersion Include="Hangfire.Storage.SQLite.Microsoft.Extensions.Hosting" Version="1.8.7" />
+    <PackageVersion Include="Hangfire.Storage.SQLite.Microsoft.Extensions.Logging" Version="1.8.7" />
+    <PackageVersion Include="Hangfire.Storage.SQLite.Microsoft.Extensions.Options" Version="1.8.7" />
+    <PackageVersion Include="Hangfire.Storage.SQLite.Microsoft.Extensions.DependencyInjection.Abstractions" Version="1.8.7" />
+    <PackageVersion Include="Hangfire.Storage.SQLite.Microsoft.Extensions.Hosting.Abstractions" Version="1.8.7" />
+    <PackageVersion Include="Hangfire.Storage.SQLite.Microsoft.Extensions.Logging.Abstractions" Version="1.8.7" />
+    <PackageVersion Include="Hangfire.Storage.SQLite.Microsoft.Extensions.Options.Abstractions" Version="1.8.7" />
+  </ItemGroup>
+</Project> 

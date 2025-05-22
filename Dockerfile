@@ -18,11 +18,11 @@ COPY . .
 
 # Build and publish WebAPI
 RUN dotnet build "WebAPI/WebAPI.csproj" -c Release -o /app/build
-RUN dotnet publish "WebAPI/WebAPI.csproj" -c Release -o /app/publish/webapi
+RUN dotnet publish "WebAPI/WebAPI.csproj" -c Release -o /app/publish/webapi --no-restore
 
 # Build and publish BackgroundTasks
 RUN dotnet build "BackgroundTasks/BackgroundTasks.csproj" -c Release -o /app/build-tasks
-RUN dotnet publish "BackgroundTasks/BackgroundTasks.csproj" -c Release -o /app/publish/tasks
+RUN dotnet publish "BackgroundTasks/BackgroundTasks.csproj" -c Release -o /app/publish/tasks --no-restore
 
 # Runtime stage
 FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS final

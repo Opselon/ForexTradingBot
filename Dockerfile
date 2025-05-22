@@ -18,11 +18,11 @@ COPY . .
 
 # Build and publish WebAPI
 RUN dotnet build "WebAPI/WebAPI.csproj" -c Release -o /app/build
-RUN dotnet publish "WebAPI/WebAPI.csproj" -c Release -o /app/publish/webapi --no-restore
+RUN dotnet publish "WebAPI/WebAPI.csproj" -c Release -o /app/publish/webapi --no-restore /p:ExcludeAppSettings=true
 
 # Build and publish BackgroundTasks
 RUN dotnet build "BackgroundTasks/BackgroundTasks.csproj" -c Release -o /app/build-tasks
-RUN dotnet publish "BackgroundTasks/BackgroundTasks.csproj" -c Release -o /app/publish/tasks --no-restore
+RUN dotnet publish "BackgroundTasks/BackgroundTasks.csproj" -c Release -o /app/publish/tasks --no-restore /p:ExcludeAppSettings=true
 
 # Runtime stage
 FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS final
@@ -39,6 +39,12 @@ RUN mkdir -p /app/telegram-sessions && \
 # Copy published files
 COPY --from=build /app/publish/webapi /app/webapi
 COPY --from=build /app/publish/tasks /app/tasks
+
+# Copy appsettings files separately
+COPY --from=build /src/WebAPI/appsettings.json /app/webapi/appsettings.json
+COPY --from=build /src/WebAPI/appsettings.Production.json /app/webapi/appsettings.Production.json
+COPY --from=build /src/BackgroundTasks/appsettings.json /app/tasks/appsettings.json
+COPY --from=build /src/BackgroundTasks/appsettings.Production.json /app/tasks/appsettings.Production.json
 
 # Set secure permissions
 RUN chown -R appuser:appuser /app && \

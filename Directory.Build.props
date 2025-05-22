@@ -1,0 +1,9 @@
+<Project>
+  <PropertyGroup>
+    <ExcludeAppSettings Condition="'$(ExcludeAppSettings)' == ''">false</ExcludeAppSettings>
+  </PropertyGroup>
+  
+  <ItemGroup Condition="'$(ExcludeAppSettings)' == 'true'">
+    <Content Remove="**/appsettings*.json" />
+  </ItemGroup>
+</Project> 

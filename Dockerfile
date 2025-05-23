@@ -2,30 +2,37 @@
 # Stage 1: Build SDK Environment & Restore Dependencies
 #-------------------------------------------------------------------------------------
 FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
+
+# Build arguments
+ARG TELEGRAM_BOT_TOKEN
+ARG TELEGRAM_CHANNEL_ID
+
+# Install Go
+RUN apt-get update && apt-get install -y golang-go && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /src
 
 # Copy solution and project files
-COPY ["ForexTradingBot.sln", "./"]
-COPY ["nuget.config", "./"]
-COPY ["Directory.Packages.props", "./"]
-COPY ["Directory.Build.props", "./"]
+COPY ["ForexTradingBot.sln", "Directory.Packages.props", "nuget.config", "./"]
 COPY ["WebAPI/WebAPI.csproj", "WebAPI/"]
-COPY ["Application/Application.csproj", "Application/"]
-COPY ["Domain/Domain.csproj", "Domain/"]
+COPY ["Core/Core.csproj", "Core/"]
 COPY ["Infrastructure/Infrastructure.csproj", "Infrastructure/"]
-COPY ["Shared/Shared.csproj", "Shared/"]
 COPY ["BackgroundTasks/BackgroundTasks.csproj", "BackgroundTasks/"]
-COPY ["TelegramPanel/TelegramPanel.csproj", "TelegramPanel/"]
 
 # Restore packages
-RUN dotnet restore --configfile nuget.config
+RUN dotnet restore "WebAPI/WebAPI.csproj" --configfile nuget.config
 
 # Copy the rest of the code
 COPY . .
 
-# Build and publish
-RUN dotnet publish "WebAPI/WebAPI.csproj" -c Release -o /app/publish/webapi
-RUN dotnet publish "BackgroundTasks/BackgroundTasks.csproj" -c Release -o /app/publish/tasks
+# Build Go log monitor
+WORKDIR /src/WebAPI
+RUN go build -o docker_log_monitor docker_log_monitor.go
+
+# Build .NET applications
+WORKDIR /src
+RUN dotnet build "WebAPI/WebAPI.csproj" -c Release -o /app/build/webapi
+RUN dotnet build "BackgroundTasks/BackgroundTasks.csproj" -c Release -o /app/build/tasks
 
 #-------------------------------------------------------------------------------------
 # Stage 2: Final Runtime Image
@@ -39,9 +46,18 @@ RUN adduser --system --group --disabled-password --gecos "" --home /app appuser
 # Install curl for health checks
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 
-# Copy published files
-COPY --from=build /app/publish/webapi /app/webapi/
-COPY --from=build /app/publish/tasks /app/tasks/
+# Install Go runtime and Docker CLI
+RUN apt-get update && apt-get install -y \
+    golang-go \
+    docker.io \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy the Go log monitor
+COPY --from=build /src/WebAPI/docker_log_monitor .
+
+# Copy the published applications
+COPY --from=build /app/build/webapi ./webapi
+COPY --from=build /app/build/tasks ./tasks
 
 # Create necessary directories
 RUN mkdir -p /app/telegram-sessions && \
@@ -59,6 +75,8 @@ ENV ASPNETCORE_URLS=http://+:80
 ENV ASPNETCORE_ENVIRONMENT=Production
 ENV TELEGRAM_SESSION_PATH=/app/telegram-sessions
 ENV DOTNET_RUNNING_IN_CONTAINER=true
+ENV TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+ENV TELEGRAM_CHANNEL_ID=${TELEGRAM_CHANNEL_ID}
 
 # Switch to non-root user
 USER appuser

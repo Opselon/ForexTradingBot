@@ -1,81 +1,93 @@
-# Build Stage
-FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
+#-------------------------------------------------------------------------------------
+# Stage 1: Build SDK Environment & Restore Dependencies
+#-------------------------------------------------------------------------------------
+FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build-env
 WORKDIR /src
 
-# --- Crucial: Copy solution-level files FIRST ---
-# Copy the .sln file (if you restore at solution level, which is good practice)
-# COPY YourSolutionName.sln ./ 
-# Copy Directory.Packages.props for Central Package Management
+# --- Copy Solution Level Files for Restore Layer ---
+# This layer benefits most from caching if these files don't change often.
 COPY Directory.Packages.props ./
-# Copy Directory.Build.props if you have one
-# COPY Directory.Build.props ./
-# Copy NuGet.config if you have one
-# COPY NuGet.config ./
+# COPY YourSolutionName.sln ./ # UNCOMMENT if you want to restore at solution level
+# COPY NuGet.config ./         # UNCOMMENT if you have a solution-specific NuGet.config
+# COPY Directory.Build.props ./ # UNCOMMENT if you use this
 
-# --- Now copy project files ---
+# --- Copy Project Files for Restore ---
+# Copy only the .csproj files to leverage Docker cache for the restore step.
+# If a .csproj changes, only this layer and subsequent ones are rebuilt.
 COPY ["WebAPI/WebAPI.csproj", "WebAPI/"]
 COPY ["Application/Application.csproj", "Application/"]
 COPY ["Domain/Domain.csproj", "Domain/"]
 COPY ["Infrastructure/Infrastructure.csproj", "Infrastructure/"]
 COPY ["Shared/Shared.csproj", "Shared/"]
-COPY ["TelegramPanel/TelegramPanel.csproj", "TelegramPanel/"]       # Added this, was missing
-COPY ["BackgroundTasks/BackgroundTasks.csproj", "BackgroundTasks/"] # Added this, was missing
+COPY ["TelegramPanel/TelegramPanel.csproj", "TelegramPanel/"]
+COPY ["BackgroundTasks/BackgroundTasks.csproj", "BackgroundTasks/"]
+# Add any other .csproj files your solution might have, e.g., test projects if they were part of restore issues.
 
-# --- Restore dependencies ---
-# It's often better to restore at the solution level if you copied the .sln file
-# RUN dotnet restore YourSolutionName.sln
-# Or, if restoring project by project, ensure all projects that need restoring are done
-# For a single restore command that considers all, targeting the main project is often okay if it references others.
-# However, since your previous logs showed multiple projects failing restore,
-# let's stick to restoring the main one, assuming it will chain correctly *now that CPM is present*.
-RUN dotnet restore "WebAPI/WebAPI.csproj"
-# If issues persist, you might need to restore each project that has direct dependencies
-# or, ideally, restore the .sln file.
+# --- Restore Dependencies ---
+# Using minimal verbosity to reduce log noise but still show errors/warnings.
+# If debugging difficult restore issues, change to '--verbosity diagnostic' temporarily.
+# RUN dotnet restore YourSolutionName.sln --verbosity minimal # UNCOMMENT and use this if you copied .sln
+RUN dotnet restore "WebAPI/WebAPI.csproj" --verbosity minimal
 
+#-------------------------------------------------------------------------------------
+# Stage 2: Build & Publish Application
+#-------------------------------------------------------------------------------------
+# This stage depends on the restore layer (build-env)
 # Copy the rest of the source code
+WORKDIR /src # Ensure we are in the same WORKDIR if using layers explicitly like this
 COPY . .
 
-# Build and publish
-# The build command will implicitly restore if needed, but the explicit restore earlier is good for layer caching.
-RUN dotnet build "WebAPI/WebAPI.csproj" -c Release -o /app/build --no-restore # Add --no-restore
-RUN dotnet publish "WebAPI/WebAPI.csproj" -c Release -o /app/publish --no-restore # Add --no-restore
+# --- Build and Publish the Application ---
+# Using minimal verbosity. Ensure '--no-restore' as dependencies are already restored.
+RUN dotnet build "WebAPI/WebAPI.csproj" -c Release -o /app/build --no-restore --verbosity minimal
+RUN dotnet publish "WebAPI/WebAPI.csproj" -c Release -o /app/publish --no-restore --verbosity minimal
 
-# Runtime Stage
+#-------------------------------------------------------------------------------------
+# Stage 3: Final Runtime Image
+#-------------------------------------------------------------------------------------
 FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS final
 WORKDIR /app
 
-# Install necessary tools
-# Consider if 'curl' is truly needed in the final runtime image. It's good for HEALTHCHECK, but keep images minimal.
+# --- Install Runtime Dependencies (if any) ---
+# Only install essential tools needed by the application at runtime.
+# curl is included here for the HEALTHCHECK.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy published files
-COPY --from=build /app/publish .
+# --- Copy Published Application from Build Stage ---
+COPY --from=build-env /app/publish . # Changed from 'build' to 'build-env' as per updated stage name
 
-# Set environment variables
-ENV ASPNETCORE_URLS=http://+:80
-ENV ASPNETCORE_ENVIRONMENT=Production # This can be overridden at runtime
+# --- Security: Create and Use a Non-Root User ---
+# Create a non-root user and group for the application
+RUN adduser --system --group --disabled-password --gecos "" --home /app appuser
+# chown /app to the new user is implicitly done if --home /app works, but being explicit is okay
+# Ensure app files are owned by appuser if not already.
+RUN chown -R appuser:appuser /app
 
-# Expose port
-EXPOSE 80
-
-# Create a non-root user for better security (matches your previous log's appuser setup)
-RUN adduser --disabled-password --gecos "" appuser && \
-    chown -R appuser:appuser /app
-
-# Create directories and set permissions (if these are needed by your app and not created by the app itself)
-# These were in your GitHub Actions log earlier, so they might be relevant
+# --- Application-Specific Directories and Permissions (if needed) ---
+# These should ideally be created by the app or init scripts if their content is dynamic.
+# If static and needed at startup, create them and set ownership.
 RUN mkdir -p /app/telegram-sessions && \
-    mkdir -p /app/data-protection && \
-    chown -R appuser:appuser /app/telegram-sessions && \
+    chown -R appuser:appuser /app/telegram-sessions
+RUN mkdir -p /app/data-protection && \
     chown -R appuser:appuser /app/data-protection
 
-USER appuser # Run the application as a non-root user
+# Switch to the non-root user
+USER appuser
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --retries=3 \
-    CMD curl -f http://localhost/health || exit 1 # This will run as 'appuser'
+# --- Environment Variables ---
+ENV ASPNETCORE_URLS=http://+:80
+ENV ASPNETCORE_ENVIRONMENT=Production # Can be overridden at runtime by docker run -e or docker-compose
 
-# Run the app
+# --- Port Exposure ---
+EXPOSE 80
+
+# --- Health Check ---
+# Ensures the application is running and responsive.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD curl -f http://localhost/health || exit 1
+
+# --- Entrypoint ---
+# Runs the application.
 ENTRYPOINT ["dotnet", "WebAPI.dll"]

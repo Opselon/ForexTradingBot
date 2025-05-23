@@ -2,9 +2,9 @@ name: Docker Build and Deploy
 
 on:
   push:
-    branches: [ main ]
+    branches: [ master ]
   pull_request:
-    branches: [ main ]
+    branches: [ master ]
 
 env:
   REGISTRY: ghcr.io
@@ -46,6 +46,11 @@ jobs:
           build-args: |
             TELEGRAM_API_ID=${{ secrets.TELEGRAM_API_ID }}
             TELEGRAM_API_HASH=${{ secrets.TELEGRAM_API_HASH }}
+            TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
+            DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+            CRYPTOPAY_API_TOKEN=${{ secrets.CRYPTOPAY_API_TOKEN }}
+            CRYPTOPAY_API_KEY=${{ secrets.CRYPTOPAY_API_KEY }}
+            CRYPTOPAY_WEBHOOK_SECRET=${{ secrets.CRYPTOPAY_WEBHOOK_SECRET }}
 
   deploy:
     needs: build-and-push
@@ -60,9 +65,6 @@ jobs:
           username: ${{ secrets.SERVER_USERNAME }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
-            cd /path/to/your/app
-            echo "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}" > .env
-            echo "TELEGRAM_CHANNEL_ID=${{ secrets.TELEGRAM_CHANNEL_ID }}" >> .env
-            echo "DB_PASSWORD=${{ secrets.DB_PASSWORD }}" >> .env
+            cd /var/lib/forex-trading-bot/ForexTradingBot
             docker-compose pull
             docker-compose up -d 

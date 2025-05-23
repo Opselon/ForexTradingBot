@@ -5,9 +5,11 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <ExcludeAppSettings Condition="'$(ExcludeAppSettings)' == ''">false</ExcludeAppSettings>
     <CopyAppSettings Condition="'$(CopyAppSettings)' == ''">true</CopyAppSettings>
-    <GenerateRuntimeConfigurationFiles Condition="'$(GenerateRuntimeConfigurationFiles)' == ''">false</GenerateRuntimeConfigurationFiles>
+    <!-- این خط را بررسی کنید! برای پروژه‌های اجرایی معمولاً باید true باشد یا حذف شود -->
+    <GenerateRuntimeConfigurationFiles Condition="'$(GenerateRuntimeConfigurationFiles)' == '' And '$(OutputType)' != 'Library'">true</GenerateRuntimeConfigurationFiles>
+    <!-- اگر برای کتابخانه‌ها نمی‌خواهید، می‌توانید $(OutputType) را چک کنید -->
   </PropertyGroup>
-  
+
   <ItemGroup Condition="'$(ExcludeAppSettings)' == 'true'">
     <Content Remove="**/appsettings*.json" />
     <None Remove="**/appsettings*.json" />
@@ -19,9 +21,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="9.0.5" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="9.0.5" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="9.0.5" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Tools" Version="9.0.5" />
+    <!-- Version ها حذف شده‌اند! نسخه‌ها باید در Directory.Packages.props باشند. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Tools" />
   </ItemGroup>
-</Project> 
+</Project>

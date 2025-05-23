@@ -32,22 +32,25 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    command: dotnet WebAPI.dll
+    ports:
+      - "80:80"
     environment:
-      ASPNETCORE_ENVIRONMENT: Production
-      ConnectionStrings__DefaultConnection: "Host=db;Port=5432;Database=forextrading;Username=forexuser;Password=${DB_PASSWORD}"
-      ConnectionStrings__HangfireConnection: "Host=db;Port=5432;Database=forextrading;Username=forexuser;Password=${DB_PASSWORD}"
-      TelegramBot__Token: ${TELEGRAM_BOT_TOKEN}
-      TELEGRAM_CHANNEL_ID: ${TELEGRAM_CHANNEL_ID}
-    volumes:
-      - telegram-sessions:/app/telegram-sessions
-      - data-protection:/app/data-protection
-      - app-logs:/app/logs
+      - ASPNETCORE_ENVIRONMENT=Production
+      - DB_PASSWORD=${DB_PASSWORD}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_API_ID=${TELEGRAM_API_ID}
+      - TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
+      - CRYPTOPAY_API_TOKEN=${CRYPTOPAY_API_TOKEN}
+      - CRYPTOPAY_API_KEY=${CRYPTOPAY_API_KEY}
+      - CRYPTOPAY_WEBHOOK_SECRET=${CRYPTOPAY_WEBHOOK_SECRET}
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_started
+    volumes:
+      - telegram-sessions:/app/telegram-sessions
+      - data-protection:/app/data-protection
     networks:
       - forex-network
 
@@ -57,11 +60,14 @@ services:
       dockerfile: Dockerfile
     command: dotnet BackgroundTasks.dll
     environment:
-      ASPNETCORE_ENVIRONMENT: Production
-      ConnectionStrings__DefaultConnection: "Host=db;Port=5432;Database=forextrading;Username=forexuser;Password=${DB_PASSWORD}"
-      ConnectionStrings__HangfireConnection: "Host=db;Port=5432;Database=forextrading;Username=forexuser;Password=${DB_PASSWORD}"
-      TelegramBot__Token: ${TELEGRAM_BOT_TOKEN}
-      TELEGRAM_CHANNEL_ID: ${TELEGRAM_CHANNEL_ID}
+      - ASPNETCORE_ENVIRONMENT=Production
+      - DB_PASSWORD=${DB_PASSWORD}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_API_ID=${TELEGRAM_API_ID}
+      - TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
+      - CRYPTOPAY_API_TOKEN=${CRYPTOPAY_API_TOKEN}
+      - CRYPTOPAY_API_KEY=${CRYPTOPAY_API_KEY}
+      - CRYPTOPAY_WEBHOOK_SECRET=${CRYPTOPAY_WEBHOOK_SECRET}
     volumes:
       - telegram-sessions:/app/telegram-sessions
       - data-protection:/app/data-protection
@@ -80,11 +86,14 @@ services:
       dockerfile: Dockerfile
     command: dotnet TelegramPanel.dll
     environment:
-      ASPNETCORE_ENVIRONMENT: Production
-      ConnectionStrings__DefaultConnection: "Host=db;Port=5432;Database=forextrading;Username=forexuser;Password=${DB_PASSWORD}"
-      TelegramBot__Token: ${TELEGRAM_BOT_TOKEN}
-      TELEGRAM_CHANNEL_ID: ${TELEGRAM_CHANNEL_ID}
-      TELEGRAM_SESSION_PATH: /app/telegram-sessions
+      - ASPNETCORE_ENVIRONMENT=Production
+      - DB_PASSWORD=${DB_PASSWORD}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_API_ID=${TELEGRAM_API_ID}
+      - TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
+      - CRYPTOPAY_API_TOKEN=${CRYPTOPAY_API_TOKEN}
+      - CRYPTOPAY_API_KEY=${CRYPTOPAY_API_KEY}
+      - CRYPTOPAY_WEBHOOK_SECRET=${CRYPTOPAY_WEBHOOK_SECRET}
     volumes:
       - telegram-sessions:/app/telegram-sessions
       - data-protection:/app/data-protection
@@ -103,8 +112,7 @@ services:
       dockerfile: Dockerfile
     command: ./docker_log_monitor webapi
     environment:
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
-      TELEGRAM_CHANNEL_ID: ${TELEGRAM_CHANNEL_ID}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - app-logs:/app/logs

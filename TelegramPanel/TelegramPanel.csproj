@@ -6,6 +6,7 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <!-- Compile Remove های شما مشکلی ندارند -->
   <ItemGroup>
     <Compile Remove="Infrastructure\NewFolder\**" />
     <EmbeddedResource Remove="Infrastructure\NewFolder\**" />
@@ -13,13 +14,19 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.AspNetCore.Mvc.Core" />
+    <!-- این خط باید حذف شود چون FrameworkReference به Microsoft.AspNetCore.App وجود دارد -->
+    <!-- <PackageReference Include="Microsoft.AspNetCore.Mvc.Core" /> -->
+
+    <!-- این FrameworkReference صحیح و کافی است برای دسترسی به تمام قابلیت‌های ASP.NET Core -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+
+    <!-- برای این پکیج‌ها، اطمینان حاصل کنید که نسخه صحیح آن‌ها در Directory.Packages.props تعریف شده باشد -->
+    <!-- و در اینجا *هیچ* صفت Version وجود نداشته باشد -->
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
     <PackageReference Include="Microsoft.Extensions.Hosting" />
     <PackageReference Include="Microsoft.Extensions.Http" />
     <PackageReference Include="Microsoft.Extensions.Logging" />
     <PackageReference Include="Polly" />
-    <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <PackageReference Include="Scrutor" />
     <PackageReference Include="System.Threading.Channels" />
     <PackageReference Include="Telegram.Bot" />

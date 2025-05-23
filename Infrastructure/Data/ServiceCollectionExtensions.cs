@@ -9,6 +9,7 @@ using Infrastructure.Services; // مسیر Repositoryها
 using Microsoft.EntityFrameworkCore;      // EF Core
 using Microsoft.Extensions.Configuration; // IConfiguration
 using Microsoft.Extensions.DependencyInjection; // IServiceCollection
+using Microsoft.Extensions.Logging; // Added for LogLevel
 using Hangfire;
 using Hangfire.PostgreSql;
 using Domain.Features.Forwarding.Repositories;
@@ -43,7 +44,12 @@ namespace Infrastructure
                         maxRetryCount: 5,
                         maxRetryDelay: TimeSpan.FromSeconds(30),
                         errorCodesToAdd: null);
-                }));
+                    npgsql.CommandTimeout(30);
+                    npgsql.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
+                })
+                .EnableDetailedErrors()
+                .EnableSensitiveDataLogging()
+                .LogTo(Console.WriteLine, LogLevel.Information));
 
             // 2. Register IAppDbContext
             services.AddScoped<IAppDbContext>(

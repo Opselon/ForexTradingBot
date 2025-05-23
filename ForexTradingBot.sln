@@ -13,8 +13,6 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WebAPI", "WebAPI\WebAPI.csp
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BackgroundTasks", "BackgroundTasks\BackgroundTasks.csproj", "{7A84B8A8-FACA-401F-B6E1-FEA5BF91C550}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Application.Tests", "Application.Tests\Application.Tests.csproj", "{BEFA562D-5E8E-4E1E-9296-2D5112A9D983}"
-EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Shared", "Shared\Shared.csproj", "{C5855F89-D7F9-4766-A04D-1B365F694292}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TelegramPanel", "TelegramPanel\TelegramPanel.csproj", "{E34C0BDC-20E7-4627-AA8D-C4CEECF3B3FE}"
@@ -50,10 +48,6 @@ Global
 		{7A84B8A8-FACA-401F-B6E1-FEA5BF91C550}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{7A84B8A8-FACA-401F-B6E1-FEA5BF91C550}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{7A84B8A8-FACA-401F-B6E1-FEA5BF91C550}.Release|Any CPU.Build.0 = Release|Any CPU
-		{BEFA562D-5E8E-4E1E-9296-2D5112A9D983}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{BEFA562D-5E8E-4E1E-9296-2D5112A9D983}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{BEFA562D-5E8E-4E1E-9296-2D5112A9D983}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{BEFA562D-5E8E-4E1E-9296-2D5112A9D983}.Release|Any CPU.Build.0 = Release|Any CPU
 		{C5855F89-D7F9-4766-A04D-1B365F694292}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{C5855F89-D7F9-4766-A04D-1B365F694292}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{C5855F89-D7F9-4766-A04D-1B365F694292}.Release|Any CPU.ActiveCfg = Release|Any CPU

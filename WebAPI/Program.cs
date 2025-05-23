@@ -131,7 +131,7 @@ try
     builder.Services.AddForwardingOrchestratorServices();
     Log.Information("Forwarding orchestrator services registered.");
 
-    SqlServiceManager.EnsureSqlServicesRunning();
+    SqlServiceManager.EnsurePostgresServiceRunning();
     //  ❌❌ یادآوری: رجیستری‌های تکراری یا جابجا شده باید از اینجا حذف شده باشند ❌❌
     //  MediatR باید در AddApplicationServices با اسمبلی لایه Application رجیستر شود.
     //  ISignalService و سایر سرویس‌های لایه Application باید در AddApplicationServices رجیستر شوند.

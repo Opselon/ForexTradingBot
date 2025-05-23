@@ -2,6 +2,7 @@
 using Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using System.Reflection; // برای ApplyConfigurationsFromAssembly
+using Microsoft.Extensions.Logging;
 
 namespace Infrastructure.Data
 {
@@ -13,12 +14,18 @@ namespace Infrastructure.Data
     /// </summary>
     public class AppDbContext : DbContext, IAppDbContext
     {
+        private readonly ILogger<AppDbContext> _logger;
+
         /// <summary>
         /// سازنده AppDbContext.
         /// </summary>
         /// <param name="options">گزینه‌های پیکربندی برای DbContext.</param>
-        public AppDbContext(DbContextOptions<AppDbContext> options) : base(options)
+        /// <param name="logger">لاگر برای لاگ کردن اطلاعات در زمان ذخیره تغییرات و پیکربندی مدل.</param>
+        public AppDbContext(
+            DbContextOptions<AppDbContext> options,
+            ILogger<AppDbContext> logger) : base(options)
         {
+            _logger = logger;
         }
 
         // DbSet ها برای هر موجودیت در دامنه
@@ -39,23 +46,29 @@ namespace Infrastructure.Data
         /// </summary>
         /// <param name="cancellationToken">توکن برای لغو عملیات.</param>
         /// <returns>تعداد رکوردهای تغییر یافته در پایگاه داده.</returns>
-        public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+        public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
         {
-            // می‌توان منطق اضافی مانند به‌روزرسانی خودکار فیلدهای Auditable (CreatedAt, UpdatedAt) را در اینجا اضافه کرد.
-            // به عنوان مثال، برای موجودیت‌هایی که از یک اینترفیس IAuditableEntity ارث‌بری می‌کنند.
-            // foreach (var entry in ChangeTracker.Entries<IAuditableEntity>())
-            // {
-            //     switch (entry.State)
-            //     {
-            //         case EntityState.Added:
-            //             entry.Entity.CreatedAt = DateTime.UtcNow;
-            //             break;
-            //         case EntityState.Modified:
-            //             entry.Entity.UpdatedAt = DateTime.UtcNow;
-            //             break;
-            //     }
-            // }
-            return base.SaveChangesAsync(cancellationToken);
+            try
+            {
+                var result = await base.SaveChangesAsync(cancellationToken);
+                _logger.LogInformation("Successfully saved {Count} changes to the database", result);
+                return result;
+            }
+            catch (DbUpdateConcurrencyException ex)
+            {
+                _logger.LogError(ex, "Concurrency conflict occurred while saving changes");
+                throw;
+            }
+            catch (DbUpdateException ex)
+            {
+                _logger.LogError(ex, "Error occurred while saving changes to the database");
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unexpected error occurred while saving changes");
+                throw;
+            }
         }
 
         /// <summary>
@@ -65,14 +78,26 @@ namespace Infrastructure.Data
         /// <param name="modelBuilder">سازنده مدل برای پیکربندی موجودیت‌ها و روابط.</param>
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
-            base.OnModelCreating(modelBuilder);
+            try
+            {
+                base.OnModelCreating(modelBuilder);
+                modelBuilder.ApplyConfigurationsFromAssembly(Assembly.GetExecutingAssembly());
+                _logger.LogInformation("Successfully applied entity configurations");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error occurred while applying entity configurations");
+                throw;
+            }
+        }
 
-            // اعمال تمام پیکربندی‌های تعریف شده در کلاس‌هایی که IEntityTypeConfiguration<TEntity> را پیاده‌سازی می‌کنند
-            // از اسمبلی جاری. این روش برای سازماندهی بهتر پیکربندی‌ها توصیه می‌شود.
-            // modelBuilder.ApplyConfigurationsFromAssembly(Assembly.GetExecutingAssembly());
-            // اگر از روش بالا استفاده نمی‌کنید، پیکربندی‌ها را مستقیماً در اینجا تعریف کنید:
-            modelBuilder.ApplyConfigurationsFromAssembly(Assembly.GetExecutingAssembly());
-            // --- User Configuration ---
+        protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+        {
+            if (!optionsBuilder.IsConfigured)
+            {
+                _logger.LogWarning("DbContext is not configured. Make sure to configure it in the service collection.");
+            }
+            base.OnConfiguring(optionsBuilder);
         }
     }
 }

@@ -54,6 +54,9 @@
     <PackageVersion Include="RestSharp" Version="112.1.0" />
     <PackageVersion Include="Scrutor" Version="4.2.2" /> <!-- اگر اصرار به 6.0.1 دارید، این را تغییر دهید. 4.2.2 پایدار است -->
     <PackageVersion Include="Serilog.AspNetCore" Version="9.0.0" />
+    <PackageVersion Include="Serilog.Enrichers.Environment" Version="2.3.0" />
+    <PackageVersion Include="Serilog.Enrichers.Process" Version="2.0.2" />
+    <PackageVersion Include="Serilog.Enrichers.Thread" Version="3.1.0" />
     <PackageVersion Include="Swashbuckle.AspNetCore" Version="6.6.2" />
     <PackageVersion Include="Telegram.Bot" Version="22.5.1" /> <!-- اگر نسخه پایدار 19.0.0 را ترجیح می‌دهید، تغییر دهید -->
     <PackageVersion Include="WTelegramClient" Version="4.3.4" />

@@ -19,6 +19,9 @@
     </PackageReference>
     <PackageReference Include="Microsoft.Extensions.Http.Polly" />
     <PackageReference Include="Serilog.AspNetCore" />
+    <PackageReference Include="Serilog.Enrichers.Environment" />
+    <PackageReference Include="Serilog.Enrichers.Process" />
+    <PackageReference Include="Serilog.Enrichers.Thread" />
     <PackageReference Include="Swashbuckle.AspNetCore" />
     <PackageReference Include="Telegram.Bot" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />

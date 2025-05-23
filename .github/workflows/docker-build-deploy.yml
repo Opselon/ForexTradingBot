@@ -108,7 +108,7 @@ jobs:
             # Navigate to application directory
             cd /var/lib/forex-trading-bot/ForexTradingBot
             
-            # Create .env file
+            # Create .env file with all required variables
             cat > .env << 'EOF'
             DB_PASSWORD=${{ secrets.DB_PASSWORD }}
             TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -141,9 +141,19 @@ jobs:
             # Start services
             docker compose up -d
             
+            # Wait for services to start
+            echo "Waiting for services to start..."
+            sleep 10
+            
             # Check container status
             echo "Checking container status..."
             docker ps -a
+            
+            # Start log monitoring for each service
+            echo "Starting log monitoring..."
+            docker compose exec -d webapi ./docker_log_monitor webapi
+            docker compose exec -d backgroundtasks ./docker_log_monitor backgroundtasks
+            docker compose exec -d telegrampanel ./docker_log_monitor telegrampanel
             
             # Show logs for all services
             echo "Showing logs for all services..."
@@ -157,4 +167,8 @@ jobs:
             docker compose logs backgroundtasks --tail 100
             
             echo "Checking TelegramPanel logs..."
-            docker compose logs telegrampanel --tail 100 
+            docker compose logs telegrampanel --tail 100
+            
+            # Verify log monitoring is running
+            echo "Verifying log monitoring..."
+            docker ps | grep docker_log_monitor 

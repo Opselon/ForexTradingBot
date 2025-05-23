@@ -47,8 +47,7 @@ try
     var builder = WebApplication.CreateBuilder(args);
 
     #region Configure Serilog Logging
-    // ------------------- ۱. پیکربندی Serilog با تنظیمات از appsettings.json -------------------
-    // این بخش Serilog را به عنوان سیستم لاگینگ اصلی برنامه تنظیم می‌کند.
+    // Configure Serilog with settings from appsettings.json
     builder.Host.UseSerilog((context, services, loggerConfiguration) => loggerConfiguration
         .ReadFrom.Configuration(context.Configuration)
         .ReadFrom.Services(services)
@@ -57,6 +56,7 @@ try
         .Enrich.WithEnvironmentName()
         .Enrich.WithProcessId()
         .Enrich.WithThreadId()
+        .Enrich.WithProperty("Application", "ForexTradingBot")
         .WriteTo.Console(
             outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}",
             restrictedToMinimumLevel: Serilog.Events.LogEventLevel.Information

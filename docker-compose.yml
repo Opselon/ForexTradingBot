@@ -107,12 +107,15 @@ services:
       TELEGRAM_CHANNEL_ID: ${TELEGRAM_CHANNEL_ID}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - app-logs:/app/logs
+    user: root  # Required for Docker socket access
     depends_on:
       - webapi
       - backgroundtasks
       - telegrampanel
     networks:
       - forex-network
+    restart: unless-stopped
 
 volumes:
   postgres_data:

@@ -266,6 +266,11 @@ try
     }
     app.Run(); //  شروع به گوش دادن به درخواست‌های HTTP و اجرای برنامه
     #endregion
+
+    builder.Logging.ClearProviders();
+    builder.Logging.AddConsole(options => options.LogToStandardErrorThreshold = LogLevel.Warning);
+    builder.Logging.AddDebug();
+    builder.Logging.AddTelegramLogger("/app/logs/telegram.log");
 }
 catch (Exception ex)
 {

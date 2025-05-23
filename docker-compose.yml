@@ -5,15 +5,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-        - TELEGRAM_CHANNEL_ID=${TELEGRAM_CHANNEL_ID}
     ports:
       - "80:80"
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
-      - ConnectionStrings__DefaultConnection=Host=db;Database=myappdb;Username=postgres;Password=your_secure_password
-      - ConnectionStrings__HangfireConnection=Host=db;Database=hangfire;Username=postgres;Password=your_secure_password
+      - ConnectionStrings__DefaultConnection=Host=db;Database=myappdb;Username=postgres;Password=${DB_PASSWORD}
+      - ConnectionStrings__HangfireConnection=Host=db;Database=hangfire;Username=postgres;Password=${DB_PASSWORD}
       - TelegramBot__Token=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_SESSION_PATH=/app/telegram-sessions
     volumes:
@@ -30,14 +27,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-        - TELEGRAM_CHANNEL_ID=${TELEGRAM_CHANNEL_ID}
     command: dotnet BackgroundTasks.dll
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
-      - ConnectionStrings__DefaultConnection=Host=db;Database=myappdb;Username=postgres;Password=your_secure_password
-      - ConnectionStrings__HangfireConnection=Host=db;Database=hangfire;Username=postgres;Password=your_secure_password
+      - ConnectionStrings__DefaultConnection=Host=db;Database=myappdb;Username=postgres;Password=${DB_PASSWORD}
+      - ConnectionStrings__HangfireConnection=Host=db;Database=hangfire;Username=postgres;Password=${DB_PASSWORD}
       - TelegramBot__Token=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_SESSION_PATH=/app/telegram-sessions
     volumes:
@@ -50,13 +44,31 @@ services:
       - forex-network
     working_dir: /app/tasks
 
+  telegrampanel:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: dotnet TelegramPanel.dll
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ConnectionStrings__DefaultConnection=Host=db;Database=myappdb;Username=postgres;Password=${DB_PASSWORD}
+      - TelegramBot__Token=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHANNEL_ID=${TELEGRAM_CHANNEL_ID}
+      - TELEGRAM_SESSION_PATH=/app/telegram-sessions
+    volumes:
+      - telegram-sessions:/app/telegram-sessions
+      - data-protection:/app/data-protection
+    depends_on:
+      - db
+      - redis
+    networks:
+      - forex-network
+    working_dir: /app/telegrampanel
+
   logmonitor:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-        - TELEGRAM_CHANNEL_ID=${TELEGRAM_CHANNEL_ID}
     command: ./docker_log_monitor webapi
     environment:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
@@ -72,7 +84,7 @@ services:
     image: postgres:16
     environment:
       - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=your_secure_password
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
       - POSTGRES_MULTIPLE_DATABASES=myappdb,hangfire
     volumes:
       - postgres-data:/var/lib/postgresql/data

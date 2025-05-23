@@ -3,10 +3,6 @@
 #-------------------------------------------------------------------------------------
 FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 
-# Build arguments
-ARG TELEGRAM_BOT_TOKEN
-ARG TELEGRAM_CHANNEL_ID
-
 # Install Go
 RUN apt-get update && apt-get install -y golang-go && rm -rf /var/lib/apt/lists/*
 
@@ -18,6 +14,7 @@ COPY ["WebAPI/WebAPI.csproj", "WebAPI/"]
 COPY ["Core/Core.csproj", "Core/"]
 COPY ["Infrastructure/Infrastructure.csproj", "Infrastructure/"]
 COPY ["BackgroundTasks/BackgroundTasks.csproj", "BackgroundTasks/"]
+COPY ["TelegramPanel/TelegramPanel.csproj", "TelegramPanel/"]
 
 # Restore packages
 RUN dotnet restore "WebAPI/WebAPI.csproj" --configfile nuget.config
@@ -75,8 +72,6 @@ ENV ASPNETCORE_URLS=http://+:80
 ENV ASPNETCORE_ENVIRONMENT=Production
 ENV TELEGRAM_SESSION_PATH=/app/telegram-sessions
 ENV DOTNET_RUNNING_IN_CONTAINER=true
-ENV TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-ENV TELEGRAM_CHANNEL_ID=${TELEGRAM_CHANNEL_ID}
 
 # Switch to non-root user
 USER appuser

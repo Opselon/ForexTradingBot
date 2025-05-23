@@ -14,8 +14,8 @@ COPY ["Application/Application.csproj", "Application/"]
 COPY ["Domain/Domain.csproj", "Domain/"]
 COPY ["Infrastructure/Infrastructure.csproj", "Infrastructure/"]
 COPY ["Shared/Shared.csproj", "Shared/"]
-COPY ["TelegramPanel/TelegramPanel.csproj", "TelegramPanel/"]
 COPY ["BackgroundTasks/BackgroundTasks.csproj", "BackgroundTasks/"]
+COPY ["TelegramPanel/TelegramPanel.csproj", "TelegramPanel/"]
 
 # Restore packages
 RUN dotnet restore --configfile nuget.config
@@ -24,11 +24,8 @@ RUN dotnet restore --configfile nuget.config
 COPY . .
 
 # Build and publish
-RUN dotnet build "WebAPI/WebAPI.csproj" -c Release -o /app/build/webapi
-RUN dotnet publish "WebAPI/WebAPI.csproj" -c Release -o /app/publish/webapi /p:GenerateRuntimeConfigurationFiles=true
-
-RUN dotnet build "BackgroundTasks/BackgroundTasks.csproj" -c Release -o /app/build/tasks
-RUN dotnet publish "BackgroundTasks/BackgroundTasks.csproj" -c Release -o /app/publish/tasks /p:GenerateRuntimeConfigurationFiles=true
+RUN dotnet publish "WebAPI/WebAPI.csproj" -c Release -o /app/publish/webapi
+RUN dotnet publish "BackgroundTasks/BackgroundTasks.csproj" -c Release -o /app/publish/tasks
 
 #-------------------------------------------------------------------------------------
 # Stage 2: Final Runtime Image
@@ -36,7 +33,7 @@ RUN dotnet publish "BackgroundTasks/BackgroundTasks.csproj" -c Release -o /app/p
 FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS final
 WORKDIR /app
 
-# Create a non-root user
+# Create non-root user
 RUN adduser --system --group --disabled-password --gecos "" --home /app appuser
 
 # Install curl for health checks
@@ -76,5 +73,5 @@ WORKDIR /app/webapi
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD curl -f http://localhost/health || exit 1
 
-# Start the application
+# Run the application
 ENTRYPOINT ["dotnet", "WebAPI.dll"]

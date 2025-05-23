@@ -6,16 +6,17 @@
   </PropertyGroup>
 
   <ItemGroup>
-  
-   <!-- Microsoft Packages - Updated to highest required preview versions based on NU1109 errors -->
-    <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="9.0.0-preview.5.24306.11" />
+   <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="9.0.0-preview.5.24306.11" />
     <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="9.0.0-preview.5.24306.11" />
     <PackageVersion Include="Microsoft.Data.SqlClient" Version="5.2.0" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="9.0.0-preview.5.24306.3" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="9.0.0-preview.5.24306.3" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Relational" Version="9.0.0-preview.5.24306.3" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.SqlServer" Version="9.0.0-preview.5.24306.3" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Sqlite" Version="9.0.0-preview.5.24306.3" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Tools" Version="9.0.0-preview.5.24306.3" />
+    <!-- If Serilog.AspNetCore 9.0.0 requires final 9.0.0 for these, update these to final 9.0.0. -->
+    <!-- Otherwise, stick to consistent preview like ...24306.7 or the very latest preview available. -->
     <PackageVersion Include="Microsoft.Extensions.Configuration" Version="9.0.0-preview.5.24306.7" />
     <PackageVersion Include="Microsoft.Extensions.Configuration.Abstractions" Version="9.0.0-preview.5.24306.7" />
     <PackageVersion Include="Microsoft.Extensions.Configuration.Binder" Version="9.0.0-preview.5.24306.7" />
@@ -27,12 +28,10 @@
     <PackageVersion Include="System.Net.Http.Json" Version="9.0.0-preview.5.24306.7" />
     <PackageVersion Include="System.ServiceModel.Syndication" Version="9.0.0-preview.5.24306.7" />
     <PackageVersion Include="System.Threading.Channels" Version="9.0.0-preview.5.24306.7" />
-    <PackageVersion Include="Microsoft.EntityFrameworkCore.Sqlite" Version="9.0.0-preview.5.24306.3" /> 
-  
   
     <!-- WebAPI.csproj References -->
     <PackageVersion Include="FluentValidation" Version="12.0.0" /> <!-- هشدار: این نسخه احتمالاً صحیح نیست، 11.9.2 پایدار است -->
-    <PackageVersion Include="Hangfire.AspNetCore" Version="1.8.20" />
+ <PackageVersion Include="Hangfire.AspNetCore" Version="1.8.12" /> 
     <PackageVersion Include="Hangfire.Core" Version="1.8.20" />
    <PackageVersion Include="Hangfire.MemoryStorage" Version="1.8.1.1" /> <!-- از WebAPI.csproj شما -->
     <PackageVersion Include="Hangfire.SqlServer" Version="1.8.20" />

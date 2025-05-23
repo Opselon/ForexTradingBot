@@ -32,9 +32,15 @@
     <!-- WebAPI.csproj References -->
     <PackageVersion Include="FluentValidation" Version="12.0.0" /> <!-- هشدار: این نسخه احتمالاً صحیح نیست، 11.9.2 پایدار است -->
  <PackageVersion Include="Hangfire.AspNetCore" Version="1.8.12" /> 
+    <PackageVersion Include="Hangfire" Version="1.8.20" />
+    <PackageVersion Include="Hangfire.AspNetCore" Version="1.8.20" />
     <PackageVersion Include="Hangfire.Core" Version="1.8.20" />
-   <PackageVersion Include="Hangfire.MemoryStorage" Version="1.8.1.1" /> <!-- از WebAPI.csproj شما -->
+    <PackageVersion Include="Hangfire.NetCore" Version="1.8.20" />
+    <PackageVersion Include="Hangfire.PostgreSql" Version="1.20.8" /> <!-- این نسخه خودش را دارد -->
     <PackageVersion Include="Hangfire.SqlServer" Version="1.8.20" />
+    <PackageVersion Include="Hangfire.MemoryStorage" Version="1.8.1.1" /> <!-- این نسخه خودش را دارد -->
+	
+	
     <PackageVersion Include="MediatR" Version="12.5.0" /> <!-- بسیار جدید، پایدارتر 12.3.0 -->
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="9.0.4" /> <!-- نسخه preview نامشخص -->
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="9.0.5" /> <!-- نسخه preview نامشخص، احتمالاً باید 9.0.0-preview.X باشد -->
@@ -52,11 +58,8 @@
     <!-- WTelegramClient در اینجا لیست نشده، اما در فایل csproj شما برای Application بود، اگر لازم است اضافه کنید: -->
     <!-- <PackageVersion Include="WTelegramClient" Version="نسخه_مورد_نظر" /> -->
 
-    <PackageVersion Include="Hangfire.NetCore" Version="1.8.12" /> <!-- رفع NU1008 -->
+    
     <!-- Infrastructure.csproj References (پکیج‌های جدید یا متفاوت) -->
-    <PackageVersion Include="Dapper" Version="2.1.66" />
-    <PackageVersion Include="Hangfire" Version="1.8.20" /> <!-- تکراری با Hangfire.Core، اما اگر هر دو لازمند، اشکالی ندارد -->
-    <PackageVersion Include="Hangfire.NetCore" Version="1.8.20" />
     <PackageVersion Include="HtmlAgilityPack" Version="1.12.1" /> <!-- بسیار قدیمی، آخرین پایدار ~1.11.61 -->
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Sqlite" Version="9.0.5" /> <!-- نسخه preview نامشخص -->
     <PackageVersion Include="Microsoft.Extensions.Configuration" Version="9.0.5" /> <!-- نسخه preview نامشخص -->

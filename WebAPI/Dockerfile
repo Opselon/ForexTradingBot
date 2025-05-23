@@ -1,14 +1,14 @@
-#-------------------------------------------------------------------------------------
+﻿#-------------------------------------------------------------------------------------
 # Stage 1: Build SDK Environment & Restore Dependencies
 #-------------------------------------------------------------------------------------
-FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build-env # <-- Used this stage name for COPY --from later
+FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build-env
 WORKDIR /src
 
 # --- Copy Solution Level Files for Restore Layer ---
 COPY Directory.Packages.props ./
-# COPY YourSolutionName.sln ./
-# COPY NuGet.config ./
-# COPY Directory.Build.props ./
+# COPY YourSolutionName.sln ./ # اگر می‌خواهید در سطح سلوشن restore کنید
+# COPY NuGet.config ./         # اگر فایل NuGet.config مخصوص سلوشن دارید
+# COPY Directory.Build.props ./ # اگر از این استفاده می‌کنید
 
 # --- Copy Project Files for Restore ---
 COPY ["WebAPI/WebAPI.csproj", "WebAPI/"]
@@ -19,50 +19,42 @@ COPY ["Shared/Shared.csproj", "Shared/"]
 COPY ["TelegramPanel/TelegramPanel.csproj", "TelegramPanel/"]
 COPY ["BackgroundTasks/BackgroundTasks.csproj", "BackgroundTasks/"]
 
-# --- DIAGNOSTICS: Print file contents (CRUCIAL FOR DEBUGGING) ---
+# --- DIAGNOSTICS: Print file contents (بسیار مهم برای دیباگ) ---
 RUN echo "--- DIAGNOSTIC: Content of /src/Directory.Packages.props ---" && \
     cat /src/Directory.Packages.props && \
     echo "--- DIAGNOSTIC: End of /src/Directory.Packages.props ---" && \
     echo " " && \
     echo "--- DIAGNOSTIC: Relevant content of /src/TelegramPanel/TelegramPanel.csproj ---" && \
-    (grep -i -A3 -B3 "PackageReference.*Scrutor" /src/TelegramPanel/TelegramPanel.csproj || echo "DIAGNOSTIC: Scrutor grep not matched in TelegramPanel") && \
-    (grep -i -A3 -B3 "PackageReference.*HangFire" /src/TelegramPanel/TelegramPanel.csproj || echo "DIAGNOSTIC: HangFire grep not matched in TelegramPanel") && \
-    (grep -i -A3 -B3 "FrameworkReference.*AspNetCore.App" /src/TelegramPanel/TelegramPanel.csproj || echo "DIAGNOSTIC: FrameworkRef AspNetCore.App grep not matched in TelegramPanel") && \
-    (grep -i -A3 -B3 "PackageReference.*Microsoft.AspNetCore.Mvc.Core" /src/TelegramPanel/TelegramPanel.csproj || echo "DIAGNOSTIC: Mvc.Core PackageRef grep not matched in TelegramPanel") && \
+    (grep -i -E "PackageReference.*Scrutor|PackageReference.*HangFire|FrameworkReference.*AspNetCore.App|PackageReference.*Microsoft.AspNetCore.Mvc.Core" /src/TelegramPanel/TelegramPanel.csproj -B3 -A3 || echo "DIAGNOSTIC: Grep found no relevant PackageReference/FrameworkReference in TelegramPanel") && \
     echo "--- DIAGNOSTIC: End of /src/TelegramPanel/TelegramPanel.csproj ---" && \
     echo " " && \
     echo "--- DIAGNOSTIC: Relevant content of /src/Infrastructure/Infrastructure.csproj ---" && \
-    (grep -i -A3 -B3 "PackageReference.*Scrutor" /src/Infrastructure/Infrastructure.csproj || echo "DIAGNOSTIC: Scrutor grep not matched in Infrastructure") && \
-    (grep -i -A3 -B3 "PackageReference.*HangFire" /src/Infrastructure/Infrastructure.csproj || echo "DIAGNOSTIC: HangFire grep not matched in Infrastructure") && \
+    (grep -i -E "PackageReference.*Scrutor|PackageReference.*HangFire|PackageReference.*Dapper" /src/Infrastructure/Infrastructure.csproj -B3 -A3 || echo "DIAGNOSTIC: Grep found no relevant PackageReference in Infrastructure") && \
     echo "--- DIAGNOSTIC: End of /src/Infrastructure/Infrastructure.csproj ---" && \
     echo " " && \
     echo "--- DIAGNOSTIC: Relevant content of /src/BackgroundTasks/BackgroundTasks.csproj ---" && \
-    (grep -i -A3 -B3 "PackageReference.*Scrutor" /src/BackgroundTasks/BackgroundTasks.csproj || echo "DIAGNOSTIC: Scrutor grep not matched in BackgroundTasks") && \
-    (grep -i -A3 -B3 "PackageReference.*HangFire" /src/BackgroundTasks/BackgroundTasks.csproj || echo "DIAGNOSTIC: HangFire grep not matched in BackgroundTasks") && \
+    (grep -i -E "PackageReference.*Scrutor|PackageReference.*HangFire" /src/BackgroundTasks/BackgroundTasks.csproj -B3 -A3 || echo "DIAGNOSTIC: Grep found no relevant PackageReference in BackgroundTasks") && \
     echo "--- DIAGNOSTIC: End of /src/BackgroundTasks/BackgroundTasks.csproj ---" && \
     echo " " && \
     echo "--- DIAGNOSTIC: Relevant content of /src/Application/Application.csproj ---" && \
-    (grep -i -A3 -B3 "PackageReference.*AutoMapper" /src/Application/Application.csproj || echo "DIAGNOSTIC: AutoMapper grep not matched in Application") && \
-    (grep -i -A3 -B3 "PackageReference.*MediatR" /src/Application/Application.csproj || echo "DIAGNOSTIC: MediatR grep not matched in Application") && \
+    (grep -i -E "PackageReference.*AutoMapper|PackageReference.*MediatR|PackageReference.*HangFire.Core" /src/Application/Application.csproj -B3 -A3 || echo "DIAGNOSTIC: Grep found no relevant PackageReference in Application") && \
     echo "--- DIAGNOSTIC: End of /src/Application/Application.csproj ---" && \
     echo " " && \
     echo "--- DIAGNOSTIC: Relevant content of /src/WebAPI/WebAPI.csproj ---" && \
-    (grep -i -A3 -B3 "PackageReference.*HangFire.SqlServer" /src/WebAPI/WebAPI.csproj || echo "DIAGNOSTIC: HangFire.SqlServer grep not matched in WebAPI") && \
-    (grep -i -A3 -B3 "PackageReference.*Scrutor" /src/WebAPI/WebAPI.csproj || echo "DIAGNOSTIC: Scrutor grep not matched in WebAPI") && \
+    (grep -i -E "PackageReference.*HangFire.SqlServer|PackageReference.*Scrutor" /src/WebAPI/WebAPI.csproj -B3 -A3 || echo "DIAGNOSTIC: Grep found no relevant PackageReference in WebAPI") && \
     echo "--- DIAGNOSTIC: End of /src/WebAPI/WebAPI.csproj ---"
 
 # --- Restore Dependencies ---
-# Using minimal verbosity. If the cat/grep show correct files but restore still fails,
-# then try '--verbosity diagnostic' to understand Nuget's decisions.
-RUN dotnet restore "WebAPI/WebAPI.csproj" --verbosity minimal
-# RUN dotnet restore "WebAPI/WebAPI.csproj" --verbosity diagnostic # <-- USE THIS IF STILL FAILING AFTER CHECKING CAT/GREP OUTPUT
+# RUN dotnet restore "WebAPI/WebAPI.csproj" --verbosity minimal
+# اگر پس از بررسی خروجی cat/grep همچنان مشکل پابرجا بود، این خط را با verbosity diagnostic اجرا کنید:
+RUN dotnet restore "WebAPI/WebAPI.csproj" --verbosity diagnostic
 
 
 #-------------------------------------------------------------------------------------
 # Stage 2: Build & Publish Application
 #-------------------------------------------------------------------------------------
-WORKDIR /src # Ensuring WORKDIR is set correctly for the COPY . .
-COPY . . # Copy all source code now
+WORKDIR /src
+COPY . .
 
 # --- Build and Publish the Application ---
 RUN dotnet build "WebAPI/WebAPI.csproj" -c Release -o /app/build --no-restore --verbosity minimal
@@ -78,7 +70,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=build-env /app/publish . # Ensure this matches the SDK stage name
+COPY --from=build-env /app/publish .
 
 RUN adduser --system --group --disabled-password --gecos "" --home /app appuser
 RUN chown -R appuser:appuser /app

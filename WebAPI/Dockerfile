@@ -19,20 +19,37 @@ COPY ["Shared/Shared.csproj", "Shared/"]
 COPY ["TelegramPanel/TelegramPanel.csproj", "TelegramPanel/"]
 COPY ["BackgroundTasks/BackgroundTasks.csproj", "BackgroundTasks/"]
 
-# --- DIAGNOSTICS: Print file contents (ADD THESE LINES) ---
-RUN echo "--- Content of Directory.Packages.props ---" && \
-    cat Directory.Packages.props && \
-    echo "--- End of Directory.Packages.props ---" && \
-    echo "--- Relevant content of TelegramPanel.csproj ---" && \
-    (grep -i -A3 -B3 "PackageReference.*Scrutor" TelegramPanel/TelegramPanel.csproj || echo "Scrutor grep not matched in TelegramPanel") && \
-    (grep -i -A3 -B3 "PackageReference.*HangFire" TelegramPanel/TelegramPanel.csproj || echo "HangFire grep not matched in TelegramPanel") && \
-    (grep -i -A3 -B3 "FrameworkReference.*AspNetCore.App" TelegramPanel/TelegramPanel.csproj || echo "FrameworkRef AspNetCore.App grep not matched in TelegramPanel") && \
-    (grep -i -A3 -B3 "PackageReference.*Microsoft.AspNetCore.Mvc.Core" TelegramPanel/TelegramPanel.csproj || echo "Mvc.Core PackageRef grep not matched in TelegramPanel") && \
-    echo "--- End of TelegramPanel.csproj ---" && \
-    echo "--- Relevant content of Infrastructure.csproj ---" && \
-    (grep -i -A3 -B3 "PackageReference.*Scrutor" Infrastructure/Infrastructure.csproj || echo "Scrutor grep not matched in Infrastructure") && \
-    echo "--- End of Infrastructure.csproj ---"
-# Add more greps for other projects/packages if needed
+# --- DIAGNOSTICS: Print file contents (CRUCIAL FOR DEBUGGING) ---
+RUN echo "--- DIAGNOSTIC: Content of /src/Directory.Packages.props ---" && \
+    cat /src/Directory.Packages.props && \
+    echo "--- DIAGNOSTIC: End of /src/Directory.Packages.props ---" && \
+    echo " " && \
+    echo "--- DIAGNOSTIC: Relevant content of /src/TelegramPanel/TelegramPanel.csproj ---" && \
+    (grep -i -A3 -B3 "PackageReference.*Scrutor" /src/TelegramPanel/TelegramPanel.csproj || echo "DIAGNOSTIC: Scrutor grep not matched in TelegramPanel") && \
+    (grep -i -A3 -B3 "PackageReference.*HangFire" /src/TelegramPanel/TelegramPanel.csproj || echo "DIAGNOSTIC: HangFire grep not matched in TelegramPanel") && \
+    (grep -i -A3 -B3 "FrameworkReference.*AspNetCore.App" /src/TelegramPanel/TelegramPanel.csproj || echo "DIAGNOSTIC: FrameworkRef AspNetCore.App grep not matched in TelegramPanel") && \
+    (grep -i -A3 -B3 "PackageReference.*Microsoft.AspNetCore.Mvc.Core" /src/TelegramPanel/TelegramPanel.csproj || echo "DIAGNOSTIC: Mvc.Core PackageRef grep not matched in TelegramPanel") && \
+    echo "--- DIAGNOSTIC: End of /src/TelegramPanel/TelegramPanel.csproj ---" && \
+    echo " " && \
+    echo "--- DIAGNOSTIC: Relevant content of /src/Infrastructure/Infrastructure.csproj ---" && \
+    (grep -i -A3 -B3 "PackageReference.*Scrutor" /src/Infrastructure/Infrastructure.csproj || echo "DIAGNOSTIC: Scrutor grep not matched in Infrastructure") && \
+    (grep -i -A3 -B3 "PackageReference.*HangFire" /src/Infrastructure/Infrastructure.csproj || echo "DIAGNOSTIC: HangFire grep not matched in Infrastructure") && \
+    echo "--- DIAGNOSTIC: End of /src/Infrastructure/Infrastructure.csproj ---" && \
+    echo " " && \
+    echo "--- DIAGNOSTIC: Relevant content of /src/BackgroundTasks/BackgroundTasks.csproj ---" && \
+    (grep -i -A3 -B3 "PackageReference.*Scrutor" /src/BackgroundTasks/BackgroundTasks.csproj || echo "DIAGNOSTIC: Scrutor grep not matched in BackgroundTasks") && \
+    (grep -i -A3 -B3 "PackageReference.*HangFire" /src/BackgroundTasks/BackgroundTasks.csproj || echo "DIAGNOSTIC: HangFire grep not matched in BackgroundTasks") && \
+    echo "--- DIAGNOSTIC: End of /src/BackgroundTasks/BackgroundTasks.csproj ---" && \
+    echo " " && \
+    echo "--- DIAGNOSTIC: Relevant content of /src/Application/Application.csproj ---" && \
+    (grep -i -A3 -B3 "PackageReference.*AutoMapper" /src/Application/Application.csproj || echo "DIAGNOSTIC: AutoMapper grep not matched in Application") && \
+    (grep -i -A3 -B3 "PackageReference.*MediatR" /src/Application/Application.csproj || echo "DIAGNOSTIC: MediatR grep not matched in Application") && \
+    echo "--- DIAGNOSTIC: End of /src/Application/Application.csproj ---" && \
+    echo " " && \
+    echo "--- DIAGNOSTIC: Relevant content of /src/WebAPI/WebAPI.csproj ---" && \
+    (grep -i -A3 -B3 "PackageReference.*HangFire.SqlServer" /src/WebAPI/WebAPI.csproj || echo "DIAGNOSTIC: HangFire.SqlServer grep not matched in WebAPI") && \
+    (grep -i -A3 -B3 "PackageReference.*Scrutor" /src/WebAPI/WebAPI.csproj || echo "DIAGNOSTIC: Scrutor grep not matched in WebAPI") && \
+    echo "--- DIAGNOSTIC: End of /src/WebAPI/WebAPI.csproj ---"
 
 # --- Restore Dependencies ---
 # Using minimal verbosity. If the cat/grep show correct files but restore still fails,
@@ -44,6 +61,7 @@ RUN dotnet restore "WebAPI/WebAPI.csproj" --verbosity minimal
 #-------------------------------------------------------------------------------------
 # Stage 2: Build & Publish Application
 #-------------------------------------------------------------------------------------
+WORKDIR /src # Ensuring WORKDIR is set correctly for the COPY . .
 COPY . . # Copy all source code now
 
 # --- Build and Publish the Application ---

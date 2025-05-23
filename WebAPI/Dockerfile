@@ -19,23 +19,6 @@ COPY ["Shared/Shared.csproj", "Shared/"]
 COPY ["TelegramPanel/TelegramPanel.csproj", "TelegramPanel/"]
 COPY ["BackgroundTasks/BackgroundTasks.csproj", "BackgroundTasks/"]
 
-# --- DIAGNOSTICS: Print critical file contents ---
-# (Keeping these for one more run, just in case)
-RUN echo "--- DIAGNOSTIC: Content of /src/Directory.Packages.props ---" && \
-    (cat /src/Directory.Packages.props || echo "DIAGNOSTIC: Directory.Packages.props not found or cat failed") && \
-    echo "--- DIAGNOSTIC: End of /src/Directory.Packages.props ---" && \
-    echo " " && \
-    echo "--- DIAGNOSTIC: Content of /src/Directory.Build.props ---" && \
-    (cat /src/Directory.Build.props || echo "DIAGNOSTIC: Directory.Build.props not found or cat failed") && \
-    echo "--- DIAGNOSTIC: End of /src/Directory.Build.props ---" && \
-    echo " " && \
-    echo "--- DIAGNOSTIC: Relevant content of /src/TelegramPanel/TelegramPanel.csproj ---" && \
-    (grep -i -E "PackageReference.*Scrutor|PackageReference.*HangFire|FrameworkReference.*AspNetCore.App|PackageReference.*Microsoft.AspNetCore.Mvc.Core" /src/TelegramPanel/TelegramPanel.csproj -B3 -A3 || echo "DIAGNOSTIC: Grep found no relevant PackageReference/FrameworkReference in TelegramPanel") && \
-    echo "--- DIAGNOSTIC: End of /src/TelegramPanel/TelegramPanel.csproj ---" && \
-    echo " " && \
-    echo "--- DIAGNOSTIC: Relevant content of /src/Infrastructure/Infrastructure.csproj ---" && \
-    (grep -i -E "PackageReference.*Scrutor|PackageReference.*HangFire|PackageReference.*Dapper" /src/Infrastructure/Infrastructure.csproj -B3 -A3 || echo "DIAGNOSTIC: Grep found no relevant PackageReference in Infrastructure") && \
-    echo "--- DIAGNOSTIC: End of /src/Infrastructure/Infrastructure.csproj ---"
 
 # Restore Dependencies: Quiet verbosity + attempt to suppress common warnings
 # Common NuGet warning codes from your logs: NU1602, NU1603, NU1604, NU1608, NU1701, NU1504

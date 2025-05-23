@@ -25,6 +25,7 @@
     <PackageVersion Include="Microsoft.Extensions.Http" Version="9.0.0-preview.5.24306.7" /> <!-- Kept as is if not forced higher by another dependency -->
     <PackageVersion Include="Microsoft.Extensions.Http.Polly" Version="9.0.0-preview.5.24306.11" />
     <PackageVersion Include="Microsoft.Extensions.Logging" Version="9.0.4" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.4" />
     <PackageVersion Include="System.Net.Http.Json" Version="9.0.0-preview.5.24306.7" />
     <PackageVersion Include="System.ServiceModel.Syndication" Version="9.0.0-preview.5.24306.7" />
     <PackageVersion Include="System.Threading.Channels" Version="9.0.0-preview.5.24306.7" />

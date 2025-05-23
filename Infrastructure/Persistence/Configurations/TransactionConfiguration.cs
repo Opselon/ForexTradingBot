@@ -44,10 +44,10 @@ namespace Infrastructure.Persistence.Configurations
             builder.Property(t => t.PaidAt); // Nullable DateTime
 
             builder.Property(t => t.PaymentGatewayPayload)
-                .HasColumnType("nvarchar(max)"); // For potentially long JSON strings
+                .HasColumnType("text"); // For potentially long JSON strings
 
             builder.Property(t => t.PaymentGatewayResponse)
-                .HasColumnType("nvarchar(max)"); // For potentially long JSON strings
+                .HasColumnType("text"); // For potentially long JSON strings
 
             // Indexes
             builder.HasIndex(t => t.UserId);

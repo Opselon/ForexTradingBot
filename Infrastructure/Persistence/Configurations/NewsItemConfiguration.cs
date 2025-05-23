@@ -19,8 +19,8 @@ namespace Infrastructure.Persistence.Configurations
             builder.Property(ni => ni.Link).IsRequired().HasMaxLength(2083);
             builder.HasIndex(ni => ni.Link).IsUnique(false);
 
-            builder.Property(ni => ni.Summary).HasColumnType("nvarchar(max)");
-            builder.Property(ni => ni.FullContent).HasColumnType("nvarchar(max)");
+            builder.Property(ni => ni.Summary).HasColumnType("text");
+            builder.Property(ni => ni.FullContent).HasColumnType("text");
             builder.Property(ni => ni.ImageUrl).HasMaxLength(2083);
 
             builder.Property(ni => ni.PublishedDate).IsRequired(); // اگر تاریخ انتشار همیشه از منبع می‌آید
@@ -40,8 +40,7 @@ namespace Infrastructure.Persistence.Configurations
             // اما فقط زمانی که SourceItemId مقدار دارد (برای سازگاری با آیتم‌هایی که ممکن است SourceItemId نداشته باشند).
             builder.HasIndex(ni => new { ni.RssSourceId, ni.SourceItemId })
                    .IsUnique()
-                   .HasFilter("[SourceItemId] IS NOT NULL"); // فیلتر برای SQL Server
-                                                             // برای PostgreSQL: .HasFilter("\"SourceItemId\" IS NOT NULL")
+                   .HasFilter("SourceItemId IS NOT NULL"); // Filter for all databases
 
             builder.Property(ni => ni.SentimentScore);
             builder.Property(ni => ni.SentimentLabel).HasMaxLength(50);

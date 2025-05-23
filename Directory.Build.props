@@ -24,7 +24,6 @@
     <!-- Version ها حذف شده‌اند! نسخه‌ها باید در Directory.Packages.props باشند. -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" />
     <PackageReference Include="Microsoft.EntityFrameworkCore" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Tools" />
   </ItemGroup>
 </Project>

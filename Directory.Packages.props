@@ -13,16 +13,15 @@
     <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="9.0.4" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="9.0.4" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Relational" Version="9.0.4" />
-    <PackageVersion Include="Microsoft.EntityFrameworkCore.SqlServer" Version="9.0.4" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Sqlite" Version="9.0.4" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Tools" Version="9.0.4" />
     <PackageVersion Include="Microsoft.Extensions.Configuration" Version="9.0.0" />
     <PackageVersion Include="Microsoft.Extensions.Configuration.Abstractions" Version="9.0.4" />
     <PackageVersion Include="Microsoft.Extensions.Configuration.Binder" Version="9.0.0" />
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="9.0.4" />
-    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="9.0.0" /> <!-- Updated to 9.0.0 final (assuming Hosting.Abstractions 9.0.0 implies this too) -->
+    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="9.0.0" />
     <PackageVersion Include="Microsoft.Extensions.Hosting.Abstractions" Version="9.0.0" />
-    <PackageVersion Include="Microsoft.Extensions.Http" Version="9.0.0-preview.5.24306.7" /> <!-- Kept as is if not forced higher by another dependency -->
+    <PackageVersion Include="Microsoft.Extensions.Http" Version="9.0.0-preview.5.24306.7" />
     <PackageVersion Include="Microsoft.Extensions.Http.Polly" Version="9.0.0-preview.5.24306.11" />
     <PackageVersion Include="Microsoft.Extensions.Logging" Version="9.0.4" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.4" />
@@ -36,7 +35,6 @@
     <PackageVersion Include="Hangfire.Core" Version="1.8.20" />
     <PackageVersion Include="Hangfire.NetCore" Version="1.8.20" />
     <PackageVersion Include="Hangfire.PostgreSql" Version="1.20.8" />
-    <PackageVersion Include="Hangfire.SqlServer" Version="1.8.20" />
     <PackageVersion Include="Hangfire.MemoryStorage" Version="1.8.1.1" />
 
     <!-- Other Packages (Your specified versions, with corrections for invalid ones) -->
@@ -52,13 +50,13 @@
     <PackageVersion Include="Polly.Core" Version="8.5.2" />
     <PackageVersion Include="Quartz" Version="3.14.0" />
     <PackageVersion Include="RestSharp" Version="112.1.0" />
-    <PackageVersion Include="Scrutor" Version="4.2.2" /> <!-- اگر اصرار به 6.0.1 دارید، این را تغییر دهید. 4.2.2 پایدار است -->
+    <PackageVersion Include="Scrutor" Version="4.2.2" />
     <PackageVersion Include="Serilog.AspNetCore" Version="9.0.0" />
     <PackageVersion Include="Serilog.Enrichers.Environment" Version="2.3.0" />
     <PackageVersion Include="Serilog.Enrichers.Process" Version="2.0.2" />
     <PackageVersion Include="Serilog.Enrichers.Thread" Version="3.1.0" />
     <PackageVersion Include="Swashbuckle.AspNetCore" Version="6.6.2" />
-    <PackageVersion Include="Telegram.Bot" Version="22.5.1" /> <!-- اگر نسخه پایدار 19.0.0 را ترجیح می‌دهید، تغییر دهید -->
+    <PackageVersion Include="Telegram.Bot" Version="22.5.1" />
     <PackageVersion Include="WTelegramClient" Version="4.3.4" />
   </ItemGroup>
 </Project>

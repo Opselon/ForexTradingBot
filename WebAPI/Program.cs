@@ -147,19 +147,19 @@ try
     #endregion
 
     #region Configure Hangfire
-
-
     // ------------------- ۵. پیکربندی Hangfire برای اجرای کارهای پس‌زمینه -------------------
     builder.Services.AddHangfire(config => config
         .SetDataCompatibilityLevel(CompatibilityLevel.Version_170)
         .UseSimpleAssemblyNameTypeSerializer()
         .UseRecommendedSerializerSettings()
-        .UsePostgreSqlStorage(builder.Configuration.GetConnectionString("Hangfire")
-            ?? builder.Configuration.GetConnectionString("DefaultConnection")));
+        .UsePostgreSqlStorage(options => {
+            options.UseNpgsqlConnection(builder.Configuration.GetConnectionString("Hangfire")
+                ?? builder.Configuration.GetConnectionString("DefaultConnection"));
+        }));
     builder.Services.AddHangfireServer();
-    Log.Information("Hangfire services (with SQL Server for production) added.");
-    builder.Services.Configure<List<Infrastructure.Settings.ForwardingRule>>( // <<< Fully qualified
-      builder.Configuration.GetSection("ForwardingRules"));
+    Log.Information("Hangfire services configured with PostgreSQL storage.");
+    builder.Services.Configure<List<Infrastructure.Settings.ForwardingRule>>(
+        builder.Configuration.GetSection("ForwardingRules"));
     builder.Services.AddScoped<IActualTelegramMessageActions, ActualTelegramMessageActions>();
     builder.Services.AddScoped<ITelegramMessageSender, HangfireRelayTelegramMessageSender>();
     builder.Services.AddScoped<IForwardingJobActions, ForwardingJobActions>();

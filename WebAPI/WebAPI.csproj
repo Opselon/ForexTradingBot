@@ -10,7 +10,7 @@
     <PackageReference Include="FluentValidation" />
     <PackageReference Include="Hangfire.AspNetCore" />
     <PackageReference Include="Hangfire.Core" />
-    <PackageReference Include="Hangfire.SqlServer" />
+    <PackageReference Include="Hangfire.PostgreSql" />
     <PackageReference Include="MediatR" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design">

@@ -104,7 +104,7 @@ namespace Domain.Entities
         /// پاسخ کامل یا بخشی از پاسخ دریافتی از درگاه پرداخت (اختیاری).
         /// برای اهداف اشکال‌زدایی یا ممیزی می‌تواند مفید باشد.
         /// </summary>
-        [Column(TypeName = "nvarchar(max)")] // اگر می‌خواهید JSON طولانی ذخیره کنید
+        [Column(TypeName = "text")] // اگر می‌خواهید JSON طولانی ذخیره کنید
         public string? PaymentGatewayResponse { get; set; }
 
 

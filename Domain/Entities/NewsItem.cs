@@ -38,15 +38,14 @@ namespace Domain.Entities // ✅ Namespace صحیح
         /// A brief summary or description of the news item.
         /// This can be plain text or contain HTML depending on the RSS feed.
         /// </summary>
-        [Column(TypeName = "nvarchar(max)")] //  برای ذخیره متن‌های طولانی (SQL Server)
-                                             //  یا "text" برای PostgreSQL
+        [Column(TypeName = "text")] // For storing long text content
         public string? Summary { get; set; } //  نامی که شما استفاده کردید (Summary)
 
         /// <summary>
         /// (Optional) The full content of the news item, if fetched and stored.
         /// This might be useful for local analysis or if the original link becomes unavailable.
         /// </summary>
-        [Column(TypeName = "nvarchar(max)")]
+        [Column(TypeName = "text")]
         public string? FullContent { get; set; } //  نامی که شما استفاده کردید
 
         /// <summary>

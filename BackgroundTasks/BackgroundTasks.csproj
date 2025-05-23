@@ -22,29 +22,29 @@
     <ProjectReference Include="..\TelegramPanel\TelegramPanel.csproj" />
   </ItemGroup>
 
-  <!-- 
-    Ensure appsettings files for this worker project are copied to ITS OWN 
-    publish directory when this project itself is published.
-  -->
+  <!-- این بخش برای جلوگیری از کپی شدن appsettings این پروژه -->
+  <!-- به دایرکتوری پابلیش پروژه WebAPI اضافه شده است. -->
   <ItemGroup>
     <Content Update="appsettings.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
-      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <CopyToPublishDirectory>Never</CopyToPublishDirectory>
+      <!-- کلید حل مشکل -->
     </Content>
     <Content Update="appsettings.Development.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
-      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <CopyToPublishDirectory>Never</CopyToPublishDirectory>
+      <!-- کلید حل مشکل -->
       <DependentUpon>appsettings.json</DependentUpon>
     </Content>
     <Content Update="appsettings.Production.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
-      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <CopyToPublishDirectory>Never</CopyToPublishDirectory>
+      <!-- کلید حل مشکل -->
       <DependentUpon>appsettings.json</DependentUpon>
     </Content>
   </ItemGroup>
 
-  
 </Project>

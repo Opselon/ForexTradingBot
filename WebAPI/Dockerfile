@@ -62,6 +62,7 @@ RUN chmod -R u=rX,g=rX,o= /app/webapi && \
     chmod -R u=rX,g=rX,o= /app/tasks && \
     chmod -R u=rwx,g=,o= /app/telegram-sessions && \
     chmod -R u=rwx,g=,o= /app/data-protection
+      
 
 ENV ASPNETCORE_URLS=http://+:80
 ENV ASPNETCORE_ENVIRONMENT=Production

@@ -3,8 +3,8 @@
 #-------------------------------------------------------------------------------------
 FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 
-# Install Go
-RUN apt-get update && apt-get install -y golang-go && rm -rf /var/lib/apt/lists/*
+# Install Go and netcat
+RUN apt-get update && apt-get install -y golang-go netcat-traditional && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
 
@@ -15,6 +15,9 @@ COPY ["Core/Core.csproj", "Core/"]
 COPY ["Infrastructure/Infrastructure.csproj", "Infrastructure/"]
 COPY ["BackgroundTasks/BackgroundTasks.csproj", "BackgroundTasks/"]
 COPY ["TelegramPanel/TelegramPanel.csproj", "TelegramPanel/"]
+
+# Install EF Core tools
+RUN dotnet tool install --global dotnet-ef
 
 # Restore packages
 RUN dotnet restore "WebAPI/WebAPI.csproj" --configfile nuget.config
@@ -41,11 +44,10 @@ WORKDIR /app
 # Create non-root user
 RUN adduser --system --group --disabled-password --gecos "" --home /app appuser
 
-# Install curl for health checks
-RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
-
-# Install Go runtime and Docker CLI
-RUN apt-get update && apt-get install -y \
+# Install curl, netcat, Go, and Docker CLI for health checks and log monitoring
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    netcat-traditional \
     golang-go \
     docker.io \
     && rm -rf /var/lib/apt/lists/*
@@ -66,7 +68,8 @@ RUN chown -R appuser:appuser /app && \
     chmod -R u=rX,g=rX,o= /app/webapi && \
     chmod -R u=rX,g=rX,o= /app/tasks && \
     chmod -R u=rwx,g=,o= /app/telegram-sessions && \
-    chmod -R u=rwx,g=,o= /app/data-protection
+    chmod -R u=rwx,g=,o= /app/data-protection && \
+    chmod +x /app/docker_log_monitor
 
 # Set environment variables
 ENV ASPNETCORE_URLS=http://+:80

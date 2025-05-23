@@ -50,15 +50,23 @@ try
     // ------------------- ۱. پیکربندی Serilog با تنظیمات از appsettings.json -------------------
     // این بخش Serilog را به عنوان سیستم لاگینگ اصلی برنامه تنظیم می‌کند.
     builder.Host.UseSerilog((context, services, loggerConfiguration) => loggerConfiguration
-        .ReadFrom.Configuration(context.Configuration) // خواندن تنظیمات Serilog از appsettings.json (بخش "Serilog")
-        .ReadFrom.Services(services)                   // امکان غنی‌سازی لاگ‌ها با استفاده از سرویس‌های DI
-        .Enrich.FromLogContext()                       // اضافه کردن اطلاعات context به لاگ‌ها (مانند RequestId)
-        .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}") // فرمت خروجی کنسول
-                                                                                                               //  می‌توانید Sink های دیگری مانند File, Seq, ElasticSearch و ... را اینجا اضافه کنید
-                                                                                                               // .WriteTo.File($"logs/ForexBot_{builder.Environment.EnvironmentName}_.txt",
-                                                                                                               //               rollingInterval: RollingInterval.Day,
-                                                                                                               //               restrictedToMinimumLevel: Serilog.Events.LogEventLevel.Information,
-                                                                                                               //               outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] ({SourceContext}) {Message:lj}{NewLine}{Exception}")
+        .ReadFrom.Configuration(context.Configuration)
+        .ReadFrom.Services(services)
+        .Enrich.FromLogContext()
+        .Enrich.WithMachineName()
+        .Enrich.WithEnvironmentName()
+        .Enrich.WithProcessId()
+        .Enrich.WithThreadId()
+        .WriteTo.Console(
+            outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}",
+            restrictedToMinimumLevel: Serilog.Events.LogEventLevel.Information
+        )
+        .WriteTo.File(
+            path: "logs/forexbot-.log",
+            rollingInterval: RollingInterval.Hour,
+            outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}",
+            restrictedToMinimumLevel: Serilog.Events.LogEventLevel.Information
+        )
     );
     Log.Information("Serilog configured as the primary logging provider.");
     #endregion

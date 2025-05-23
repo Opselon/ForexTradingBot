@@ -110,8 +110,12 @@ jobs:
             
             # Create .env file
             cat > .env << 'EOF'
-            DB_CONNECTION_STRING=Host=db;Database=forextrading;Username=postgres;Password=your_secure_password
-            TELEGRAM_BOT_TOKEN=7101564106:AAHbHL5hhGJK7aIKH7RGEX2ZG4nGvMHOmIE
+            DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+            TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
+            TELEGRAM_CHANNEL_ID=${{ secrets.TELEGRAM_CHANNEL_ID }}
+            SERVER_HOST=${{ secrets.SERVER_HOST }}
+            SERVER_USERNAME=${{ secrets.SERVER_USERNAME }}
+            SERVER_SSH_KEY=${{ secrets.SERVER_SSH_KEY }}
             EOF
             
             # Pull latest changes
@@ -123,11 +127,34 @@ jobs:
             # Pull latest image
             docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
             
+            # Wait for database to be ready
+            echo "Waiting for database to be ready..."
+            for i in {1..30}; do
+              if docker compose exec db pg_isready -U forexuser -d forextrading; then
+                echo "Database is ready!"
+                break
+              fi
+              echo "Waiting for database... attempt $i"
+              sleep 2
+            done
+            
             # Start services
             docker compose up -d
             
             # Check container status
-            docker ps
+            echo "Checking container status..."
+            docker ps -a
             
-            # Show logs
-            docker compose logs --tail 50 
+            # Show logs for all services
+            echo "Showing logs for all services..."
+            docker compose logs --tail 100
+            
+            # Check specific service logs
+            echo "Checking WebAPI logs..."
+            docker compose logs webapi --tail 100
+            
+            echo "Checking BackgroundTasks logs..."
+            docker compose logs backgroundtasks --tail 100
+            
+            echo "Checking TelegramPanel logs..."
+            docker compose logs telegrampanel --tail 100 

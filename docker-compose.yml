@@ -1,27 +1,55 @@
 version: '3.8'
 
 services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: forextrading
+      POSTGRES_USER: forexuser
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U forexuser -d forextrading"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - forex-network
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - forex-network
+
   webapi:
     build:
       context: .
       dockerfile: Dockerfile
-    ports:
-      - "80:80"
+    command: dotnet WebAPI.dll
     environment:
-      - ASPNETCORE_ENVIRONMENT=Production
-      - ConnectionStrings__DefaultConnection=Host=db;Database=myappdb;Username=postgres;Password=${DB_PASSWORD}
-      - ConnectionStrings__HangfireConnection=Host=db;Database=hangfire;Username=postgres;Password=${DB_PASSWORD}
-      - TelegramBot__Token=${TELEGRAM_BOT_TOKEN}
-      - TELEGRAM_SESSION_PATH=/app/telegram-sessions
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__DefaultConnection: "Host=db;Port=5432;Database=forextrading;Username=forexuser;Password=${DB_PASSWORD}"
+      ConnectionStrings__HangfireConnection: "Host=db;Port=5432;Database=forextrading;Username=forexuser;Password=${DB_PASSWORD}"
+      TelegramBot__Token: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHANNEL_ID: ${TELEGRAM_CHANNEL_ID}
     volumes:
       - telegram-sessions:/app/telegram-sessions
       - data-protection:/app/data-protection
+      - app-logs:/app/logs
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
     networks:
       - forex-network
-    working_dir: /app/webapi
 
   backgroundtasks:
     build:
@@ -29,20 +57,22 @@ services:
       dockerfile: Dockerfile
     command: dotnet BackgroundTasks.dll
     environment:
-      - ASPNETCORE_ENVIRONMENT=Production
-      - ConnectionStrings__DefaultConnection=Host=db;Database=myappdb;Username=postgres;Password=${DB_PASSWORD}
-      - ConnectionStrings__HangfireConnection=Host=db;Database=hangfire;Username=postgres;Password=${DB_PASSWORD}
-      - TelegramBot__Token=${TELEGRAM_BOT_TOKEN}
-      - TELEGRAM_SESSION_PATH=/app/telegram-sessions
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__DefaultConnection: "Host=db;Port=5432;Database=forextrading;Username=forexuser;Password=${DB_PASSWORD}"
+      ConnectionStrings__HangfireConnection: "Host=db;Port=5432;Database=forextrading;Username=forexuser;Password=${DB_PASSWORD}"
+      TelegramBot__Token: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHANNEL_ID: ${TELEGRAM_CHANNEL_ID}
     volumes:
       - telegram-sessions:/app/telegram-sessions
       - data-protection:/app/data-protection
+      - app-logs:/app/logs
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
     networks:
       - forex-network
-    working_dir: /app/tasks
 
   telegrampanel:
     build:
@@ -50,66 +80,47 @@ services:
       dockerfile: Dockerfile
     command: dotnet TelegramPanel.dll
     environment:
-      - ASPNETCORE_ENVIRONMENT=Production
-      - ConnectionStrings__DefaultConnection=Host=db;Database=myappdb;Username=postgres;Password=${DB_PASSWORD}
-      - TelegramBot__Token=${TELEGRAM_BOT_TOKEN}
-      - TELEGRAM_CHANNEL_ID=${TELEGRAM_CHANNEL_ID}
-      - TELEGRAM_SESSION_PATH=/app/telegram-sessions
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__DefaultConnection: "Host=db;Port=5432;Database=forextrading;Username=forexuser;Password=${DB_PASSWORD}"
+      TelegramBot__Token: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHANNEL_ID: ${TELEGRAM_CHANNEL_ID}
+      TELEGRAM_SESSION_PATH: /app/telegram-sessions
     volumes:
       - telegram-sessions:/app/telegram-sessions
       - data-protection:/app/data-protection
+      - app-logs:/app/logs
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
     networks:
       - forex-network
-    working_dir: /app/telegrampanel
 
-  logmonitor:
+  log-monitor:
     build:
       context: .
       dockerfile: Dockerfile
     command: ./docker_log_monitor webapi
     environment:
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-      - TELEGRAM_CHANNEL_ID=${TELEGRAM_CHANNEL_ID}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHANNEL_ID: ${TELEGRAM_CHANNEL_ID}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-    networks:
-      - forex-network
     depends_on:
       - webapi
-
-  db:
-    image: postgres:16
-    environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=${DB_PASSWORD}
-      - POSTGRES_MULTIPLE_DATABASES=myappdb,hangfire
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
+      - backgroundtasks
+      - telegrampanel
     networks:
       - forex-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
 
-  redis:
-    image: redis:7
-    ports:
-      - "6379:6379"
-    networks:
-      - forex-network
+volumes:
+  postgres_data:
+  redis_data:
+  telegram-sessions:
+  data-protection:
+  app-logs:
 
 networks:
   forex-network:
-    driver: bridge
-
-volumes:
-  postgres-data:
-  telegram-sessions:
-  data-protection: 
+    driver: bridge 

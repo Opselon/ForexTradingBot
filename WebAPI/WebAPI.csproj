@@ -29,6 +29,7 @@
     <ProjectReference Include="..\BackgroundTasks\BackgroundTasks.csproj" />
     <ProjectReference Include="..\Infrastructure\Infrastructure.csproj" />
     <ProjectReference Include="..\TelegramPanel\TelegramPanel.csproj" />
+    <ProjectReference Include="..\Core\Core.csproj" />
   </ItemGroup>
 
   <!-- اطمینان از اینکه appsettings ها در publish کپی می‌شوند -->

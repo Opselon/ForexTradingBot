@@ -11,6 +11,7 @@ using Application.Interfaces; // برای IRssFetchingCoordinatorService (جهت
 // using Application.Interfaces;          // معمولاً اینترفیس‌های Application مستقیماً اینجا نیاز نیستند مگر برای موارد خاص
 // using Application.Services;            // و نه پیاده‌سازی‌های آن
 using BackgroundTasks;                    // برای متد توسعه‌دهنده AddBackgroundTasksServices (اگر تعریف کرده‌اید)
+using Core.Logging;                         // Add this line for TelegramLogger
 using Hangfire;                             // برای پیکربندی‌های Hangfire مانند CompatibilityLevel, RecurringJob, Cron
 using Hangfire.Dashboard;                   // برای DashboardOptions, IDashboardAuthorizationFilter
 using Hangfire.PostgreSql;

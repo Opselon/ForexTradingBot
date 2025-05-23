@@ -28,6 +28,7 @@ RUN go build -o docker_log_monitor docker_log_monitor.go
 
 # Build .NET applications
 WORKDIR /src
+RUN dotnet build "Core/Core.csproj" -c Release -o /app/build/core
 RUN dotnet build "WebAPI/WebAPI.csproj" -c Release -o /app/build/webapi
 RUN dotnet build "BackgroundTasks/BackgroundTasks.csproj" -c Release -o /app/build/tasks
 

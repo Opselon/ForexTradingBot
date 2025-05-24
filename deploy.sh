@@ -1,93 +1,189 @@
-# ... (تمام بخش‌های قبلی jobs.test و jobs.build بدون تغییر باقی می‌مانند) ...
-# ... (مطمئن شوید که job build شما outputs.primary_image_tag را به درستی تعریف می‌کند) ...
+#!/bin/bash
+#
+# deploy.sh: Handles application deployment on the target server.
+# Fetches latest code, prepares environment, and restarts services using Docker Compose.
+#
+# Requirements: git, docker, docker compose (plugin V2)
+# Environment Variables expected from GitHub Actions:
+# - GIT_BRANCH_NAME: The Git branch to deploy.
+# - DEPLOY_IMAGE_TAG: The Docker image tag for application services.
+# - REGISTRY_GHCR: The GitHub Container Registry URL (e.g., ghcr.io).
+# - IMAGE_NAME_BASE: The base name of the Docker image (e.g., your-org/your-repo).
+# - SECRET_DB_CONNECTION_STRING: Full connection string for the application.
+# - SECRET_POSTGRES_SERVICE_PASSWORD: Password for the PostgreSQL service's primary user.
+# - SECRET_TELEGRAM_BOT_TOKEN: Telegram Bot Token.
+# - SECRET_TELEGRAM_API_ID: Telegram API ID.
+# - SECRET_TELEGRAM_API_HASH: Telegram API Hash.
+# - SECRET_TELEGRAM_CHANNEL_ID_FOR_LOG_MONITOR: Channel ID for the log monitor service.
+# - SECRET_WTELEGRAMBOT (Optional): Value for WTELEGRAMBOT.
+#
+# Note: This script will overwrite the .env.production file on each run.
 
-  #------------------------------------------------------------------------------------
-  # JOB 3: Deploy - Deploy application to the server
-  #------------------------------------------------------------------------------------
-  deploy:
-    name: "🚀 Deploy Application to Production"
-    needs: build # Depends on successful completion of the build job
-    # Run only on push to specified branches
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/ForexSignal-Performance')
-    runs-on: ubuntu-latest
-    environment: production # Use GitHub Environment "production" for secrets and deployment protection rules
+# --- Strict Mode & Error Handling ---
+set -euo pipefail # Fail fast on errors, unset variables, or pipe failures.
+trap 'echo "ERROR: A command failed at line $LINENO. See output above for details." >&2; exit 1' ERR
+trap 'echo "Deployment interrupted." >&2; exit 1' SIGINT SIGTERM
 
-    steps:
-      - name: "🔑 Setup SSH Agent (for server access)"
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.SERVER_SSH_KEY }} # SSH private key stored as a GitHub secret
+# --- Configuration & Constants ---
+# Variables passed from GHA are already in the environment.
+readonly ENV_FILE_PATH=".env.production"
+readonly REQUIRED_COMMANDS=("git" "docker" "docker compose")
 
-      - name: "🚀 Deploy to Server via SSH using deploy.sh"
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USERNAME }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          port: ${{ secrets.SERVER_PORT || 22 }} # Default SSH port is 22
-          timeout: 60s # Connection timeout
-          command_timeout: 20m # Max time for the entire script execution, increased for safety
+# --- Logging Functions ---
+log_info() {
+  echo "INFO: $1"
+}
+log_warn() {
+  echo "WARNING: $1" >&2
+}
+log_error() {
+  echo "ERROR: $1" >&2
+  exit 1
+}
+log_success() {
+  echo "SUCCESS: $1"
+}
 
-          # Pass secrets and other necessary info as environment variables to deploy.sh on the server
-          # The deploy.sh script will access these as $SECRET_DB_PASSWORD, $DEPLOY_IMAGE_TAG, etc.
-          # نام پارامتر صحیح 'envs' است
-          envs: |
-            SECRET_DB_PASSWORD=${{ secrets.DB_PASSWORD }}
-            SECRET_TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
-            SECRET_TELEGRAM_API_ID=${{ secrets.TELEGRAM_API_ID }}
-            SECRET_TELEGRAM_API_HASH=${{ secrets.TELEGRAM_API_HASH }}
-            SECRET_LOG_MONITOR_TELEGRAM_CHANNEL_ID=${{ secrets.LOG_MONITOR_TELEGRAM_CHANNEL_ID }}
-            SECRET_CRYPTOPAY_API_TOKEN=${{ secrets.CRYPTOPAY_API_TOKEN }}
-            SECRET_CRYPTOPAY_API_KEY=${{ secrets.CRYPTOPAY_API_KEY }}
-            SECRET_CRYPTOPAY_WEBHOOK_SECRET=${{ secrets.CRYPTOPAY_WEBHOOK_SECRET }}
-            GIT_BRANCH_NAME=${{ github.ref_name }}
-            # The primary_image_tag from the 'build' job output (e.g., short SHA or semver)
-            DEPLOY_IMAGE_TAG=${{ needs.build.outputs.primary_image_tag }}
-            REGISTRY_GHCR=${{ env.REGISTRY }} # Pass registry for deploy.sh to construct full image names
-            IMAGE_NAME_BASE=${{ env.IMAGE_NAME }} # Pass base image name
+# --- Helper Functions ---
+check_env_var() {
+  local var_name="$1"
+  if [ -z "${!var_name:-}" ]; then # Check if variable is unset or empty
+    log_error "Required environment variable '$var_name' is not set or is empty. This should be passed from GitHub Actions."
+  fi
+}
 
-          script: |
-            set -euo pipefail # Exit immediately if a command exits with a non-zero status
+check_commands_exist() {
+  for cmd in "${REQUIRED_COMMANDS[@]}"; do
+    if ! command -v "$cmd" &> /dev/null; then
+      log_error "Command '$cmd' not found. Please install it and ensure it's in the PATH."
+    fi
+  done
+  log_info "All required commands found."
+}
 
-            DEPLOY_TARGET_DIR="/var/lib/forex-trading-bot/ForexTradingBot" # Your deployment directory on the server
-            DEPLOY_SCRIPT_NAME="deploy.sh" # Name of your deployment script in the repo root
-            DEPLOY_SCRIPT_FULL_PATH="$DEPLOY_TARGET_DIR/$DEPLOY_SCRIPT_NAME"
+# --- Main Deployment Logic ---
+main() {
+  log_info "--- Starting Deployment Script ---"
 
-            echo ">>> Navigating to deployment directory: $DEPLOY_TARGET_DIR"
-            # Create directory if it doesn't exist (e.g., for first-time deployment)
-            mkdir -p "$DEPLOY_TARGET_DIR"
-            cd "$DEPLOY_TARGET_DIR"
+  # Validate required environment variables passed from GHA
+  check_env_var "GIT_BRANCH_NAME"
+  check_env_var "DEPLOY_IMAGE_TAG"
+  check_env_var "REGISTRY_GHCR"
+  check_env_var "IMAGE_NAME_BASE"
+  check_env_var "SECRET_DB_CONNECTION_STRING"
+  check_env_var "SECRET_POSTGRES_SERVICE_PASSWORD"
+  check_env_var "SECRET_TELEGRAM_BOT_TOKEN"
+  check_env_var "SECRET_TELEGRAM_API_ID"
+  check_env_var "SECRET_TELEGRAM_API_HASH"
+  check_env_var "SECRET_TELEGRAM_CHANNEL_ID_FOR_LOG_MONITOR"
+  # SECRET_WTELEGRAMBOT is optional
 
-            echo ">>> Updating deployment script and configurations from Git branch: $GIT_BRANCH_NAME"
-            # Ensure Git is initialized if this is a fresh directory or first-time setup
-            if [ ! -d ".git" ]; then
-              echo "INFO: .git directory not found. Initializing Git repository in $DEPLOY_TARGET_DIR..."
-              git init
-              # Configure remote if it's not already set (adjust URL as needed)
-              # You might need to handle authentication for git remote add if private repo
-              if ! git remote -v | grep -q origin; then
-                # Using format for GITHUB_SERVER_URL and GITHUB_REPOSITORY which are available to actions
-                git remote add origin "${{ github.server_url }}/${{ github.repository }}.git"
-              fi
-            fi
-            
-            # Fetch the specific branch and reset hard to ensure clean state
-            # Using --depth 1 for faster fetch if full history isn't needed for deploy script
-            echo "Fetching from origin, branch: $GIT_BRANCH_NAME" # GIT_BRANCH_NAME should now be set
-            git fetch origin "$GIT_BRANCH_NAME" --depth 1 
-            echo "Resetting to origin/$GIT_BRANCH_NAME"
-            git reset --hard "origin/$GIT_BRANCH_NAME"
-            # Optional: Clean untracked files and directories. Use with caution.
-            # git clean -fdx
+  log_info "Deployment Target Branch: $GIT_BRANCH_NAME"
+  log_info "Deployment Docker Image: ${REGISTRY_GHCR}/${IMAGE_NAME_BASE}:${DEPLOY_IMAGE_TAG}"
 
-            echo ">>> Verifying deployment script presence: $DEPLOY_SCRIPT_FULL_PATH"
-            if [ ! -f "$DEPLOY_SCRIPT_FULL_PATH" ]; then
-                echo "::error file=${{ github.workflow }}::Deploy script '$DEPLOY_SCRIPT_FULL_PATH' not found in $DEPLOY_TARGET_DIR."
-                echo "Ensure '$DEPLOY_SCRIPT_NAME' is committed to the repository and pulled correctly."
-                exit 1
-            fi
-            chmod +x "$DEPLOY_SCRIPT_FULL_PATH" # Ensure it's executable
+  # --- Pre-flight Checks ---
+  log_info ">>> Performing pre-flight checks..."
+  check_commands_exist
 
-            echo ">>> Executing deployment script: $DEPLOY_SCRIPT_FULL_PATH"
-            # The script will use environment variables passed via 'envs' context of ssh-action
-            "$DEPLOY_SCRIPT_FULL_PATH"
+  # --- Prepare .env.production File ---
+  log_info ">>> Preparing $ENV_FILE_PATH file..."
+  # Always overwrite .env.production to ensure it reflects the latest GHA secrets
+  # Note: Ensure your docker-compose.yml is designed to use these .env variables.
+  cat > "$ENV_FILE_PATH" << EOL
+# This file is auto-generated by deploy.sh during deployment.
+# It contains secrets and configurations for Docker Compose and applications.
+
+# --- Docker Image Configuration (for docker-compose.yml image definitions) ---
+REGISTRY=${REGISTRY_GHCR}
+GITHUB_REPOSITORY=${IMAGE_NAME_BASE} # Used as image name part in docker-compose
+IMAGE_TAG=${DEPLOY_IMAGE_TAG}
+
+# --- Database Configuration ---
+# For PostgreSQL Service (db service in docker-compose.yml)
+DB_HOST=db                                    # Service name for internal Docker networking
+DB_PORT=5432                                  # Standard PostgreSQL port
+DB_NAME=${DB_NAME_OVERRIDE:-forextrading}     # Default, can be overridden by DB_NAME_OVERRIDE from GHA envs
+DB_USER=${DB_USER_OVERRIDE:-forexuser}        # Default, can be overridden by DB_USER_OVERRIDE from GHA envs
+DB_PASSWORD=${SECRET_POSTGRES_SERVICE_PASSWORD} # Password for the PostgreSQL service's primary user
+
+# For Application Services (read by your .NET applications)
+# This is the full connection string your app uses.
+DB_CONNECTION_STRING_APP=${SECRET_DB_CONNECTION_STRING}
+
+# --- Telegram Configuration (for application services) ---
+TELEGRAM_BOT_TOKEN=${SECRET_TELEGRAM_BOT_TOKEN}
+TELEGRAM_API_ID=${SECRET_TELEGRAM_API_ID}
+TELEGRAM_API_HASH=${SECRET_TELEGRAM_API_HASH}
+
+# --- Telegram Configuration (for log-monitor service) ---
+# Ensure your log-monitor application reads TELEGRAM_CHANNEL_ID
+LOG_MONITOR_TELEGRAM_CHANNEL_ID=${SECRET_TELEGRAM_CHANNEL_ID_FOR_LOG_MONITOR}
+
+# --- Optional WTELEGRAMBOT ---
+# If SECRET_WTELEGRAMBOT is set in GHA, include it.
+# The application needs to be configured to read WTELEGRAMBOT_ENV_VAR_NAME.
+$( [ -n "${SECRET_WTELEGRAMBOT:-}" ] && echo "WTELEGRAMBOT_ENV_VAR_NAME=${SECRET_WTELEGRAMBOT}" || echo "# SECRET_WTELEGRAMBOT not set or empty" )
+
+# --- Application Runtime Configuration (Examples, non-secret) ---
+# These can be set here if they are runtime configurations not baked into the image.
+# If they were ARG_ in Dockerfile, they are build-time. If also needed at runtime, define them here.
+# ASPNETCORE_ENVIRONMENT=Production # Often set directly in docker-compose.yml or app defaults to Production
+# TELEGRAM_PANEL__ADMIN_USER_IDS__0=5094837833 # Example admin ID
+EOL
+
+  # Secure the .env file
+  chmod 600 "$ENV_FILE_PATH"
+  log_info "'$ENV_FILE_PATH' created/updated successfully."
+
+  # --- Update Source Code & Configurations (docker-compose.yml, etc.) ---
+  log_info ">>> Updating source code (including docker-compose.yml) from Git branch: $GIT_BRANCH_NAME..."
+  
+  # Check current branch and switch if necessary
+  local current_branch_on_server
+  current_branch_on_server=$(git rev-parse --abbrev-ref HEAD)
+  if [ "$current_branch_on_server" != "$GIT_BRANCH_NAME" ]; then
+    log_info "Current branch is '$current_branch_on_server'. Switching to '$GIT_BRANCH_NAME'..."
+    if git show-ref --quiet "refs/heads/$GIT_BRANCH_NAME"; then
+      git checkout "$GIT_BRANCH_NAME"
+    else
+      log_info "Branch '$GIT_BRANCH_NAME' does not exist locally. Fetching and checking out..."
+      git fetch origin "$GIT_BRANCH_NAME":"$GIT_BRANCH_NAME" # Fetch specific branch and create local tracking
+      git checkout "$GIT_BRANCH_NAME"
+    fi
+  fi
+
+  log_info "Fetching latest changes from origin for branch '$GIT_BRANCH_NAME'..."
+  git fetch origin "$GIT_BRANCH_NAME"
+  log_info "Resetting local branch '$GIT_BRANCH_NAME' to 'origin/$GIT_BRANCH_NAME'..."
+  git reset --hard "origin/$GIT_BRANCH_NAME"
+  # git pull origin "$GIT_BRANCH_NAME" # This should be redundant after reset --hard
+
+  log_success "Source code updated to latest from 'origin/$GIT_BRANCH_NAME'."
+
+  # --- Docker Compose Operations ---
+  log_info ">>> Pulling latest Docker images referenced in docker-compose.yml (using $ENV_FILE_PATH)..."
+  docker compose --env-file "$ENV_FILE_PATH" pull
+
+  log_info ">>> Stopping and removing existing Docker containers (using $ENV_FILE_PATH)..."
+  docker compose --env-file "$ENV_FILE_PATH" down --remove-orphans --timeout 60 # Added timeout
+
+  log_info ">>> Starting Docker services using docker-compose (with $ENV_FILE_PATH)..."
+  docker compose --env-file "$ENV_FILE_PATH" up -d --remove-orphans --force-recreate --renew-anon-volumes
+
+  log_success "Docker services started."
+
+  # --- Post-Deployment ---
+  log_info ">>> Waiting for services to stabilize (30 seconds)..."
+  sleep 30
+
+  log_info ">>> Current Docker container status:"
+  docker compose --env-file "$ENV_FILE_PATH" ps
+
+  log_info ">>> Displaying recent logs for all services (last 100 lines)..."
+  docker compose --env-file "$ENV_FILE_PATH" logs --tail 100
+
+  log_success "--- Deployment Script Finished Successfully ---"
+}
+
+# --- Execute Main Function ---
+main "$@"

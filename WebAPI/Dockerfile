@@ -366,30 +366,34 @@ jobs:
           with:
             host: ${{ secrets.SERVER_HOST }}
             username: ${{ secrets.SERVER_USERNAME }}
-            key: ${{ secrets.SERVER_SSH_KEY }} # Can often be omitted if ssh-agent is correctly used
+            key: ${{ secrets.SERVER_SSH_KEY }} # اغلب اگر ssh-agent به درستی استفاده شود، می‌توان این را حذف کرد
             port: ${{ secrets.SERVER_PORT || 22 }}
             timeout: 60s
-            command_timeout: 20m # Increased for safety
+            command_timeout: 20m # برای ایمنی افزایش یافته است
   
-            # --- CORRECTED 'envs' SECTION ---
+            # --- بخش 'envs' تصحیح شده و مطابق با secret های جدید شما ---
             envs: |
               GIT_BRANCH_NAME=${{ github.ref_name }}
               DEPLOY_IMAGE_TAG=${{ needs.build.outputs.primary_image_tag }}
               REGISTRY_GHCR=${{ env.REGISTRY }}
               IMAGE_NAME_BASE=${{ env.IMAGE_NAME }}
   
-              # Secrets based on your current strategy (DB_CONNECTION_STRING, etc.)
+              # Secrets بر اساس استراتژی فعلی شما (DB_CONNECTION_STRING و غیره)
               SECRET_DB_CONNECTION_STRING=${{ secrets.DB_CONNECTION_STRING }}
-              SECRET_POSTGRES_SERVICE_PASSWORD=${{ secrets.POSTGRES_SERVICE_PASSWORD }} # Ensure this GitHub secret exists!
+              SECRET_POSTGRES_SERVICE_PASSWORD=${{ secrets.POSTGRES_SERVICE_PASSWORD }} # اطمینان حاصل کنید این secret در گیت‌هاب وجود دارد!
               SECRET_TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
               SECRET_TELEGRAM_API_ID=${{ secrets.TELEGRAM_API_ID }}
               SECRET_TELEGRAM_API_HASH=${{ secrets.TELEGRAM_API_HASH }}
-              # Map the GHA secret 'TELEGRAM_CHANNEL_ID' to the env var deploy.sh expects
+              # نگاشت secret گیت‌هاب 'TELEGRAM_CHANNEL_ID' به متغیر محیطی که deploy.sh انتظار دارد
               SECRET_TELEGRAM_CHANNEL_ID_FOR_LOG_MONITOR=${{ secrets.TELEGRAM_CHANNEL_ID }}
-              SECRET_WTELEGRAMBOT=${{ secrets.WTELEGRAMBOT }} # Will be empty if the secret is not set
-              DEBUG_DEPLOY=true # Enable debug logs in the latest deploy.sh
+              SECRET_WTELEGRAMBOT=${{ secrets.WTELEGRAMBOT }} # اگر secret تنظیم نشده باشد، خالی خواهد بود
+              DEBUG_DEPLOY=true # فعال کردن لاگ‌های دیباگ در deploy.sh جدید
   
-            # --- SCRIPT TO FETCH AND EXECUTE deploy.sh ---
+              # اختیاری: اگر می‌خواهید DB_NAME_OVERRIDE و DB_USER_OVERRIDE را سفارشی کنید
+              # DB_NAME_OVERRIDE=${{ secrets.CUSTOM_DB_NAME }} # مثال
+              # DB_USER_OVERRIDE=${{ secrets.CUSTOM_DB_USER }} # مثال
+  
+            # --- اسکریپت برای FETCH و اجرای deploy.sh ---
             script: |
               set -euo pipefail
               
@@ -408,10 +412,10 @@ jobs:
               
               if [ ! -d ".git" ]; then
                 echo "INFO: .git directory not found. Initializing Git repository..."
-                git init -b "$GIT_BRANCH_NAME" # Initialize with the target branch
+                git init -b "$GIT_BRANCH_NAME" # مقداردهی اولیه با شاخه هدف
                 if ! git remote -v | grep -q origin; then
-                  # For private repos, use SSH URL: git@github.com:${{ github.repository }}.git
-                  # Ensure server has the corresponding deploy key.
+                  # برای ریپازیتوری‌های خصوصی، از URL مبتنی بر SSH استفاده کنید: git@github.com:${{ github.repository }}.git
+                  # اطمینان حاصل کنید که سرور کلید دیپلوی مربوطه را دارد.
                   git remote add origin "${{ github.server_url }}/${{ github.repository }}.git"
                 fi
               fi

@@ -2,7 +2,7 @@
 #
 # deploy.sh: Handles application deployment on the target server.
 # Fetches latest code, prepares environment, and restarts services using Docker Compose.
-# ... (rest of the comments and script header) ...
+# ... (بقیه کامنت‌های ابتدای اسکریپت مانند نسخه شما باقی می‌ماند) ...
 
 # --- Strict Mode & Error Handling ---
 set -euo pipefail
@@ -11,10 +11,9 @@ trap 'echo "Deployment interrupted." >&2; exit 1' SIGINT SIGTERM
 
 # --- Configuration & Constants ---
 readonly ENV_FILE_PATH=".env.production"
-# We will find docker path dynamically, so no DOCKER_PATH constant for now.
+# DOCKER_CMD به صورت داینامیک پیدا خواهد شد.
 
 # --- Logging Functions ---
-# ... (logging functions remain the same) ...
 log_info() {
   echo "INFO: $1"
 }
@@ -25,7 +24,8 @@ log_error() {
   echo "ERROR: $1" >&2
   # Capture last few lines of output for better error reporting in trap
   # This might not always capture the exact error, but can be helpful
-  tail -n 20 > /tmp/deploy_error_output
+  # shellcheck disable=SC2002 # Allow cat without useless use
+  # cat /tmp/deploy_command_output 2>/dev/null | tail -n 20 > /tmp/deploy_error_output
   exit 1
 }
 log_success() {
@@ -38,9 +38,7 @@ log_debug() {
   fi
 }
 
-
 # --- Helper Functions ---
-# ... (check_env_var remains the same) ...
 check_env_var() {
   local var_name="$1"
   if [ -z "${!var_name:-}" ]; then # Check if variable is unset or empty
@@ -55,7 +53,15 @@ check_commands_exist() {
     log_debug "Checking required commands..."
     log_debug "Current PATH: $PATH"
     log_debug "Current user: $(whoami)"
+    log_debug "Effective user: $(id -u -n)"
     
+    # Find Git executable
+    if command -v git &> /dev/null; then
+        log_debug "Git found at: $(command -v git)"
+    else
+        log_error "Git not found. Please install Git first."
+    fi
+
     # Find Docker executable
     if command -v docker &> /dev/null; then
         DOCKER_CMD=$(command -v docker)
@@ -73,41 +79,34 @@ check_commands_exist() {
         fi
     fi
     
-    # Check for Docker Compose plugin
-    # Try direct 'docker compose' first, as this works in your interactive shell
-    if "$DOCKER_CMD" compose version &> /dev/null; then
-        log_debug "Docker Compose plugin confirmed working with '$DOCKER_CMD compose version'."
+    # Check for Docker Compose plugin using the found DOCKER_CMD
+    log_debug "Attempting to verify Docker Compose plugin with command: '$DOCKER_CMD compose version'"
+    if "$DOCKER_CMD" compose version &> /tmp/docker_compose_version_output; then
+        log_debug "Docker Compose plugin confirmed working. Version: $(cat /tmp/docker_compose_version_output)"
     else
-        log_warn "Direct '$DOCKER_CMD compose version' failed. This might indicate a PATH or installation issue for non-interactive sessions."
-        log_warn "Attempting to find docker-compose plugin location..."
-        # Attempt to find the plugin explicitly if the direct command fails.
-        # This is more complex and often not needed if 'docker compose' is set up correctly system-wide.
-        # For now, we'll rely on the direct command and error out if it fails,
-        # as it works for you interactively, suggesting the issue is environment-related for the script.
-        log_error "Docker Compose plugin not found or not functioning correctly with the resolved Docker command. '$DOCKER_CMD compose version' failed. Please ensure the Docker Compose plugin (V2) is correctly installed and accessible. Your interactive shell test was 'docker compose version', so ensure the non-interactive environment for this script can also find and execute it. The user '$(whoami)' might have a different PATH or environment setup for non-interactive SSH sessions."
+        log_warn "Direct '$DOCKER_CMD compose version' failed. Output/Error was:"
+        cat /tmp/docker_compose_version_output >&2 # Show output/error from the failed command
+        log_error "Docker Compose plugin (V2) not found or not functioning correctly with the resolved Docker command '$DOCKER_CMD'. Please ensure it's correctly installed and accessible to the user '$(whoami)' in non-interactive SSH sessions. Your interactive shell test ('docker compose version') works, which suggests an environment difference (e.g., PATH)."
     fi
-    log_debug "Docker Compose version: $("$DOCKER_CMD" compose version)"
     
-    # Check for Git
-    if ! command -v git &> /dev/null; then
-        log_error "Git not found. Please install Git first."
-    fi
-    log_debug "Git found at: $(command -v git)"
-    
-    log_info "All required commands found."
+    log_info "All required commands (git, docker, docker compose plugin) found."
 }
 
 # --- Main Deployment Logic ---
 main() {
   log_info "--- Starting Deployment Script ---"
-  # ... (debug info and env var checks remain the same) ...
+
+  # Debug information at the start
   log_debug "Script started"
   log_debug "Current directory: $(pwd)"
   log_debug "Current user: $(whoami)"
-  log_debug "Effective user: $(id -u -n)" # More reliable for effective user
+  log_debug "Effective user: $(id -u -n)"
   log_debug "Current PATH: $PATH"
   log_debug "SHELL: $SHELL"
   log_debug "HOME: $HOME"
+  log_debug "GIT_BRANCH_NAME: ${GIT_BRANCH_NAME:-Not Set}"
+  log_debug "DEPLOY_IMAGE_TAG: ${DEPLOY_IMAGE_TAG:-Not Set}"
+  # ... (بقیه لاگ‌های دیباگ برای متغیرهای محیطی)
 
   # Validate required environment variables passed from GHA
   check_env_var "GIT_BRANCH_NAME"
@@ -121,10 +120,6 @@ main() {
   check_env_var "SECRET_TELEGRAM_API_HASH"
   check_env_var "SECRET_TELEGRAM_CHANNEL_ID_FOR_LOG_MONITOR"
 
-
-  # DB_NAME_OVERRIDE and DB_USER_OVERRIDE are now used directly in the cat heredoc
-  # No need to export DB_NAME, DB_USER, DB_PASSWORD, DB_PORT here as they are written to .env.production
-
   log_info "Deployment Target Branch: $GIT_BRANCH_NAME"
   log_info "Deployment Docker Image: ${REGISTRY_GHCR}/${IMAGE_NAME_BASE}:${DEPLOY_IMAGE_TAG}"
 
@@ -133,12 +128,6 @@ main() {
   check_commands_exist # This will set the global DOCKER_CMD
 
   # --- Prepare .env.production File ---
-  # ... (cat > "$ENV_FILE_PATH" heredoc remains the same as your last version) ...
-  # Ensure DB_HOST is 'db' or your actual service name in docker-compose.yml
-  # Your script has DB_HOST=forex-postgres, so docker-compose.yml should match.
-  # If docker-compose.yml has 'db:', then DB_HOST in .env.production should be 'db'.
-  # I will assume your docker-compose.yml service is named 'db' as per previous examples.
-  # If it's 'forex-postgres', ensure DB_CONNECTION_STRING_APP also uses 'forex-postgres'.
   log_info ">>> Preparing $ENV_FILE_PATH file..."
   cat > "$ENV_FILE_PATH" << EOL
 # This file is auto-generated by deploy.sh during deployment.
@@ -151,14 +140,14 @@ IMAGE_TAG=${DEPLOY_IMAGE_TAG}
 
 # --- Database Configuration ---
 # For PostgreSQL Service (db service in docker-compose.yml)
-DB_HOST=db                                    # <<<< ENSURE THIS MATCHES YOUR docker-compose.yml SERVICE NAME FOR POSTGRES (e.g., 'db' or 'forex-postgres')
+DB_HOST=db                                    # <<<< مهم: این باید با نام سرویس پستگرس در docker-compose.yml شما یکی باشد (مثلاً 'db' یا 'forex-postgres')
 DB_PORT=5432
 DB_NAME=${DB_NAME_OVERRIDE:-forextrading}
 DB_USER=${DB_USER_OVERRIDE:-forexuser}
 DB_PASSWORD=${SECRET_POSTGRES_SERVICE_PASSWORD}
 
 # For Application Services (read by your .NET applications)
-DB_CONNECTION_STRING_APP=${SECRET_DB_CONNECTION_STRING} # Ensure Host in this string matches DB_HOST above (e.g., Host=db or Host=forex-postgres)
+DB_CONNECTION_STRING_APP=${SECRET_DB_CONNECTION_STRING} # <<<< مهم: اطمینان حاصل کنید که هاست در این رشته اتصال با DB_HOST بالا یکی است
 
 # --- Telegram Configuration (for application services) ---
 TELEGRAM_BOT_TOKEN=${SECRET_TELEGRAM_BOT_TOKEN}
@@ -175,9 +164,9 @@ EOL
   chmod 600 "$ENV_FILE_PATH"
   log_info "'$ENV_FILE_PATH' created/updated successfully."
 
-  # --- Update Source Code & Configurations ---
-  # ... (git operations remain the same) ...
+  # --- Update Source Code & Configurations (docker-compose.yml, etc.) ---
   log_info ">>> Updating source code (including docker-compose.yml) from Git branch: $GIT_BRANCH_NAME..."
+  
   local current_branch_on_server
   current_branch_on_server=$(git rev-parse --abbrev-ref HEAD)
   if [ "$current_branch_on_server" != "$GIT_BRANCH_NAME" ]; then
@@ -186,16 +175,16 @@ EOL
       git checkout "$GIT_BRANCH_NAME"
     else
       log_info "Branch '$GIT_BRANCH_NAME' does not exist locally. Fetching and checking out..."
-      git fetch origin "$GIT_BRANCH_NAME":"$GIT_BRANCH_NAME"
+      git fetch origin "$GIT_BRANCH_NAME":"$GIT_BRANCH_NAME" # Fetch specific branch and create local tracking
       git checkout "$GIT_BRANCH_NAME"
     fi
   fi
+
   log_info "Fetching latest changes from origin for branch '$GIT_BRANCH_NAME'..."
-  git fetch origin "$GIT_BRANCH_NAME"
+  git fetch origin "$GIT_BRANCH_NAME" --prune
   log_info "Resetting local branch '$GIT_BRANCH_NAME' to 'origin/$GIT_BRANCH_NAME'..."
   git reset --hard "origin/$GIT_BRANCH_NAME"
   log_success "Source code updated to latest from 'origin/$GIT_BRANCH_NAME'."
-
 
   # --- Docker Compose Operations ---
   # Use the DOCKER_CMD variable found by check_commands_exist
@@ -211,13 +200,15 @@ EOL
   log_success "Docker services started."
 
   # --- Post-Deployment ---
-  # ... (ps and logs commands remain the same, but use $DOCKER_CMD) ...
-  log_info ">>> Waiting for services to stabilize..."
+  log_info ">>> Waiting for services to stabilize (30 seconds)..."
   sleep 30
+
   log_info ">>> Current Docker container status:"
   "$DOCKER_CMD" compose --env-file "$ENV_FILE_PATH" ps
-  log_info ">>> Recent logs:"
+
+  log_info ">>> Recent logs (last 100 lines):"
   "$DOCKER_CMD" compose --env-file "$ENV_FILE_PATH" logs --tail 100
+
   log_success "--- Deployment Script Finished Successfully ---"
 }
 

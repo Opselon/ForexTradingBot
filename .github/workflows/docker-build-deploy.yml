@@ -268,7 +268,7 @@ jobs:
             GIT_BRANCH_NAME=${{ github.ref_name }}
             # Pass the Docker image tag to be deployed (e.g., the short SHA)
             # Assuming you have a tag like 'sha-xxxxxxx' from the metadata step
-            DEPLOY_IMAGE_TAG=sha-${{ چھوٹ(github.sha, 7) }} # Example: sha- followed by short commit SHA
+            DEPLOY_IMAGE_TAG=sha-${{ (github.sha, 7) }} # Example: sha- followed by short commit SHA
 
           script: |
             set -euo pipefail # Fail fast on errors, unset variables, or pipe failures

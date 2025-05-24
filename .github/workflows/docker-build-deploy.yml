@@ -386,6 +386,162 @@ jobs:
           script: |
             set -euo pipefail
             
+            # Create deployment directory
+            mkdir -p /var/lib/forex-trading-bot/ForexTradingBot
+            
+            # Create deploy.sh script
+            cat > /var/lib/forex-trading-bot/ForexTradingBot/deploy.sh << 'EOL'
+            #!/bin/bash
+            #
+            # deploy.sh: Handles application deployment on the target server.
+            # Fetches latest code, prepares environment, and restarts services using Docker Compose.
+            
+            # --- Strict Mode & Error Handling ---
+            set -euo pipefail
+            trap 'echo "ERROR: A command failed at line $LINENO. See output above for details." >&2; exit 1' ERR
+            trap 'echo "Deployment interrupted." >&2; exit 1' SIGINT SIGTERM
+            
+            # --- Configuration & Constants ---
+            readonly ENV_FILE_PATH=".env.production"
+            readonly REQUIRED_COMMANDS=("git" "docker" "docker compose")
+            
+            # --- Logging Functions ---
+            log_info() { echo "INFO: $1"; }
+            log_warn() { echo "WARNING: $1" >&2; }
+            log_error() { echo "ERROR: $1" >&2; exit 1; }
+            log_success() { echo "SUCCESS: $1"; }
+            
+            # --- Helper Functions ---
+            check_env_var() {
+              local var_name="$1"
+              if [ -z "${!var_name:-}" ]; then
+                log_error "Required environment variable '$var_name' is not set or is empty."
+              fi
+            }
+            
+            check_commands_exist() {
+              for cmd in "${REQUIRED_COMMANDS[@]}"; do
+                if ! command -v "$cmd" &> /dev/null; then
+                  log_error "Command '$cmd' not found. Please install it and ensure it's in the PATH."
+                fi
+              done
+              log_info "All required commands found."
+            }
+            
+            # --- Main Deployment Logic ---
+            main() {
+              log_info "--- Starting Deployment Script ---"
+            
+              # Validate required environment variables
+              check_env_var "GIT_BRANCH_NAME"
+              check_env_var "DEPLOY_IMAGE_TAG"
+              check_env_var "REGISTRY_GHCR"
+              check_env_var "IMAGE_NAME_BASE"
+              check_env_var "SECRET_DB_CONNECTION_STRING"
+              check_env_var "SECRET_POSTGRES_SERVICE_PASSWORD"
+              check_env_var "SECRET_TELEGRAM_BOT_TOKEN"
+              check_env_var "SECRET_TELEGRAM_API_ID"
+              check_env_var "SECRET_TELEGRAM_API_HASH"
+              check_env_var "SECRET_TELEGRAM_CHANNEL_ID_FOR_LOG_MONITOR"
+            
+              log_info "Deployment Target Branch: $GIT_BRANCH_NAME"
+              log_info "Deployment Docker Image: ${REGISTRY_GHCR}/${IMAGE_NAME_BASE}:${DEPLOY_IMAGE_TAG}"
+            
+              # --- Pre-flight Checks ---
+              log_info ">>> Performing pre-flight checks..."
+              check_commands_exist
+            
+              # --- Prepare .env.production File ---
+              log_info ">>> Preparing $ENV_FILE_PATH file..."
+              cat > "$ENV_FILE_PATH" << EOF
+            # Docker Image Configuration
+            REGISTRY=${REGISTRY_GHCR}
+            GITHUB_REPOSITORY=${IMAGE_NAME_BASE}
+            IMAGE_TAG=${DEPLOY_IMAGE_TAG}
+            
+            # Database Configuration
+            DB_HOST=forex-postgres
+            DB_PORT=5432
+            DB_NAME=${DB_NAME_OVERRIDE:-forextrading}
+            DB_USER=${DB_USER_OVERRIDE:-forexuser}
+            DB_PASSWORD=${SECRET_POSTGRES_SERVICE_PASSWORD}
+            DB_CONNECTION_STRING_APP=${SECRET_DB_CONNECTION_STRING}
+            
+            # Telegram Configuration
+            TELEGRAM_BOT_TOKEN=${SECRET_TELEGRAM_BOT_TOKEN}
+            TELEGRAM_API_ID=${SECRET_TELEGRAM_API_ID}
+            TELEGRAM_API_HASH=${SECRET_TELEGRAM_API_HASH}
+            LOG_MONITOR_TELEGRAM_CHANNEL_ID=${SECRET_TELEGRAM_CHANNEL_ID_FOR_LOG_MONITOR}
+            
+            # CryptoPay Configuration
+            CRYPTOPAY_API_TOKEN=${SECRET_CRYPTOPAY_API_TOKEN}
+            CRYPTOPAY_API_KEY=${SECRET_CRYPTOPAY_API_KEY}
+            CRYPTOPAY_WEBHOOK_SECRET=${SECRET_CRYPTOPAY_WEBHOOK_SECRET}
+            EOF
+            
+              # Secure the .env file
+              chmod 600 "$ENV_FILE_PATH"
+              log_info "'$ENV_FILE_PATH' created/updated successfully."
+            
+              # --- Update Source Code ---
+              log_info ">>> Updating source code from Git branch: $GIT_BRANCH_NAME..."
+              
+              # Initialize git if not already done
+              if [ ! -d .git ]; then
+                git init
+                git remote add origin "https://github.com/${IMAGE_NAME_BASE}.git"
+              fi
+              
+              # Fetch and checkout the branch
+              git fetch origin "$GIT_BRANCH_NAME"
+              git checkout -f "$GIT_BRANCH_NAME"
+              git reset --hard "origin/$GIT_BRANCH_NAME"
+            
+              log_success "Source code updated to latest from 'origin/$GIT_BRANCH_NAME'."
+            
+              # --- Docker Compose Operations ---
+              log_info ">>> Pulling latest Docker images..."
+              docker compose --env-file "$ENV_FILE_PATH" pull
+            
+              log_info ">>> Stopping existing containers..."
+              docker compose --env-file "$ENV_FILE_PATH" down --remove-orphans --timeout 60
+            
+              log_info ">>> Starting Docker services..."
+              docker compose --env-file "$ENV_FILE_PATH" up -d --remove-orphans --force-recreate --renew-anon-volumes
+            
+              log_success "Docker services started."
+            
+              # --- Post-Deployment ---
+              log_info ">>> Waiting for services to stabilize..."
+              sleep 30
+            
+              log_info ">>> Current Docker container status:"
+              docker compose --env-file "$ENV_FILE_PATH" ps
+            
+              log_info ">>> Recent logs:"
+              docker compose --env-file "$ENV_FILE_PATH" logs --tail 100
+            
+              log_success "--- Deployment Script Finished Successfully ---"
+            }
+            
+            # Execute main function
+            main "$@"
+            EOL
+            
+            # Make the script executable
+            chmod +x /var/lib/forex-trading-bot/ForexTradingBot/deploy.sh
+            
+            # Install required packages if not already installed
+            if ! command -v docker &> /dev/null; then
+              apt-get update
+              apt-get install -y docker.io docker-compose-plugin
+            fi
+            
+            if ! command -v git &> /dev/null; then
+              apt-get update
+              apt-get install -y git
+            fi
+            
             # Required environment variables for deploy.sh
             export GIT_BRANCH_NAME="${{ github.ref_name }}"
             export DEPLOY_IMAGE_TAG="${{ needs.build.outputs.primary_image_tag }}"
@@ -409,5 +565,6 @@ jobs:
             export SECRET_CRYPTOPAY_API_KEY="${{ secrets.CRYPTOPAY_API_KEY }}"
             export SECRET_CRYPTOPAY_WEBHOOK_SECRET="${{ secrets.CRYPTOPAY_WEBHOOK_SECRET }}"
             
+            # Run the deployment script
             cd /var/lib/forex-trading-bot/ForexTradingBot
             ./deploy.sh

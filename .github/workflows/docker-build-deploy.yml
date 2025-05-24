@@ -194,6 +194,7 @@ jobs:
           ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
 
       - name: Deploy to server
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/ForexSignal-Performance')
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -206,6 +207,15 @@ jobs:
             # Check for required configuration files
             if [ ! -f .env.production ]; then
               echo "ERROR: .env.production file not found on the server!"
+              echo "Please create .env.production file with necessary environment variables."
+              exit 1
+            fi
+            
+            # Check Docker Compose version
+            echo "Checking Docker Compose version..."
+            if ! docker compose version > /dev/null 2>&1; then
+              echo "ERROR: docker compose command not found!"
+              echo "Please install Docker Compose plugin for Docker Engine."
               exit 1
             fi
             
@@ -281,5 +291,6 @@ jobs:
             
             # Clean up secrets after deployment
             echo "Cleaning up secrets..."
+            docker secret rm db_password telegram_bot_token telegram_api_id telegram_api_hash cryptopay_api_token cryptopay_api_key cryptopay_webhook_secret telegram_channel_id || true
             
             echo "Deployment completed successfully!" 

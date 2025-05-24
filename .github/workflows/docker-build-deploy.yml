@@ -276,7 +276,7 @@ jobs:
           fi
           echo "Image signing process completed."
 
-  deploy: # Job 3 - این خط باید دقیقاً هم‌سطح با test: و build: باشد
+  deploy:
     name: "🚀 Deploy Application to Production"
     needs: build
     if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/ForexSignal-Performance')
@@ -301,7 +301,8 @@ jobs:
             GIT_BRANCH_NAME=${{ github.ref_name }}
             DEPLOY_IMAGE_TAG=${{ needs.build.outputs.primary_image_tag }}
             REGISTRY_GHCR=${{ env.REGISTRY }}
-            IMAGE_NAME_BASE=${{ env.IMAGE_NAME }}
+            # Convert GITHUB_REPOSITORY to lowercase for IMAGE_NAME_BASE
+            IMAGE_NAME_BASE=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
             SECRET_DB_CONNECTION_STRING=${{ secrets.DB_CONNECTION_STRING }}
             SECRET_POSTGRES_SERVICE_PASSWORD=${{ secrets.POSTGRES_SERVICE_PASSWORD }}
             SECRET_TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -310,15 +311,10 @@ jobs:
             SECRET_TELEGRAM_CHANNEL_ID_FOR_LOG_MONITOR=${{ secrets.TELEGRAM_CHANNEL_ID }}
             SECRET_WTELEGRAMBOT=${{ secrets.WTELEGRAMBOT }}
             DEBUG_DEPLOY=true
-            # DB_NAME_OVERRIDE=${{ secrets.CUSTOM_DB_NAME }}
-            # DB_USER_OVERRIDE=${{ secrets.CUSTOM_DB_USER }}
-
           script: |
             set -euo pipefail
             
-            # تعریف متغیر برای استفاده در این بلوک script
-            readonly CURRENT_GIT_BRANCH="${{ github.ref_name }}"
-
+            readonly CURRENT_GIT_BRANCH="${{ github.ref_name }}" # Already lowercase if branch name is
             DEPLOY_TARGET_DIR="/var/lib/forex-trading-bot/ForexTradingBot"
             DEPLOY_SCRIPT_NAME="deploy.sh"
             DEPLOY_SCRIPT_FULL_PATH="$DEPLOY_TARGET_DIR/$DEPLOY_SCRIPT_NAME"
@@ -326,17 +322,8 @@ jobs:
             echo ">>> Navigating to deployment directory: $DEPLOY_TARGET_DIR"
             mkdir -p "$DEPLOY_TARGET_DIR"
             cd "$DEPLOY_TARGET_DIR"
-
-            echo ">>> Current user: $(whoami), Effective user: $(id -u -n)"
-            echo ">>> Initial PATH: $PATH"
-            echo ">>> Home directory: $HOME"
-            echo ">>> Shell: $SHELL"
-            echo ">>> Workflow Git Branch (CURRENT_GIT_BRANCH): $CURRENT_GIT_BRANCH"
             
-            # ... (بخش اختیاری نصب پکیج‌ها، اگر لازم است) ...
-
-            echo ">>> Updating $DEPLOY_SCRIPT_NAME and project files from Git branch: $CURRENT_GIT_BRANCH"
-            
+            # Git operations
             if [ ! -d ".git" ]; then
               echo "INFO: .git directory not found. Initializing Git repository..."
               git init -b "$CURRENT_GIT_BRANCH"
@@ -344,50 +331,22 @@ jobs:
                 git remote add origin "${{ github.server_url }}/${{ github.repository }}.git"
               fi
             fi
-            
-            echo "Fetching branch '$CURRENT_GIT_BRANCH' from origin (shallow)..."
-            git fetch origin "$CURRENT_GIT_BRANCH" --depth 1 --prune --no-tags
+            echo "Fetching branch '$CURRENT_GIT_BRANCH' from origin..."
+            # Use --force for fetch if reset --hard is used, to ensure local refs are updated
+            git fetch --force origin "$CURRENT_GIT_BRANCH":"refs/remotes/origin/$CURRENT_GIT_BRANCH" --depth 1 --prune --no-tags
             echo "Cleaning working directory and resetting to 'origin/$CURRENT_GIT_BRANCH'..."
             git clean -fdx 
             git reset --hard "origin/$CURRENT_GIT_BRANCH"
-            echo "Git status after reset:"
-            git status
-            echo "Files in deployment directory (ls -la):"
-            ls -la
-
+            
+            # Verify and execute deploy.sh
             echo ">>> Verifying $DEPLOY_SCRIPT_NAME presence: $DEPLOY_SCRIPT_FULL_PATH"
             if [ ! -f "$DEPLOY_SCRIPT_FULL_PATH" ]; then
-                echo "::error::Deploy script '$DEPLOY_SCRIPT_FULL_PATH' not found in $DEPLOY_TARGET_DIR."
+                echo "::error::Deploy script '$DEPLOY_SCRIPT_FULL_PATH' not found."
                 exit 1
             fi
-            
-            echo ">>> Content of $DEPLOY_SCRIPT_FULL_PATH (from Git) being executed:"
-            echo "-------------------------------------------------------------"
-            cat "$DEPLOY_SCRIPT_FULL_PATH"
-            echo "-------------------------------------------------------------"
-            
-            echo ">>> Making '$DEPLOY_SCRIPT_NAME' executable: $DEPLOY_SCRIPT_FULL_PATH"
+            echo ">>> Making '$DEPLOY_SCRIPT_NAME' executable..."
             chmod +x "$DEPLOY_SCRIPT_FULL_PATH"
-
-            echo ">>> Exporting GHA variables to be available for $DEPLOY_SCRIPT_NAME ..."
-            # این متغیرها از بخش 'envs' اکشن خوانده می‌شوند و در اینجا export می‌شوند
-            # تا deploy.sh به آنها دسترسی داشته باشد.
-            # خود appleboy/ssh-action باید این کار را انجام دهد، اما این برای اطمینان بیشتر است.
-            # توجه: مقادیر سکرت‌ها اینجا لاگ نمی‌شوند، فقط نام متغیرها.
-            export GIT_BRANCH_NAME="${{ github.ref_name }}"
-            export DEPLOY_IMAGE_TAG="${{ needs.build.outputs.primary_image_tag }}"
-            export REGISTRY_GHCR="${{ env.REGISTRY }}"
-            export IMAGE_NAME_BASE="${{ env.IMAGE_NAME }}"
-            export SECRET_DB_CONNECTION_STRING="${{ secrets.DB_CONNECTION_STRING }}"
-            export SECRET_POSTGRES_SERVICE_PASSWORD="${{ secrets.POSTGRES_SERVICE_PASSWORD }}"
-            export SECRET_TELEGRAM_BOT_TOKEN="${{ secrets.TELEGRAM_BOT_TOKEN }}"
-            export SECRET_TELEGRAM_API_ID="${{ secrets.TELEGRAM_API_ID }}"
-            export SECRET_TELEGRAM_API_HASH="${{ secrets.TELEGRAM_API_HASH }}"
-            export SECRET_TELEGRAM_CHANNEL_ID_FOR_LOG_MONITOR="${{ secrets.TELEGRAM_CHANNEL_ID }}"
-            export SECRET_WTELEGRAMBOT="${{ secrets.WTELEGRAMBOT }}" # اگر سکرت وجود نداشته باشد، خالی خواهد بود
-            export DEBUG_DEPLOY="true"
-            # export DB_NAME_OVERRIDE="${{ secrets.CUSTOM_DB_NAME }}" # در صورت نیاز
-            # export DB_USER_OVERRIDE="${{ secrets.CUSTOM_DB_USER }}" # در صورت نیاز
-
-            echo ">>> Executing deployment script fetched from Git: $DEPLOY_SCRIPT_FULL_PATH"
+            
+            echo ">>> Executing deployment script: $DEPLOY_SCRIPT_FULL_PATH"
+            # Variables from 'envs:' are already in the environment for deploy.sh
             "$DEPLOY_SCRIPT_FULL_PATH"

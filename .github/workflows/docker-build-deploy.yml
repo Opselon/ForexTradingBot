@@ -247,28 +247,40 @@ jobs:
       - name: "✍️ Sign the Published Docker Image"
         if: steps.build-and-push.outputs.digest && github.event_name == 'push'
         env:
-          COSIGN_EXPERIMENTAL: "true"
-          IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
-          IMAGE_DIGEST: ${{ steps.build-and-push.outputs.digest }}
-          IMAGE_BASE_NAME: "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          COSIGN_EXPERIMENTAL: "true" # برای keyless signing (OIDC)
+          # مستقیماً از outputs استفاده می‌کنیم تا از تمیز بودن مقادیر مطمئن شویم
+          IMAGE_TO_SIGN: "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-and-push.outputs.digest }}"
+          TAGS_TO_SIGN: ${{ steps.meta.outputs.tags }} # تگ‌ها از docker/metadata-action
         run: |
-          echo "Signing image digest: $IMAGE_BASE_NAME@$IMAGE_DIGEST"
-          if cosign sign --yes "$IMAGE_BASE_NAME@$IMAGE_DIGEST"; then
-            echo "Successfully signed image by digest."
+          echo "Attempting to sign image digest: $IMAGE_TO_SIGN"
+          
+          # تلاش اول: امضای مستقیم digest
+          if cosign sign --yes "$IMAGE_TO_SIGN"; then
+            echo "Successfully signed image by digest: $IMAGE_TO_SIGN"
           else
-            echo "::error::Failed to sign image by digest. See cosign output above."
-            # Fallback to signing tags if direct digest signing fails (less ideal)
-            echo "Attempting to sign tags as a fallback..."
-            echo "$IMAGE_TAGS" | tr ',' '\n' | while read -r tag; do
-              if [ -n "$tag" ]; then
-                echo "Signing tag (resolves to digest): $tag"
-                if cosign sign --yes "$tag"; then
-                  echo "Successfully signed (via tag): $tag"
+            echo "::error::Failed to sign image by digest: $IMAGE_TO_SIGN. See cosign output above."
+            # اگر امضای digest شکست خورد، ممکن است مشکل بزرگتری وجود داشته باشد.
+            # اما همچنان می‌توانیم تلاش کنیم تگ‌ها را امضا کنیم، شاید مشکل از خود digest string بوده.
+            
+            echo "Attempting to sign associated tags as a fallback..."
+            # TAGS_TO_SIGN یک رشته جدا شده با کاما از تگ‌های کامل است (e.g., ghcr.io/user/repo:tag1,ghcr.io/user/repo:tag2)
+            # ما باید آنها را جدا کرده و هر کدام را امضا کنیم.
+            # cosign وقتی یک تگ را امضا می‌کند، در واقع digest ی که تگ به آن اشاره دارد را امضا می‌کند.
+            
+            IFS=',' # جداکننده را کاما قرار می‌دهیم
+            for tag_ref in $TAGS_TO_SIGN; do
+              # حذف فضای خالی احتمالی اطراف تگ
+              trimmed_tag_ref=$(echo "$tag_ref" | xargs) 
+              if [ -n "$trimmed_tag_ref" ]; then
+                echo "Attempting to sign tag (which resolves to a digest): $trimmed_tag_ref"
+                if cosign sign --yes "$trimmed_tag_ref"; then
+                  echo "Successfully signed (via tag reference): $trimmed_tag_ref"
                 else
-                  echo "::warning::Failed to sign (via tag): $tag"
+                  echo "::warning::Failed to sign (via tag reference): $trimmed_tag_ref. This tag might not point to the pushed digest or another issue occurred."
                 fi
               fi
             done
+            unset IFS # بازگرداندن جداکننده به حالت پیش‌فرض
           fi
           echo "Image signing process completed."
 
@@ -294,7 +306,7 @@ jobs:
           timeout: 60s
           command_timeout: 25m
           envs: |
-            GIT_BRANCH_NAME=${{ github.ref_name }} # این مقدار به deploy.sh پاس داده می‌شود
+            GIT_BRANCH_NAME=${{ github.ref_name }}
             DEPLOY_IMAGE_TAG=${{ needs.build.outputs.primary_image_tag }}
             REGISTRY_GHCR=${{ env.REGISTRY }}
             IMAGE_NAME_BASE=${{ env.IMAGE_NAME }}
@@ -306,15 +318,14 @@ jobs:
             SECRET_TELEGRAM_CHANNEL_ID_FOR_LOG_MONITOR=${{ secrets.TELEGRAM_CHANNEL_ID }}
             SECRET_WTELEGRAMBOT=${{ secrets.WTELEGRAMBOT }}
             DEBUG_DEPLOY=true
+            # DB_NAME_OVERRIDE=${{ secrets.CUSTOM_DB_NAME }}
+            # DB_USER_OVERRIDE=${{ secrets.CUSTOM_DB_USER }}
 
           script: |
             set -euo pipefail
             
-            # متغیر GIT_BRANCH_NAME را برای استفاده در این بلوک script تعریف می‌کنیم
-            # ما از همان مقداری استفاده می‌کنیم که به envs پاس داده شده است.
-            # appleboy/ssh-action باید اینها را export کند، اما برای اطمینان این کار را می‌کنیم یا مستقیم استفاده می‌کنیم.
-            # در این مورد، چون خطا unbound variable است، یعنی export نشده. پس مستقیم از github context استفاده می‌کنیم.
-            readonly CURRENT_GIT_BRANCH="${{ github.ref_name }}" # استفاده از یک نام جدید برای جلوگیری از تداخل احتمالی
+            # تعریف متغیر برای استفاده در این بلوک script
+            readonly CURRENT_GIT_BRANCH="${{ github.ref_name }}"
 
             DEPLOY_TARGET_DIR="/var/lib/forex-trading-bot/ForexTradingBot"
             DEPLOY_SCRIPT_NAME="deploy.sh"
@@ -328,11 +339,10 @@ jobs:
             echo ">>> Initial PATH: $PATH"
             echo ">>> Home directory: $HOME"
             echo ">>> Shell: $SHELL"
-            echo ">>> Workflow Git Branch (CURRENT_GIT_BRANCH): $CURRENT_GIT_BRANCH" # چاپ برای دیباگ
+            echo ">>> Workflow Git Branch (CURRENT_GIT_BRANCH): $CURRENT_GIT_BRANCH"
             
-            # ... (بخش نصب پکیج‌ها بدون تغییر)
+            # ... (بخش اختیاری نصب پکیج‌ها، اگر لازم است) ...
 
-            # حالا از CURRENT_GIT_BRANCH برای دستورات git استفاده می‌کنیم
             echo ">>> Updating $DEPLOY_SCRIPT_NAME and project files from Git branch: $CURRENT_GIT_BRANCH"
             
             if [ ! -d ".git" ]; then
@@ -367,6 +377,25 @@ jobs:
             echo ">>> Making '$DEPLOY_SCRIPT_NAME' executable: $DEPLOY_SCRIPT_FULL_PATH"
             chmod +x "$DEPLOY_SCRIPT_FULL_PATH"
 
+            echo ">>> Exporting GHA variables to be available for $DEPLOY_SCRIPT_NAME ..."
+            # این متغیرها از بخش 'envs' اکشن خوانده می‌شوند و در اینجا export می‌شوند
+            # تا deploy.sh به آنها دسترسی داشته باشد.
+            # خود appleboy/ssh-action باید این کار را انجام دهد، اما این برای اطمینان بیشتر است.
+            # توجه: مقادیر سکرت‌ها اینجا لاگ نمی‌شوند، فقط نام متغیرها.
+            export GIT_BRANCH_NAME="${{ github.ref_name }}"
+            export DEPLOY_IMAGE_TAG="${{ needs.build.outputs.primary_image_tag }}"
+            export REGISTRY_GHCR="${{ env.REGISTRY }}"
+            export IMAGE_NAME_BASE="${{ env.IMAGE_NAME }}"
+            export SECRET_DB_CONNECTION_STRING="${{ secrets.DB_CONNECTION_STRING }}"
+            export SECRET_POSTGRES_SERVICE_PASSWORD="${{ secrets.POSTGRES_SERVICE_PASSWORD }}"
+            export SECRET_TELEGRAM_BOT_TOKEN="${{ secrets.TELEGRAM_BOT_TOKEN }}"
+            export SECRET_TELEGRAM_API_ID="${{ secrets.TELEGRAM_API_ID }}"
+            export SECRET_TELEGRAM_API_HASH="${{ secrets.TELEGRAM_API_HASH }}"
+            export SECRET_TELEGRAM_CHANNEL_ID_FOR_LOG_MONITOR="${{ secrets.TELEGRAM_CHANNEL_ID }}"
+            export SECRET_WTELEGRAMBOT="${{ secrets.WTELEGRAMBOT }}" # اگر سکرت وجود نداشته باشد، خالی خواهد بود
+            export DEBUG_DEPLOY="true"
+            # export DB_NAME_OVERRIDE="${{ secrets.CUSTOM_DB_NAME }}" # در صورت نیاز
+            # export DB_USER_OVERRIDE="${{ secrets.CUSTOM_DB_USER }}" # در صورت نیاز
+
             echo ">>> Executing deployment script fetched from Git: $DEPLOY_SCRIPT_FULL_PATH"
-            # اسکریپت deploy.sh از متغیر GIT_BRANCH_NAME که از طریق envs پاس داده شده استفاده خواهد کرد
             "$DEPLOY_SCRIPT_FULL_PATH"

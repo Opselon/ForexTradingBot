@@ -58,13 +58,14 @@ jobs:
       - name: Build
         run: dotnet build ForexTradingBot.sln --no-restore
 
-      - name: Run Unit Tests with Coverage
+      - name: Run Tests
         run: |
-          dotnet test Tests.Unit/Tests.Unit.csproj \
-            --no-build \
-            --verbosity normal \
+          dotnet test Tests.Application/Tests.Application.csproj \
+            --configuration Release \
             --collect:"XPlat Code Coverage" \
-            --results-directory ./coverage/unit
+            --results-directory ./coverage \
+            --logger "console;verbosity=detailed" \
+            --no-build
 
       - name: Run Integration Tests with Coverage
         run: |
@@ -196,19 +197,29 @@ jobs:
           username: ${{ secrets.SERVER_USERNAME }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
-            # Navigate to application directory
+            echo "Starting deployment to server..."
             cd /var/lib/forex-trading-bot/ForexTradingBot
             
+            # Check for required configuration files
+            if [ ! -f .env.production ]; then
+              echo "ERROR: .env.production file not found on the server!"
+              exit 1
+            fi
+            
             # Pull latest changes
+            echo "Pulling latest changes..."
             git pull origin ${{ github.ref_name }}
             
+            # Pull latest images
+            echo "Pulling latest images..."
+            docker compose pull
+            
             # Stop and remove existing containers
+            echo "Stopping existing containers..."
             docker compose down
             
-            # Pull latest image
-            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
-            
-            # Create Docker secrets directly
+            # Create Docker secrets
+            echo "Creating Docker secrets..."
             echo "${{ secrets.DB_PASSWORD }}" | docker secret create db_password -
             echo "${{ secrets.TELEGRAM_BOT_TOKEN }}" | docker secret create telegram_bot_token -
             echo "${{ secrets.TELEGRAM_API_ID }}" | docker secret create telegram_api_id -
@@ -230,7 +241,8 @@ jobs:
             done
             
             # Start services with secrets
-            docker compose --env-file /dev/null up -d
+            echo "Starting services..."
+            docker compose --env-file .env.production up -d --remove-orphans
             
             # Wait for services to start
             echo "Waiting for services to start..."
@@ -238,7 +250,7 @@ jobs:
             
             # Check container status
             echo "Checking container status..."
-            docker ps -a
+            docker compose ps
             
             # Start log monitoring for each service
             echo "Starting log monitoring..."
@@ -262,7 +274,10 @@ jobs:
             
             # Verify log monitoring is running
             echo "Verifying log monitoring..."
-            docker ps | grep docker_log_monitor
+            docker compose ps | grep docker_log_monitor
             
             # Clean up secrets after deployment
-            docker secret rm db_password telegram_bot_token telegram_api_id telegram_api_hash cryptopay_api_token cryptopay_api_key cryptopay_webhook_secret telegram_channel_id 
+            echo "Cleaning up secrets..."
+            docker secret rm db_password telegram_bot_token telegram_api_id telegram_api_hash cryptopay_api_token cryptopay_api_key cryptopay_webhook_secret telegram_channel_id || true
+            
+            echo "Deployment completed successfully!" 

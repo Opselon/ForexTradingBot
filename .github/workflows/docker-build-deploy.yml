@@ -67,10 +67,19 @@ jobs:
 
       - name: Run All Tests with Coverage
         run: |
-          dotnet test ForexTradingBot.sln \
+          # Run Application Tests
+          dotnet test Tests.Application/Tests.Application.csproj \
             --configuration Release \
             --collect:"XPlat Code Coverage" \
-            --results-directory ./coverage \
+            --results-directory ./coverage/application \
+            --logger "console;verbosity=detailed" \
+            --no-build
+
+          # Run Integration Tests
+          dotnet test Application.Tests/Application.Tests.csproj \
+            --configuration Release \
+            --collect:"XPlat Code Coverage" \
+            --results-directory ./coverage/integration \
             --logger "console;verbosity=detailed" \
             --no-build
 

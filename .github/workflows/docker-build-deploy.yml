@@ -360,7 +360,7 @@ jobs:
   #------------------------------------------------------------------------------------
   # JOB 3: Deploy - Deploy application to the server
   #------------------------------------------------------------------------------------
-    deploy:
+ deploy:
     name: "🚀 Deploy Application to Production"
     needs: build
     if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/ForexSignal-Performance')
@@ -368,12 +368,12 @@ jobs:
     environment: production
 
     steps:
-      - name: "🔑 Setup SSH Agent (for server access)"
+      - name: "🔑 Setup SSH Agent"
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
 
-      - name: "🚀 Deploy to Server (Fetch & Run deploy.sh from Git)" # نام مرحله برای وضوح
+      - name: "🚀 Deploy to Server (Fetch & Run deploy.sh from Git)"
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -383,34 +383,27 @@ jobs:
           timeout: 60s
           command_timeout: 25m
 
-          # --- متغیرهای محیطی که به deploy.sh روی سرور پاس داده می‌شوند ---
           envs: |
             GIT_BRANCH_NAME=${{ github.ref_name }}
             DEPLOY_IMAGE_TAG=${{ needs.build.outputs.primary_image_tag }}
             REGISTRY_GHCR=${{ env.REGISTRY }}
             IMAGE_NAME_BASE=${{ env.IMAGE_NAME }}
-
-            # سکرت‌های اصلی شما بر اساس آخرین لیست
-            SECRET_DB_CONNECTION_STRING=${{ secrets.DB_CONNECTION_STRING }} # باید شامل Host=forex-postgres;... باشد
+            SECRET_DB_CONNECTION_STRING=${{ secrets.DB_CONNECTION_STRING }}
             SECRET_POSTGRES_SERVICE_PASSWORD=${{ secrets.POSTGRES_SERVICE_PASSWORD }}
             SECRET_TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
             SECRET_TELEGRAM_API_ID=${{ secrets.TELEGRAM_API_ID }}
             SECRET_TELEGRAM_API_HASH=${{ secrets.TELEGRAM_API_HASH }}
-            SECRET_TELEGRAM_CHANNEL_ID_FOR_LOG_MONITOR=${{ secrets.TELEGRAM_CHANNEL_ID }} # نگاشت از سکرت TELEGRAM_CHANNEL_ID
-            SECRET_WTELEGRAMBOT=${{ secrets.WTELEGRAMBOT }} # اختیاری
+            SECRET_TELEGRAM_CHANNEL_ID_FOR_LOG_MONITOR=${{ secrets.TELEGRAM_CHANNEL_ID }}
+            SECRET_WTELEGRAMBOT=${{ secrets.WTELEGRAMBOT }}
+            DEBUG_DEPLOY=true
+            # DB_NAME_OVERRIDE=${{ secrets.CUSTOM_DB_NAME }} # Uncomment if needed
+            # DB_USER_OVERRIDE=${{ secrets.CUSTOM_DB_USER }} # Uncomment if needed
 
-            DEBUG_DEPLOY=true # برای فعال کردن لاگ‌های دیباگ در deploy.sh (که از گیت گرفته می‌شود)
-
-            # اختیاری: اگر می‌خواهید نام دیتابیس یا کاربر را از سکرت‌ها بازنویسی کنید
-            # DB_NAME_OVERRIDE=${{ secrets.CUSTOM_DB_NAME }}
-            # DB_USER_OVERRIDE=${{ secrets.CUSTOM_DB_USER }}
-
-          # --- اسکریپت برای FETCH کردن و اجرای deploy.sh از گیت ---
           script: |
             set -euo pipefail
             
             DEPLOY_TARGET_DIR="/var/lib/forex-trading-bot/ForexTradingBot"
-            DEPLOY_SCRIPT_NAME="deploy.sh" # نام اسکریپت شما در ریشه ریپازیتوری
+            DEPLOY_SCRIPT_NAME="deploy.sh"
             DEPLOY_SCRIPT_FULL_PATH="$DEPLOY_TARGET_DIR/$DEPLOY_SCRIPT_NAME"
 
             echo ">>> Navigating to deployment directory: $DEPLOY_TARGET_DIR"
@@ -422,59 +415,52 @@ jobs:
             echo ">>> Home directory: $HOME"
             echo ">>> Shell: $SHELL"
             
-            # بخش نصب پکیج‌ها (این بخش را می‌توانید نگه دارید یا حذف کنید اگر مطمئن هستید پکیج‌ها نصب هستند)
-            # اگر نگه می‌دارید، مطمئن شوید دستورات برای توزیع لینوکس سرور شما صحیح است و دسترسی لازم وجود دارد (مثلاً sudo)
-            echo ">>> Checking/Ensuring required packages are installed..."
-            PACKAGES_INSTALLED=true
-            if ! command -v git &> /dev/null; then echo "INFO: git not found, attempting install..."; sudo apt-get update -y && sudo apt-get install -y git || PACKAGES_INSTALLED=false; fi
-            if ! command -v docker &> /dev/null; then echo "INFO: docker not found, attempting install..."; sudo apt-get update -y && sudo apt-get install -y docker.io || PACKAGES_INSTALLED=false; fi
-            if ! (docker compose version &> /dev/null); then # تست اولیه docker compose
-                echo "INFO: docker compose plugin not found or not working, attempting install/update..."
-                sudo apt-get update -y && sudo apt-get install -y docker-compose-plugin || PACKAGES_INSTALLED=false
-                # اطمینان از اجرای داکر پس از نصب احتمالی
-                sudo systemctl start docker || true
-                sudo systemctl enable docker || true
-            fi
-            if [ "$PACKAGES_INSTALLED" = false ]; then echo "WARNING: Some package installations may have failed."; fi
-            echo ">>> Package check/installation attempt finished."
-            # پایان بخش نصب پکیج‌ها
+            # Optional: Package installation check - keep if server might not have them
+            # Ensure 'sudo' is used if the ssh user is not root and needs it.
+            # Or remove if server is pre-configured.
+            # echo ">>> Checking/Ensuring required packages..."
+            # if ! command -v git &> /dev/null || ! command -v docker &> /dev/null || ! (docker compose version &> /dev/null); then
+            #   echo "INFO: Attempting package installation (git, docker, docker-compose-plugin)..."
+            #   sudo apt-get update -y && sudo apt-get install -y git docker.io docker-compose-plugin || echo "Package installation attempt had issues."
+            #   sudo systemctl start docker || true
+            #   sudo systemctl enable docker || true
+            # else
+            #   echo "INFO: Required packages appear to be installed."
+            # fi
 
-            echo ">>> Updating $DEPLOY_SCRIPT_NAME and other project files from Git branch: $GIT_BRANCH_NAME"
+            echo ">>> Updating $DEPLOY_SCRIPT_NAME and project files from Git branch: $GIT_BRANCH_NAME"
             
             if [ ! -d ".git" ]; then
               echo "INFO: .git directory not found. Initializing Git repository..."
               git init -b "$GIT_BRANCH_NAME"
               if ! git remote -v | grep -q origin; then
-                # برای ریپازیتوری‌های خصوصی، از URL مبتنی بر SSH استفاده کنید و کلید دیپلوی را روی سرور تنظیم کنید
                 git remote add origin "${{ github.server_url }}/${{ github.repository }}.git"
               fi
             fi
             
-            echo "Fetching branch '$GIT_BRANCH_NAME' from origin (shallow clone)..."
+            echo "Fetching branch '$GIT_BRANCH_NAME' from origin (shallow)..."
             git fetch origin "$GIT_BRANCH_NAME" --depth 1 --prune
             echo "Cleaning working directory and resetting to 'origin/$GIT_BRANCH_NAME'..."
-            git clean -fdx # حذف فایل‌های محلی که در گیت نیستند
-            git reset --hard "origin/$GIT_BRANCH_NAME" # بازنشانی به آخرین کامیت از گیت
+            git clean -fdx 
+            git reset --hard "origin/$GIT_BRANCH_NAME"
             echo "Git status after reset:"
             git status
-            echo "Files in deployment directory:"
+            echo "Files in deployment directory (ls -la):"
             ls -la
 
-            echo ">>> Verifying deployment script presence after Git operations: $DEPLOY_SCRIPT_FULL_PATH"
+            echo ">>> Verifying $DEPLOY_SCRIPT_NAME presence: $DEPLOY_SCRIPT_FULL_PATH"
             if [ ! -f "$DEPLOY_SCRIPT_FULL_PATH" ]; then
-                echo "::error::Deploy script '$DEPLOY_SCRIPT_FULL_PATH' not found in $DEPLOY_TARGET_DIR. Ensure it's committed to the branch."
+                echo "::error::Deploy script '$DEPLOY_SCRIPT_FULL_PATH' not found in $DEPLOY_TARGET_DIR."
                 exit 1
             fi
             
-            echo ">>> Content of $DEPLOY_SCRIPT_FULL_PATH (from Git) that will be executed:"
+            echo ">>> Content of $DEPLOY_SCRIPT_FULL_PATH (from Git) being executed:"
             echo "-------------------------------------------------------------"
-            cat "$DEPLOY_SCRIPT_FULL_PATH" # این محتوای deploy.sh که از گیت آمده را نشان می‌دهد
+            cat "$DEPLOY_SCRIPT_FULL_PATH"
             echo "-------------------------------------------------------------"
             
             echo ">>> Making '$DEPLOY_SCRIPT_NAME' executable: $DEPLOY_SCRIPT_FULL_PATH"
             chmod +x "$DEPLOY_SCRIPT_FULL_PATH"
 
             echo ">>> Executing deployment script fetched from Git: $DEPLOY_SCRIPT_FULL_PATH"
-            # این خط deploy.sh را که از گیت گرفته شده اجرا می‌کند
-            # متغیرهای محیطی از بخش 'envs' به این اسکریپت پاس داده می‌شوند
             "$DEPLOY_SCRIPT_FULL_PATH"

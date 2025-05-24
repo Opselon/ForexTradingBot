@@ -545,7 +545,13 @@ jobs:
               systemctl start docker
               systemctl enable docker
             fi
-            
+
+            # Add Docker Compose to PATH if not already there
+            if ! command -v docker compose &> /dev/null; then
+              echo 'export PATH="/usr/libexec/docker/cli-plugins:$PATH"' >> ~/.bashrc
+              source ~/.bashrc
+            fi
+
             if ! command -v git &> /dev/null; then
               apt-get update
               apt-get install -y git

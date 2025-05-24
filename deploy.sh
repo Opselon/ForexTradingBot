@@ -55,7 +55,18 @@ check_env_var() {
 check_commands_exist() {
   for cmd in "${REQUIRED_COMMANDS[@]}"; do
     if ! command -v "$cmd" &> /dev/null; then
-      log_error "Command '$cmd' not found. Please install it and ensure it's in the PATH."
+      if [ "$cmd" = "docker compose" ]; then
+        # Try to find docker compose in common locations
+        if [ -f "/usr/libexec/docker/cli-plugins/docker-compose" ]; then
+          export PATH="/usr/libexec/docker/cli-plugins:$PATH"
+        elif [ -f "/usr/local/lib/docker/cli-plugins/docker-compose" ]; then
+          export PATH="/usr/local/lib/docker/cli-plugins:$PATH"
+        else
+          log_error "Command 'docker compose' not found. Please install it and ensure it's in the PATH."
+        fi
+      else
+        log_error "Command '$cmd' not found. Please install it and ensure it's in the PATH."
+      fi
     fi
   done
   log_info "All required commands found."

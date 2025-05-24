@@ -76,7 +76,12 @@ main() {
   check_env_var "SECRET_TELEGRAM_API_ID"
   check_env_var "SECRET_TELEGRAM_API_HASH"
   check_env_var "SECRET_TELEGRAM_CHANNEL_ID_FOR_LOG_MONITOR"
-  # SECRET_WTELEGRAMBOT is optional
+
+  # Set default values for database configuration if not provided
+  export DB_NAME=${DB_NAME:-forextrading}
+  export DB_USER=${DB_USER:-forexuser}
+  export DB_PASSWORD=${SECRET_POSTGRES_SERVICE_PASSWORD}
+  export DB_PORT=${DB_PORT:-5432}
 
   log_info "Deployment Target Branch: $GIT_BRANCH_NAME"
   log_info "Deployment Docker Image: ${REGISTRY_GHCR}/${IMAGE_NAME_BASE}:${DEPLOY_IMAGE_TAG}"

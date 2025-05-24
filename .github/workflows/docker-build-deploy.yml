@@ -356,7 +356,7 @@ jobs:
             done
           fi
           echo "Image signing process completed."
- deploy:
+deploy:
     name: "🚀 Deploy Application to Production"
     needs: build
     if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/ForexSignal-Performance')

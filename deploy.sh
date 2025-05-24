@@ -28,6 +28,7 @@ trap 'echo "Deployment interrupted." >&2; exit 1' SIGINT SIGTERM
 # Variables passed from GHA are already in the environment.
 readonly ENV_FILE_PATH=".env.production"
 readonly REQUIRED_COMMANDS=("git" "docker")
+readonly DOCKER_PATH="/usr/bin/docker"
 
 # --- Logging Functions ---
 log_info() {
@@ -57,24 +58,28 @@ check_env_var() {
 
 check_commands_exist() {
     log_debug "Checking required commands..."
+    log_debug "Current PATH: $PATH"
+    log_debug "Current user: $(whoami)"
     
     # Check for Docker
-    if ! command -v docker &> /dev/null; then
-        log_error "Docker not found. Please install Docker first."
+    if [ ! -x "$DOCKER_PATH" ]; then
+        log_error "Docker not found at $DOCKER_PATH"
     fi
+    log_debug "Docker found at: $DOCKER_PATH"
     
     # Check for Docker Compose
-    if ! docker compose version &> /dev/null; then
+    if ! "$DOCKER_PATH" compose version &> /dev/null; then
         log_error "Docker Compose plugin not found. Please install it with: apt-get install -y docker-compose-plugin"
     fi
+    log_debug "Docker Compose version: $("$DOCKER_PATH" compose version)"
     
     # Check for Git
     if ! command -v git &> /dev/null; then
         log_error "Git not found. Please install Git first."
     fi
+    log_debug "Git found at: $(which git)"
     
     log_info "All required commands found."
-    log_debug "Docker Compose version: $(docker compose version)"
 }
 
 # --- Main Deployment Logic ---
@@ -189,13 +194,13 @@ EOL
 
   # --- Docker Compose Operations ---
   log_info ">>> Pulling latest Docker images..."
-  docker compose --env-file "$ENV_FILE_PATH" pull
+  "$DOCKER_PATH" compose --env-file "$ENV_FILE_PATH" pull
 
   log_info ">>> Stopping existing containers..."
-  docker compose --env-file "$ENV_FILE_PATH" down --remove-orphans --timeout 60
+  "$DOCKER_PATH" compose --env-file "$ENV_FILE_PATH" down --remove-orphans --timeout 60
 
   log_info ">>> Starting Docker services..."
-  docker compose --env-file "$ENV_FILE_PATH" up -d --remove-orphans --force-recreate --renew-anon-volumes
+  "$DOCKER_PATH" compose --env-file "$ENV_FILE_PATH" up -d --remove-orphans --force-recreate --renew-anon-volumes
 
   log_success "Docker services started."
 
@@ -204,10 +209,10 @@ EOL
   sleep 30
 
   log_info ">>> Current Docker container status:"
-  docker compose --env-file "$ENV_FILE_PATH" ps
+  "$DOCKER_PATH" compose --env-file "$ENV_FILE_PATH" ps
 
   log_info ">>> Recent logs:"
-  docker compose --env-file "$ENV_FILE_PATH" logs --tail 100
+  "$DOCKER_PATH" compose --env-file "$ENV_FILE_PATH" logs --tail 100
 
   log_success "--- Deployment Script Finished Successfully ---"
 }

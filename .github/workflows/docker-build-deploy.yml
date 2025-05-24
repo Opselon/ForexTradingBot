@@ -299,7 +299,7 @@ jobs:
           command_timeout: 25m
           # These envs are made available to the remote script (deploy.sh)
           # by appleboy/ssh-action.
-          envs: |
+        envs: | # These should be available to the script executed by appleboy/ssh-action
             GIT_BRANCH_NAME=${{ github.ref_name }}
             DEPLOY_IMAGE_TAG=${{ needs.build.outputs.primary_image_tag }}
             REGISTRY_GHCR=${{ env.REGISTRY }}
@@ -311,77 +311,84 @@ jobs:
             SECRET_TELEGRAM_API_HASH=${{ secrets.TELEGRAM_API_HASH }}
             SECRET_TELEGRAM_CHANNEL_ID_FOR_LOG_MONITOR=${{ secrets.TELEGRAM_CHANNEL_ID }}
             SECRET_WTELEGRAMBOT=${{ secrets.WTELEGRAMBOT }}
-            DEBUG_DEPLOY=true # This should be seen by deploy.sh
-            # DB_NAME_OVERRIDE=${{ secrets.CUSTOM_DB_NAME }} # Example
-            # DB_USER_OVERRIDE=${{ secrets.CUSTOM_DB_USER }} # Example
+            DEBUG_DEPLOY=true
           script: |
-            set -euo pipefail # Fail fast
+            set -euo pipefail
             
-            # This variable is for use *within this GHA script block only*.
-            # deploy.sh will get its GIT_BRANCH_NAME from the 'envs' above.
-            readonly GHA_EXPECTED_BRANCH="${{ github.ref_name }}"
-
+            echo "--- GHA Script Block Initial Debug ---"
+            echo "Value of GHA context github.ref_name: [${{ github.ref_name }}]"
+            echo "Value of GHA context github.ref: [${{ github.ref }}]"
+            
+            # Use GHA context for branch name within this script block, with a fallback if somehow empty
+            TARGET_BRANCH_NAME="${{ github.ref_name }}"
+            if [ -z "$TARGET_BRANCH_NAME" ] && [[ "${{ github.ref }}" == refs/heads/* ]]; then
+              TARGET_BRANCH_NAME="${{ github.ref#refs/heads/ }}" # Extract branch from full ref if ref_name is empty
+            elif [ -z "$TARGET_BRANCH_NAME" ]; then
+              echo "::error::TARGET_BRANCH_NAME could not be determined from GHA context. Using 'master' as a last resort."
+              TARGET_BRANCH_NAME="master" # Fallback, adjust if your default is different
+            fi
+            
             DEPLOY_TARGET_DIR="/var/lib/forex-trading-bot/ForexTradingBot"
-            DEPLOY_SCRIPT_NAME="deploy.sh"
+            DEPLOY_SCRIPT_NAME="deploy.sh" 
             DEPLOY_SCRIPT_FULL_PATH="$DEPLOY_TARGET_DIR/$DEPLOY_SCRIPT_NAME"
 
-            echo ">>> Deployment Target Directory: $DEPLOY_TARGET_DIR"
-            echo ">>> Expected Git Branch for checkout: $GHA_EXPECTED_BRANCH"
+            echo "Deployment Target Directory: $DEPLOY_TARGET_DIR"
+            echo "Target Git Branch for checkout/reset: $TARGET_BRANCH_NAME"
             
             mkdir -p "$DEPLOY_TARGET_DIR"
             cd "$DEPLOY_TARGET_DIR"
-            echo ">>> Current user: $(whoami)"
+            
+            echo "Current user: $(whoami)"
+            echo "--- Checking envs from appleboy/ssh-action ---"
+            echo "Value of env var GIT_BRANCH_NAME: [$GIT_BRANCH_NAME]" # This comes from 'envs:'
+            echo "Value of env var DEPLOY_IMAGE_TAG: [$DEPLOY_IMAGE_TAG]"
+            echo "Value of env var DEBUG_DEPLOY: [$DEBUG_DEPLOY]"
+            echo "--- End checking envs ---"
 
-            # Initialize Git repo if it doesn't exist
+            # Git Operations
             if [ ! -d ".git" ]; then
-              echo "INFO: .git directory not found. Initializing Git repository..."
-              git init -b "$GHA_EXPECTED_BRANCH" # Initialize with the target branch
+              echo "Initializing Git repository for branch $TARGET_BRANCH_NAME..."
+              git init -b "$TARGET_BRANCH_NAME"
               git remote add origin "https://github.com/Opselon/ForexTradingBot.git"
             else
-              echo "INFO: .git directory exists. Ensuring remote 'origin' URL and cleaning up..."
+              echo "Ensuring remote 'origin' URL is correct..."
               git remote set-url origin "https://github.com/Opselon/ForexTradingBot.git"
-              # Clean up any problematic refs before fetching
-              # Attempt to delete a potentially problematic remote tracking ref if it's broken
-              # This is a bit more aggressive but might help with "unable to resolve reference"
-              rm -f .git/refs/remotes/origin/"$GHA_EXPECTED_BRANCH"
-              git remote prune origin || echo "Warning: 'git remote prune origin' failed, continuing..."
+              echo "Pruning stale remote branches from 'origin'..."
+              rm -f .git/refs/remotes/origin/"$TARGET_BRANCH_NAME" # Attempt to remove potentially broken ref
+              git remote prune origin || echo "Warning: 'git remote prune origin' continuing..."
             fi
             
-            echo ">>> Fetching updates from origin for branch '$GHA_EXPECTED_BRANCH'..."
-            # Fetch all updates for the specified branch into the remote-tracking branch (e.g., origin/master)
-            # Using --depth 1 for a shallow clone for speed. Remove if full history is ever needed.
-            git fetch origin "$GHA_EXPECTED_BRANCH" --depth 1 --prune 
+            echo "Fetching branch '$TARGET_BRANCH_NAME' from origin..."
+            git fetch origin "$TARGET_BRANCH_NAME" --depth 1 --prune
             
-            echo ">>> Checking out branch '$GHA_EXPECTED_BRANCH' and resetting to remote state..."
-            # This command checks out the local branch GHA_EXPECTED_BRANCH.
-            # If it doesn't exist, it creates it and sets it to track origin/GHA_EXPECTED_BRANCH.
-            # If it does exist, it just checks it out.
-            git checkout "$GHA_EXPECTED_BRANCH"
+            echo "Checking out branch '$TARGET_BRANCH_NAME'..."
+            git checkout "$TARGET_BRANCH_NAME"
             
-            # Now, forcefully reset the (now current) local branch to match the state
-            # of the remote-tracking branch we just fetched.
-            echo "Resetting local branch '$GHA_EXPECTED_BRANCH' to 'origin/$GHA_EXPECTED_BRANCH'..."
-            git reset --hard "origin/$GHA_EXPECTED_BRANCH"
+            echo "Resetting local branch '$TARGET_BRANCH_NAME' to 'origin/$TARGET_BRANCH_NAME'..."
+            git reset --hard "origin/$TARGET_BRANCH_NAME"
             
-            echo ">>> Cleaning the working directory..."
-            git clean -fdx # Remove all untracked files, including directories.
-
-            echo "Git status after reset and clean:"
-            git status
-            echo "Files in deployment directory (ls -la) after git operations:"
-            ls -la
+            echo "Cleaning the working directory..."
+            git clean -fdx
 
             # Verify and execute deploy.sh
-            echo ">>> Verifying $DEPLOY_SCRIPT_NAME presence: $DEPLOY_SCRIPT_FULL_PATH"
             if [ ! -f "$DEPLOY_SCRIPT_FULL_PATH" ]; then
-                echo "::error::Deploy script '$DEPLOY_SCRIPT_FULL_PATH' not found in $DEPLOY_TARGET_DIR after Git operations."
+                echo "::error::File '$DEPLOY_SCRIPT_FULL_PATH' (expected to be deploy.sh bash script) not found after Git ops."
                 exit 1
             fi
             
-            echo ">>> Making '$DEPLOY_SCRIPT_NAME' executable..."
+            echo "Displaying first 10 lines of fetched $DEPLOY_SCRIPT_NAME to verify it's a bash script:"
+            head -n 10 "$DEPLOY_SCRIPT_FULL_PATH"
+            echo "------------------------------------------------------------------------------------"
+
+            if ! head -n 1 "$DEPLOY_SCRIPT_FULL_PATH" | grep -q -E '^#!/(bin/bash|usr/bin/env bash|bin/sh)'; then
+              echo "::error::The fetched $DEPLOY_SCRIPT_NAME does not appear to be a valid bash/shell script (missing shebang)."
+              ls -la . # Show files in current dir for debugging
+              exit 1
+            fi
+
             chmod +x "$DEPLOY_SCRIPT_FULL_PATH"
             
-            echo ">>> Executing deployment script: $DEPLOY_SCRIPT_FULL_PATH"
-            # The deploy.sh script will now use environment variables
-            # set by the 'envs:' parameter of the appleboy/ssh-action.
+            echo "Executing $DEPLOY_SCRIPT_FULL_PATH..."
+            # deploy.sh should inherit envs set by appleboy/ssh-action's 'envs:' parameter
             "$DEPLOY_SCRIPT_FULL_PATH"
+            echo "--- GHA Script Block Finished ---"

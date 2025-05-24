@@ -100,7 +100,7 @@ IMAGE_TAG=${DEPLOY_IMAGE_TAG}
 
 # --- Database Configuration ---
 # For PostgreSQL Service (db service in docker-compose.yml)
-DB_HOST=db                                    # Service name for internal Docker networking
+DB_HOST=forex-postgres                                    # Service name for internal Docker networking
 DB_PORT=5432                                  # Standard PostgreSQL port
 DB_NAME=${DB_NAME_OVERRIDE:-forextrading}     # Default, can be overridden by DB_NAME_OVERRIDE from GHA envs
 DB_USER=${DB_USER_OVERRIDE:-forexuser}        # Default, can be overridden by DB_USER_OVERRIDE from GHA envs

@@ -71,25 +71,39 @@ jobs:
           mkdir -p ./coverage/application
           mkdir -p ./coverage/integration
           
-          # Run Application Tests
+          # List test projects
+          echo "Available test projects:"
+          find . -name "*.csproj" | grep -i test
+          
+          # Run Application Tests with detailed output
+          echo "Running Application Tests..."
           dotnet test Tests.Application/Tests.Application.csproj \
             --configuration Release \
             --collect:"XPlat Code Coverage" \
             --results-directory ./coverage/application \
             --logger "console;verbosity=detailed" \
-            --no-build || true
+            --no-build \
+            --blame-hang-timeout 60s \
+            --blame-crash || true
 
-          # Run Integration Tests
+          # Run Integration Tests with detailed output
+          echo "Running Integration Tests..."
           dotnet test Application.Tests/Application.Tests.csproj \
             --configuration Release \
             --collect:"XPlat Code Coverage" \
             --results-directory ./coverage/integration \
             --logger "console;verbosity=detailed" \
-            --no-build || true
+            --no-build \
+            --blame-hang-timeout 60s \
+            --blame-crash || true
 
-          # List coverage files for debugging
+          # List all files in coverage directories
           echo "Listing coverage directories:"
           ls -R ./coverage/
+          
+          # Find all coverage files
+          echo "Searching for coverage files:"
+          find ./coverage -type f -name "*.xml" -o -name "*.json"
 
       - name: Generate Coverage Report
         run: |
@@ -98,17 +112,24 @@ jobs:
           
           # List all coverage files before generating report
           echo "Searching for coverage files..."
-          find ./coverage -name "*.xml" -type f
+          find ./coverage -type f -name "*.xml" -o -name "*.json"
           
-          # Generate report if coverage files exist
-          if [ -n "$(find ./coverage -name 'coverage.cobertura.xml' -type f)" ]; then
+          # Try to find coverage files in different locations
+          COVERAGE_FILES=$(find ./coverage -type f -name "coverage.cobertura.xml" -o -name "coverage.xml" -o -name "coverage.json")
+          
+          if [ -n "$COVERAGE_FILES" ]; then
+            echo "Found coverage files:"
+            echo "$COVERAGE_FILES"
+            
+            # Generate report with found files
             reportgenerator \
-              -reports:./coverage/**/coverage.cobertura.xml \
+              -reports:"$COVERAGE_FILES" \
               -targetdir:./coverage/report \
               -reporttypes:HtmlInline_AzurePipelines;Cobertura
           else
-            echo "No coverage files found. Skipping report generation."
-            mkdir -p ./coverage/report
+            echo "No coverage files found. Checking test results..."
+            find ./coverage -type f -name "*.trx" -o -name "*.log"
+            
             echo "No coverage data available" > ./coverage/report/coverage.txt
           fi
 
@@ -120,6 +141,7 @@ jobs:
           path: |
             ./coverage/application
             ./coverage/integration
+            ./coverage/report
           retention-days: 7
 
       - name: Upload Coverage Report
@@ -141,6 +163,8 @@ jobs:
             echo "Test coverage is good: $coverage"
           else
             echo "No coverage report found. Skipping coverage check."
+            echo "Available files in coverage directory:"
+            ls -R ./coverage/
           fi
 
   build:

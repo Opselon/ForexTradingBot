@@ -1,4 +1,4 @@
-name: Docker Build and Deploy
+name: Test, Build, and Deploy
 
 # This workflow uses actions that are not certified by GitHub.
 # They are provided by a third-party and are governed by
@@ -110,7 +110,8 @@ jobs:
           fi
           echo "Test coverage is good: $coverage"
 
-  build-and-deploy:
+  build:
+    name: Build and Push
     needs: test
     runs-on: ubuntu-latest
     permissions:
@@ -181,16 +182,18 @@ jobs:
           DIGEST: ${{ steps.build-and-push.outputs.digest }}
         run: echo "${TAGS}" | xargs -I {} cosign sign --yes {}@${DIGEST}
 
-      # Setup SSH Agent for deployment
+  deploy:
+    name: Deploy to Server
+    needs: build
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/ForexSignal-Performance')
+    runs-on: ubuntu-latest
+    steps:
       - name: Setup SSH Agent
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/ForexSignal-Performance')
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
 
-      # Deploy to server
       - name: Deploy to server
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/ForexSignal-Performance')
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -278,6 +281,5 @@ jobs:
             
             # Clean up secrets after deployment
             echo "Cleaning up secrets..."
-            docker secret rm db_password telegram_bot_token telegram_api_id telegram_api_hash cryptopay_api_token cryptopay_api_key cryptopay_webhook_secret telegram_channel_id || true
             
             echo "Deployment completed successfully!" 

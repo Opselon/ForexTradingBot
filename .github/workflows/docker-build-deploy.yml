@@ -356,10 +356,6 @@ jobs:
             done
           fi
           echo "Image signing process completed."
-
-  #------------------------------------------------------------------------------------
-  # JOB 3: Deploy - Deploy application to the server
-  #------------------------------------------------------------------------------------
  deploy:
     name: "🚀 Deploy Application to Production"
     needs: build

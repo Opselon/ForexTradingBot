@@ -82,7 +82,7 @@ namespace Shared.Helpers
                         case "START_PENDING":
                             Console.WriteLine($"[WAIT] SQL Server service '{service}' is currently starting...");
                             break;
-                        case "NOT_FOUND":
+                        case "NOT_FOUNDD":
                             Console.WriteLine($"[SKIP] SQL Server service '{service}' not found.");
                             break;
                         default:

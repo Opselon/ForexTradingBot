@@ -41,14 +41,16 @@ check_commands_exist() {
 
     # Attempt to add Docker Compose plugin dir to PATH if it exists
     # This is a common location, but might vary.
-         log_debug "Adding Docker Compose plugin directory to PATH: $DOCKER_COMPOSE_PLUGIN_DIR"
+    if [ -d "$DOCKER_COMPOSE_PLUGIN_DIR" ] && [[ ":$PATH:" != *":$DOCKER_COMPOSE_PLUGIN_DIR:"* ]]; then
+        log_debug "Adding Docker Compose plugin directory to PATH: $DOCKER_COMPOSE_PLUGIN_DIR"
         export PATH="$DOCKER_COMPOSE_PLUGIN_DIR:$PATH"
         log_debug "Updated PATH: $PATH"
-    elif [ ! -d "$DOCKER_COMPOSE_PLUGIN_DIR" ]; then # <--- THE 'then' IS CRUCIAL HERE
+    elif [ ! -d "$DOCKER_COMPOSE_PLUGIN_DIR" ]; then # CORRECTED: Added 'then'
         log_debug "Docker Compose plugin directory '$DOCKER_COMPOSE_PLUGIN_DIR' not found. Assuming 'docker compose' is in standard PATH."
-    fi
-    fi # THIS IS LIKELY THE PROBLEMATIC 'fi' at line 50
+    fi # CORRECTED: This 'fi' correctly closes the if/elif block. The extra 'fi' is removed.
+
     if ! command -v git &> /dev/null; then log_error "Git not found."; fi
+    log_debug "Git found: $(command -v git)"
 
     if command -v docker &> /dev/null; then
         DOCKER_CMD=$(command -v docker)
@@ -61,22 +63,20 @@ check_commands_exist() {
     fi
 
     log_debug "Attempting to verify Docker Compose plugin with: '$DOCKER_CMD compose version'"
-    # Using a temporary file for output/error to avoid cluttering main log unless there's an issue
     local compose_test_output_file
     compose_test_output_file=$(mktemp)
-    # shellcheck disable=SC2064 # We want $compose_test_output_file to be expanded now
-    trap "rm -f '$compose_test_output_file'" EXIT # Ensure temp file is cleaned up
+    # shellcheck disable=SC2064
+    trap "rm -f '$compose_test_output_file'" EXIT CLEANUP ERR SIGINT SIGTERM
 
     if "$DOCKER_CMD" compose version &> "$compose_test_output_file"; then
         log_debug "SUCCESS: '$DOCKER_CMD compose version' executed. Output: $(cat "$compose_test_output_file")"
     else
         log_warn "FAILURE: '$DOCKER_CMD compose version' failed. Output/Error was:"
-        cat "$compose_test_output_file" >&2 # Send failure output to stderr
+        cat "$compose_test_output_file" >&2
         log_error "Docker Compose plugin (V2) is not working correctly. Ensure it's installed and configured for the user '$(whoami)'."
     fi
     log_info "All command checks passed (git, docker, docker compose plugin)."
 }
-
 # --- Main Deployment Logic ---
 main() {
   log_info "--- Starting Deployment Script (deploy.sh) ---"

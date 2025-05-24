@@ -270,7 +270,6 @@ jobs:
           ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
 
       - name: Deploy to server
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/ForexSignal-Performance')
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -282,9 +281,43 @@ jobs:
             
             # Check for required configuration files
             if [ ! -f .env.production ]; then
-              echo "ERROR: .env.production file not found on the server!"
-              echo "Please create .env.production file with necessary environment variables."
-              exit 1
+              echo "WARNING: .env.production file not found on the server!"
+              echo "Creating .env.production file with required environment variables..."
+              
+              # Create .env.production file with required variables
+              cat > .env.production << EOL
+# Database Configuration
+DB_HOST=db
+DB_PORT=5432
+DB_NAME=forextrading
+DB_USER=forexuser
+DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+
+# Telegram Configuration
+TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
+TELEGRAM_API_ID=${{ secrets.TELEGRAM_API_ID }}
+TELEGRAM_API_HASH=${{ secrets.TELEGRAM_API_HASH }}
+TELEGRAM_CHANNEL_ID=${{ secrets.LOG_MONITOR_TELEGRAM_CHANNEL_ID }}
+
+# Cryptopay Configuration
+CRYPTOPAY_API_TOKEN=${{ secrets.CRYPTOPAY_API_TOKEN }}
+CRYPTOPAY_API_KEY=${{ secrets.CRYPTOPAY_API_KEY }}
+CRYPTOPAY_WEBHOOK_SECRET=${{ secrets.CRYPTOPAY_WEBHOOK_SECRET }}
+
+# Application Configuration
+ASPNETCORE_ENVIRONMENT=Production
+DOTNET_RUNNING_IN_CONTAINER=true
+TELEGRAM_PANEL__USE_WEBHOOK=false
+TELEGRAM_PANEL__POLLING_INTERVAL=0
+TELEGRAM_PANEL__ADMIN_USER_IDS__0=5094837833
+TELEGRAM_PANEL__ENABLE_DEBUG_MODE=true
+CRYPTOPAY__BASE_URL=https://testnet-pay.crypt.bot/api/
+CRYPTOPAY__IS_TESTNET=true
+EOL
+              
+              # Set proper permissions
+              chmod 600 .env.production
+              echo ".env.production file created successfully."
             fi
             
             # Check Docker Compose version
@@ -297,7 +330,7 @@ jobs:
             
             # Pull latest changes
             echo "Pulling latest changes..."
-            git pull origin ${{ github.ref_name }}
+            git pull origin master
             
             # Pull latest images
             echo "Pulling latest images..."

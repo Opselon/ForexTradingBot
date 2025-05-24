@@ -39,15 +39,13 @@ check_commands_exist() {
     log_debug "Initial PATH: $PATH"
     log_debug "User: $(whoami), Effective User: $(id -u -n)"
 
-    # Attempt to add Docker Compose plugin dir to PATH if it exists
-    # This is a common location, but might vary.
     if [ -d "$DOCKER_COMPOSE_PLUGIN_DIR" ] && [[ ":$PATH:" != *":$DOCKER_COMPOSE_PLUGIN_DIR:"* ]]; then
         log_debug "Adding Docker Compose plugin directory to PATH: $DOCKER_COMPOSE_PLUGIN_DIR"
         export PATH="$DOCKER_COMPOSE_PLUGIN_DIR:$PATH"
         log_debug "Updated PATH: $PATH"
-    elif [ ! -d "$DOCKER_COMPOSE_PLUGIN_DIR" ]; then # CORRECTED: Added 'then'
+    elif [ ! -d "$DOCKER_COMPOSE_PLUGIN_DIR" ]; then
         log_debug "Docker Compose plugin directory '$DOCKER_COMPOSE_PLUGIN_DIR' not found. Assuming 'docker compose' is in standard PATH."
-    fi # CORRECTED: This 'fi' correctly closes the if/elif block. The extra 'fi' is removed.
+    fi
 
     if ! command -v git &> /dev/null; then log_error "Git not found."; fi
     log_debug "Git found: $(command -v git)"
@@ -66,7 +64,8 @@ check_commands_exist() {
     local compose_test_output_file
     compose_test_output_file=$(mktemp)
     # shellcheck disable=SC2064
-    trap "rm -f '$compose_test_output_file'" EXIT CLEANUP ERR SIGINT SIGTERM
+    # CORRECTED TRAP: Removed CLEANUP
+    trap "rm -f '$compose_test_output_file'" EXIT ERR SIGINT SIGTERM
 
     if "$DOCKER_CMD" compose version &> "$compose_test_output_file"; then
         log_debug "SUCCESS: '$DOCKER_CMD compose version' executed. Output: $(cat "$compose_test_output_file")"
@@ -77,6 +76,7 @@ check_commands_exist() {
     fi
     log_info "All command checks passed (git, docker, docker compose plugin)."
 }
+
 # --- Main Deployment Logic ---
 main() {
   log_info "--- Starting Deployment Script (deploy.sh) ---"
@@ -84,8 +84,18 @@ main() {
   log_debug "--- Environment Variables Received by deploy.sh ---"
   log_debug "GIT_BRANCH_NAME: '${GIT_BRANCH_NAME:-UNSET}'"
   log_debug "DEPLOY_IMAGE_TAG: '${DEPLOY_IMAGE_TAG:-UNSET}'"
-  # ... (other debug logs for env vars as before) ...
+  log_debug "REGISTRY_GHCR: '${REGISTRY_GHCR:-UNSET}'"
+  log_debug "IMAGE_NAME_BASE: '${IMAGE_NAME_BASE:-UNSET}'"
+  log_debug "SECRET_DB_CONNECTION_STRING present: $([ -n "${SECRET_DB_CONNECTION_STRING:-}" ] && echo "yes" || echo "no")"
   log_debug "SECRET_POSTGRES_SERVICE_PASSWORD present: $([ -n "${SECRET_POSTGRES_SERVICE_PASSWORD:-}" ] && echo "yes" || echo "no")"
+  log_debug "SECRET_TELEGRAM_BOT_TOKEN present: $([ -n "${SECRET_TELEGRAM_BOT_TOKEN:-}" ] && echo "yes" || echo "no")"
+  log_debug "SECRET_TELEGRAM_API_ID present: $([ -n "${SECRET_TELEGRAM_API_ID:-}" ] && echo "yes" || echo "no")"
+  log_debug "SECRET_TELEGRAM_API_HASH present: $([ -n "${SECRET_TELEGRAM_API_HASH:-}" ] && echo "yes" || echo "no")"
+  log_debug "SECRET_TELEGRAM_CHANNEL_ID_FOR_LOG_MONITOR: '${SECRET_TELEGRAM_CHANNEL_ID_FOR_LOG_MONITOR:-UNSET}'"
+  log_debug "SECRET_WTELEGRAMBOT present: $([ -n "${SECRET_WTELEGRAMBOT:-}" ] && echo "yes" || echo "no")"
+  log_debug "DEBUG_DEPLOY: '${DEBUG_DEPLOY:-false}'"
+  log_debug "DB_NAME_OVERRIDE: '${DB_NAME_OVERRIDE:-UNSET}'"
+  log_debug "DB_USER_OVERRIDE: '${DB_USER_OVERRIDE:-UNSET}'"
   log_debug "-----------------------------------------------------"
 
   check_env_var "GIT_BRANCH_NAME"
@@ -103,10 +113,9 @@ main() {
   log_info "Deployment Docker Image: ${REGISTRY_GHCR}/${IMAGE_NAME_BASE}:${DEPLOY_IMAGE_TAG}"
 
   log_info ">>> Performing pre-flight checks..."
-  check_commands_exist
+  check_commands_exist # This function will now run with the corrected trap
 
-  # --- Update Source Code & Configurations (docker-compose.yml, etc.) ---
-  # This section now comes BEFORE creating .env.production
+  # ... (rest of the main function is the same) ...
   log_info ">>> Updating source code from Git branch: $GIT_BRANCH_NAME..."
   local current_branch_on_server
   current_branch_on_server=$(git rev-parse --abbrev-ref HEAD)
@@ -116,38 +125,30 @@ main() {
       git checkout "$GIT_BRANCH_NAME"
     else
       log_info "Branch '$GIT_BRANCH_NAME' does not exist locally. Fetching and checking out..."
-      git fetch origin "$GIT_BRANCH_NAME":"$GIT_BRANCH_NAME" # Fetch specific branch and create local tracking
+      git fetch origin "$GIT_BRANCH_NAME":"$GIT_BRANCH_NAME"
       git checkout "$GIT_BRANCH_NAME"
     fi
   fi
 
   log_info "Fetching latest changes from origin for branch '$GIT_BRANCH_NAME'..."
-  git fetch origin "$GIT_BRANCH_NAME" --prune # Keep --prune, remove --depth 1 if full history needed for other reasons
+  git fetch origin "$GIT_BRANCH_NAME" --prune
   log_info "Resetting local branch '$GIT_BRANCH_NAME' to 'origin/$GIT_BRANCH_NAME' and cleaning workspace..."
-  git clean -fdx # Remove untracked files (like an old .env.production if it existed from a failed run)
+  git clean -fdx
   git reset --hard "origin/$GIT_BRANCH_NAME"
   log_success "Source code updated and workspace cleaned."
 
-  # --- Prepare .env.production File ---
-  # This section now comes AFTER git clean and git reset
   log_info ">>> Preparing $ENV_FILE_PATH file..."
   cat > "$ENV_FILE_PATH" << EOL
 # Auto-generated by deploy.sh from GHA secrets
 REGISTRY=${REGISTRY_GHCR}
 GITHUB_REPOSITORY=${IMAGE_NAME_BASE}
 IMAGE_TAG=${DEPLOY_IMAGE_TAG}
-
-# For PostgreSQL Service (db)
-DB_HOST=db # Use service name for inter-container communication
+DB_HOST=db
 DB_PORT=5432
 DB_NAME=${DB_NAME_OVERRIDE:-forextrading}
 DB_USER=${DB_USER_OVERRIDE:-forexuser}
 DB_PASSWORD=${SECRET_POSTGRES_SERVICE_PASSWORD}
-
-# For Application Services
-# Ensure SECRET_DB_CONNECTION_STRING uses Host=db;...
 DB_CONNECTION_STRING_APP=${SECRET_DB_CONNECTION_STRING}
-
 TELEGRAM_BOT_TOKEN=${SECRET_TELEGRAM_BOT_TOKEN}
 TELEGRAM_API_ID=${SECRET_TELEGRAM_API_ID}
 TELEGRAM_API_HASH=${SECRET_TELEGRAM_API_HASH}
@@ -157,7 +158,6 @@ EOL
   chmod 600 "$ENV_FILE_PATH"
   log_info "'$ENV_FILE_PATH' created successfully AFTER Git operations."
 
-  # --- Docker Compose Operations ---
   log_info ">>> Docker Compose operations using '$DOCKER_CMD compose'..."
   log_info "Pulling images..."
   "$DOCKER_CMD" compose --env-file "$ENV_FILE_PATH" pull
@@ -167,7 +167,6 @@ EOL
   "$DOCKER_CMD" compose --env-file "$ENV_FILE_PATH" up -d --remove-orphans --force-recreate --renew-anon-volumes
   log_success "Docker services operations completed."
 
-  # --- Post-Deployment ---
   log_info ">>> Waiting 30s for services to stabilize..."
   sleep 30
   log_info ">>> Current Docker container status:"

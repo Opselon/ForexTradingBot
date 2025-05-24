@@ -291,7 +291,6 @@ jobs:
             type=sha,format=short,prefix=                    # Short commit SHA (e.g., abcdef0) - no prefix for cleaner tag
             # Add 'latest' tag only for pushes to the 'master' branch
             type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'master') }}
-
       - name: "🏭 Build and Push Docker Image"
         id: build-and-push
         uses: docker/build-push-action@v5.3.0

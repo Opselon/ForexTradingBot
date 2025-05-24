@@ -296,8 +296,10 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }} # Redundant if ssh-agent works, but safe fallback
           port: ${{ secrets.SERVER_PORT || 22 }}
           timeout: 60s
-          command_timeout: 25m # Increased timeout for all operations
-          envs: | # These are passed to the remote environment for deploy.sh by the action
+          command_timeout: 25m
+          # These envs are made available to the remote script (deploy.sh)
+          # by appleboy/ssh-action.
+          envs: |
             GIT_BRANCH_NAME=${{ github.ref_name }}
             DEPLOY_IMAGE_TAG=${{ needs.build.outputs.primary_image_tag }}
             REGISTRY_GHCR=${{ env.REGISTRY }}
@@ -309,60 +311,61 @@ jobs:
             SECRET_TELEGRAM_API_HASH=${{ secrets.TELEGRAM_API_HASH }}
             SECRET_TELEGRAM_CHANNEL_ID_FOR_LOG_MONITOR=${{ secrets.TELEGRAM_CHANNEL_ID }}
             SECRET_WTELEGRAMBOT=${{ secrets.WTELEGRAMBOT }}
-            DEBUG_DEPLOY=true
+            DEBUG_DEPLOY=true # This should be seen by deploy.sh
             # DB_NAME_OVERRIDE=${{ secrets.CUSTOM_DB_NAME }} # Example
             # DB_USER_OVERRIDE=${{ secrets.CUSTOM_DB_USER }} # Example
           script: |
-            set -euo pipefail
+            set -euo pipefail # Fail fast
             
-            # This variable is specific to this script block's execution context
-            # GIT_BRANCH_NAME from 'envs' above will be available to deploy.sh
-            readonly GHA_SCRIPT_GIT_BRANCH="${{ github.ref_name }}" 
+            # This variable is for use *within this GHA script block only*.
+            # deploy.sh will get its GIT_BRANCH_NAME from the 'envs' above.
+            readonly GHA_EXPECTED_BRANCH="${{ github.ref_name }}"
 
             DEPLOY_TARGET_DIR="/var/lib/forex-trading-bot/ForexTradingBot"
             DEPLOY_SCRIPT_NAME="deploy.sh"
             DEPLOY_SCRIPT_FULL_PATH="$DEPLOY_TARGET_DIR/$DEPLOY_SCRIPT_NAME"
 
-            echo ">>> Navigating to deployment directory: $DEPLOY_TARGET_DIR"
+            echo ">>> Deployment Target Directory: $DEPLOY_TARGET_DIR"
+            echo ">>> Expected Git Branch for checkout: $GHA_EXPECTED_BRANCH"
+            
             mkdir -p "$DEPLOY_TARGET_DIR"
             cd "$DEPLOY_TARGET_DIR"
+            echo ">>> Current user: $(whoami)"
 
-            echo ">>> Current user: $(whoami), Effective user: $(id -u -n)"
-            echo ">>> Target Git Branch for checkout: $GHA_SCRIPT_GIT_BRANCH"
-
-            # Robust Git Operations
+            # Initialize Git repo if it doesn't exist
             if [ ! -d ".git" ]; then
-              echo "INFO: .git directory not found. Initializing Git repository for branch $GHA_SCRIPT_GIT_BRANCH..."
-              git init -b "$GHA_SCRIPT_GIT_BRANCH"
-              if ! git remote -v | grep -q origin; then
-                git remote add origin "https://github.com/Opselon/ForexTradingBot.git"
-              fi
+              echo "INFO: .git directory not found. Initializing Git repository..."
+              git init -b "$GHA_EXPECTED_BRANCH" # Initialize with the target branch
+              git remote add origin "https://github.com/Opselon/ForexTradingBot.git"
             else
-              echo "INFO: .git directory exists. Ensuring remote 'origin' URL is correct..."
-              current_remote_url=$(git remote get-url origin || echo "none")
-              expected_remote_url="https://github.com/Opselon/ForexTradingBot.git"
-              if [ "$current_remote_url" != "$expected_remote_url" ]; then
-                echo "Updating remote 'origin' URL from '$current_remote_url' to '$expected_remote_url'..."
-                git remote set-url origin "$expected_remote_url"
-              fi
-              echo "Pruning stale remote branches from 'origin'..."
-              git remote prune origin
+              echo "INFO: .git directory exists. Ensuring remote 'origin' URL and cleaning up..."
+              git remote set-url origin "https://github.com/Opselon/ForexTradingBot.git"
+              # Clean up any problematic refs before fetching
+              # Attempt to delete a potentially problematic remote tracking ref if it's broken
+              # This is a bit more aggressive but might help with "unable to resolve reference"
+              rm -f .git/refs/remotes/origin/"$GHA_EXPECTED_BRANCH"
+              git remote prune origin || echo "Warning: 'git remote prune origin' failed, continuing..."
             fi
             
-            echo "Fetching branch '$GHA_SCRIPT_GIT_BRANCH' directly into local branch..."
-            # Fetch the specific branch from origin and update the local branch with the same name.
-            # --force allows overwriting the local branch if it exists and is not a fast-forward.
-            # --prune removes any remote-tracking branches that no longer exist on the remote.
-            # --depth 1 for shallow clone (can be removed if full history is needed for other purposes).
-            git fetch --force --prune origin "$GHA_SCRIPT_GIT_BRANCH":"$GHA_SCRIPT_GIT_BRANCH" --depth 1 --no-tags
+            echo ">>> Fetching updates from origin for branch '$GHA_EXPECTED_BRANCH'..."
+            # Fetch all updates for the specified branch into the remote-tracking branch (e.g., origin/master)
+            # Using --depth 1 for a shallow clone for speed. Remove if full history is ever needed.
+            git fetch origin "$GHA_EXPECTED_BRANCH" --depth 1 --prune 
             
-            echo "Ensuring we are on branch '$GHA_SCRIPT_GIT_BRANCH'..."
-            git checkout "$GHA_SCRIPT_GIT_BRANCH"
+            echo ">>> Checking out branch '$GHA_EXPECTED_BRANCH' and resetting to remote state..."
+            # This command checks out the local branch GHA_EXPECTED_BRANCH.
+            # If it doesn't exist, it creates it and sets it to track origin/GHA_EXPECTED_BRANCH.
+            # If it does exist, it just checks it out.
+            git checkout "$GHA_EXPECTED_BRANCH"
             
-            echo "Cleaning working directory and resetting local branch '$GHA_SCRIPT_GIT_BRANCH' to its latest fetched state (HEAD)..."
-            git reset --hard HEAD # Reset to the tip of the current (just updated) local branch
-            git clean -fdx  # Remove all untracked files and directories
+            # Now, forcefully reset the (now current) local branch to match the state
+            # of the remote-tracking branch we just fetched.
+            echo "Resetting local branch '$GHA_EXPECTED_BRANCH' to 'origin/$GHA_EXPECTED_BRANCH'..."
+            git reset --hard "origin/$GHA_EXPECTED_BRANCH"
             
+            echo ">>> Cleaning the working directory..."
+            git clean -fdx # Remove all untracked files, including directories.
+
             echo "Git status after reset and clean:"
             git status
             echo "Files in deployment directory (ls -la) after git operations:"
@@ -371,7 +374,7 @@ jobs:
             # Verify and execute deploy.sh
             echo ">>> Verifying $DEPLOY_SCRIPT_NAME presence: $DEPLOY_SCRIPT_FULL_PATH"
             if [ ! -f "$DEPLOY_SCRIPT_FULL_PATH" ]; then
-                echo "::error::Deploy script '$DEPLOY_SCRIPT_FULL_PATH' not found in $DEPLOY_TARGET_DIR."
+                echo "::error::Deploy script '$DEPLOY_SCRIPT_FULL_PATH' not found in $DEPLOY_TARGET_DIR after Git operations."
                 exit 1
             fi
             
@@ -379,7 +382,6 @@ jobs:
             chmod +x "$DEPLOY_SCRIPT_FULL_PATH"
             
             echo ">>> Executing deployment script: $DEPLOY_SCRIPT_FULL_PATH"
-            # Variables from 'envs:' (like GIT_BRANCH_NAME, DEPLOY_IMAGE_TAG, etc.)
-            # are automatically exported by appleboy/ssh-action into the environment
-            # where $DEPLOY_SCRIPT_FULL_PATH will run.
+            # The deploy.sh script will now use environment variables
+            # set by the 'envs:' parameter of the appleboy/ssh-action.
             "$DEPLOY_SCRIPT_FULL_PATH"

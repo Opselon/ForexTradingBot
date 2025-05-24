@@ -350,68 +350,94 @@ jobs:
   #------------------------------------------------------------------------------------
     deploy:
       name: "🚀 Deploy Application to Production"
-      needs: build # Depends on successful completion of the build job
-      # Run only on push to specified branches
+      needs: build
       if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/ForexSignal-Performance')
       runs-on: ubuntu-latest
-      environment: production # Use GitHub Environment "production" for secrets and deployment protection rules
+      environment: production
   
       steps:
         - name: "🔑 Setup SSH Agent (for server access)"
           uses: webfactory/ssh-agent@v0.9.0
           with:
-            ssh-private-key: ${{ secrets.SERVER_SSH_KEY }} # SSH private key stored as a GitHub secret
+            ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
   
         - name: "🚀 Deploy to Server via SSH using deploy.sh"
           uses: appleboy/ssh-action@v1.0.3
           with:
             host: ${{ secrets.SERVER_HOST }}
             username: ${{ secrets.SERVER_USERNAME }}
-            key: ${{ secrets.SERVER_SSH_KEY }}
-            port: ${{ secrets.SERVER_PORT || 22 }} # Default SSH port is 22
-            timeout: 60s # Connection timeout
-            command_timeout: 20m # Max time for the entire script execution, increased for safety
+            key: ${{ secrets.SERVER_SSH_KEY }} # Can often be omitted if ssh-agent is correctly used
+            port: ${{ secrets.SERVER_PORT || 22 }}
+            timeout: 60s
+            command_timeout: 20m # Increased for safety
   
-            # Pass secrets and other necessary info as environment variables to deploy.sh on the server
-            # The deploy.sh script will access these as $SECRET_DB_PASSWORD, $DEPLOY_IMAGE_TAG, etc.
-            env: | # <<<<<<< PROBLEM 1: This should be 'envs:' (plural)
-              SECRET_DB_PASSWORD=${{ secrets.DB_PASSWORD }} # <<<<<<< PROBLEM 2: Wrong secret. Should be SECRET_DB_CONNECTION_STRING and SECRET_POSTGRES_SERVICE_PASSWORD
+            # --- CORRECTED 'envs' SECTION ---
+            envs: |
+              GIT_BRANCH_NAME=${{ github.ref_name }}
+              DEPLOY_IMAGE_TAG=${{ needs.build.outputs.primary_image_tag }}
+              REGISTRY_GHCR=${{ env.REGISTRY }}
+              IMAGE_NAME_BASE=${{ env.IMAGE_NAME }}
+  
+              # Secrets based on your current strategy (DB_CONNECTION_STRING, etc.)
+              SECRET_DB_CONNECTION_STRING=${{ secrets.DB_CONNECTION_STRING }}
+              SECRET_POSTGRES_SERVICE_PASSWORD=${{ secrets.POSTGRES_SERVICE_PASSWORD }} # Ensure this GitHub secret exists!
               SECRET_TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
               SECRET_TELEGRAM_API_ID=${{ secrets.TELEGRAM_API_ID }}
               SECRET_TELEGRAM_API_HASH=${{ secrets.TELEGRAM_API_HASH }}
-              SECRET_LOG_MONITOR_TELEGRAM_CHANNEL_ID=${{ secrets.LOG_MONITOR_TELEGRAM_CHANNEL_ID }} # <<<<<<< PROBLEM 3: deploy.sh expects SECRET_TELEGRAM_CHANNEL_ID_FOR_LOG_MONITOR
-              SECRET_CRYPTOPAY_API_TOKEN=${{ secrets.CRYPTOPAY_API_TOKEN }} # <<<<<<< PROBLEM 4: Cryptopay not used anymore
-              SECRET_CRYPTOPAY_API_KEY=${{ secrets.CRYPTOPAY_API_KEY }} # <<<<<<< PROBLEM 4
-              SECRET_CRYPTOPAY_WEBHOOK_SECRET=${{ secrets.CRYPTOPAY_WEBHOOK_SECRET }} # <<<<<<< PROBLEM 4
-              GIT_BRANCH_NAME=${{ github.ref_name }}
-              DEPLOY_IMAGE_TAG=${{ needs.build.outputs.primary_image_tag }}
-              REGISTRY_GHCR=${{ env.REGISTRY }} 
-              IMAGE_NAME_BASE=${{ env.IMAGE_NAME }}
+              # Map the GHA secret 'TELEGRAM_CHANNEL_ID' to the env var deploy.sh expects
+              SECRET_TELEGRAM_CHANNEL_ID_FOR_LOG_MONITOR=${{ secrets.TELEGRAM_CHANNEL_ID }}
+              SECRET_WTELEGRAMBOT=${{ secrets.WTELEGRAMBOT }} # Will be empty if the secret is not set
+              DEBUG_DEPLOY=true # Enable debug logs in the latest deploy.sh
+  
+            # --- SCRIPT TO FETCH AND EXECUTE deploy.sh ---
             script: |
-              set -euo pipefail # Exit immediately if a command exits with a non-zero status
-              DEPLOY_TARGET_DIR="/var/lib/forex-trading-bot/ForexTradingBot" # Your deployment directory on the server
-              DEPLOY_SCRIPT_NAME="deploy.sh" # Name of your deployment script in the repo root
+              set -euo pipefail
+              
+              DEPLOY_TARGET_DIR="/var/lib/forex-trading-bot/ForexTradingBot"
+              DEPLOY_SCRIPT_NAME="deploy.sh"
               DEPLOY_SCRIPT_FULL_PATH="$DEPLOY_TARGET_DIR/$DEPLOY_SCRIPT_NAME"
+  
               echo ">>> Navigating to deployment directory: $DEPLOY_TARGET_DIR"
               mkdir -p "$DEPLOY_TARGET_DIR"
               cd "$DEPLOY_TARGET_DIR"
-              echo ">>> Updating deployment script and configurations from Git branch: $GIT_BRANCH_NAME"
+  
+              echo ">>> Current user: $(whoami)"
+              echo ">>> Initial PATH: $PATH"
+  
+              echo ">>> Updating deployment script (deploy.sh) and configurations from Git branch: $GIT_BRANCH_NAME"
+              
               if [ ! -d ".git" ]; then
-                echo "INFO: .git directory not found. Initializing Git repository in $DEPLOY_TARGET_DIR..."
-                git init # <<<<<<< MINOR: Consider 'git init -b "$GIT_BRANCH_NAME"'
+                echo "INFO: .git directory not found. Initializing Git repository..."
+                git init -b "$GIT_BRANCH_NAME" # Initialize with the target branch
                 if ! git remote -v | grep -q origin; then
+                  # For private repos, use SSH URL: git@github.com:${{ github.repository }}.git
+                  # Ensure server has the corresponding deploy key.
                   git remote add origin "${{ github.server_url }}/${{ github.repository }}.git"
                 fi
               fi
               
-              git fetch origin "$GIT_BRANCH_NAME" --depth 1 
+              echo "Fetching branch '$GIT_BRANCH_NAME' from origin..."
+              git fetch origin "$GIT_BRANCH_NAME" --depth 1 --prune
+              echo "Resetting local branch '$GIT_BRANCH_NAME' to 'origin/$GIT_BRANCH_NAME'..."
               git reset --hard "origin/$GIT_BRANCH_NAME"
-              
+              echo "Git status after reset:"
+              git status
+              echo "Files in deployment directory:"
+              ls -la
+  
               echo ">>> Verifying deployment script presence: $DEPLOY_SCRIPT_FULL_PATH"
               if [ ! -f "$DEPLOY_SCRIPT_FULL_PATH" ]; then
-                  echo "::error file=${{ github.workflow }}::Deploy script '$DEPLOY_SCRIPT_FULL_PATH' not found in $DEPLOY_TARGET_DIR."
-                  echo "Ensure '$DEPLOY_SCRIPT_NAME' is committed to the repository and pulled correctly."
+                  echo "::error::Deploy script '$DEPLOY_SCRIPT_FULL_PATH' not found in $DEPLOY_TARGET_DIR."
                   exit 1
               fi
+              
+              echo ">>> Content of $DEPLOY_SCRIPT_FULL_PATH that will be executed:"
+              echo "-------------------------------------------------------------"
+              cat "$DEPLOY_SCRIPT_FULL_PATH"
+              echo "-------------------------------------------------------------"
+              
+              echo ">>> Making deployment script executable: $DEPLOY_SCRIPT_FULL_PATH"
               chmod +x "$DEPLOY_SCRIPT_FULL_PATH"
+  
               echo ">>> Executing deployment script: $DEPLOY_SCRIPT_FULL_PATH"
+              "$DEPLOY_SCRIPT_FULL_PATH"

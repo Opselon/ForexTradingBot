@@ -28,11 +28,6 @@ trap 'echo "Deployment interrupted." >&2; exit 1' SIGINT SIGTERM
 # Variables passed from GHA are already in the environment.
 readonly ENV_FILE_PATH=".env.production"
 readonly REQUIRED_COMMANDS=("git" "docker")
-readonly DOCKER_COMPOSE_PATHS=(
-    "/usr/libexec/docker/cli-plugins/docker-compose"
-    "/usr/local/lib/docker/cli-plugins/docker-compose"
-    "/usr/bin/docker-compose"
-)
 
 # --- Logging Functions ---
 log_info() {
@@ -60,46 +55,45 @@ check_env_var() {
   fi
 }
 
-find_docker_compose() {
-    log_debug "Searching for Docker Compose..."
-    log_debug "Current PATH: $PATH"
+install_docker_compose() {
+    log_info "Installing Docker Compose..."
     
-    # First try the command directly
-    if command -v docker compose &> /dev/null; then
-        log_debug "Found 'docker compose' in PATH"
-        return 0
+    # Remove old versions if they exist
+    apt-get remove -y docker-compose-plugin || true
+    apt-get remove -y docker-compose || true
+    
+    # Update package list
+    apt-get update
+    
+    # Install Docker Compose plugin
+    apt-get install -y docker-compose-plugin
+    
+    # Verify installation
+    if ! docker compose version &> /dev/null; then
+        log_error "Failed to install Docker Compose plugin"
     fi
     
-    # Then check specific paths
-    for path in "${DOCKER_COMPOSE_PATHS[@]}"; do
-        if [ -f "$path" ]; then
-            log_debug "Found Docker Compose at: $path"
-            if [ ! -x "$path" ]; then
-                log_debug "Making Docker Compose executable: $path"
-                chmod +x "$path"
-            fi
-            export PATH="$(dirname "$path"):$PATH"
-            return 0
-        fi
-    done
-    
-    # If we get here, Docker Compose wasn't found
-    log_error "Docker Compose not found in PATH or standard locations"
-    return 1
+    log_success "Docker Compose installed successfully"
 }
 
 check_commands_exist() {
     log_debug "Checking required commands..."
     
-    # First check for Docker Compose
-    find_docker_compose
+    # Check for Docker
+    if ! command -v docker &> /dev/null; then
+        log_error "Docker not found. Please install Docker first."
+    fi
     
-    # Then check other required commands
-    for cmd in "${REQUIRED_COMMANDS[@]}"; do
-        if ! command -v "$cmd" &> /dev/null; then
-            log_error "Command '$cmd' not found. Please install it and ensure it's in the PATH."
-        fi
-    done
+    # Check for Docker Compose
+    if ! docker compose version &> /dev/null; then
+        log_warn "Docker Compose not found. Attempting to install..."
+        install_docker_compose
+    fi
+    
+    # Check for Git
+    if ! command -v git &> /dev/null; then
+        log_error "Git not found. Please install Git first."
+    fi
     
     log_info "All required commands found."
 }

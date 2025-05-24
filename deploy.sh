@@ -41,16 +41,14 @@ check_commands_exist() {
 
     # Attempt to add Docker Compose plugin dir to PATH if it exists
     # This is a common location, but might vary.
-    if [ -d "$DOCKER_COMPOSE_PLUGIN_DIR" ] && [[ ":$PATH:" != *":$DOCKER_COMPOSE_PLUGIN_DIR:"* ]]; then
+   if [ -d "$DOCKER_COMPOSE_PLUGIN_DIR" ] && [[ ":$PATH:" != *":$DOCKER_COMPOSE_PLUGIN_DIR:"* ]]; then
         log_debug "Adding Docker Compose plugin directory to PATH: $DOCKER_COMPOSE_PLUGIN_DIR"
         export PATH="$DOCKER_COMPOSE_PLUGIN_DIR:$PATH"
         log_debug "Updated PATH: $PATH"
-    elif [ ! -d "$DOCKER_COMPOSE_PLUGIN_DIR" ];
+    elif [ ! -d "$DOCKER_COMPOSE_PLUGIN_DIR" ]; # THIS IS LINE 49 in my reference version
         log_debug "Docker Compose plugin directory '$DOCKER_COMPOSE_PLUGIN_DIR' not found. Assuming 'docker compose' is in standard PATH."
-    fi
-
+    fi # THIS IS LIKELY THE PROBLEMATIC 'fi' at line 50
     if ! command -v git &> /dev/null; then log_error "Git not found."; fi
-    log_debug "Git found: $(command -v git)"
 
     if command -v docker &> /dev/null; then
         DOCKER_CMD=$(command -v docker)

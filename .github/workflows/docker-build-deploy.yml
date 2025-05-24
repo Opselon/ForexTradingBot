@@ -230,57 +230,49 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=sha,format=short,prefix=
             type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'master') }}
-      - name: "🏭 Build and Push Docker Image"
-        id: build-and-push
-        uses: docker/build-push-action@v5.3.0
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: |
-            type=gha
-            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache
-            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-          cache-to: type=gha,mode=max,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache
-          build-args: ${{ env.DOCKER_BUILD_ARGS }}
       - name: "✍️ Sign the Published Docker Image"
         if: steps.build-and-push.outputs.digest && github.event_name == 'push'
         env:
-          COSIGN_EXPERIMENTAL: "true" # برای keyless signing (OIDC)
-          # مستقیماً از outputs استفاده می‌کنیم تا از تمیز بودن مقادیر مطمئن شویم
-          IMAGE_TO_SIGN: "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-and-push.outputs.digest }}"
-          TAGS_TO_SIGN: ${{ steps.meta.outputs.tags }} # تگ‌ها از docker/metadata-action
+          COSIGN_EXPERIMENTAL: "true"
+          IMAGE_DIGEST_REF: "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-and-push.outputs.digest }}"
+          IMAGE_TAGS_STRING: ${{ steps.meta.outputs.tags }} # رشته تگ‌ها جدا شده با کاما
         run: |
-          echo "Attempting to sign image digest: $IMAGE_TO_SIGN"
+          echo "Attempting to sign image digest reference: $IMAGE_DIGEST_REF"
           
-          # تلاش اول: امضای مستقیم digest
-          if cosign sign --yes "$IMAGE_TO_SIGN"; then
-            echo "Successfully signed image by digest: $IMAGE_TO_SIGN"
+          # اطمینان از اینکه digest معتبر است (اختیاری اما می‌تواند کمک کند)
+          if ! echo "$IMAGE_DIGEST_REF" | grep -Eq '^[^@]+@[a-zA-Z0-9_.-]+:[a-fA-F0-9]{64}$'; then
+            echo "::error::Invalid image digest reference format: $IMAGE_DIGEST_REF"
+            # exit 1 # می‌توانید در صورت نامعتبر بودن فرمت، job را متوقف کنید
+          fi
+
+          # تلاش اول: امضای مستقیم digest reference
+          if cosign sign --yes "$IMAGE_DIGEST_REF"; then
+            echo "Successfully signed image by digest reference: $IMAGE_DIGEST_REF"
           else
-            echo "::error::Failed to sign image by digest: $IMAGE_TO_SIGN. See cosign output above."
-            # اگر امضای digest شکست خورد، ممکن است مشکل بزرگتری وجود داشته باشد.
-            # اما همچنان می‌توانیم تلاش کنیم تگ‌ها را امضا کنیم، شاید مشکل از خود digest string بوده.
+            echo "::error::Failed to sign image by digest reference: $IMAGE_DIGEST_REF. See cosign output above."
             
+            # اگر امضای digest شکست خورد، تلاش می‌کنیم تگ‌ها را امضا کنیم.
+            # این کار در واقع همان digest را امضا می‌کند اگر تگ‌ها به آن digest اشاره کنند.
             echo "Attempting to sign associated tags as a fallback..."
-            # TAGS_TO_SIGN یک رشته جدا شده با کاما از تگ‌های کامل است (e.g., ghcr.io/user/repo:tag1,ghcr.io/user/repo:tag2)
-            # ما باید آنها را جدا کرده و هر کدام را امضا کنیم.
-            # cosign وقتی یک تگ را امضا می‌کند، در واقع digest ی که تگ به آن اشاره دارد را امضا می‌کند.
-            
-            IFS=',' # جداکننده را کاما قرار می‌دهیم
-            for tag_ref in $TAGS_TO_SIGN; do
-              # حذف فضای خالی احتمالی اطراف تگ
-              trimmed_tag_ref=$(echo "$tag_ref" | xargs) 
+            echo "Raw tags string from metadata: $IMAGE_TAGS_STRING"
+
+            # استفاده از read و tr برای پردازش صحیح تگ‌های جدا شده با کاما
+            echo "$IMAGE_TAGS_STRING" | tr ',' '\n' | while IFS= read -r tag_ref; do
+              # حذف فضای خالی احتمالی از ابتدا و انتهای هر تگ
+              trimmed_tag_ref=$(echo "$tag_ref" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+              
               if [ -n "$trimmed_tag_ref" ]; then
-                echo "Attempting to sign tag (which resolves to a digest): $trimmed_tag_ref"
+                echo "Attempting to sign tag (which resolves to a digest): '$trimmed_tag_ref'"
                 if cosign sign --yes "$trimmed_tag_ref"; then
                   echo "Successfully signed (via tag reference): $trimmed_tag_ref"
                 else
-                  echo "::warning::Failed to sign (via tag reference): $trimmed_tag_ref. This tag might not point to the pushed digest or another issue occurred."
+                  # اگر یک تگ خاص امضا نشد، فقط یک هشدار می‌دهیم و به تگ بعدی می‌رویم
+                  echo "::warning::Failed to sign (via tag reference): '$trimmed_tag_ref'. This tag might not point to the pushed digest, or another issue occurred. See cosign output if any."
                 fi
+              else
+                echo "Skipping empty tag reference."
               fi
             done
-            unset IFS # بازگرداندن جداکننده به حالت پیش‌فرض
           fi
           echo "Image signing process completed."
 

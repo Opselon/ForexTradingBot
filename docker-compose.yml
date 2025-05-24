@@ -96,7 +96,7 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
       # ConnectionStrings & secrets sourced from .env.production
-      - ConnectionStrings__DefaultConnection=Host=db;Port=${DB_PORT:-5432};Database=${DB_NAME};Username=${DB_USER};Password=${DB_PASSWORD}
+      - ConnectionStrings__DefaultConnection=Host=forex-postgres;Port=${DB_PORT:-5432};Database=${DB_NAME};Username=${DB_USER};Password=re110121
       - TELEGRAM_BOT__TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_BOT__API_ID=${TELEGRAM_API_ID}
       - TELEGRAM_BOT__API_HASH=${TELEGRAM_API_HASH}

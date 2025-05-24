@@ -55,27 +55,6 @@ check_env_var() {
   fi
 }
 
-install_docker_compose() {
-    log_info "Installing Docker Compose..."
-    
-    # Remove old versions if they exist
-    apt-get remove -y docker-compose-plugin || true
-    apt-get remove -y docker-compose || true
-    
-    # Update package list
-    apt-get update
-    
-    # Install Docker Compose plugin
-    apt-get install -y docker-compose-plugin
-    
-    # Verify installation
-    if ! docker compose version &> /dev/null; then
-        log_error "Failed to install Docker Compose plugin"
-    fi
-    
-    log_success "Docker Compose installed successfully"
-}
-
 check_commands_exist() {
     log_debug "Checking required commands..."
     
@@ -86,8 +65,7 @@ check_commands_exist() {
     
     # Check for Docker Compose
     if ! docker compose version &> /dev/null; then
-        log_warn "Docker Compose not found. Attempting to install..."
-        install_docker_compose
+        log_error "Docker Compose plugin not found. Please install it with: apt-get install -y docker-compose-plugin"
     fi
     
     # Check for Git
@@ -96,6 +74,7 @@ check_commands_exist() {
     fi
     
     log_info "All required commands found."
+    log_debug "Docker Compose version: $(docker compose version)"
 }
 
 # --- Main Deployment Logic ---

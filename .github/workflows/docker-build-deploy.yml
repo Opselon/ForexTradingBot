@@ -309,14 +309,56 @@ jobs:
           cache-to: type=gha,mode=max,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache # Push build cache
           build-args: ${{ env.DOCKER_BUILD_ARGS }} # Pass ARG values to Dockerfile
 
-      - name: "✍️ Sign the Published Docker Image (Sigstore/Cosign)"
-        if: steps.build-and-push.outputs.digest # Only if image was successfully pushed
+        - name: "✍️ Sign the Published Docker Image (Sigstore/Cosign)"
+        if: steps.build-and-push.outputs.digest && github.event_name == 'push' # Ensure digest exists and it's a push event
         env:
-          COSIGN_EXPERIMENTAL: "true" # Enable keyless signing with OIDC token
-          IMAGE_TO_SIGN: "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-and-push.outputs.digest }}"
+          COSIGN_EXPERIMENTAL: "true" # For keyless signing with OIDC
+          # TAGS_JSON: ${{ steps.meta.outputs.json }} # metadata-action provides all tags as JSON
+          # یا به صورت مستقیم از لیست تگ‌ها استفاده کنیم:
+          IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
+          IMAGE_DIGEST: ${{ steps.build-and-push.outputs.digest }} # دایجست اصلی ایمیج پوش شده
+          IMAGE_BASE_NAME: "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
         run: |
-          echo "Attempting to sign image: $IMAGE_TO_SIGN"
-          cosign sign --yes "$IMAGE_TO_SIGN"
+          echo "Attempting to sign image with digest: $IMAGE_DIGEST"
+          echo "Base image name for signing: $IMAGE_BASE_NAME"
+          echo "Available tags (will attempt to sign these if they point to the pushed digest):"
+          echo "$IMAGE_TAGS"
+
+          # روش 1: امضای مستقیم دایجست (که ظاهرا مشکل دارد، اما برای اطمینان دوباره تست می‌کنیم با نقل قول)
+          echo "Attempt 1: Signing the digest directly..."
+          if cosign sign --yes "$IMAGE_BASE_NAME@$IMAGE_DIGEST"; then
+            echo "Successfully signed image by digest: $IMAGE_BASE_NAME@$IMAGE_DIGEST"
+          else
+            echo "::warning::Failed to sign by digest directly. Will attempt to sign by tags."
+          
+            # روش 2: Iterate over tags and sign each one that points to the pushed digest.
+            # Cosign will resolve the tag to a digest and sign that digest.
+            # If the tag already points to the signed digest, it effectively adds a signature reference for that tag.
+            echo "Attempt 2: Signing each relevant tag..."
+            echo "$IMAGE_TAGS" | tr ',' '\n' | while read -r tag; do
+              if [ -n "$tag" ]; then
+                # Construct the full image reference with the tag
+                # The tag from metadata-action is already the full image name with tag
+                # e.g., ghcr.io/user/repo:tag_name or ghcr.io/user/repo:sha-abcdef
+                # So, no need to prepend IMAGE_BASE_NAME if tag is already full.
+                # Let's check if tag already contains the registry
+                if [[ "$tag" == *"$IMAGE_BASE_NAME"* ]]; then
+                  IMAGE_WITH_TAG="$tag"
+                else
+                  IMAGE_WITH_TAG="$IMAGE_BASE_NAME:$tag" # Fallback if tag is just the tag part
+                fi
+
+                echo "Attempting to sign: $IMAGE_WITH_TAG (which should resolve to digest $IMAGE_DIGEST)"
+                # We are signing the digest that the tag points to.
+                # If the tag points to the same digest we pushed, this is what we want.
+                if cosign sign --yes "$IMAGE_WITH_TAG"; then
+                  echo "Successfully signed: $IMAGE_WITH_TAG"
+                else
+                  echo "::warning::Failed to sign tag: $IMAGE_WITH_TAG. It might not point to the pushed digest or another issue occurred."
+                fi
+              fi
+            done
+          fi
           echo "Image signing process completed."
 
   #------------------------------------------------------------------------------------

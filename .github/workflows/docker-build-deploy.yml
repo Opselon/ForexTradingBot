@@ -30,8 +30,6 @@ env:
     TELEGRAM_PANEL__ENABLE_DEBUG_MODE=true
     CRYPTOPAY__BASE_URL=https://testnet-pay.crypt.bot/api/
     CRYPTOPAY__IS_TESTNET=true
- 
- 
 jobs:
   test:
     name: Run Tests

@@ -385,16 +385,29 @@ jobs:
           command_timeout: 20m
           script: |
             set -euo pipefail
+            
+            # Required environment variables for deploy.sh
             export GIT_BRANCH_NAME="${{ github.ref_name }}"
             export DEPLOY_IMAGE_TAG="${{ needs.build.outputs.primary_image_tag }}"
-            export SECRET_DB_PASSWORD="${{ secrets.DB_PASSWORD }}"
+            export REGISTRY_GHCR="${{ env.REGISTRY }}"
+            export IMAGE_NAME_BASE="${{ env.IMAGE_NAME }}"
+            
+            # Database configuration
+            export DB_NAME_OVERRIDE="${{ secrets.DB_NAME }}"
+            export DB_USER_OVERRIDE="${{ secrets.DB_USER }}"
+            export SECRET_POSTGRES_SERVICE_PASSWORD="${{ secrets.DB_PASSWORD }}"
+            export SECRET_DB_CONNECTION_STRING="Host=forex-postgres;Port=5432;Database=${{ secrets.DB_NAME }};Username=${{ secrets.DB_USER }};Password=${{ secrets.DB_PASSWORD }}"
+            
+            # Telegram configuration
             export SECRET_TELEGRAM_BOT_TOKEN="${{ secrets.TELEGRAM_BOT_TOKEN }}"
             export SECRET_TELEGRAM_API_ID="${{ secrets.TELEGRAM_API_ID }}"
             export SECRET_TELEGRAM_API_HASH="${{ secrets.TELEGRAM_API_HASH }}"
-            export SECRET_LOG_MONITOR_TELEGRAM_CHANNEL_ID="${{ secrets.LOG_MONITOR_TELEGRAM_CHANNEL_ID }}"
+            export SECRET_TELEGRAM_CHANNEL_ID_FOR_LOG_MONITOR="${{ secrets.LOG_MONITOR_TELEGRAM_CHANNEL_ID }}"
+            
+            # CryptoPay configuration
             export SECRET_CRYPTOPAY_API_TOKEN="${{ secrets.CRYPTOPAY_API_TOKEN }}"
             export SECRET_CRYPTOPAY_API_KEY="${{ secrets.CRYPTOPAY_API_KEY }}"
             export SECRET_CRYPTOPAY_WEBHOOK_SECRET="${{ secrets.CRYPTOPAY_WEBHOOK_SECRET }}"
             
             cd /var/lib/forex-trading-bot/ForexTradingBot
-            ./start.sh
+            ./deploy.sh

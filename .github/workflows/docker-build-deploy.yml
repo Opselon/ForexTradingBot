@@ -1,192 +1,274 @@
-name: Test, Build, and Deploy
+name: Test, Build, Secure, and Deploy Application
 
 on:
+  # اجرای زمان‌بندی شده (مثلا برای بیلدهای شبانه یا تست‌های دوره‌ای)
   schedule:
-    - cron: '16 20 * * *'
+    - cron: '30 1 * * *' # ساعت ۱:۳۰ بامداد هر روز
+
+  # تریگر برای push به شاخه‌های اصلی و تگ‌های نسخه‌بندی شده
   push:
-    branches: [ "master", "ForexSignal-Performance" ]
-    tags: [ 'v*.*.*' ] # Publish semver tags as releases.
+    branches:
+      - 'master'
+      - 'ForexSignal-Performance' # یا هر شاخه دیگری برای استقرار
+    tags:
+      - 'v*.*.*' # برای انتشار نسخه‌های رسمی
+
+  # تریگر برای Pull Request به شاخه‌های اصلی
   pull_request:
-    branches: [ "master", "ForexSignal-Performance" ]
+    branches:
+      - 'master'
+      - 'ForexSignal-Performance'
 
 env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
-  DOTNET_VERSION: '9.0.x' # Defining .NET version for consistency
+  # --- Global Environment Variables ---
+  REGISTRY: ghcr.io                                 # GitHub Container Registry
+  IMAGE_NAME: ${{ github.repository }}              # نام ایمیج بر اساس نام ریپازیتوری
+  DOTNET_VERSION: '9.0.x'                           # نسخه .NET SDK مورد استفاده
+  SOLUTION_FILE_PATH: ForexTradingBot.sln         # مسیر فایل Solution (فرض بر ریشه ریپازیتوری)
+  TEST_RESULTS_PATH: ./test-results               # مسیر ذخیره نتایج تست‌ها
+  COVERAGE_REPORTS_PATH: ./coverage-reports         # مسیر ذخیره گزارش‌های Coverage
 
-  # Non-sensitive build arguments for Docker image
-  # These are passed to 'docker build --build-arg VAR=value'
-  # Ensure your Dockerfile uses ARG to accept these and ENV to set them if needed at runtime
-  BUILD_ARGS_FOR_DOCKER: |
-    ASPNETCORE_ENVIRONMENT=Production
-    DOTNET_RUNNING_IN_CONTAINER=true
-    TELEGRAM_PANEL__USE_WEBHOOK=false
-    TELEGRAM_PANEL__POLLING_INTERVAL=0
-    TELEGRAM_PANEL__ADMIN_USER_IDS__0=5094837833 # Example User ID
-    TELEGRAM_PANEL__ENABLE_DEBUG_MODE=true
-    CRYPTOPAY__BASE_URL=https://testnet-pay.crypt.bot/api/
-    CRYPTOPAY__IS_TESTNET=true
+  # آرگومان‌های زمان ساخت برای Dockerfile (مقادیر غیرحساس)
+  # این مقادیر توسط ARG در Dockerfile قابل دریافت و توسط ENV قابل تنظیم برای زمان اجرا هستند.
+  DOCKER_BUILD_ARGS: |
+    ARG_ASPNETCORE_ENVIRONMENT=Production
+    ARG_DOTNET_RUNNING_IN_CONTAINER=true
+    ARG_TELEGRAM_PANEL_USE_WEBHOOK=false
+    ARG_TELEGRAM_PANEL_POLLING_INTERVAL=0
+    ARG_TELEGRAM_PANEL_ADMIN_USER_IDS_0=5094837833 # Example
+    ARG_TELEGRAM_PANEL_ENABLE_DEBUG_MODE=true
+    ARG_CRYPTOPAY_BASE_URL=https://testnet-pay.crypt.bot/api/
+    ARG_CRYPTOPAY_IS_TESTNET=true
 
 jobs:
+  #------------------------------------------------------------------------------------
+  # JOB: Test - اجرای تست‌ها و تولید گزارش پوشش کد
+  #------------------------------------------------------------------------------------
   test:
-    name: Run Tests and Generate Coverage
+    name: "🧪 Run Unit & Integration Tests"
     runs-on: ubuntu-latest
+    # تعریف خروجی برای این job که در job های بعدی قابل استفاده باشد
     outputs:
       coverage_percentage: ${{ steps.check_coverage.outputs.coveragePercentage }}
+      test_run_successful: ${{ steps.final_test_check.outputs.success }}
+
     steps:
-      - name: Checkout repository
+      - name: "⬇️ Checkout Repository"
         uses: actions/checkout@v4
 
-      - name: Setup .NET SDK ${{ env.DOTNET_VERSION }}
+      - name: "⚙️ Setup .NET SDK ${{ env.DOTNET_VERSION }}"
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
-      - name: Cache NuGet packages
+      - name: "📦 Cache NuGet Packages"
         uses: actions/cache@v4
         with:
           path: ~/.nuget/packages
-          key: ${{ runner.os }}-nuget-${{ hashFiles('**/Directory.Packages.props', '**/*.csproj') }}
+          key: ${{ runner.os }}-nuget-dotnet${{ env.DOTNET_VERSION }}-${{ hashFiles('**/Directory.Packages.props', '**/*.csproj') }}
           restore-keys: |
+            ${{ runner.os }}-nuget-dotnet${{ env.DOTNET_VERSION }}-
             ${{ runner.os }}-nuget-
 
-      - name: List project structure (for debugging)
+      - name: "🔍 List Project Structure (Debug)"
+        if: ${{ github.actor == 'your_debug_actor' }} # Run only for specific actor or on demand
         run: |
-          echo "Current directory structure:"
+          echo "::group::Project Structure"
           ls -R .
-          echo "Solution file location:"
-          find . -name "*.sln"
-          echo "Test projects found:"
-          find . -name "*.csproj" -path "*/Tests/*" # Assuming test projects are in subfolders named Tests
+          echo "::endgroup::"
+          echo "::group::Solution File"
+          find . -name "${{ env.SOLUTION_FILE_PATH }}"
+          echo "::endgroup::"
+          echo "::group::Test Projects"
+          find . -name "*.csproj" -path "*/Tests/*" # Assuming test projects are in subfolders like 'Tests' or 'Project.Tests'
+          echo "::endgroup::"
 
-      - name: Restore dependencies
-        run: dotnet restore ForexTradingBot.sln # Assuming your solution file is named this
+      - name: "🛠️ Restore Dependencies"
+        run: dotnet restore "${{ env.SOLUTION_FILE_PATH }}"
 
-      - name: Build solution
-        run: dotnet build ForexTradingBot.sln --no-restore --configuration Release
+      - name: "🏗️ Build Solution (Release)"
+        run: dotnet build "${{ env.SOLUTION_FILE_PATH }}" --no-restore --configuration Release
 
-      - name: Create coverage directories
+      - name: "🗂️ Create Test and Coverage Directories"
         run: |
-          mkdir -p ./coverage/application
-          mkdir -p ./coverage/integration
-          mkdir -p ./coverage/report
+          mkdir -p "${{ env.TEST_RESULTS_PATH }}/application"
+          mkdir -p "${{ env.TEST_RESULTS_PATH }}/integration"
+          mkdir -p "${{ env.COVERAGE_REPORTS_PATH }}/raw" # For individual coverage files
+          mkdir -p "${{ env.COVERAGE_REPORTS_PATH }}/final-report"
 
-      - name: Run Application Tests
-        # Ensure 'Tests.Application/Tests.Application.csproj' is the correct path
-        # If it can be different, use find or a more robust method to locate it
-        if: hashFiles('**/Tests.Application.csproj') != '' # Run only if the project file exists
-        run: |
-          echo "Running Application Tests (Tests.Application.csproj)..."
-          dotnet test $(find . -name Tests.Application.csproj -print -quit) \
-            --configuration Release \
-            --collect:"XPlat Code Coverage" \
-            --results-directory ./coverage/application \
-            --logger "console;verbosity=detailed" \
-            --no-build \
-            --blame-hang-timeout 120s \
-            --blame-crash || echo "Application tests failed or project not found."
+      # --- اجرای انواع تست‌ها ---
+      # شما باید مسیر دقیق پروژه‌های تست خود را مشخص کنید.
+      # مثال: Tests/Application.Tests/Application.Tests.csproj
+      # APPLICATION_TEST_PROJECT_PATH=$(find . -name "Application.Tests.csproj" -print -quit) # یک روش برای پیدا کردن
+      # INTEGRATION_TEST_PROJECT_PATH=$(find . -name "Integration.Tests.csproj" -print -quit)
 
-      - name: Run Integration Tests
-        # Ensure 'Application.Tests/Application.Tests.csproj' is the correct path for integration tests
-        # It seems you might have two different naming conventions for test projects
-        if: hashFiles('**/Application.Tests.csproj') != '' # Run only if the project file exists
+      - name: "🧪 Run Application Tests"
+        # if: env.APPLICATION_TEST_PROJECT_PATH != ''
         run: |
-          echo "Running Integration Tests (Application.Tests.csproj)..."
-          dotnet test $(find . -name Application.Tests.csproj -print -quit) \
-            --configuration Release \
-            --collect:"XPlat Code Coverage" \
-            --results-directory ./coverage/integration \
-            --logger "console;verbosity=detailed" \
-            --no-build \
-            --blame-hang-timeout 180s \
-            --blame-crash || echo "Integration tests failed or project not found."
-      
-      - name: Debug - List coverage files
-        run: |
-          echo "Listing files in coverage directory:"
-          ls -R ./coverage
-          echo "Searching for Cobertura XML files:"
-          find ./coverage -type f -name "coverage.cobertura.xml"
-
-      - name: Generate Coverage Report
-        run: |
-          dotnet tool install --global dotnet-reportgenerator-globaltool || true # Install if not present
-          
-          COVERAGE_FILES=$(find ./coverage -type f -name "coverage.cobertura.xml" | tr '\n' ';')
-          
-          if [ -n "$COVERAGE_FILES" ]; then
-            echo "Found Cobertura coverage files: $COVERAGE_FILES"
-            reportgenerator \
-              -reports:"${COVERAGE_FILES%;}" \
-              -targetdir:./coverage/report \
-              -reporttypes:HtmlInline_AzurePipelines;Cobertura;TextSummary
-            echo "Coverage report generated."
-            cat ./coverage/report/Summary.txt || echo "Summary.txt not found."
+          APPLICATION_TEST_PROJECT=$(find . -path "*/Tests.Application.csproj" -print -quit) # مثال
+          if [ -z "$APPLICATION_TEST_PROJECT" ]; then
+            echo "::warning file=workflow,line=$LINENO,title=Application Tests Skipped::Application test project not found. Skipping tests."
+            echo "APPLICATION_TESTS_SUCCESS=skipped" >> $GITHUB_ENV
           else
-            echo "No Cobertura XML coverage files found. Skipping report generation."
-            echo "No coverage data available" > ./coverage/report/Summary.txt
-            echo "Test projects might not have run or no coverage data was generated in Cobertura format." >> ./coverage/report/Summary.txt
-          fi
-
-      - name: Upload Test and Coverage Artifacts
-        uses: actions/upload-artifact@v4
-        if: always() # Always run this step to upload logs/results even if tests fail
-        with:
-          name: test-and-coverage-results
-          path: |
-            ./coverage/
-          retention-days: 7
-
-      - name: Check Test Coverage and Output Percentage
-        id: check_coverage # Give this step an ID to reference its outputs
-        run: |
-          COVERAGE_PERCENTAGE=0
-          if [ -f ./coverage/report/Summary.txt ]; then
-            # Try to extract from Summary.txt (ReportGenerator 5.x format)
-            LINE_COVERAGE=$(grep -o 'Line coverage: [0-9.]*%' ./coverage/report/Summary.txt | grep -o '[0-9.]*')
-            if [ -n "$LINE_COVERAGE" ]; then
-              COVERAGE_PERCENTAGE=$LINE_COVERAGE
-            elif [ -f ./coverage/report/Cobertura.xml ]; then # Fallback to Cobertura.xml if Summary.txt parsing fails
-              COBERTURA_COVERAGE=$(grep -m 1 -o 'line-rate="[0-9.]*"' ./coverage/report/Cobertura.xml | grep -o '[0-9.]*')
-              if [ -n "$COBERTURA_COVERAGE" ]; then
-                 COVERAGE_PERCENTAGE=$(echo "$COBERTURA_COVERAGE * 100" | bc)
-              fi
+            echo "Running Application Tests: $APPLICATION_TEST_PROJECT"
+            if dotnet test "$APPLICATION_TEST_PROJECT" \
+              --configuration Release \
+              --no-build \
+              --logger "trx;LogFileName=application-tests.trx" \
+              --results-directory "${{ env.TEST_RESULTS_PATH }}/application" \
+              --collect:"XPlat Code Coverage" \
+              --settings ./.runsettings \
+              DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=cobertura \
+              DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.CoverageFileName=application.cobertura.xml \
+              DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.OutputDirectory=${{ env.COVERAGE_REPORTS_PATH }}/raw \
+              --blame-hang-timeout 120s; then
+              echo "APPLICATION_TESTS_SUCCESS=true" >> $GITHUB_ENV
+            else
+              echo "::error file=workflow,line=$LINENO,title=Application Tests Failed::Application tests failed. See logs for details."
+              echo "APPLICATION_TESTS_SUCCESS=false" >> $GITHUB_ENV
             fi
           fi
-          echo "Current line coverage: $COVERAGE_PERCENTAGE%"
-          echo "coveragePercentage=$COVERAGE_PERCENTAGE" >> "$GITHUB_OUTPUT" # Set output for other jobs/steps
-          
-          # Fail if coverage is below threshold (e.g., 80%)
-          # MIN_COVERAGE=80
-          # if (( $(echo "$COVERAGE_PERCENTAGE < $MIN_COVERAGE" | bc -l) )); then
-          #   echo "Error: Test coverage ($COVERAGE_PERCENTAGE%) is below the threshold of $MIN_COVERAGE%."
-          #   exit 1
-          # fi
-          echo "Test coverage check passed (or no data to check)."
+        # نیازمند فایل .runsettings برای تنظیم فرمت و نام فایل coverage
+        # مثال .runsettings:
+        # <?xml version="1.0" encoding="utf-8"?>
+        # <RunSettings>
+        #   <DataCollectionRunSettings>
+        #     <DataCollectors>
+        #       <DataCollector friendlyName="XPlat code coverage" uri="datacollector://Microsoft/XPlatCodeCoverage/1.0" assemblyQualifiedName="Microsoft.VisualStudio.Coverage.XPlatDataCollector.XPlatCodeCoverageDataCollector, Microsoft.VisualStudio.Coverage.XPlatDataCollector, Version=17.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a">
+        #         <Configuration>
+        #           <Format>cobertura, relatório</Format> <!-- Include 'cobertura' -->
+        #           <CoverageFileName>coverage.cobertura.xml</CoverageFileName> <!-- Default name -->
+        #           <OutputDirectory>./coverage-raw</OutputDirectory> <!-- Default output -->
+        #           <ExcludeByFile>**/Migrations/*.cs,**/Program.cs,**/Startup.cs</ExcludeByFile>
+        #           <IncludeTestAssembly>false</IncludeTestAssembly>
+        #         </Configuration>
+        #       </DataCollector>
+        #     </DataCollectors>
+        #   </DataCollectionRunSettings>
+        # </RunSettings>
 
+      - name: "🔩 Run Integration Tests"
+        # if: env.INTEGRATION_TEST_PROJECT_PATH != ''
+        run: |
+          INTEGRATION_TEST_PROJECT=$(find . -path "*/Integration.Tests.csproj" -print -quit) # مثال
+          if [ -z "$INTEGRATION_TEST_PROJECT" ]; then
+            echo "::warning file=workflow,line=$LINENO,title=Integration Tests Skipped::Integration test project not found. Skipping tests."
+            echo "INTEGRATION_TESTS_SUCCESS=skipped" >> $GITHUB_ENV
+          else
+            echo "Running Integration Tests: $INTEGRATION_TEST_PROJECT"
+            if dotnet test "$INTEGRATION_TEST_PROJECT" \
+              --configuration Release \
+              --no-build \
+              --logger "trx;LogFileName=integration-tests.trx" \
+              --results-directory "${{ env.TEST_RESULTS_PATH }}/integration" \
+              --collect:"XPlat Code Coverage" \
+              --settings ./.runsettings \
+              DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=cobertura \
+              DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.CoverageFileName=integration.cobertura.xml \
+              DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.OutputDirectory=${{ env.COVERAGE_REPORTS_PATH }}/raw \
+              --blame-hang-timeout 240s; then
+              echo "INTEGRATION_TESTS_SUCCESS=true" >> $GITHUB_ENV
+            else
+              echo "::error file=workflow,line=$LINENO,title=Integration Tests Failed::Integration tests failed. See logs for details."
+              echo "INTEGRATION_TESTS_SUCCESS=false" >> $GITHUB_ENV
+            fi
+          fi
+
+      - name: "📄 Generate Combined Coverage Report"
+        run: |
+          dotnet tool install --global dotnet-reportgenerator-globaltool --version 5.2.0 || true # Specify version
+          
+          # Combine all cobertura files from the raw directory
+          REPORT_FILES_PATTERN="${{ env.COVERAGE_REPORTS_PATH }}/raw/*.cobertura.xml"
+          
+          # Check if any coverage files were generated
+          if ! ls $REPORT_FILES_PATTERN 1> /dev/null 2>&1; then
+            echo "::warning file=workflow,line=$LINENO,title=No Coverage Files::No .cobertura.xml files found in '${{ env.COVERAGE_REPORTS_PATH }}/raw'. Skipping report generation."
+            echo "No coverage data available for reporting." > "${{ env.COVERAGE_REPORTS_PATH }}/final-report/Summary.txt"
+          else
+            echo "Generating combined coverage report from files matching: $REPORT_FILES_PATTERN"
+            reportgenerator \
+              "-reports:$REPORT_FILES_PATTERN" \
+              "-targetdir:${{ env.COVERAGE_REPORTS_PATH }}/final-report" \
+              "-reporttypes:HtmlInline_AzurePipelines;Cobertura;TextSummary" \
+              "-assemblyfilters:+${{ env.SOLUTION_FILE_PATH }};-*.Tests" # Filter to include only solution assemblies, exclude test assemblies
+            echo "Coverage report generated in '${{ env.COVERAGE_REPORTS_PATH }}/final-report'."
+            cat "${{ env.COVERAGE_REPORTS_PATH }}/final-report/Summary.txt" || echo "Summary.txt not found post-generation."
+          fi
+
+      - name: "📊 Check Test Coverage and Set Output"
+        id: check_coverage
+        run: |
+          COVERAGE_VALUE=0
+          SUMMARY_FILE="${{ env.COVERAGE_REPORTS_PATH }}/final-report/Summary.txt"
+          if [ -f "$SUMMARY_FILE" ]; then
+            # Regex to find line coverage percentage, handling potential spaces and variations
+            LINE_COVERAGE_EXTRACTED=$(grep -i 'Line coverage' "$SUMMARY_FILE" | sed -n 's/.*Line coverage:[^0-9]*\([0-9.]\+\)%/\1/p')
+            if [ -n "$LINE_COVERAGE_EXTRACTED" ]; then
+              COVERAGE_VALUE=$LINE_COVERAGE_EXTRACTED
+            else
+              echo "::warning file=workflow,line=$LINENO,title=Coverage Parse Error::Could not parse line coverage from $SUMMARY_FILE. Defaulting to 0."
+            fi
+          else
+            echo "::warning file=workflow,line=$LINENO,title=No Summary File::Coverage summary file $SUMMARY_FILE not found. Defaulting to 0."
+          fi
+          echo "Current Line Coverage: $COVERAGE_VALUE%"
+          echo "coveragePercentage=$COVERAGE_VALUE" >> "$GITHUB_OUTPUT"
+
+      - name: "📤 Upload Test Results and Coverage Reports"
+        uses: actions/upload-artifact@v4
+        if: always() # Always upload, even on failure, for debugging
+        with:
+          name: test-and-coverage-artifacts
+          path: |
+            ${{ env.TEST_RESULTS_PATH }}/**
+            ${{ env.COVERAGE_REPORTS_PATH }}/**
+          retention-days: 7
+
+      - name: "🏁 Final Test Check"
+        id: final_test_check
+        run: |
+          if [[ "${{ env.APPLICATION_TESTS_SUCCESS }}" == "false" || "${{ env.INTEGRATION_TESTS_SUCCESS }}" == "false" ]]; then
+            echo "::error file=workflow,line=$LINENO,title=Test Job Failed::One or more test suites failed."
+            echo "success=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          else
+            echo "All test suites passed or were skipped."
+            echo "success=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  #------------------------------------------------------------------------------------
+  # JOB: Build - ساخت و پوش کردن ایمیج Docker
+  #------------------------------------------------------------------------------------
   build:
-    name: Build and Push Docker Image
-    needs: test # Depends on successful completion of the test job
+    name: "🏗️ Build, Sign, and Push Docker Image"
+    needs: test
+    if: ${{ needs.test.outputs.test_run_successful == 'true' }} # Only run if tests passed
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      packages: write      # To push to GitHub Packages (GHCR)
-      id-token: write      # To use OIDC for Sigstore signing
+      contents: read      # برای خواندن کد
+      packages: write      # برای پوش به GHCR
+      id-token: write      # برای OIDC (Sigstore)
+
+    outputs:
+      image_digest: ${{ steps.build-and-push.outputs.digest }}
+      image_tags: ${{ steps.meta.outputs.tags }} # All generated tags
+      primary_image_tag: ${{ steps.meta.outputs.version }} # The primary tag (e.g., semver or short SHA)
 
     steps:
-      - name: Checkout repository
+      - name: "⬇️ Checkout Repository"
         uses: actions/checkout@v4
 
-      - name: Install cosign for image signing
-        if: github.event_name != 'pull_request' # Only sign on pushes, not PRs
+      - name: "🛡️ Install Cosign (for image signing)"
+        if: github.event_name != 'pull_request' # Sign only non-PR builds
         uses: sigstore/cosign-installer@v3.5.0
         with:
           cosign-release: 'v2.2.4'
 
-      - name: Set up Docker Buildx
+      - name: "🔧 Set up Docker Buildx"
         uses: docker/setup-buildx-action@v3.3.0
 
-      - name: Log into GitHub Container Registry (GHCR)
+      - name: "🔑 Log in to GitHub Container Registry (GHCR)"
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v3.1.0
         with:
@@ -194,68 +276,88 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract Docker metadata (tags, labels)
+      - name: "ℹ️ Extract Docker Metadata (Tags and Labels)"
         id: meta
         uses: docker/metadata-action@v5.5.1
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # استراتژی‌های تگ‌گذاری:
           tags: |
-            type=schedule,pattern={{date 'YYYYMMDDHHmmss'}} # For scheduled builds
-            type=ref,event=branch
-            type=ref,event=pr,prefix=pr-
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha,format=short,prefix=sha-
-            # Add a 'latest' tag for pushes to the default branch (master)
+            type=schedule,pattern={{date 'YYYYMMDDHHmmss'}} # تگ برای بیلدهای زمان‌بندی شده
+            type=ref,event=branch                          # تگ برای شاخه‌ها (e.g., master)
+            type=ref,event=pr,prefix=pr-                   # تگ برای PR ها (e.g., pr-123)
+            type=semver,pattern={{version}}                # تگ‌های SemVer (e.g., v1.2.3)
+            type=semver,pattern={{major}}.{{minor}}        # (e.g., v1.2)
+            type=sha,format=short,prefix=                   # تگ هش کوتاه کامیت (e.g., abcdef1) - حذف پیشوند sha- برای سادگی
+            # تگ 'latest' فقط برای push به شاخه پیش‌فرض (master)
             type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'master') }}
 
-
-      - name: Build and push Docker image
+      - name: "🏭 Build and Push Docker Image"
         id: build-and-push
         uses: docker/build-push-action@v5.3.0
         with:
-          context: . # Build context is the root of the repository
-          push: ${{ github.event_name != 'pull_request' }}
+          context: .
+          # Dockerfile: ./MyApplication.Dockerfile # مسیر Dockerfile اگر در ریشه نیست
+          push: ${{ github.event_name != 'pull_request' }} # پوش نکردن برای PR ها
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # استفاده از کش برای سرعت بخشیدن به بیلدها
           cache-from: |
             type=gha
-            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
             type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache
-          cache-to: type=gha,mode=max,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache
-          build-args: ${{ env.BUILD_ARGS_FOR_DOCKER }}
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest # Fallback cache
+          cache-to: type=gha,mode=max,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache # Push cache for future runs
+          build-args: ${{ env.DOCKER_BUILD_ARGS }}
 
-      - name: Sign the published Docker image
+      - name: "✍️ Sign the Published Docker Image (Sigstore)"
         if: github.event_name != 'pull_request' && steps.build-and-push.outputs.digest
         env:
-          TAGS: ${{ steps.meta.outputs.tags }}
-          DIGEST: ${{ steps.build-and-push.outputs.digest }}
-        # This uses private keyless signing with Sigstore's Fulcio and Rekor services.
-        # Ensure your GitHub organization or repository is configured for OIDC with Sigstore if needed.
-        run: echo "${TAGS}" | xargs -I {} cosign sign --yes {}@${DIGEST}
+          COSIGN_EXPERIMENTAL: "true" # For keyless signing
+          IMAGE_DIGEST: ${{ steps.build-and-push.outputs.digest }}
+          IMAGE_TAGS_TO_SIGN: ${{ steps.meta.outputs.tags }} # Sign all generated tags
+        run: |
+          echo "Signing image with digest: $IMAGE_DIGEST"
+          echo "Tags to be associated with signature: $IMAGE_TAGS_TO_SIGN"
+          # Sign the digest, cosign will automatically find appropriate images by digest on GHCR
+          cosign sign --yes "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${IMAGE_DIGEST}"
+          # Optionally, sign each tag individually if needed, though signing the digest is usually sufficient
+          # echo "$IMAGE_TAGS_TO_SIGN" | tr ',' '\n' | while read tag; do
+          #   if [ -n "$tag" ]; then
+          #     echo "Signing tag: $tag"
+          #     cosign sign --yes "$tag@${IMAGE_DIGEST}"
+          #   fi
+          # done
 
+
+  #------------------------------------------------------------------------------------
+  # JOB: Deploy - استقرار برنامه روی سرور
+  #------------------------------------------------------------------------------------
   deploy:
-    name: Deploy to Server
-    needs: build
-    # Run only on push to specified branches
+    name: "🚀 Deploy Application to Production"
+    needs: build # اجرا بعد از بیلد موفق
+    # فقط برای push به شاخه‌های مشخص اجرا شود
     if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/ForexSignal-Performance')
     runs-on: ubuntu-latest
-    environment: production # Using GitHub Environments for secrets and protection rules
+    environment: production # استفاده از GitHub Environments برای سکرت‌ها و قوانین محافظت شده
 
     steps:
-      - name: Setup SSH Agent for deployment key
+      - name: "🔑 Setup SSH Agent (for server access)"
         uses: webfactory/ssh-agent@v0.9.0
         with:
-          ssh-private-key: ${{ secrets.SERVER_SSH_KEY }} # SSH private key to access the server
+          ssh-private-key: ${{ secrets.SERVER_SSH_KEY }} # سکرت حاوی کلید خصوصی SSH
 
-      - name: Deploy application to server
-        uses: appleboy/ssh-action@v1.0.3 # Using a specific version
+      - name: "🚀 Deploy to Server via SSH"
+        uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USERNAME }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          # Pass GitHub secrets as environment variables to the script on the server
-          # The script deploy.sh will use these (e.g., $SECRET_DB_PASSWORD)
+          port: ${{ secrets.SERVER_PORT || 22 }} # پورت SSH، پیش‌فرض 22
+          timeout: 60s # زمان انتظار برای اتصال
+          command_timeout: 10m # زمان انتظار برای اجرای کل اسکریپت
+
+          # پاس دادن متغیرهای محیطی به اسکریپت deploy.sh روی سرور
+          # این متغیرها در deploy.sh با همان نام قابل دسترسی خواهند بود (e.g., $SECRET_DB_PASSWORD)
           env: |
             SECRET_DB_PASSWORD=${{ secrets.DB_PASSWORD }}
             SECRET_TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -266,31 +368,45 @@ jobs:
             SECRET_CRYPTOPAY_API_KEY=${{ secrets.CRYPTOPAY_API_KEY }}
             SECRET_CRYPTOPAY_WEBHOOK_SECRET=${{ secrets.CRYPTOPAY_WEBHOOK_SECRET }}
             GIT_BRANCH_NAME=${{ github.ref_name }}
-            # Pass the Docker image tag to be deployed (e.g., the short SHA)
-            # Assuming you have a tag like 'sha-xxxxxxx' from the metadata step
-            DEPLOY_IMAGE_TAG=sha-${{ (github.sha, 7) }} # Example: sha- followed by short commit SHA
+            # پاس دادن تگ اصلی ایمیج ساخته شده در job 'build'
+            # needs.build.outputs.primary_image_tag باید تگ مورد نظر شما برای deploy باشد
+            DEPLOY_IMAGE_TAG=${{ needs.build.outputs.primary_image_tag }}
+            # یا اگر می‌خواهید همیشه از هش کوتاه استفاده کنید:
+            # DEPLOY_IMAGE_TAG=${{ github.sha }} # و در deploy.sh برش دهید: DEPLOY_IMAGE_TAG_SHORT="${DEPLOY_IMAGE_TAG:0:7}"
 
           script: |
-            set -euo pipefail # Fail fast on errors, unset variables, or pipe failures
+            set -euo pipefail # خروج سریع در صورت خطا
 
-            TARGET_DIR="/var/lib/forex-trading-bot/ForexTradingBot" # Deployment directory on the server
-            DEPLOY_SCRIPT_PATH="./deploy.sh" # Path to the deploy script relative to TARGET_DIR
+            # مسیرهای مهم روی سرور
+            DEPLOY_TARGET_DIR="/var/lib/forex-trading-bot/ForexTradingBot"
+            DEPLOY_SCRIPT_NAME="deploy.sh" # یا مثلا ".scripts/deploy.sh"
+            DEPLOY_SCRIPT_FULL_PATH="$DEPLOY_TARGET_DIR/$DEPLOY_SCRIPT_NAME"
 
-            echo ">>> Navigating to deployment directory: $TARGET_DIR"
-            cd "$TARGET_DIR"
+            echo ">>> Navigating to deployment directory: $DEPLOY_TARGET_DIR"
+            cd "$DEPLOY_TARGET_DIR"
 
-            echo ">>> Ensuring deploy script is present and executable"
-            # The deploy.sh script should be part of your repository
-            # and pulled onto the server.
-            # The git pull below should fetch the latest version of deploy.sh
-            if [ ! -f "$DEPLOY_SCRIPT_PATH" ]; then
-                echo "ERROR: Deploy script '$DEPLOY_SCRIPT_PATH' not found in $TARGET_DIR after checkout/pull."
-                echo "Make sure 'deploy.sh' is committed to your repository."
+            echo ">>> Updating deployment script and configurations from Git branch: $GIT_BRANCH_NAME"
+            # اطمینان از اینکه کاربر SSH دسترسی لازم برای pull از این ریپازیتوری را دارد
+            # و کلید SSH مربوط به گیت روی سرور تنظیم شده یا از HTTPS با توکن استفاده می‌شود.
+            current_branch_on_server=$(git rev-parse --abbrev-ref HEAD)
+            if [ "$current_branch_on_server" != "$GIT_BRANCH_NAME" ]; then
+              echo "Switching server to branch '$GIT_BRANCH_NAME'..."
+              git fetch origin "$GIT_BRANCH_NAME" # Fetch the specific branch
+              git checkout -B "$GIT_BRANCH_NAME" "origin/$GIT_BRANCH_NAME" || { echo "ERROR: Failed to checkout branch '$GIT_BRANCH_NAME'."; exit 1; }
+            fi
+            echo "Pulling latest changes on server for branch '$GIT_BRANCH_NAME'..."
+            git reset --hard "origin/$GIT_BRANCH_NAME" # Reset local to match remote branch exactly, discards local changes
+            # git pull origin "$GIT_BRANCH_NAME" # Should be redundant after reset --hard
+
+            echo ">>> Verifying deployment script: $DEPLOY_SCRIPT_FULL_PATH"
+            if [ ! -f "$DEPLOY_SCRIPT_FULL_PATH" ]; then
+                echo "::error::Deploy script '$DEPLOY_SCRIPT_FULL_PATH' not found in $DEPLOY_TARGET_DIR."
+                echo "Ensure '$DEPLOY_SCRIPT_NAME' is committed to the root of your repository (or adjust path)."
                 exit 1
             fi
-            chmod +x "$DEPLOY_SCRIPT_PATH"
+            chmod +x "$DEPLOY_SCRIPT_FULL_PATH" # اطمینان از قابلیت اجرایی بودن
 
-            echo ">>> Executing deployment script: $DEPLOY_SCRIPT_PATH"
-            # Execute the deployment script. It will use the environment variables passed via 'env'
-            # (e.g., $SECRET_DB_PASSWORD, $GIT_BRANCH_NAME, $DEPLOY_IMAGE_TAG)
-            "$DEPLOY_SCRIPT_PATH"
+            echo ">>> Executing deployment script: $DEPLOY_SCRIPT_FULL_PATH"
+            # اجرای اسکریپت deploy.sh. متغیرهای محیطی که با 'env:' پاس داده شده‌اند،
+            # در این اسکریپت قابل دسترس خواهند بود.
+            "$DEPLOY_SCRIPT_FULL_PATH"

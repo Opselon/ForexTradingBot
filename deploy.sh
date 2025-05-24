@@ -5,30 +5,20 @@
 
 # --- Strict Mode & Error Handling ---
 set -euo pipefail
-trap 'echo "ERROR: A command failed at line $LINENO. See output above for details." >&2; exit 1' ERR
-trap 'echo "Deployment interrupted." >&2; exit 1' SIGINT SIGTERM
+trap 'echo "ERROR: deploy.sh failed at line $LINENO. See output above." >&2; exit 1' ERR
+# ... (trap های دیگر مانند قبل) ...
 
 # --- Configuration & Constants ---
+# ... (مانند قبل) ...
 readonly ENV_FILE_PATH=".env.production"
-# مسیر پلاگین Docker Compose که شما تایید کردید
 readonly DOCKER_COMPOSE_PLUGIN_DIR="/usr/libexec/docker/cli-plugins"
-readonly DOCKER_COMPOSE_PLUGIN_EXEC="${DOCKER_COMPOSE_PLUGIN_DIR}/docker-compose" # نام فایل اجرایی پلاگین
 
 # --- Logging Functions ---
-# ... (توابع لاگ بدون تغییر) ...
-log_info() {
-  echo "INFO: $1"
-}
-log_warn() {
-  echo "WARNING: $1" >&2
-}
-log_error() {
-  echo "ERROR: $1" >&2
-  exit 1
-}
-log_success() {
-  echo "SUCCESS: $1"
-}
+# ... (مانند قبل) ...
+log_info() { echo "INFO: $1"; }
+log_warn() { echo "WARNING: $1" >&2; }
+log_error() { echo "ERROR: $1" >&2; exit 1; }
+log_success() { echo "SUCCESS: $1"; }
 log_debug() {
   if [[ "${DEBUG_DEPLOY:-false}" == "true" ]]; then
     echo "DEBUG: $1"
@@ -36,15 +26,17 @@ log_debug() {
 }
 
 # --- Helper Functions ---
-# ... (check_env_var بدون تغییر) ...
 check_env_var() {
   local var_name="$1"
-  if [ -z "${!var_name:-}" ]; then
-    log_error "Required environment variable '$var_name' is not set or is empty."
+  local var_value="${!var_name:-}" # مقدار متغیر را می‌خوانیم
+
+  log_debug "Checking env var: '$var_name', Value: '$var_value'" # چاپ مقدار برای دیباگ
+
+  if [ -z "$var_value" ]; then # چک می‌کنیم که آیا مقدار خالی است یا خیر
+    log_error "Required GHA environment variable '$var_name' is not set or is empty."
   fi
 }
-
-# متغیر سراسری برای دستور docker
+# ... (DOCKER_CMD و check_commands_exist مانند قبل) ...
 DOCKER_CMD=""
 
 check_commands_exist() {
@@ -52,22 +44,17 @@ check_commands_exist() {
     log_debug "Initial PATH: $PATH"
     log_debug "User: $(whoami), Effective User: $(id -u -n)"
 
-    # 1. به صراحت مسیر پلاگین Docker Compose را به PATH اضافه می‌کنیم
     if [ -d "$DOCKER_COMPOSE_PLUGIN_DIR" ]; then
         log_debug "Adding Docker Compose plugin directory to PATH: $DOCKER_COMPOSE_PLUGIN_DIR"
         export PATH="$DOCKER_COMPOSE_PLUGIN_DIR:$PATH"
         log_debug "Updated PATH: $PATH"
     else
-        log_warn "Docker Compose plugin directory not found at $DOCKER_COMPOSE_PLUGIN_DIR. This might be an issue."
+        log_warn "Confirmed Docker Compose plugin directory '$DOCKER_COMPOSE_PLUGIN_DIR' not found. This will likely cause issues."
     fi
 
-    # 2. پیدا کردن دستور git
-    if ! command -v git &> /dev/null; then
-        log_error "Git not found. Please install Git."
-    fi
+    if ! command -v git &> /dev/null; then log_error "Git not found."; fi
     log_debug "Git found: $(command -v git)"
 
-    # 3. پیدا کردن دستور docker
     if command -v docker &> /dev/null; then
         DOCKER_CMD=$(command -v docker)
         log_debug "Docker found in PATH: $DOCKER_CMD"
@@ -75,66 +62,79 @@ check_commands_exist() {
         DOCKER_CMD="/usr/bin/docker"
         log_debug "Docker found at /usr/bin/docker (fallback)"
     else
-        log_error "Docker executable not found in PATH or /usr/bin/docker."
+        log_error "Docker executable not found."
     fi
 
-    # 4. تست کردن docker compose (به عنوان پلاگین docker)
     log_debug "Attempting to verify Docker Compose plugin with: '$DOCKER_CMD compose version'"
     if "$DOCKER_CMD" compose version &> /tmp/docker_compose_test_output; then
-        log_debug "SUCCESS: '$DOCKER_CMD compose version' executed successfully. Output:"
-        cat /tmp/docker_compose_test_output
+        log_debug "SUCCESS: '$DOCKER_CMD compose version' executed. Output: $(cat /tmp/docker_compose_test_output)"
     else
-        log_warn "FAILURE: '$DOCKER_CMD compose version' failed. Output/Error:"
+        log_warn "FAILURE: '$DOCKER_CMD compose version' failed. Output/Error was:"
         cat /tmp/docker_compose_test_output >&2
-        # تلاش برای اجرای مستقیم پلاگین به عنوان آخرین راه حل (بیشتر برای دیباگ)
-        log_warn "Attempting to run plugin directly: '$DOCKER_COMPOSE_PLUGIN_EXEC version' (if it exists)"
-        if [ -x "$DOCKER_COMPOSE_PLUGIN_EXEC" ]; then
-             if "$DOCKER_COMPOSE_PLUGIN_EXEC" version &> /tmp/docker_compose_direct_output; then
-                log_warn "Direct plugin execution '$DOCKER_COMPOSE_PLUGIN_EXEC version' succeeded. Output:"
-                cat /tmp/docker_compose_direct_output
-                log_warn "This indicates 'docker compose' (plugin invocation) is not working, but the plugin binary itself is executable."
-             else
-                log_warn "Direct plugin execution '$DOCKER_COMPOSE_PLUGIN_EXEC version' also failed. Output/Error:"
-                cat /tmp/docker_compose_direct_output >&2
-             fi
-        else
-            log_warn "Plugin executable not found or not executable at $DOCKER_COMPOSE_PLUGIN_EXEC"
-        fi
-        log_error "Docker Compose plugin (V2) is not working correctly even after attempting to modify PATH. Please check Docker installation and plugin setup for non-interactive sessions."
+        log_error "Docker Compose plugin (V2) is not working correctly even after modifying PATH."
     fi
-    
-    log_info "All command checks passed."
+    log_info "All command checks passed (git, docker, docker compose plugin)."
 }
 
 # --- Main Deployment Logic ---
 main() {
-  # ... (بخش validate environment variables و لاگ‌های اولیه مانند قبل) ...
-  log_info "--- Starting Deployment Script ---"
-  log_debug "Script started. User: $(whoami), PATH: $PATH"
+  log_info "--- Starting Deployment Script (deploy.sh) ---"
+  
+  # دیباگ کردن متغیرهای محیطی که از GHA انتظار داریم
+  log_debug "--- Environment Variables Received by deploy.sh ---"
+  log_debug "GIT_BRANCH_NAME: '${GIT_BRANCH_NAME:-UNSET}'"
+  log_debug "DEPLOY_IMAGE_TAG: '${DEPLOY_IMAGE_TAG:-UNSET}'"
+  log_debug "REGISTRY_GHCR: '${REGISTRY_GHCR:-UNSET}'"
+  log_debug "IMAGE_NAME_BASE: '${IMAGE_NAME_BASE:-UNSET}'"
+  log_debug "SECRET_DB_CONNECTION_STRING: '${SECRET_DB_CONNECTION_STRING:-UNSET_OR_EMPTY}' (Value itself is secret)"
+  log_debug "SECRET_POSTGRES_SERVICE_PASSWORD: '${SECRET_POSTGRES_SERVICE_PASSWORD:-UNSET_OR_EMPTY}' (Value is secret)"
+  log_debug "SECRET_TELEGRAM_BOT_TOKEN: '${SECRET_TELEGRAM_BOT_TOKEN:-UNSET_OR_EMPTY}' (Value is secret)"
+  log_debug "SECRET_TELEGRAM_API_ID: '${SECRET_TELEGRAM_API_ID:-UNSET_OR_EMPTY}' (Value is secret)"
+  log_debug "SECRET_TELEGRAM_API_HASH: '${SECRET_TELEGRAM_API_HASH:-UNSET_OR_EMPTY}' (Value is secret)"
+  log_debug "SECRET_TELEGRAM_CHANNEL_ID_FOR_LOG_MONITOR: '${SECRET_TELEGRAM_CHANNEL_ID_FOR_LOG_MONITOR:-UNSET}'"
+  log_debug "SECRET_WTELEGRAMBOT: '${SECRET_WTELEGRAMBOT:-UNSET_OR_EMPTY}' (Value is secret)"
+  log_debug "DEBUG_DEPLOY: '${DEBUG_DEPLOY:-false}'"
+  log_debug "DB_NAME_OVERRIDE: '${DB_NAME_OVERRIDE:-UNSET}'"
+  log_debug "DB_USER_OVERRIDE: '${DB_USER_OVERRIDE:-UNSET}'"
+  log_debug "-----------------------------------------------------"
+
+  # Validate required environment variables passed from GHA
   check_env_var "GIT_BRANCH_NAME"
-  # ... (سایر check_env_var ها)
+  check_env_var "DEPLOY_IMAGE_TAG"
+  check_env_var "REGISTRY_GHCR"
+  check_env_var "IMAGE_NAME_BASE"
+  check_env_var "SECRET_DB_CONNECTION_STRING"
+  check_env_var "SECRET_POSTGRES_SERVICE_PASSWORD"
+  check_env_var "SECRET_TELEGRAM_BOT_TOKEN"
+  check_env_var "SECRET_TELEGRAM_API_ID" # اضافه شد
+  check_env_var "SECRET_TELEGRAM_API_HASH" # اضافه شد
   check_env_var "SECRET_TELEGRAM_CHANNEL_ID_FOR_LOG_MONITOR"
+  # SECRET_WTELEGRAMBOT is optional, so no check_env_var for it unless required
 
   log_info "Deployment Target Branch: $GIT_BRANCH_NAME"
   log_info "Deployment Docker Image: ${REGISTRY_GHCR}/${IMAGE_NAME_BASE}:${DEPLOY_IMAGE_TAG}"
 
-  log_info ">>> Performing pre-flight checks..."
-  check_commands_exist # DOCKER_CMD در اینجا تنظیم می‌شود
+  # ... (بقیه اسکریپت deploy.sh مانند قبل، با اطمینان از صحت DB_HOST در بخش .env.production) ...
+  # مثال برای DB_HOST در .env.production:
+  # DB_HOST=forex-postgres # اگر container_name شما این است
+  # یا
+  # DB_HOST=db # اگر نام سرویس شما db است و از container_name برای اتصال داخلی استفاده نمی‌کنید
 
-  # --- Prepare .env.production File ---
-  # ... (بخش cat > "$ENV_FILE_PATH" << EOL مانند قبل، با اطمینان از صحت DB_HOST) ...
+  log_info ">>> Performing pre-flight checks..."
+  check_commands_exist
+
   log_info ">>> Preparing $ENV_FILE_PATH file..."
   cat > "$ENV_FILE_PATH" << EOL
-# Auto-generated by deploy.sh
+# Auto-generated by deploy.sh from GHA secrets
 REGISTRY=${REGISTRY_GHCR}
 GITHUB_REPOSITORY=${IMAGE_NAME_BASE}
 IMAGE_TAG=${DEPLOY_IMAGE_TAG}
-DB_HOST=db # یا 'forex-postgres' اگر نام سرویس در docker-compose.yml شما این است
+DB_HOST=forex-postgres # مطابق با container_name در docker-compose.yml شما
 DB_PORT=5432
 DB_NAME=${DB_NAME_OVERRIDE:-forextrading}
 DB_USER=${DB_USER_OVERRIDE:-forexuser}
 DB_PASSWORD=${SECRET_POSTGRES_SERVICE_PASSWORD}
-DB_CONNECTION_STRING_APP=${SECRET_DB_CONNECTION_STRING} # مطمئن شوید Host= در این رشته با DB_HOST بالا مطابقت دارد
+DB_CONNECTION_STRING_APP=${SECRET_DB_CONNECTION_STRING} # باید شامل Host=forex-postgres;... باشد
 TELEGRAM_BOT_TOKEN=${SECRET_TELEGRAM_BOT_TOKEN}
 TELEGRAM_API_ID=${SECRET_TELEGRAM_API_ID}
 TELEGRAM_API_HASH=${SECRET_TELEGRAM_API_HASH}
@@ -142,38 +142,37 @@ LOG_MONITOR_TELEGRAM_CHANNEL_ID=${SECRET_TELEGRAM_CHANNEL_ID_FOR_LOG_MONITOR}
 $( [ -n "${SECRET_WTELEGRAMBOT:-}" ] && echo "WTELEGRAMBOT_ENV_VAR_NAME=${SECRET_WTELEGRAMBOT}" || echo "# SECRET_WTELEGRAMBOT not set or empty" )
 EOL
   chmod 600 "$ENV_FILE_PATH"
-  log_info "'$ENV_FILE_PATH' created/updated."
+  log_info "'$ENV_FILE_PATH' created/updated successfully."
 
-  # --- Update Source Code ---
-  # ... (بخش git fetch و git reset مانند قبل) ...
   log_info ">>> Updating source code from Git branch: $GIT_BRANCH_NAME..."
-  # ... (دستورات git) ...
+  if [ "$(git rev-parse --abbrev-ref HEAD)" != "$GIT_BRANCH_NAME" ]; then
+    log_info "Switching to branch '$GIT_BRANCH_NAME'..."
+    if git show-ref --quiet "refs/heads/$GIT_BRANCH_NAME"; then
+      git checkout "$GIT_BRANCH_NAME"
+    else
+      git fetch origin "$GIT_BRANCH_NAME":"$GIT_BRANCH_NAME"
+      git checkout "$GIT_BRANCH_NAME"
+    fi
+  fi
+  git fetch origin "$GIT_BRANCH_NAME" --prune
+  log_info "Resetting local branch '$GIT_BRANCH_NAME' to 'origin/$GIT_BRANCH_NAME'..."
+  git clean -fdx
   git reset --hard "origin/$GIT_BRANCH_NAME"
   log_success "Source code updated."
 
-  # --- Docker Compose Operations ---
-  # از DOCKER_CMD که پیدا شده استفاده می‌کنیم
-  log_info ">>> Pulling Docker images..."
+  log_info ">>> Docker Compose operations using '$DOCKER_CMD compose'..."
   "$DOCKER_CMD" compose --env-file "$ENV_FILE_PATH" pull
-
-  log_info ">>> Stopping containers..."
   "$DOCKER_CMD" compose --env-file "$ENV_FILE_PATH" down --remove-orphans --timeout 60
-
-  log_info ">>> Starting Docker services..."
   "$DOCKER_CMD" compose --env-file "$ENV_FILE_PATH" up -d --remove-orphans --force-recreate --renew-anon-volumes
+  log_success "Docker services operations completed."
 
-  log_success "Docker services started."
-
-  # --- Post-Deployment ---
-  # ... (بخش sleep, ps, logs مانند قبل، با استفاده از DOCKER_CMD) ...
-  log_info ">>> Waiting for services (30s)..."
+  log_info ">>> Waiting 30s for services to stabilize..."
   sleep 30
-  log_info ">>> Container status:"
+  log_info ">>> Current Docker container status:"
   "$DOCKER_CMD" compose --env-file "$ENV_FILE_PATH" ps
-  log_info ">>> Recent logs:"
+  log_info ">>> Recent logs (last 100 lines):"
   "$DOCKER_CMD" compose --env-file "$ENV_FILE_PATH" logs --tail 100
-  log_success "--- Deployment Script Finished ---"
+  log_success "--- Deployment Script Finished Successfully ---"
 }
 
-# --- Execute Main Function ---
 main "$@"

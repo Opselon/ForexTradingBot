@@ -2,16 +2,13 @@
 set -euo pipefail # Fail fast on errors, unset variables, or pipe failures
 
 # --- Configuration ---
-# These are expected to be set as environment variables when this script is called
-# Example: SECRET_DB_PASSWORD, GIT_BRANCH_NAME, DEPLOY_IMAGE_TAG
-# Default values can be provided for local testing if needed
-# e.g., GIT_BRANCH_NAME_DEFAULT="master"
-# CURRENT_GIT_BRANCH="${GIT_BRANCH_NAME:-$GIT_BRANCH_NAME_DEFAULT}"
-# CURRENT_DEPLOY_TAG="${DEPLOY_IMAGE_TAG:-latest}" # Use 'latest' if DEPLOY_IMAGE_TAG is not set
+# These are expected to be set as environment variables when this script is called by GHA
+# Example: SECRET_DB_PASSWORD, GIT_BRANCH_NAME, DEPLOY_IMAGE_TAG, REGISTRY_GHCR, IMAGE_NAME_BASE
+# SECRET_LOG_MONITOR_TELEGRAM_CHANNEL_ID, SECRET_WTELEGRAMBOT (optional)
 
 echo "--- Starting Deployment Script ---"
 echo "Deployment Target Branch: $GIT_BRANCH_NAME"
-echo "Deployment Docker Image Tag: $DEPLOY_IMAGE_TAG" # Ensure this is passed from GHA
+echo "Deployment Docker Image: ${REGISTRY_GHCR}/${IMAGE_NAME_BASE}:${DEPLOY_IMAGE_TAG}"
 
 # --- Helper Functions ---
 check_command() {
@@ -25,73 +22,66 @@ check_command() {
 echo ">>> Performing pre-flight checks..."
 check_command "git"
 check_command "docker"
-check_command "docker compose" # Ensures 'docker compose' (plugin V2) is available
+check_command "docker compose"
 
 # --- Prepare Environment ---
-ENV_FILE_PATH=".env.production"
+ENV_FILE_PATH=".env.production" # Docker Compose V2 automatically loads .env in the current directory first, then .env.production.
+                                # Explicitly using --env-file .env.production is more robust.
 
-echo ">>> Preparing .env.production file at $ENV_FILE_PATH..."
-if [ ! -f "$ENV_FILE_PATH" ]; then
-  echo "WARNING: '$ENV_FILE_PATH' not found. Creating it with secrets from environment variables."
-  
-  # Create .env.production file with secrets
-  # These secrets (e.g., $SECRET_DB_PASSWORD) are passed as env vars by GitHub Actions
-  cat > "$ENV_FILE_PATH" << EOL
-# This file is auto-generated during deployment if it doesn't exist.
-# For production, it's recommended to manage this file securely outside of the script.
+echo ">>> Preparing $ENV_FILE_PATH file..."
 
-# --- Database Configuration ---
-# Populated from GitHub Secrets via environment variables
+# Always overwrite .env.production to ensure it reflects the latest GHA secrets
+cat > "$ENV_FILE_PATH" << EOL
+# This file is auto-generated during deployment by deploy.sh.
+# It contains secrets and configurations for docker-compose.
+
+# --- Docker Image Configuration (for docker-compose.yml image definitions) ---
+REGISTRY=${REGISTRY_GHCR}
+GITHUB_REPOSITORY=${IMAGE_NAME_BASE} # Corresponds to 'IMAGE_NAME' in GHA
+IMAGE_TAG=${DEPLOY_IMAGE_TAG}
+
+# --- Database Configuration (for postgres service and application) ---
 DB_HOST=db
 DB_PORT=5432
-DB_NAME=forextrading
-DB_USER=forexuser
+DB_NAME=forextrading # Default, or use a GHA secret if it needs to be dynamic
+DB_USER=forexuser   # Default, or use a GHA secret if it needs to be dynamic
 DB_PASSWORD=${SECRET_DB_PASSWORD}
 
-# --- Telegram Configuration ---
+# --- Telegram Configuration (for application services) ---
 TELEGRAM_BOT_TOKEN=${SECRET_TELEGRAM_BOT_TOKEN}
 TELEGRAM_API_ID=${SECRET_TELEGRAM_API_ID}
 TELEGRAM_API_HASH=${SECRET_TELEGRAM_API_HASH}
-TELEGRAM_CHANNEL_ID=${SECRET_LOG_MONITOR_TELEGRAM_CHANNEL_ID} # For log_monitor service
 
-# --- Cryptopay Configuration ---
+# --- Telegram Configuration (for log-monitor service) ---
+LOG_MONITOR_TELEGRAM_CHANNEL_ID=${SECRET_LOG_MONITOR_TELEGRAM_CHANNEL_ID}
+
+# --- Cryptopay Configuration (for application services) ---
 CRYPTOPAY_API_TOKEN=${SECRET_CRYPTOPAY_API_TOKEN}
 CRYPTOPAY_API_KEY=${SECRET_CRYPTOPAY_API_KEY}
 CRYPTOPAY_WEBHOOK_SECRET=${SECRET_CRYPTOPAY_WEBHOOK_SECRET}
 
-# --- Application Runtime Configuration (non-secret, can be here or in Dockerfile/docker-compose.yml) ---
-# These are often set via ARG/ENV in Dockerfile or directly in docker-compose.yml
+# --- Optional WTELEGRAMBOT ---
+# If SECRET_WTELEGRAMBOT is set in GHA, include it. Adjust VAR_NAME as needed by your app.
+$( [ -n "${SECRET_WTELEGRAMBOT:-}" ] && echo "WTELEGRAMBOT_VAR_NAME=${SECRET_WTELEGRAMBOT}" || echo "# SECRET_WTELEGRAMBOT not set or empty" )
+
+# --- Application Runtime Configuration (non-secret, from GHA DOCKER_BUILD_ARGS or set here) ---
+# These were in your GHA DOCKER_BUILD_ARGS. If they also need to be runtime env vars, add them.
+# Example:
 # ASPNETCORE_ENVIRONMENT=Production
 # DOTNET_RUNNING_IN_CONTAINER=true
 # TELEGRAM_PANEL__USE_WEBHOOK=false
 # TELEGRAM_PANEL__POLLING_INTERVAL=0
 # TELEGRAM_PANEL__ADMIN_USER_IDS__0=5094837833
-# TELEGRAM_PANEL__ENABLE_DEBUG_MODE=true
+# TELEGRAM_PANEL__ENABLE_DEBUG_MODE=true # Set to false for production usually
 # CRYPTOPAY__BASE_URL=https://testnet-pay.crypt.bot/api/
 # CRYPTOPAY__IS_TESTNET=true
-
-# --- Docker Image Tag for Services (Important for updating services) ---
-# This tells docker-compose which image version to use for your application services.
-# It should match the tag pushed to the registry by the CI build job.
-WEBAPI_IMAGE_TAG=${DEPLOY_IMAGE_TAG}
-BACKGROUNDTASKS_IMAGE_TAG=${DEPLOY_IMAGE_TAG}
-TELEGRAMPANEL_IMAGE_TAG=${DEPLOY_IMAGE_TAG}
-# LOGMONITOR_IMAGE_TAG=${DEPLOY_IMAGE_TAG} # If you have a separate log monitor image
 EOL
 
-  chmod 600 "$ENV_FILE_PATH"
-  echo "'$ENV_FILE_PATH' created successfully."
-else
-  echo "'$ENV_FILE_PATH' already exists. Will be used by docker-compose."
-  # Optionally, you could update specific variables in an existing .env file
-  # if needed, but simply creating if not exists is safer for this script.
-  # For updating, tools like `sed` or `awk` would be needed, increasing complexity.
-fi
+chmod 600 "$ENV_FILE_PATH"
+echo "'$ENV_FILE_PATH' created/updated successfully."
 
 # --- Update Source Code & Configurations (docker-compose.yml, etc.) ---
-echo ">>> Updating source code and configuration files from Git branch: $GIT_BRANCH_NAME..."
-# Ensure we are in the correct branch.
-# The 'cd $TARGET_DIR' is done by the calling GHA script.
+echo ">>> Updating source code (including docker-compose.yml) from Git branch: $GIT_BRANCH_NAME..."
 current_branch_on_server=$(git rev-parse --abbrev-ref HEAD)
 if [ "$current_branch_on_server" != "$GIT_BRANCH_NAME" ]; then
   echo "Switching to branch '$GIT_BRANCH_NAME'..."
@@ -99,69 +89,28 @@ if [ "$current_branch_on_server" != "$GIT_BRANCH_NAME" ]; then
   git checkout "$GIT_BRANCH_NAME" || { echo "ERROR: Failed to checkout branch '$GIT_BRANCH_NAME'."; exit 1; }
 fi
 
-# Stash any local changes, pull, then try to reapply stash
-# This is safer than `git reset --hard` if there are intentional local modifications.
-# However, for a CI/CD managed server, `reset --hard` is often preferred.
-# git stash push -u # Stash uncommitted changes and untracked files
-# git pull origin "$GIT_BRANCH_NAME" --rebase
-# git stash pop || echo "No stash to pop or conflicts encountered."
-# For simplicity and typical CI/CD:
-git fetch origin # Fetch all remote branches
-git reset --hard "origin/$GIT_BRANCH_NAME" # Reset local to match remote branch exactly
-git pull origin "$GIT_BRANCH_NAME" # Ensure it's up-to-date (should be redundant after reset --hard)
-
+git fetch origin
+git reset --hard "origin/$GIT_BRANCH_NAME"
+git pull origin "$GIT_BRANCH_NAME" # Should be redundant after reset --hard, but safe
 
 # --- Docker Compose Operations ---
-# The docker-compose.yml should be written to use environment variables from .env.production
-# for image tags and sensitive configurations.
-# Example service definition in docker-compose.yml:
-# services:
-#   webapi:
-#     image: ghcr.io/your_repo/your_image_name:${WEBAPI_IMAGE_TAG}
-#     env_file:
-#       - .env.production
-#     secrets: # If using Docker Swarm secrets
-#       - db_password_secret
-# ...
-
-# If NOT using Docker Swarm secrets, and relying purely on .env.production for env vars:
-# The application code reads environment variables directly (e.g., for DB_PASSWORD).
-# Dockerfile should NOT embed these secrets.
-
-# Pull the specific Docker images defined in docker-compose.yml (which uses $DEPLOY_IMAGE_TAG)
-echo ">>> Pulling latest Docker images referenced in docker-compose.yml..."
+echo ">>> Pulling latest Docker images specified in docker-compose.yml (using $ENV_FILE_PATH)..."
 docker compose --env-file "$ENV_FILE_PATH" pull
 
-echo ">>> Stopping and removing existing Docker containers..."
+echo ">>> Stopping and removing existing Docker containers (using $ENV_FILE_PATH)..."
 docker compose --env-file "$ENV_FILE_PATH" down --remove-orphans
 
-# If using Docker Swarm secrets (this section needs Docker in Swarm mode):
-# echo ">>> Managing Docker Swarm secrets..."
-# docker secret rm db_password telegram_bot_token ... || true # Remove old secrets if they exist
-# echo "$SECRET_DB_PASSWORD" | docker secret create db_password -
-# echo "$SECRET_TELEGRAM_BOT_TOKEN" | docker secret create telegram_bot_token -
-# ... add other secrets ...
-# Make sure your docker-compose.yml's services are configured to use these swarm secrets.
-
-echo ">>> Starting Docker services using docker-compose..."
+echo ">>> Starting Docker services using docker-compose (with $ENV_FILE_PATH)..."
 docker compose --env-file "$ENV_FILE_PATH" up -d --remove-orphans
 
 # --- Post-Deployment ---
 echo ">>> Waiting for services to stabilize..."
-sleep 20 # Increased wait time
+sleep 20
 
 echo ">>> Current Docker container status:"
 docker compose --env-file "$ENV_FILE_PATH" ps
 
 echo ">>> Displaying recent logs for all services (last 50 lines)..."
 docker compose --env-file "$ENV_FILE_PATH" logs --tail 50
-
-# Example: Check health of a specific service if it has a healthcheck endpoint
-# echo ">>> Checking WebAPI health..."
-# if docker compose exec webapi curl -f http://localhost/health; then
-#   echo "WebAPI is healthy."
-# else
-#   echo "WARNING: WebAPI health check failed or endpoint not available."
-# fi
 
 echo "--- Deployment Script Finished Successfully ---"

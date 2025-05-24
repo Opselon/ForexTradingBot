@@ -152,10 +152,7 @@ try
         .SetDataCompatibilityLevel(CompatibilityLevel.Version_170)
         .UseSimpleAssemblyNameTypeSerializer()
         .UseRecommendedSerializerSettings()
-        .UsePostgreSqlStorage(options => {
-            options.UseNpgsqlConnection(builder.Configuration.GetConnectionString("Hangfire")
-                ?? builder.Configuration.GetConnectionString("DefaultConnection"));
-        }));
+        .UsePostgreSqlStorage(builder.Configuration.GetConnectionString("Hangfire")));
     builder.Services.AddHangfireServer();
     Log.Information("Hangfire services configured with PostgreSQL storage.");
     builder.Services.Configure<List<Infrastructure.Settings.ForwardingRule>>(

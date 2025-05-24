@@ -293,15 +293,14 @@ jobs:
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USERNAME }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
+          key: ${{ secrets.SERVER_SSH_KEY }} # Redundant if ssh-agent works, but safe fallback
           port: ${{ secrets.SERVER_PORT || 22 }}
           timeout: 60s
-          command_timeout: 25m
-          envs: |
+          command_timeout: 25m # Increased timeout for all operations
+          envs: | # These are passed to the remote environment for deploy.sh by the action
             GIT_BRANCH_NAME=${{ github.ref_name }}
             DEPLOY_IMAGE_TAG=${{ needs.build.outputs.primary_image_tag }}
             REGISTRY_GHCR=${{ env.REGISTRY }}
-            # Convert GITHUB_REPOSITORY to lowercase for IMAGE_NAME_BASE
             IMAGE_NAME_BASE=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
             SECRET_DB_CONNECTION_STRING=${{ secrets.DB_CONNECTION_STRING }}
             SECRET_POSTGRES_SERVICE_PASSWORD=${{ secrets.POSTGRES_SERVICE_PASSWORD }}
@@ -311,10 +310,15 @@ jobs:
             SECRET_TELEGRAM_CHANNEL_ID_FOR_LOG_MONITOR=${{ secrets.TELEGRAM_CHANNEL_ID }}
             SECRET_WTELEGRAMBOT=${{ secrets.WTELEGRAMBOT }}
             DEBUG_DEPLOY=true
+            # DB_NAME_OVERRIDE=${{ secrets.CUSTOM_DB_NAME }} # Example
+            # DB_USER_OVERRIDE=${{ secrets.CUSTOM_DB_USER }} # Example
           script: |
             set -euo pipefail
             
-            readonly CURRENT_GIT_BRANCH="${{ github.ref_name }}" # Already lowercase if branch name is
+            # This variable is specific to this script block's execution context
+            # GIT_BRANCH_NAME from 'envs' above will be available to deploy.sh
+            readonly GHA_SCRIPT_GIT_BRANCH="${{ github.ref_name }}" 
+
             DEPLOY_TARGET_DIR="/var/lib/forex-trading-bot/ForexTradingBot"
             DEPLOY_SCRIPT_NAME="deploy.sh"
             DEPLOY_SCRIPT_FULL_PATH="$DEPLOY_TARGET_DIR/$DEPLOY_SCRIPT_NAME"
@@ -322,31 +326,60 @@ jobs:
             echo ">>> Navigating to deployment directory: $DEPLOY_TARGET_DIR"
             mkdir -p "$DEPLOY_TARGET_DIR"
             cd "$DEPLOY_TARGET_DIR"
-            
-            # Git operations
+
+            echo ">>> Current user: $(whoami), Effective user: $(id -u -n)"
+            echo ">>> Target Git Branch for checkout: $GHA_SCRIPT_GIT_BRANCH"
+
+            # Robust Git Operations
             if [ ! -d ".git" ]; then
-              echo "INFO: .git directory not found. Initializing Git repository..."
-              git init -b "$CURRENT_GIT_BRANCH"
+              echo "INFO: .git directory not found. Initializing Git repository for branch $GHA_SCRIPT_GIT_BRANCH..."
+              git init -b "$GHA_SCRIPT_GIT_BRANCH"
               if ! git remote -v | grep -q origin; then
-                git remote add origin "${{ github.server_url }}/${{ github.repository }}.git"
+                git remote add origin "https://github.com/Opselon/ForexTradingBot.git"
               fi
+            else
+              echo "INFO: .git directory exists. Ensuring remote 'origin' URL is correct..."
+              current_remote_url=$(git remote get-url origin || echo "none")
+              expected_remote_url="https://github.com/Opselon/ForexTradingBot.git"
+              if [ "$current_remote_url" != "$expected_remote_url" ]; then
+                echo "Updating remote 'origin' URL from '$current_remote_url' to '$expected_remote_url'..."
+                git remote set-url origin "$expected_remote_url"
+              fi
+              echo "Pruning stale remote branches from 'origin'..."
+              git remote prune origin
             fi
-            echo "Fetching branch '$CURRENT_GIT_BRANCH' from origin..."
-            # Use --force for fetch if reset --hard is used, to ensure local refs are updated
-            git fetch --force origin "$CURRENT_GIT_BRANCH":"refs/remotes/origin/$CURRENT_GIT_BRANCH" --depth 1 --prune --no-tags
-            echo "Cleaning working directory and resetting to 'origin/$CURRENT_GIT_BRANCH'..."
-            git clean -fdx 
-            git reset --hard "origin/$CURRENT_GIT_BRANCH"
             
+            echo "Fetching branch '$GHA_SCRIPT_GIT_BRANCH' directly into local branch..."
+            # Fetch the specific branch from origin and update the local branch with the same name.
+            # --force allows overwriting the local branch if it exists and is not a fast-forward.
+            # --prune removes any remote-tracking branches that no longer exist on the remote.
+            # --depth 1 for shallow clone (can be removed if full history is needed for other purposes).
+            git fetch --force --prune origin "$GHA_SCRIPT_GIT_BRANCH":"$GHA_SCRIPT_GIT_BRANCH" --depth 1 --no-tags
+            
+            echo "Ensuring we are on branch '$GHA_SCRIPT_GIT_BRANCH'..."
+            git checkout "$GHA_SCRIPT_GIT_BRANCH"
+            
+            echo "Cleaning working directory and resetting local branch '$GHA_SCRIPT_GIT_BRANCH' to its latest fetched state (HEAD)..."
+            git reset --hard HEAD # Reset to the tip of the current (just updated) local branch
+            git clean -fdx  # Remove all untracked files and directories
+            
+            echo "Git status after reset and clean:"
+            git status
+            echo "Files in deployment directory (ls -la) after git operations:"
+            ls -la
+
             # Verify and execute deploy.sh
             echo ">>> Verifying $DEPLOY_SCRIPT_NAME presence: $DEPLOY_SCRIPT_FULL_PATH"
             if [ ! -f "$DEPLOY_SCRIPT_FULL_PATH" ]; then
-                echo "::error::Deploy script '$DEPLOY_SCRIPT_FULL_PATH' not found."
+                echo "::error::Deploy script '$DEPLOY_SCRIPT_FULL_PATH' not found in $DEPLOY_TARGET_DIR."
                 exit 1
             fi
+            
             echo ">>> Making '$DEPLOY_SCRIPT_NAME' executable..."
             chmod +x "$DEPLOY_SCRIPT_FULL_PATH"
             
             echo ">>> Executing deployment script: $DEPLOY_SCRIPT_FULL_PATH"
-            # Variables from 'envs:' are already in the environment for deploy.sh
+            # Variables from 'envs:' (like GIT_BRANCH_NAME, DEPLOY_IMAGE_TAG, etc.)
+            # are automatically exported by appleboy/ssh-action into the environment
+            # where $DEPLOY_SCRIPT_FULL_PATH will run.
             "$DEPLOY_SCRIPT_FULL_PATH"

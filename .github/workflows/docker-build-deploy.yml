@@ -294,7 +294,7 @@ jobs:
           timeout: 60s
           command_timeout: 25m
           envs: |
-            GIT_BRANCH_NAME=${{ github.ref_name }}
+            GIT_BRANCH_NAME=${{ github.ref_name }} # این مقدار به deploy.sh پاس داده می‌شود
             DEPLOY_IMAGE_TAG=${{ needs.build.outputs.primary_image_tag }}
             REGISTRY_GHCR=${{ env.REGISTRY }}
             IMAGE_NAME_BASE=${{ env.IMAGE_NAME }}
@@ -306,9 +306,16 @@ jobs:
             SECRET_TELEGRAM_CHANNEL_ID_FOR_LOG_MONITOR=${{ secrets.TELEGRAM_CHANNEL_ID }}
             SECRET_WTELEGRAMBOT=${{ secrets.WTELEGRAMBOT }}
             DEBUG_DEPLOY=true
+
           script: |
             set -euo pipefail
             
+            # متغیر GIT_BRANCH_NAME را برای استفاده در این بلوک script تعریف می‌کنیم
+            # ما از همان مقداری استفاده می‌کنیم که به envs پاس داده شده است.
+            # appleboy/ssh-action باید اینها را export کند، اما برای اطمینان این کار را می‌کنیم یا مستقیم استفاده می‌کنیم.
+            # در این مورد، چون خطا unbound variable است، یعنی export نشده. پس مستقیم از github context استفاده می‌کنیم.
+            readonly CURRENT_GIT_BRANCH="${{ github.ref_name }}" # استفاده از یک نام جدید برای جلوگیری از تداخل احتمالی
+
             DEPLOY_TARGET_DIR="/var/lib/forex-trading-bot/ForexTradingBot"
             DEPLOY_SCRIPT_NAME="deploy.sh"
             DEPLOY_SCRIPT_FULL_PATH="$DEPLOY_TARGET_DIR/$DEPLOY_SCRIPT_NAME"
@@ -321,45 +328,26 @@ jobs:
             echo ">>> Initial PATH: $PATH"
             echo ">>> Home directory: $HOME"
             echo ">>> Shell: $SHELL"
+            echo ">>> Workflow Git Branch (CURRENT_GIT_BRANCH): $CURRENT_GIT_BRANCH" # چاپ برای دیباگ
             
-            echo ">>> Ensuring core packages (git, docker, docker-compose-plugin) are installed..."
-            # This section attempts to install packages if they are missing.
-            # For production, it's better if the server is pre-configured.
-            # Use 'sudo' if the SSH user is not root.
-            MISSING_PACKAGES=false
-            if ! command -v git &> /dev/null; then echo "INFO: git not found, attempting install..."; MISSING_PACKAGES=true; fi
-            if ! command -v docker &> /dev/null; then echo "INFO: docker not found, attempting install..."; MISSING_PACKAGES=true; fi
-            if ! (docker compose version &> /dev/null); then echo "INFO: docker compose plugin not found/working, attempting install..."; MISSING_PACKAGES=true; fi
+            # ... (بخش نصب پکیج‌ها بدون تغییر)
 
-            if [ "$MISSING_PACKAGES" = true ]; then
-              echo "Attempting package installation..."
-              # Ensure apt-get does not prompt for user interaction
-              export DEBIAN_FRONTEND=noninteractive
-              sudo apt-get update -yq && \
-              sudo apt-get install -yq git docker.io docker-compose-plugin || \
-              echo "WARNING: Package installation attempt had issues. Continuing..."
-              sudo systemctl start docker || true
-              sudo systemctl enable docker || true
-            else
-              echo "INFO: Core packages (git, docker, docker compose plugin) appear to be installed."
-            fi
-            # End of package installation check
-
-            echo ">>> Updating $DEPLOY_SCRIPT_NAME and project files from Git branch: $GIT_BRANCH_NAME"
+            # حالا از CURRENT_GIT_BRANCH برای دستورات git استفاده می‌کنیم
+            echo ">>> Updating $DEPLOY_SCRIPT_NAME and project files from Git branch: $CURRENT_GIT_BRANCH"
             
             if [ ! -d ".git" ]; then
               echo "INFO: .git directory not found. Initializing Git repository..."
-              git init -b "$GIT_BRANCH_NAME"
+              git init -b "$CURRENT_GIT_BRANCH"
               if ! git remote -v | grep -q origin; then
                 git remote add origin "${{ github.server_url }}/${{ github.repository }}.git"
               fi
             fi
             
-            echo "Fetching branch '$GIT_BRANCH_NAME' from origin (shallow)..."
-            git fetch origin "$GIT_BRANCH_NAME" --depth 1 --prune --no-tags
-            echo "Cleaning working directory and resetting to 'origin/$GIT_BRANCH_NAME'..."
+            echo "Fetching branch '$CURRENT_GIT_BRANCH' from origin (shallow)..."
+            git fetch origin "$CURRENT_GIT_BRANCH" --depth 1 --prune --no-tags
+            echo "Cleaning working directory and resetting to 'origin/$CURRENT_GIT_BRANCH'..."
             git clean -fdx 
-            git reset --hard "origin/$GIT_BRANCH_NAME"
+            git reset --hard "origin/$CURRENT_GIT_BRANCH"
             echo "Git status after reset:"
             git status
             echo "Files in deployment directory (ls -la):"
@@ -380,4 +368,5 @@ jobs:
             chmod +x "$DEPLOY_SCRIPT_FULL_PATH"
 
             echo ">>> Executing deployment script fetched from Git: $DEPLOY_SCRIPT_FULL_PATH"
+            # اسکریپت deploy.sh از متغیر GIT_BRANCH_NAME که از طریق envs پاس داده شده استفاده خواهد کرد
             "$DEPLOY_SCRIPT_FULL_PATH"

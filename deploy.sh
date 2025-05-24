@@ -1,180 +1,83 @@
-#!/bin/bash
-#
-# deploy.sh: Handles application deployment on the target server.
-# ... (comments remain the same) ...
+# ... (name, on, env, test job, build job sections remain the same) ...
+# ... (deploy job's `needs`, `if`, `runs-on`, `environment`, `steps[0]` (ssh-agent) remain same) ...
 
-# --- Strict Mode & Error Handling ---
-set -euo pipefail
-trap 'echo "ERROR: deploy.sh failed at line $LINENO. See output above." >&2; exit 1' ERR
-trap 'echo "Deployment interrupted." >&2; exit 1' SIGINT SIGTERM
+      - name: "🚀 Deploy to Server (Fetch & Run deploy.sh from Git)"
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USERNAME }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          timeout: 60s
+          command_timeout: 25m
+          # These envs are made available to the remote script (deploy.sh)
+          # by appleboy/ssh-action. THIS IS THE PRIMARY MECHANISM.
+          envs: |
+            GIT_BRANCH_NAME=${{ github.ref_name }}
+            DEPLOY_IMAGE_TAG=${{ needs.build.outputs.primary_image_tag }}
+            REGISTRY_GHCR=${{ env.REGISTRY }}
+            IMAGE_NAME_BASE=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+            SECRET_DB_CONNECTION_STRING=${{ secrets.DB_CONNECTION_STRING }}
+            SECRET_POSTGRES_SERVICE_PASSWORD=${{ secrets.POSTGRES_SERVICE_PASSWORD }}
+            SECRET_TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
+            SECRET_TELEGRAM_API_ID=${{ secrets.TELEGRAM_API_ID }}
+            SECRET_TELEGRAM_API_HASH=${{ secrets.TELEGRAM_API_HASH }}
+            SECRET_TELEGRAM_CHANNEL_ID_FOR_LOG_MONITOR=${{ secrets.TELEGRAM_CHANNEL_ID }}
+            SECRET_WTELEGRAMBOT=${{ secrets.WTELEGRAMBOT }}
+            DEBUG_DEPLOY=true
+          script: |
+            set -euo pipefail
+            
+            TARGET_BRANCH_NAME="${{ github.ref_name }}" # Use GHA context directly for safety
+            DEPLOY_TARGET_DIR="/var/lib/forex-trading-bot/ForexTradingBot"
+            DEPLOY_SCRIPT_NAME="deploy.sh" # Must match name in repo
+            DEPLOY_SCRIPT_FULL_PATH="$DEPLOY_TARGET_DIR/$DEPLOY_SCRIPT_NAME"
 
-# --- Configuration & Constants ---
-readonly ENV_FILE_PATH=".env.production"
-readonly DOCKER_COMPOSE_PLUGIN_DIR="/usr/libexec/docker/cli-plugins" # Adjust if your system is different
+            echo "--- GHA Script Block Started ---"
+            echo "Deployment Target Directory: $DEPLOY_TARGET_DIR"
+            echo "Target Git Branch: $TARGET_BRANCH_NAME"
+            
+            mkdir -p "$DEPLOY_TARGET_DIR"
+            cd "$DEPLOY_TARGET_DIR"
+            
+            echo "Current user: $(whoami)"
+            echo "Attempting to print environment variables visible to this script block:"
+            echo "Value of GIT_BRANCH_NAME from envs (should be set by appleboy/ssh-action): [$GIT_BRANCH_NAME]"
+            echo "Value of DEBUG_DEPLOY from envs (should be set by appleboy/ssh-action): [$DEBUG_DEPLOY]"
+            printenv | grep -E 'GIT_BRANCH_NAME|DEPLOY_IMAGE_TAG|DEBUG_DEPLOY' || echo "No matching env vars found by printenv."
 
-# --- Logging Functions ---
-log_info() { echo "INFO: $1"; }
-log_warn() { echo "WARNING: $1" >&2; }
-log_error() { echo "ERROR: $1" >&2; exit 1; }
-log_success() { echo "SUCCESS: $1"; }
-log_debug() {
-  if [[ "${DEBUG_DEPLOY:-false}" == "true" ]]; then
-    echo "DEBUG: $1"
-  fi
-}
+            # Git Operations
+            if [ ! -d ".git" ]; then
+              echo "Initializing Git repository for branch $TARGET_BRANCH_NAME..."
+              git init -b "$TARGET_BRANCH_NAME"
+              git remote add origin "https://github.com/Opselon/ForexTradingBot.git"
+            else
+              echo "Ensuring remote 'origin' URL is correct..."
+              git remote set-url origin "https://github.com/Opselon/ForexTradingBot.git"
+              echo "Pruning stale remote branches from 'origin'..."
+              git remote prune origin || echo "Warning: 'git remote prune origin' continuing..."
+            fi
+            
+            echo "Fetching branch '$TARGET_BRANCH_NAME' from origin..."
+            git fetch origin "$TARGET_BRANCH_NAME" --depth 1 --prune
+            
+            echo "Checking out branch '$TARGET_BRANCH_NAME'..."
+            git checkout "$TARGET_BRANCH_NAME"
+            
+            echo "Resetting local branch '$TARGET_BRANCH_NAME' to 'origin/$TARGET_BRANCH_NAME'..."
+            git reset --hard "origin/$TARGET_BRANCH_NAME"
+            
+            echo "Cleaning the working directory..."
+            git clean -fdx
 
-# --- Helper Functions ---
-check_env_var() {
-  local var_name="$1"
-  local var_value="${!var_name:-}"
-  log_debug "Checking env var: '$var_name', Value present: $([ -n "$var_value" ] && echo "yes" || echo "no")"
-  if [ -z "$var_value" ]; then
-    log_error "Required GHA environment variable '$var_name' is not set or is empty."
-  fi
-}
-
-DOCKER_CMD=""
-check_commands_exist() {
-    log_debug "Checking required commands..."
-    log_debug "Initial PATH: $PATH"
-    log_debug "User: $(whoami), Effective User: $(id -u -n)"
-
-    if [ -d "$DOCKER_COMPOSE_PLUGIN_DIR" ] && [[ ":$PATH:" != *":$DOCKER_COMPOSE_PLUGIN_DIR:"* ]]; then
-        log_debug "Adding Docker Compose plugin directory to PATH: $DOCKER_COMPOSE_PLUGIN_DIR"
-        export PATH="$DOCKER_COMPOSE_PLUGIN_DIR:$PATH"
-        log_debug "Updated PATH: $PATH"
-    elif [ ! -d "$DOCKER_COMPOSE_PLUGIN_DIR" ]; then
-        log_debug "Docker Compose plugin directory '$DOCKER_COMPOSE_PLUGIN_DIR' not found. Assuming 'docker compose' is in standard PATH."
-    fi
-
-    if ! command -v git &> /dev/null; then log_error "Git not found."; fi
-    log_debug "Git found: $(command -v git)"
-
-    if command -v docker &> /dev/null; then
-        DOCKER_CMD=$(command -v docker)
-        log_debug "Docker found in PATH: $DOCKER_CMD"
-    elif [ -x "/usr/bin/docker" ]; then # Fallback for some systems
-        DOCKER_CMD="/usr/bin/docker"
-        log_debug "Docker found at /usr/bin/docker (fallback)"
-    else
-        log_error "Docker executable not found in PATH or at /usr/bin/docker."
-    fi
-
-    log_debug "Attempting to verify Docker Compose plugin with: '$DOCKER_CMD compose version'"
-    local compose_test_output_file
-    compose_test_output_file=$(mktemp)
-    # shellcheck disable=SC2064
-    # CORRECTED TRAP: Removed CLEANUP
-    trap "rm -f '$compose_test_output_file'" EXIT ERR SIGINT SIGTERM
-
-    if "$DOCKER_CMD" compose version &> "$compose_test_output_file"; then
-        log_debug "SUCCESS: '$DOCKER_CMD compose version' executed. Output: $(cat "$compose_test_output_file")"
-    else
-        log_warn "FAILURE: '$DOCKER_CMD compose version' failed. Output/Error was:"
-        cat "$compose_test_output_file" >&2
-        log_error "Docker Compose plugin (V2) is not working correctly. Ensure it's installed and configured for the user '$(whoami)'."
-    fi
-    log_info "All command checks passed (git, docker, docker compose plugin)."
-}
-
-# --- Main Deployment Logic ---
-main() {
-  log_info "--- Starting Deployment Script (deploy.sh) ---"
-  
-  log_debug "--- Environment Variables Received by deploy.sh ---"
-  log_debug "GIT_BRANCH_NAME: '${GIT_BRANCH_NAME:-UNSET}'"
-  log_debug "DEPLOY_IMAGE_TAG: '${DEPLOY_IMAGE_TAG:-UNSET}'"
-  log_debug "REGISTRY_GHCR: '${REGISTRY_GHCR:-UNSET}'"
-  log_debug "IMAGE_NAME_BASE: '${IMAGE_NAME_BASE:-UNSET}'"
-  log_debug "SECRET_DB_CONNECTION_STRING present: $([ -n "${SECRET_DB_CONNECTION_STRING:-}" ] && echo "yes" || echo "no")"
-  log_debug "SECRET_POSTGRES_SERVICE_PASSWORD present: $([ -n "${SECRET_POSTGRES_SERVICE_PASSWORD:-}" ] && echo "yes" || echo "no")"
-  log_debug "SECRET_TELEGRAM_BOT_TOKEN present: $([ -n "${SECRET_TELEGRAM_BOT_TOKEN:-}" ] && echo "yes" || echo "no")"
-  log_debug "SECRET_TELEGRAM_API_ID present: $([ -n "${SECRET_TELEGRAM_API_ID:-}" ] && echo "yes" || echo "no")"
-  log_debug "SECRET_TELEGRAM_API_HASH present: $([ -n "${SECRET_TELEGRAM_API_HASH:-}" ] && echo "yes" || echo "no")"
-  log_debug "SECRET_TELEGRAM_CHANNEL_ID_FOR_LOG_MONITOR: '${SECRET_TELEGRAM_CHANNEL_ID_FOR_LOG_MONITOR:-UNSET}'"
-  log_debug "SECRET_WTELEGRAMBOT present: $([ -n "${SECRET_WTELEGRAMBOT:-}" ] && echo "yes" || echo "no")"
-  log_debug "DEBUG_DEPLOY: '${DEBUG_DEPLOY:-false}'"
-  log_debug "DB_NAME_OVERRIDE: '${DB_NAME_OVERRIDE:-UNSET}'"
-  log_debug "DB_USER_OVERRIDE: '${DB_USER_OVERRIDE:-UNSET}'"
-  log_debug "-----------------------------------------------------"
-
-  check_env_var "GIT_BRANCH_NAME"
-  check_env_var "DEPLOY_IMAGE_TAG"
-  check_env_var "REGISTRY_GHCR"
-  check_env_var "IMAGE_NAME_BASE"
-  check_env_var "SECRET_DB_CONNECTION_STRING"
-  check_env_var "SECRET_POSTGRES_SERVICE_PASSWORD"
-  check_env_var "SECRET_TELEGRAM_BOT_TOKEN"
-  check_env_var "SECRET_TELEGRAM_API_ID"
-  check_env_var "SECRET_TELEGRAM_API_HASH"
-  check_env_var "SECRET_TELEGRAM_CHANNEL_ID_FOR_LOG_MONITOR"
-
-  log_info "Deployment Target Branch: $GIT_BRANCH_NAME"
-  log_info "Deployment Docker Image: ${REGISTRY_GHCR}/${IMAGE_NAME_BASE}:${DEPLOY_IMAGE_TAG}"
-
-  log_info ">>> Performing pre-flight checks..."
-  check_commands_exist # This function will now run with the corrected trap
-
-  # ... (rest of the main function is the same) ...
-  log_info ">>> Updating source code from Git branch: $GIT_BRANCH_NAME..."
-  local current_branch_on_server
-  current_branch_on_server=$(git rev-parse --abbrev-ref HEAD)
-  if [ "$current_branch_on_server" != "$GIT_BRANCH_NAME" ]; then
-    log_info "Current branch is '$current_branch_on_server'. Switching to '$GIT_BRANCH_NAME'..."
-    if git show-ref --quiet "refs/heads/$GIT_BRANCH_NAME"; then
-      git checkout "$GIT_BRANCH_NAME"
-    else
-      log_info "Branch '$GIT_BRANCH_NAME' does not exist locally. Fetching and checking out..."
-      git fetch origin "$GIT_BRANCH_NAME":"$GIT_BRANCH_NAME"
-      git checkout "$GIT_BRANCH_NAME"
-    fi
-  fi
-
-  log_info "Fetching latest changes from origin for branch '$GIT_BRANCH_NAME'..."
-  git fetch origin "$GIT_BRANCH_NAME" --prune
-  log_info "Resetting local branch '$GIT_BRANCH_NAME' to 'origin/$GIT_BRANCH_NAME' and cleaning workspace..."
-  git clean -fdx
-  git reset --hard "origin/$GIT_BRANCH_NAME"
-  log_success "Source code updated and workspace cleaned."
-
-  log_info ">>> Preparing $ENV_FILE_PATH file..."
-  cat > "$ENV_FILE_PATH" << EOL
-# Auto-generated by deploy.sh from GHA secrets
-REGISTRY=${REGISTRY_GHCR}
-GITHUB_REPOSITORY=${IMAGE_NAME_BASE}
-IMAGE_TAG=${DEPLOY_IMAGE_TAG}
-DB_HOST=db
-DB_PORT=5432
-DB_NAME=${DB_NAME_OVERRIDE:-forextrading}
-DB_USER=${DB_USER_OVERRIDE:-forexuser}
-DB_PASSWORD=${SECRET_POSTGRES_SERVICE_PASSWORD}
-DB_CONNECTION_STRING_APP=${SECRET_DB_CONNECTION_STRING}
-TELEGRAM_BOT_TOKEN=${SECRET_TELEGRAM_BOT_TOKEN}
-TELEGRAM_API_ID=${SECRET_TELEGRAM_API_ID}
-TELEGRAM_API_HASH=${SECRET_TELEGRAM_API_HASH}
-LOG_MONITOR_TELEGRAM_CHANNEL_ID=${SECRET_TELEGRAM_CHANNEL_ID_FOR_LOG_MONITOR}
-$( [ -n "${SECRET_WTELEGRAMBOT:-}" ] && echo "WTELEGRAMBOT_ENV_VAR_NAME=${SECRET_WTELEGRAMBOT}" || echo "# SECRET_WTELEGRAMBOT not set or empty" )
-EOL
-  chmod 600 "$ENV_FILE_PATH"
-  log_info "'$ENV_FILE_PATH' created successfully AFTER Git operations."
-
-  log_info ">>> Docker Compose operations using '$DOCKER_CMD compose'..."
-  log_info "Pulling images..."
-  "$DOCKER_CMD" compose --env-file "$ENV_FILE_PATH" pull
-  log_info "Stopping and removing old containers..."
-  "$DOCKER_CMD" compose --env-file "$ENV_FILE_PATH" down --remove-orphans --timeout 60
-  log_info "Starting new containers..."
-  "$DOCKER_CMD" compose --env-file "$ENV_FILE_PATH" up -d --remove-orphans --force-recreate --renew-anon-volumes
-  log_success "Docker services operations completed."
-
-  log_info ">>> Waiting 30s for services to stabilize..."
-  sleep 30
-  log_info ">>> Current Docker container status:"
-  "$DOCKER_CMD" compose --env-file "$ENV_FILE_PATH" ps
-  log_info ">>> Recent logs (last 100 lines):"
-  "$DOCKER_CMD" compose --env-file "$ENV_FILE_PATH" logs --tail 100
-  log_success "--- Deployment Script Finished Successfully ---"
-}
-
-# --- Execute Main Function ---
-main "$@"
+            # Verify and execute deploy.sh
+            if [ ! -f "$DEPLOY_SCRIPT_FULL_PATH" ]; then
+                echo "::error::Deploy script '$DEPLOY_SCRIPT_FULL_PATH' not found after Git ops."
+                exit 1
+            fi
+            chmod +x "$DEPLOY_SCRIPT_FULL_PATH"
+            
+            echo "Executing $DEPLOY_SCRIPT_FULL_PATH..."
+            # This is where deploy.sh runs. It should inherit envs from appleboy/ssh-action.
+            "$DEPLOY_SCRIPT_FULL_PATH"
+            echo "--- GHA Script Block Finished ---"

@@ -52,28 +52,27 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-nuget-
 
+      - name: List project structure
+        run: |
+          echo "Current directory structure:"
+          ls -R
+          echo "Solution file location:"
+          find . -name "*.sln"
+
       - name: Restore dependencies
         run: dotnet restore ForexTradingBot.sln
 
       - name: Build
         run: dotnet build ForexTradingBot.sln --no-restore
 
-      - name: Run Tests
+      - name: Run All Tests with Coverage
         run: |
-          dotnet test Tests.Application/Tests.Application.csproj \
+          dotnet test ForexTradingBot.sln \
             --configuration Release \
             --collect:"XPlat Code Coverage" \
             --results-directory ./coverage \
             --logger "console;verbosity=detailed" \
             --no-build
-
-      - name: Run Integration Tests with Coverage
-        run: |
-          dotnet test Tests.Integration/Tests.Integration.csproj \
-            --no-build \
-            --verbosity normal \
-            --collect:"XPlat Code Coverage" \
-            --results-directory ./coverage/integration
 
       - name: Generate Coverage Report
         run: |
@@ -88,12 +87,10 @@ jobs:
         if: always()
         with:
           name: test-results
-          path: |
-            **/TestResults/
-            **/coverage/
+          path: ./coverage
           retention-days: 7
 
-      - name: Publish Test Results
+      - name: Upload Coverage Report
         uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -231,29 +228,7 @@ jobs:
             echo "Stopping existing containers..."
             docker compose down
             
-            # Create Docker secrets
-            echo "Creating Docker secrets..."
-            echo "${{ secrets.DB_PASSWORD }}" | docker secret create db_password -
-            echo "${{ secrets.TELEGRAM_BOT_TOKEN }}" | docker secret create telegram_bot_token -
-            echo "${{ secrets.TELEGRAM_API_ID }}" | docker secret create telegram_api_id -
-            echo "${{ secrets.TELEGRAM_API_HASH }}" | docker secret create telegram_api_hash -
-            echo "${{ secrets.CRYPTOPAY_API_TOKEN }}" | docker secret create cryptopay_api_token -
-            echo "${{ secrets.CRYPTOPAY_API_KEY }}" | docker secret create cryptopay_api_key -
-            echo "${{ secrets.CRYPTOPAY_WEBHOOK_SECRET }}" | docker secret create cryptopay_webhook_secret -
-            echo "${{ secrets.LOG_MONITOR_TELEGRAM_CHANNEL_ID }}" | docker secret create telegram_channel_id -
-            
-            # Wait for database to be ready
-            echo "Waiting for database to be ready..."
-            for i in {1..30}; do
-              if docker compose exec db pg_isready -U forexuser -d forextrading; then
-                echo "Database is ready!"
-                break
-              fi
-              echo "Waiting for database... attempt $i"
-              sleep 2
-            done
-            
-            # Start services with secrets
+            # Start services with environment file
             echo "Starting services..."
             docker compose --env-file .env.production up -d --remove-orphans
             
@@ -264,12 +239,6 @@ jobs:
             # Check container status
             echo "Checking container status..."
             docker compose ps
-            
-            # Start log monitoring for each service
-            echo "Starting log monitoring..."
-            docker compose exec -d webapi ./docker_log_monitor webapi
-            docker compose exec -d backgroundtasks ./docker_log_monitor backgroundtasks
-            docker compose exec -d telegrampanel ./docker_log_monitor telegrampanel
             
             # Show logs for all services
             echo "Showing logs for all services..."
@@ -284,13 +253,5 @@ jobs:
             
             echo "Checking TelegramPanel logs..."
             docker compose logs telegrampanel --tail 100
-            
-            # Verify log monitoring is running
-            echo "Verifying log monitoring..."
-            docker compose ps | grep docker_log_monitor
-            
-            # Clean up secrets after deployment
-            echo "Cleaning up secrets..."
-            docker secret rm db_password telegram_bot_token telegram_api_id telegram_api_hash cryptopay_api_token cryptopay_api_key cryptopay_webhook_secret telegram_channel_id || true
             
             echo "Deployment completed successfully!" 

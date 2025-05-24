@@ -360,21 +360,20 @@ jobs:
   #------------------------------------------------------------------------------------
   # JOB 3: Deploy - Deploy application to the server
   #------------------------------------------------------------------------------------
-  deploy:
+    deploy:
     name: "🚀 Deploy Application to Production"
-    needs: build # Depends on successful completion of the build job
-    # Run only on push to specified branches
+    needs: build
     if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/ForexSignal-Performance')
     runs-on: ubuntu-latest
-    environment: production # Use GitHub Environment "production" for secrets and deployment protection rules
+    environment: production
 
     steps:
       - name: "🔑 Setup SSH Agent (for server access)"
         uses: webfactory/ssh-agent@v0.9.0
         with:
-          ssh-private-key: ${{ secrets.SERVER_SSH_KEY }} # SSH private key stored as a GitHub secret
+          ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
 
-      - name: "🚀 Deploy to Server via SSH using deploy.sh"
+      - name: "🚀 Deploy to Server (Fetch & Run deploy.sh from Git)" # نام مرحله برای وضوح
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -382,204 +381,100 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           port: ${{ secrets.SERVER_PORT || 22 }}
           timeout: 60s
-          command_timeout: 20m
+          command_timeout: 25m
+
+          # --- متغیرهای محیطی که به deploy.sh روی سرور پاس داده می‌شوند ---
+          envs: |
+            GIT_BRANCH_NAME=${{ github.ref_name }}
+            DEPLOY_IMAGE_TAG=${{ needs.build.outputs.primary_image_tag }}
+            REGISTRY_GHCR=${{ env.REGISTRY }}
+            IMAGE_NAME_BASE=${{ env.IMAGE_NAME }}
+
+            # سکرت‌های اصلی شما بر اساس آخرین لیست
+            SECRET_DB_CONNECTION_STRING=${{ secrets.DB_CONNECTION_STRING }} # باید شامل Host=forex-postgres;... باشد
+            SECRET_POSTGRES_SERVICE_PASSWORD=${{ secrets.POSTGRES_SERVICE_PASSWORD }}
+            SECRET_TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
+            SECRET_TELEGRAM_API_ID=${{ secrets.TELEGRAM_API_ID }}
+            SECRET_TELEGRAM_API_HASH=${{ secrets.TELEGRAM_API_HASH }}
+            SECRET_TELEGRAM_CHANNEL_ID_FOR_LOG_MONITOR=${{ secrets.TELEGRAM_CHANNEL_ID }} # نگاشت از سکرت TELEGRAM_CHANNEL_ID
+            SECRET_WTELEGRAMBOT=${{ secrets.WTELEGRAMBOT }} # اختیاری
+
+            DEBUG_DEPLOY=true # برای فعال کردن لاگ‌های دیباگ در deploy.sh (که از گیت گرفته می‌شود)
+
+            # اختیاری: اگر می‌خواهید نام دیتابیس یا کاربر را از سکرت‌ها بازنویسی کنید
+            # DB_NAME_OVERRIDE=${{ secrets.CUSTOM_DB_NAME }}
+            # DB_USER_OVERRIDE=${{ secrets.CUSTOM_DB_USER }}
+
+          # --- اسکریپت برای FETCH کردن و اجرای deploy.sh از گیت ---
           script: |
             set -euo pipefail
             
-            # Create deployment directory
-            mkdir -p /var/lib/forex-trading-bot/ForexTradingBot
-            
-            # Create deploy.sh script
-            cat > /var/lib/forex-trading-bot/ForexTradingBot/deploy.sh << 'EOL'
-            #!/bin/bash
-            #
-            # deploy.sh: Handles application deployment on the target server.
-            # Fetches latest code, prepares environment, and restarts services using Docker Compose.
-            
-            # --- Strict Mode & Error Handling ---
-            set -euo pipefail
-            trap 'echo "ERROR: A command failed at line $LINENO. See output above for details." >&2; exit 1' ERR
-            trap 'echo "Deployment interrupted." >&2; exit 1' SIGINT SIGTERM
-            
-            # --- Configuration & Constants ---
-            readonly ENV_FILE_PATH=".env.production"
-            readonly REQUIRED_COMMANDS=("git" "docker" "docker compose")
-            
-            # --- Logging Functions ---
-            log_info() { echo "INFO: $1"; }
-            log_warn() { echo "WARNING: $1" >&2; }
-            log_error() { echo "ERROR: $1" >&2; exit 1; }
-            log_success() { echo "SUCCESS: $1"; }
-            
-            # --- Helper Functions ---
-            check_env_var() {
-              local var_name="$1"
-              if [ -z "${!var_name:-}" ]; then
-                log_error "Required environment variable '$var_name' is not set or is empty."
-              fi
-            }
-            
-            check_commands_exist() {
-              for cmd in "${REQUIRED_COMMANDS[@]}"; do
-                if ! command -v "$cmd" &> /dev/null; then
-                  log_error "Command '$cmd' not found. Please install it and ensure it's in the PATH."
-                fi
-              done
-              log_info "All required commands found."
-            }
-            
-            # --- Main Deployment Logic ---
-            main() {
-              log_info "--- Starting Deployment Script ---"
-            
-              # Validate required environment variables
-              check_env_var "GIT_BRANCH_NAME"
-              check_env_var "DEPLOY_IMAGE_TAG"
-              check_env_var "REGISTRY_GHCR"
-              check_env_var "IMAGE_NAME_BASE"
-              check_env_var "SECRET_DB_CONNECTION_STRING"
-              check_env_var "SECRET_POSTGRES_SERVICE_PASSWORD"
-              check_env_var "SECRET_TELEGRAM_BOT_TOKEN"
-              check_env_var "SECRET_TELEGRAM_API_ID"
-              check_env_var "SECRET_TELEGRAM_API_HASH"
-              check_env_var "SECRET_TELEGRAM_CHANNEL_ID_FOR_LOG_MONITOR"
-            
-              log_info "Deployment Target Branch: $GIT_BRANCH_NAME"
-              log_info "Deployment Docker Image: ${REGISTRY_GHCR}/${IMAGE_NAME_BASE}:${DEPLOY_IMAGE_TAG}"
-            
-              # --- Pre-flight Checks ---
-              log_info ">>> Performing pre-flight checks..."
-              check_commands_exist
-            
-              # --- Prepare .env.production File ---
-              log_info ">>> Preparing $ENV_FILE_PATH file..."
-              cat > "$ENV_FILE_PATH" << EOF
-            # Docker Image Configuration
-            REGISTRY=${REGISTRY_GHCR}
-            GITHUB_REPOSITORY=${IMAGE_NAME_BASE}
-            IMAGE_TAG=${DEPLOY_IMAGE_TAG}
-            
-            # Database Configuration
-            DB_HOST=forex-postgres
-            DB_PORT=5432
-            DB_NAME=${DB_NAME_OVERRIDE:-forextrading}
-            DB_USER=${DB_USER_OVERRIDE:-forexuser}
-            DB_PASSWORD=${SECRET_POSTGRES_SERVICE_PASSWORD}
-            DB_CONNECTION_STRING_APP=${SECRET_DB_CONNECTION_STRING}
-            
-            # Telegram Configuration
-            TELEGRAM_BOT_TOKEN=${SECRET_TELEGRAM_BOT_TOKEN}
-            TELEGRAM_API_ID=${SECRET_TELEGRAM_API_ID}
-            TELEGRAM_API_HASH=${SECRET_TELEGRAM_API_HASH}
-            LOG_MONITOR_TELEGRAM_CHANNEL_ID=${SECRET_TELEGRAM_CHANNEL_ID_FOR_LOG_MONITOR}
-            
-            # CryptoPay Configuration
-            CRYPTOPAY_API_TOKEN=${SECRET_CRYPTOPAY_API_TOKEN}
-            CRYPTOPAY_API_KEY=${SECRET_CRYPTOPAY_API_KEY}
-            CRYPTOPAY_WEBHOOK_SECRET=${SECRET_CRYPTOPAY_WEBHOOK_SECRET}
-            EOF
-            
-              # Secure the .env file
-              chmod 600 "$ENV_FILE_PATH"
-              log_info "'$ENV_FILE_PATH' created/updated successfully."
-            
-              # --- Update Source Code ---
-              log_info ">>> Updating source code from Git branch: $GIT_BRANCH_NAME..."
-              
-              # Initialize git if not already done
-              if [ ! -d .git ]; then
-                git init
-                git remote add origin "https://github.com/${IMAGE_NAME_BASE}.git"
-              fi
-              
-              # Fetch and checkout the branch
-              git fetch origin "$GIT_BRANCH_NAME"
-              git checkout -f "$GIT_BRANCH_NAME"
-              git reset --hard "origin/$GIT_BRANCH_NAME"
-            
-              log_success "Source code updated to latest from 'origin/$GIT_BRANCH_NAME'."
-            
-              # --- Docker Compose Operations ---
-              log_info ">>> Pulling latest Docker images..."
-              docker compose --env-file "$ENV_FILE_PATH" pull
-            
-              log_info ">>> Stopping existing containers..."
-              docker compose --env-file "$ENV_FILE_PATH" down --remove-orphans --timeout 60
-            
-              log_info ">>> Starting Docker services..."
-              docker compose --env-file "$ENV_FILE_PATH" up -d --remove-orphans --force-recreate --renew-anon-volumes
-            
-              log_success "Docker services started."
-            
-              # --- Post-Deployment ---
-              log_info ">>> Waiting for services to stabilize..."
-              sleep 30
-            
-              log_info ">>> Current Docker container status:"
-              docker compose --env-file "$ENV_FILE_PATH" ps
-            
-              log_info ">>> Recent logs:"
-              docker compose --env-file "$ENV_FILE_PATH" logs --tail 100
-            
-              log_success "--- Deployment Script Finished Successfully ---"
-            }
-            
-            # Execute main function
-            main "$@"
-            EOL
-            
-            # Make the script executable
-            chmod +x /var/lib/forex-trading-bot/ForexTradingBot/deploy.sh
-            
-            # Install required packages if not already installed
-            if ! command -v docker &> /dev/null; then
-              apt-get update
-              apt-get install -y docker.io
-            fi
-            
-            # Install Docker Compose plugin
-            if ! docker compose version &> /dev/null; then
-              apt-get update
-              apt-get install -y docker-compose-plugin
-              # Ensure Docker daemon is running
-              systemctl start docker
-              systemctl enable docker
-            fi
+            DEPLOY_TARGET_DIR="/var/lib/forex-trading-bot/ForexTradingBot"
+            DEPLOY_SCRIPT_NAME="deploy.sh" # نام اسکریپت شما در ریشه ریپازیتوری
+            DEPLOY_SCRIPT_FULL_PATH="$DEPLOY_TARGET_DIR/$DEPLOY_SCRIPT_NAME"
 
-            # Add Docker Compose to PATH if not already there
-            if ! command -v docker compose &> /dev/null; then
-              echo 'export PATH="/usr/libexec/docker/cli-plugins:$PATH"' >> ~/.bashrc
-              source ~/.bashrc
-            fi
+            echo ">>> Navigating to deployment directory: $DEPLOY_TARGET_DIR"
+            mkdir -p "$DEPLOY_TARGET_DIR"
+            cd "$DEPLOY_TARGET_DIR"
 
-            if ! command -v git &> /dev/null; then
-              apt-get update
-              apt-get install -y git
+            echo ">>> Current user: $(whoami), Effective user: $(id -u -n)"
+            echo ">>> Initial PATH: $PATH"
+            echo ">>> Home directory: $HOME"
+            echo ">>> Shell: $SHELL"
+            
+            # بخش نصب پکیج‌ها (این بخش را می‌توانید نگه دارید یا حذف کنید اگر مطمئن هستید پکیج‌ها نصب هستند)
+            # اگر نگه می‌دارید، مطمئن شوید دستورات برای توزیع لینوکس سرور شما صحیح است و دسترسی لازم وجود دارد (مثلاً sudo)
+            echo ">>> Checking/Ensuring required packages are installed..."
+            PACKAGES_INSTALLED=true
+            if ! command -v git &> /dev/null; then echo "INFO: git not found, attempting install..."; sudo apt-get update -y && sudo apt-get install -y git || PACKAGES_INSTALLED=false; fi
+            if ! command -v docker &> /dev/null; then echo "INFO: docker not found, attempting install..."; sudo apt-get update -y && sudo apt-get install -y docker.io || PACKAGES_INSTALLED=false; fi
+            if ! (docker compose version &> /dev/null); then # تست اولیه docker compose
+                echo "INFO: docker compose plugin not found or not working, attempting install/update..."
+                sudo apt-get update -y && sudo apt-get install -y docker-compose-plugin || PACKAGES_INSTALLED=false
+                # اطمینان از اجرای داکر پس از نصب احتمالی
+                sudo systemctl start docker || true
+                sudo systemctl enable docker || true
+            fi
+            if [ "$PACKAGES_INSTALLED" = false ]; then echo "WARNING: Some package installations may have failed."; fi
+            echo ">>> Package check/installation attempt finished."
+            # پایان بخش نصب پکیج‌ها
+
+            echo ">>> Updating $DEPLOY_SCRIPT_NAME and other project files from Git branch: $GIT_BRANCH_NAME"
+            
+            if [ ! -d ".git" ]; then
+              echo "INFO: .git directory not found. Initializing Git repository..."
+              git init -b "$GIT_BRANCH_NAME"
+              if ! git remote -v | grep -q origin; then
+                # برای ریپازیتوری‌های خصوصی، از URL مبتنی بر SSH استفاده کنید و کلید دیپلوی را روی سرور تنظیم کنید
+                git remote add origin "${{ github.server_url }}/${{ github.repository }}.git"
+              fi
             fi
             
-            # Required environment variables for deploy.sh
-            export GIT_BRANCH_NAME="${{ github.ref_name }}"
-            export DEPLOY_IMAGE_TAG="${{ needs.build.outputs.primary_image_tag }}"
-            export REGISTRY_GHCR="${{ env.REGISTRY }}"
-            export IMAGE_NAME_BASE="${{ env.IMAGE_NAME }}"
+            echo "Fetching branch '$GIT_BRANCH_NAME' from origin (shallow clone)..."
+            git fetch origin "$GIT_BRANCH_NAME" --depth 1 --prune
+            echo "Cleaning working directory and resetting to 'origin/$GIT_BRANCH_NAME'..."
+            git clean -fdx # حذف فایل‌های محلی که در گیت نیستند
+            git reset --hard "origin/$GIT_BRANCH_NAME" # بازنشانی به آخرین کامیت از گیت
+            echo "Git status after reset:"
+            git status
+            echo "Files in deployment directory:"
+            ls -la
+
+            echo ">>> Verifying deployment script presence after Git operations: $DEPLOY_SCRIPT_FULL_PATH"
+            if [ ! -f "$DEPLOY_SCRIPT_FULL_PATH" ]; then
+                echo "::error::Deploy script '$DEPLOY_SCRIPT_FULL_PATH' not found in $DEPLOY_TARGET_DIR. Ensure it's committed to the branch."
+                exit 1
+            fi
             
-            # Database configuration
-            export DB_NAME_OVERRIDE="${{ secrets.DB_NAME }}"
-            export DB_USER_OVERRIDE="${{ secrets.DB_USER }}"
-            export SECRET_POSTGRES_SERVICE_PASSWORD="${{ secrets.DB_PASSWORD }}"
-            export SECRET_DB_CONNECTION_STRING="Host=forex-postgres;Port=5432;Database=${{ secrets.DB_NAME }};Username=${{ secrets.DB_USER }};Password=${{ secrets.DB_PASSWORD }}"
+            echo ">>> Content of $DEPLOY_SCRIPT_FULL_PATH (from Git) that will be executed:"
+            echo "-------------------------------------------------------------"
+            cat "$DEPLOY_SCRIPT_FULL_PATH" # این محتوای deploy.sh که از گیت آمده را نشان می‌دهد
+            echo "-------------------------------------------------------------"
             
-            # Telegram configuration
-            export SECRET_TELEGRAM_BOT_TOKEN="${{ secrets.TELEGRAM_BOT_TOKEN }}"
-            export SECRET_TELEGRAM_API_ID="${{ secrets.TELEGRAM_API_ID }}"
-            export SECRET_TELEGRAM_API_HASH="${{ secrets.TELEGRAM_API_HASH }}"
-            export SECRET_TELEGRAM_CHANNEL_ID_FOR_LOG_MONITOR="${{ secrets.SECRET_TELEGRAM_CHANNEL_ID_FOR_LOG_MONITOR }}"
-            
-            # CryptoPay configuration
-            export SECRET_CRYPTOPAY_API_TOKEN="${{ secrets.CRYPTOPAY_API_TOKEN }}"
-            export SECRET_CRYPTOPAY_API_KEY="${{ secrets.CRYPTOPAY_API_KEY }}"
-            export SECRET_CRYPTOPAY_WEBHOOK_SECRET="${{ secrets.CRYPTOPAY_WEBHOOK_SECRET }}"
-            
-            # Run the deployment script
-            cd /var/lib/forex-trading-bot/ForexTradingBot
-            ./deploy.sh
+            echo ">>> Making '$DEPLOY_SCRIPT_NAME' executable: $DEPLOY_SCRIPT_FULL_PATH"
+            chmod +x "$DEPLOY_SCRIPT_FULL_PATH"
+
+            echo ">>> Executing deployment script fetched from Git: $DEPLOY_SCRIPT_FULL_PATH"
+            # این خط deploy.sh را که از گیت گرفته شده اجرا می‌کند
+            # متغیرهای محیطی از بخش 'envs' به این اسکریپت پاس داده می‌شوند
+            "$DEPLOY_SCRIPT_FULL_PATH"

@@ -348,6 +348,11 @@ jobs:
   #------------------------------------------------------------------------------------
   # JOB 3: Deploy - Deploy application to the server
   #------------------------------------------------------------------------------------
+# ... (بخش‌های name, on, env, test job, build job مانند فایل شما باقی می‌مانند) ...
+
+  #------------------------------------------------------------------------------------
+  # JOB 3: Deploy - Deploy application to the server
+  #------------------------------------------------------------------------------------
     deploy:
       name: "🚀 Deploy Application to Production"
       needs: build
@@ -361,44 +366,36 @@ jobs:
           with:
             ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
   
-        - name: "🚀 Deploy to Server via SSH using deploy.sh"
+        - name: "🚀 Deploy to Server via SSH using deploy.sh from Git" # نام مرحله را تغییر دادم برای وضوح
           uses: appleboy/ssh-action@v1.0.3
           with:
             host: ${{ secrets.SERVER_HOST }}
             username: ${{ secrets.SERVER_USERNAME }}
-            key: ${{ secrets.SERVER_SSH_KEY }} # اغلب اگر ssh-agent به درستی استفاده شود، می‌توان این را حذف کرد
+            key: ${{ secrets.SERVER_SSH_KEY }}
             port: ${{ secrets.SERVER_PORT || 22 }}
             timeout: 60s
-            command_timeout: 20m # برای ایمنی افزایش یافته است
+            command_timeout: 20m
   
-            # --- بخش 'envs' تصحیح شده و مطابق با secret های جدید شما ---
-            envs: |
+            envs: | # متغیرهای محیطی که به deploy.sh پاس داده می‌شوند
               GIT_BRANCH_NAME=${{ github.ref_name }}
               DEPLOY_IMAGE_TAG=${{ needs.build.outputs.primary_image_tag }}
               REGISTRY_GHCR=${{ env.REGISTRY }}
               IMAGE_NAME_BASE=${{ env.IMAGE_NAME }}
-  
-              # Secrets بر اساس استراتژی فعلی شما (DB_CONNECTION_STRING و غیره)
               SECRET_DB_CONNECTION_STRING=${{ secrets.DB_CONNECTION_STRING }}
-              SECRET_POSTGRES_SERVICE_PASSWORD=${{ secrets.POSTGRES_SERVICE_PASSWORD }} # اطمینان حاصل کنید این secret در گیت‌هاب وجود دارد!
+              SECRET_POSTGRES_SERVICE_PASSWORD=${{ secrets.POSTGRES_SERVICE_PASSWORD }}
               SECRET_TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
               SECRET_TELEGRAM_API_ID=${{ secrets.TELEGRAM_API_ID }}
               SECRET_TELEGRAM_API_HASH=${{ secrets.TELEGRAM_API_HASH }}
-              # نگاشت secret گیت‌هاب 'TELEGRAM_CHANNEL_ID' به متغیر محیطی که deploy.sh انتظار دارد
               SECRET_TELEGRAM_CHANNEL_ID_FOR_LOG_MONITOR=${{ secrets.TELEGRAM_CHANNEL_ID }}
-              SECRET_WTELEGRAMBOT=${{ secrets.WTELEGRAMBOT }} # اگر secret تنظیم نشده باشد، خالی خواهد بود
-              DEBUG_DEPLOY=true # فعال کردن لاگ‌های دیباگ در deploy.sh جدید
+              SECRET_WTELEGRAMBOT=${{ secrets.WTELEGRAMBOT }}
+              DEBUG_DEPLOY=true # برای فعال کردن لاگ‌های دیباگ در deploy.sh
   
-              # اختیاری: اگر می‌خواهید DB_NAME_OVERRIDE و DB_USER_OVERRIDE را سفارشی کنید
-              # DB_NAME_OVERRIDE=${{ secrets.CUSTOM_DB_NAME }} # مثال
-              # DB_USER_OVERRIDE=${{ secrets.CUSTOM_DB_USER }} # مثال
-  
-            # --- اسکریپت برای FETCH و اجرای deploy.sh ---
+            # --- اسکریپت برای FETCH و اجرای deploy.sh از گیت ---
             script: |
               set -euo pipefail
               
               DEPLOY_TARGET_DIR="/var/lib/forex-trading-bot/ForexTradingBot"
-              DEPLOY_SCRIPT_NAME="deploy.sh"
+              DEPLOY_SCRIPT_NAME="deploy.sh" # نام اسکریپت شما در ریشه ریپازیتوری
               DEPLOY_SCRIPT_FULL_PATH="$DEPLOY_TARGET_DIR/$DEPLOY_SCRIPT_NAME"
   
               echo ">>> Navigating to deployment directory: $DEPLOY_TARGET_DIR"
@@ -408,21 +405,41 @@ jobs:
               echo ">>> Current user: $(whoami)"
               echo ">>> Initial PATH: $PATH"
   
-              echo ">>> Updating deployment script (deploy.sh) and configurations from Git branch: $GIT_BRANCH_NAME"
+              # بخش نصب پکیج‌ها (اگر لازم است روی سرور هر بار اجرا شود)
+              # اگر اینها یکبار نصب شده‌اند و نیازی به اجرای مجدد نیست، می‌توانید این بخش را حذف کنید یا شرطی کنید
+              echo ">>> Ensuring required packages are installed..."
+              if ! command -v docker &> /dev/null || ! docker compose version &> /dev/null || ! command -v git &> /dev/null; then
+                echo "INFO: One or more required packages (git, docker, docker-compose-plugin) might be missing. Attempting installation..."
+                # از sudo استفاده کنید اگر کاربر SSH شما root نیست و نیاز به sudo دارد
+                # ممکن است نیاز به اجرای این دستورات بدون sudo باشد اگر کاربر SSH شما root است
+                sudo apt-get update -y
+                sudo apt-get install -y git docker.io docker-compose-plugin # یا پکیج مناسب برای توزیع شما
+                # اطمینان از اجرای داکر
+                sudo systemctl start docker || true # || true برای جلوگیری از خطا اگر از قبل در حال اجراست
+                sudo systemctl enable docker || true
+                echo "INFO: Package installation attempt finished."
+                # پس از نصب، ممکن است نیاز به source کردن مجدد bashrc یا لاگین مجدد باشد تا PATH آپدیت شود
+                # اما اضافه کردن دستی مسیر پلاگین در deploy.sh (که از گیت گرفته می‌شود) این مشکل را حل می‌کند.
+              else
+                echo "INFO: Git, Docker, and Docker Compose plugin appear to be installed."
+              fi
+              # پایان بخش نصب پکیج‌ها
+  
+              echo ">>> Updating deployment script ($DEPLOY_SCRIPT_NAME) and configurations from Git branch: $GIT_BRANCH_NAME"
               
               if [ ! -d ".git" ]; then
                 echo "INFO: .git directory not found. Initializing Git repository..."
-                git init -b "$GIT_BRANCH_NAME" # مقداردهی اولیه با شاخه هدف
+                git init -b "$GIT_BRANCH_NAME"
                 if ! git remote -v | grep -q origin; then
-                  # برای ریپازیتوری‌های خصوصی، از URL مبتنی بر SSH استفاده کنید: git@github.com:${{ github.repository }}.git
-                  # اطمینان حاصل کنید که سرور کلید دیپلوی مربوطه را دارد.
-                  git remote add origin "${{ github.server_url }}/${{ github.repository }}.git"
+                  git remote add origin "${{ github.server_url }}/${{ github.repository }}.git" # یا URL SSH
                 fi
               fi
               
               echo "Fetching branch '$GIT_BRANCH_NAME' from origin..."
               git fetch origin "$GIT_BRANCH_NAME" --depth 1 --prune
               echo "Resetting local branch '$GIT_BRANCH_NAME' to 'origin/$GIT_BRANCH_NAME'..."
+              # اضافه کردن git clean برای اطمینان از حذف فایل‌های قدیمی یا تغییر یافته محلی
+              git clean -fdx 
               git reset --hard "origin/$GIT_BRANCH_NAME"
               echo "Git status after reset:"
               git status
@@ -431,17 +448,17 @@ jobs:
   
               echo ">>> Verifying deployment script presence: $DEPLOY_SCRIPT_FULL_PATH"
               if [ ! -f "$DEPLOY_SCRIPT_FULL_PATH" ]; then
-                  echo "::error::Deploy script '$DEPLOY_SCRIPT_FULL_PATH' not found in $DEPLOY_TARGET_DIR."
+                  echo "::error::Deploy script '$DEPLOY_SCRIPT_FULL_PATH' not found in $DEPLOY_TARGET_DIR after git operations."
                   exit 1
               fi
               
               echo ">>> Content of $DEPLOY_SCRIPT_FULL_PATH that will be executed:"
               echo "-------------------------------------------------------------"
-              cat "$DEPLOY_SCRIPT_FULL_PATH"
+              cat "$DEPLOY_SCRIPT_FULL_PATH" # این محتوای deploy.sh از گیت را نشان خواهد داد
               echo "-------------------------------------------------------------"
               
               echo ">>> Making deployment script executable: $DEPLOY_SCRIPT_FULL_PATH"
               chmod +x "$DEPLOY_SCRIPT_FULL_PATH"
   
-              echo ">>> Executing deployment script: $DEPLOY_SCRIPT_FULL_PATH"
+              echo ">>> Executing deployment script from Git: $DEPLOY_SCRIPT_FULL_PATH"
               "$DEPLOY_SCRIPT_FULL_PATH"

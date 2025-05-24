@@ -28,7 +28,11 @@ trap 'echo "Deployment interrupted." >&2; exit 1' SIGINT SIGTERM
 # Variables passed from GHA are already in the environment.
 readonly ENV_FILE_PATH=".env.production"
 readonly REQUIRED_COMMANDS=("git" "docker")
-readonly DOCKER_COMPOSE_PATH="/usr/libexec/docker/cli-plugins/docker-compose"
+readonly DOCKER_COMPOSE_PATHS=(
+    "/usr/libexec/docker/cli-plugins/docker-compose"
+    "/usr/local/lib/docker/cli-plugins/docker-compose"
+    "/usr/bin/docker-compose"
+)
 
 # --- Logging Functions ---
 log_info() {
@@ -56,36 +60,59 @@ check_env_var() {
   fi
 }
 
-check_commands_exist() {
-  # Debug information
-  log_debug "Checking Docker Compose installation..."
-  log_debug "PATH: $PATH"
-  log_debug "Docker Compose path: $DOCKER_COMPOSE_PATH"
-  
-  # Check if docker compose exists at the expected path
-  if [ ! -f "$DOCKER_COMPOSE_PATH" ]; then
-    log_error "Docker Compose not found at $DOCKER_COMPOSE_PATH"
-  fi
-  
-  # Make sure it's executable
-  if [ ! -x "$DOCKER_COMPOSE_PATH" ]; then
-    log_debug "Making Docker Compose executable..."
-    chmod +x "$DOCKER_COMPOSE_PATH"
-  fi
-
-  # Check other required commands
-  for cmd in "${REQUIRED_COMMANDS[@]}"; do
-    if ! command -v "$cmd" &> /dev/null; then
-      log_error "Command '$cmd' not found. Please install it and ensure it's in the PATH."
+find_docker_compose() {
+    log_debug "Searching for Docker Compose..."
+    log_debug "Current PATH: $PATH"
+    
+    # First try the command directly
+    if command -v docker compose &> /dev/null; then
+        log_debug "Found 'docker compose' in PATH"
+        return 0
     fi
-  done
-  
-  log_info "All required commands found."
+    
+    # Then check specific paths
+    for path in "${DOCKER_COMPOSE_PATHS[@]}"; do
+        if [ -f "$path" ]; then
+            log_debug "Found Docker Compose at: $path"
+            if [ ! -x "$path" ]; then
+                log_debug "Making Docker Compose executable: $path"
+                chmod +x "$path"
+            fi
+            export PATH="$(dirname "$path"):$PATH"
+            return 0
+        fi
+    done
+    
+    # If we get here, Docker Compose wasn't found
+    log_error "Docker Compose not found in PATH or standard locations"
+    return 1
+}
+
+check_commands_exist() {
+    log_debug "Checking required commands..."
+    
+    # First check for Docker Compose
+    find_docker_compose
+    
+    # Then check other required commands
+    for cmd in "${REQUIRED_COMMANDS[@]}"; do
+        if ! command -v "$cmd" &> /dev/null; then
+            log_error "Command '$cmd' not found. Please install it and ensure it's in the PATH."
+        fi
+    done
+    
+    log_info "All required commands found."
 }
 
 # --- Main Deployment Logic ---
 main() {
   log_info "--- Starting Deployment Script ---"
+
+  # Debug information at the start
+  log_debug "Script started"
+  log_debug "Current directory: $(pwd)"
+  log_debug "Current user: $(whoami)"
+  log_debug "Current PATH: $PATH"
 
   # Validate required environment variables passed from GHA
   check_env_var "GIT_BRANCH_NAME"
@@ -189,13 +216,13 @@ EOL
 
   # --- Docker Compose Operations ---
   log_info ">>> Pulling latest Docker images..."
-  "$DOCKER_COMPOSE_PATH" --env-file "$ENV_FILE_PATH" pull
+  docker compose --env-file "$ENV_FILE_PATH" pull
 
   log_info ">>> Stopping existing containers..."
-  "$DOCKER_COMPOSE_PATH" --env-file "$ENV_FILE_PATH" down --remove-orphans --timeout 60
+  docker compose --env-file "$ENV_FILE_PATH" down --remove-orphans --timeout 60
 
   log_info ">>> Starting Docker services..."
-  "$DOCKER_COMPOSE_PATH" --env-file "$ENV_FILE_PATH" up -d --remove-orphans --force-recreate --renew-anon-volumes
+  docker compose --env-file "$ENV_FILE_PATH" up -d --remove-orphans --force-recreate --renew-anon-volumes
 
   log_success "Docker services started."
 
@@ -204,10 +231,10 @@ EOL
   sleep 30
 
   log_info ">>> Current Docker container status:"
-  "$DOCKER_COMPOSE_PATH" --env-file "$ENV_FILE_PATH" ps
+  docker compose --env-file "$ENV_FILE_PATH" ps
 
   log_info ">>> Recent logs:"
-  "$DOCKER_COMPOSE_PATH" --env-file "$ENV_FILE_PATH" logs --tail 100
+  docker compose --env-file "$ENV_FILE_PATH" logs --tail 100
 
   log_success "--- Deployment Script Finished Successfully ---"
 }

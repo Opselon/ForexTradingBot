@@ -3,6 +3,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Application.Features.Forwarding.Services;
 using Domain.Features.Forwarding.Entities;
+using Domain.Features.Forwarding.ValueObjects;
 using Hangfire;
 using Infrastructure.Jobs;
 using Microsoft.AspNetCore.Authorization;
@@ -12,6 +13,9 @@ using System.Collections.Generic;
 
 namespace WebAPI.Controllers
 {
+    /// <summary>
+    /// Controller for managing message forwarding rules and processing
+    /// </summary>
     [ApiController]
     [Route("api/[controller]")]
     [Authorize]
@@ -26,6 +30,11 @@ namespace WebAPI.Controllers
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
+        /// <summary>
+        /// Processes a message for forwarding based on configured rules
+        /// </summary>
+        /// <param name="request">The message processing request containing source channel ID and message ID</param>
+        /// <returns>OK if the message processing job was enqueued successfully</returns>
         [HttpPost("process")]
         public IActionResult ProcessMessage([FromBody] ProcessMessageRequest request)
         {
@@ -38,6 +47,11 @@ namespace WebAPI.Controllers
             return Ok("Message processing job enqueued");
         }
 
+        /// <summary>
+        /// Gets all forwarding rules
+        /// </summary>
+        /// <param name="cancellationToken">Cancellation token</param>
+        /// <returns>List of all forwarding rules</returns>
         [HttpGet("rules")]
         public async Task<ActionResult<IEnumerable<ForwardingRule>>> GetAllRules(CancellationToken cancellationToken)
         {
@@ -53,6 +67,12 @@ namespace WebAPI.Controllers
             }
         }
 
+        /// <summary>
+        /// Gets a specific forwarding rule by name
+        /// </summary>
+        /// <param name="ruleName">Name of the rule to retrieve</param>
+        /// <param name="cancellationToken">Cancellation token</param>
+        /// <returns>The forwarding rule if found</returns>
         [HttpGet("rules/{ruleName}")]
         public async Task<ActionResult<ForwardingRule>> GetRule(string ruleName, CancellationToken cancellationToken)
         {
@@ -72,6 +92,12 @@ namespace WebAPI.Controllers
             }
         }
 
+        /// <summary>
+        /// Gets all forwarding rules for a specific source channel
+        /// </summary>
+        /// <param name="sourceChannelId">ID of the source channel</param>
+        /// <param name="cancellationToken">Cancellation token</param>
+        /// <returns>List of forwarding rules for the specified channel</returns>
         [HttpGet("rules/channel/{sourceChannelId}")]
         public async Task<ActionResult<IEnumerable<ForwardingRule>>> GetRulesBySourceChannel(long sourceChannelId, CancellationToken cancellationToken)
         {
@@ -87,21 +113,42 @@ namespace WebAPI.Controllers
             }
         }
 
+        /// <summary>
+        /// Creates a new forwarding rule
+        /// </summary>
+        /// <param name="request">The forwarding rule creation request</param>
+        /// <returns>The created forwarding rule</returns>
         [HttpPost("rules")]
-        public async Task<ActionResult> CreateRule([FromBody] ForwardingRule rule, CancellationToken cancellationToken)
+        public async Task<ActionResult> CreateRule([FromBody] CreateForwardingRuleRequest request)
         {
             try
             {
-                await _forwardingService.CreateRuleAsync(rule, cancellationToken);
+                var rule = new ForwardingRule(
+                    ruleName: request.RuleName,
+                    isEnabled: true,
+                    sourceChannelId: request.SourceChannelId,
+                    targetChannelIds: new List<long> { request.TargetChannelId },
+                    editOptions: new MessageEditOptions(),
+                    filterOptions: new MessageFilterOptions()
+                );
+
+                await _forwardingService.CreateRuleAsync(rule, CancellationToken.None);
                 return CreatedAtAction(nameof(GetRule), new { ruleName = rule.RuleName }, rule);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error creating forwarding rule {RuleName}", rule.RuleName);
+                _logger.LogError(ex, "Error creating forwarding rule");
                 return StatusCode(500, "Error creating forwarding rule");
             }
         }
 
+        /// <summary>
+        /// Updates an existing forwarding rule
+        /// </summary>
+        /// <param name="ruleName">Name of the rule to update</param>
+        /// <param name="rule">The updated rule data</param>
+        /// <param name="cancellationToken">Cancellation token</param>
+        /// <returns>OK if the rule was updated successfully</returns>
         [HttpPut("rules/{ruleName}")]
         public async Task<ActionResult> UpdateRule(string ruleName, [FromBody] ForwardingRule rule, CancellationToken cancellationToken)
         {
@@ -122,6 +169,12 @@ namespace WebAPI.Controllers
             }
         }
 
+        /// <summary>
+        /// Deletes a forwarding rule
+        /// </summary>
+        /// <param name="ruleName">Name of the rule to delete</param>
+        /// <param name="cancellationToken">Cancellation token</param>
+        /// <returns>OK if the rule was deleted successfully</returns>
         [HttpDelete("rules/{ruleName}")]
         public async Task<ActionResult> DeleteRule(string ruleName, CancellationToken cancellationToken)
         {
@@ -138,9 +191,40 @@ namespace WebAPI.Controllers
         }
     }
 
+    /// <summary>
+    /// Request model for processing a message
+    /// </summary>
     public class ProcessMessageRequest
     {
+        /// <summary>
+        /// ID of the source channel
+        /// </summary>
         public long SourceChannelId { get; set; }
+
+        /// <summary>
+        /// ID of the message to process
+        /// </summary>
         public long MessageId { get; set; }
+    }
+
+    /// <summary>
+    /// Request model for creating a forwarding rule
+    /// </summary>
+    public class CreateForwardingRuleRequest
+    {
+        /// <summary>
+        /// Name of the forwarding rule
+        /// </summary>
+        public string RuleName { get; set; }
+
+        /// <summary>
+        /// ID of the source channel
+        /// </summary>
+        public long SourceChannelId { get; set; }
+
+        /// <summary>
+        /// ID of the target channel
+        /// </summary>
+        public long TargetChannelId { get; set; }
     }
 } 

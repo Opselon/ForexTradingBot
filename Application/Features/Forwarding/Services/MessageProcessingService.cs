@@ -91,10 +91,26 @@ namespace Application.Features.Forwarding.Services
                 return;
             }
 
+            if (string.IsNullOrWhiteSpace(originalMessage.message) && originalMessage.media == null)
+            {
+                _logger.LogWarning(
+                    "Message {SourceMsgId} has no content (empty text and no media). Skipping forwarding.",
+                    sourceMessageId);
+                return;
+            }
+
             string newCaption = originalMessage.message ?? "";
             MessageEntity[]? newEntities = originalMessage.entities?.ToArray();
 
             (newCaption, newEntities) = ApplyEditOptions(newCaption, newEntities, rule.EditOptions, originalMessage.media);
+
+            if (string.IsNullOrWhiteSpace(newCaption) && originalMessage.media == null)
+            {
+                _logger.LogWarning(
+                    "After processing, message {SourceMsgId} has no content. Skipping forwarding.",
+                    sourceMessageId);
+                return;
+            }
 
             InputMedia? finalMediaToSend = null;
             if (originalMessage.media != null)
@@ -139,6 +155,11 @@ namespace Application.Features.Forwarding.Services
             MessageEditOptions options,
             MessageMedia? originalMedia)
         {
+            if (string.IsNullOrWhiteSpace(initialText) && originalMedia == null)
+            {
+                return (string.Empty, null);
+            }
+
             var newTextBuilder = new StringBuilder(initialText);
             List<MessageEntity>? currentEntities = initialEntities?.ToList();
 
@@ -174,7 +195,7 @@ namespace Application.Features.Forwarding.Services
 
             string finalText = newTextBuilder.ToString();
 
-            if (!string.IsNullOrEmpty(options.PrependText))
+            if (!string.IsNullOrEmpty(options.PrependText) && !string.IsNullOrWhiteSpace(finalText))
             {
                 finalText = options.PrependText + finalText;
                 if (currentEntities != null)
@@ -192,7 +213,7 @@ namespace Application.Features.Forwarding.Services
             string textToAppend = !string.IsNullOrEmpty(options.AppendText) ? options.AppendText :
                                   !string.IsNullOrEmpty(options.CustomFooter) ? options.CustomFooter :
                                   string.Empty;
-            if (!string.IsNullOrEmpty(textToAppend))
+            if (!string.IsNullOrEmpty(textToAppend) && !string.IsNullOrWhiteSpace(finalText))
             {
                 finalText += textToAppend;
             }
@@ -266,5 +287,7 @@ namespace Application.Features.Forwarding.Services
             }
             return oldEntity;
         }
+
+ 
     }
 } 

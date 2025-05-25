@@ -80,6 +80,12 @@ try
             // Contact = new OpenApiContact { Name = "Support", Email = "support@example.com" },
             // License = new OpenApiLicense { Name = "License", Url = new Uri("https://example.com/license") }
         });
+
+        // Add XML documentation
+        var xmlFile = $"{System.Reflection.Assembly.GetExecutingAssembly().GetName().Name}.xml";
+        var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
+        options.IncludeXmlComments(xmlPath);
+
         //  در صورت نیاز، می‌توانید امنیت (مانند JWT Bearer) را به Swagger اضافه کنید
         // var jwtSecurityScheme = new OpenApiSecurityScheme { ... };
         // options.AddSecurityDefinition("Bearer", jwtSecurityScheme);
@@ -172,16 +178,18 @@ try
         await next.Invoke();
     });
 
+    // Enable Swagger in all environments
+    app.UseSwagger();
+    app.UseSwaggerUI(c =>
+    {
+        c.SwaggerEndpoint("/swagger/v1/swagger.json", "Forex Signal Bot API V1");
+        c.RoutePrefix = string.Empty; // This will make Swagger UI the root page
+    });
+
     //  پیکربندی‌های مختص محیط توسعه
     if (app.Environment.IsDevelopment())
     {
-        programLogger.LogInformation("Development environment detected. Enabling Swagger UI and Developer Exception Page.");
-        app.UseSwagger(); //  فعال کردن Middleware برای تولید مستندات Swagger JSON
-        app.UseSwaggerUI(c => //  فعال کردن Middleware برای نمایش Swagger UI
-        {
-            c.SwaggerEndpoint("/swagger/v1/swagger.json", "Forex Signal Bot API V1");
-            // c.RoutePrefix = string.Empty; //  برای نمایش Swagger در ریشه آدرس سایت (اختیاری)
-        });
+        programLogger.LogInformation("Development environment detected. Enabling Developer Exception Page.");
         app.UseDeveloperExceptionPage(); //  نمایش صفحه خطای با جزئیات برای توسعه‌دهندگان
     }
     else //  پیکربندی‌های مختص محیط Production
@@ -197,12 +205,7 @@ try
 
     app.UseRouting();
     app.UseAuthorization();
-    app.UseEndpoints(endpoints =>
-    {
-        endpoints.MapControllers();
-        endpoints.MapHangfireDashboard();
-    });
-
+    app.MapHangfireDashboard();
     programLogger.LogInformation("HTTP request pipeline configured.");
     #endregion
 
@@ -233,7 +236,7 @@ try
             RecurringJob.AddOrUpdate<IRssFetchingCoordinatorService>(
                 recurringJobId: "fetch-all-active-rss-feeds", //  یک شناسه منحصر به فرد و خوانا برای این Job
                 methodCall: service => service.FetchAllActiveFeedsAsync(CancellationToken.None), // متدی که باید اجرا شود
-                cronExpression: Cron.MinuteInterval(1),    // ✅ برای تست: هر ۱ دقیقه اجرا شود. برای Production بیشتر کنید (مثلاً "*/15 * * * *")
+                cronExpression: Cron.MinuteInterval(30),    // ✅ برای تست: هر ۱ دقیقه اجرا شود. برای Production بیشتر کنید (مثلاً "*/15 * * * *")
                 options: new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc } //  اجرای Job بر اساس زمان UTC
             );
             programLogger.LogInformation("Recurring job 'fetch-all-active-rss-feeds' scheduled to run every 1 minute (for testing).");

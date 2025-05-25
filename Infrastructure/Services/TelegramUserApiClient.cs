@@ -93,16 +93,164 @@ namespace Infrastructure.Services
             };
         }
 
+        /// <summary>
+        /// Asks the user for input based on the provided question and source method.
+        /// Currently, only "console" source is supported.
+        /// Handles potential issues with console availability and logs interactions.
+        /// </summary>
+        /// <param name="question">The question to ask the user. 
+        /// IMPORTANT: If this question might contain sensitive details itself, consider omitting it from logs or sanitizing.</param>
+        /// <param name="sourceMethod">The method/source from which the code is being requested (e.g., "console", "api_callback").
+        /// Defaults to "console" if null or whitespace.</param>
+        /// <returns>The user's input as a string, or null if input could not be obtained, was cancelled, or source is not implemented.</returns>
+        /// <remarks>
+        /// Security Considerations:
+        /// - Logging `question`: Be cautious if `question` itself could contain sensitive information passed from the caller.
+        /// - Input validation: The returned code is not validated here; the caller is responsible for validating the format/content.
+        ///
+        /// Robustness:
+        /// - Checks for console availability before attempting to read from it.
+        /// - Handles potential exceptions during console read operations.
+        ///
+        /// Extensibility:
+        /// - The `sourceMethod` parameter allows for future expansion to support other input sources,
+        ///   though only "console" is implemented.
+        /// </remarks>
         private string? AskCode(string question, string? sourceMethod)
         {
-            if (string.IsNullOrWhiteSpace(sourceMethod)) sourceMethod = "console";
-            _logger.LogInformation("WTC Request: {Question} (Source: {SourceMethod})", question.Trim(), sourceMethod);
-            if (sourceMethod.Equals("console", StringComparison.OrdinalIgnoreCase))
+            #region Parameter Validation and Defaulting
+            // Robustness: Ensure question is not null to prevent issues with Trim().
+            // If question can legitimately be null/empty, this check needs adjustment based on business logic.
+            if (string.IsNullOrWhiteSpace(question))
             {
-                Console.Write(question); return Console.ReadLine();
+                _logger.LogWarning("AskCode called with an empty or null question. SourceMethod: {SourceMethod}", sourceMethod ?? "Unknown");
+                // Decide on behavior: return null, throw ArgumentException, etc.
+                // Returning null seems consistent with other failure paths.
+                return null;
             }
-            _logger.LogWarning("AskCode src '{SourceMethod}' NI for '{Question}'.", sourceMethod, question.Trim()); return null;
+
+            string effectiveSourceMethod = string.IsNullOrWhiteSpace(sourceMethod) ? "console" : sourceMethod.Trim();
+            string trimmedQuestion = question.Trim(); // Trim once for consistent use.
+            #endregion
+
+            #region Logging Initial Request
+            // Security Note: `trimmedQuestion` is logged. If it can contain sensitive data,
+            // this logging should be re-evaluated (e.g., log a generic message or a sanitized version).
+            // For instance, if question is "Enter your password for account X:", logging is risky.
+            // If question is "Enter 2FA code:", logging `trimmedQuestion` is acceptable.
+            _logger.LogInformation("WTC Input Request: \"{QuestionDisplay}\" (Source: {SourceMethod})",
+                                   trimmedQuestion.Length > 50 ? trimmedQuestion.Substring(0, 50) + "..." : trimmedQuestion, // Log a truncated question for brevity
+                                   effectiveSourceMethod);
+            #endregion
+
+            // Currently, only "console" input is supported.
+            if (effectiveSourceMethod.Equals("console", StringComparison.OrdinalIgnoreCase))
+            {
+                #region Console Input Handling
+                try
+                {
+                    // Robustness: Check if a console is actually available for input.
+                    // `Console.IsInputRedirected` can be true if input comes from a file/pipe.
+                    // `Console.KeyAvailable` (with a try-catch for InvalidOperationException)
+                    // can indicate if an interactive console is present.
+                    // A simpler check is if WindowHeight > 0, but not foolproof for all environments.
+                    // For services, `Environment.UserInteractive` is a good indicator.
+                    if (!Environment.UserInteractive) // A common check for non-interactive environments like services.
+                    {
+                        _logger.LogWarning("AskCode (console): Application is not running in an interactive user environment. Cannot prompt for \"{QuestionDisplay}\".",
+                                           trimmedQuestion.Length > 50 ? trimmedQuestion.Substring(0, 50) + "..." : trimmedQuestion);
+                        return null;
+                    }
+                    // Additionally, check for actual console input capability.
+                    // This might throw InvalidOperationException if no console is attached.
+                    try
+                    {
+                        // A quick check to see if we can even attempt to read a key.
+                        // This doesn't consume the key. If this throws, ReadLine will likely also fail or block.
+                        if (Console.IsInputRedirected)
+                        {
+                            _logger.LogInformation("AskCode (console): Input is redirected. Reading from redirected input for \"{QuestionDisplay}\".",
+                                                   trimmedQuestion.Length > 50 ? trimmedQuestion.Substring(0, 50) + "..." : trimmedQuestion);
+                        }
+                        // else: Standard interactive console expected.
+                    }
+                    catch (InvalidOperationException ioExConsoleCheck)
+                    {
+                        _logger.LogWarning(ioExConsoleCheck, "AskCode (console): No console available or console operation failed during pre-check for \"{QuestionDisplay}\".",
+                                           trimmedQuestion.Length > 50 ? trimmedQuestion.Substring(0, 50) + "..." : trimmedQuestion);
+                        return null;
+                    }
+
+
+                    // Display the question to the console.
+                    // Using Console.Out to be explicit, though Console.Write often defaults to this.
+                    Console.Out.Write(trimmedQuestion + " "); // Add a space for better user experience before they type.
+
+                    // Read the user's input.
+                    // Performance: Console.ReadLine() is blocking. This is expected for interactive input.
+                    string? userInput = Console.ReadLine();
+
+                    // Security & Logging: Do NOT log the `userInput` if it's sensitive (e.g., password, token).
+                    // Here, we assume the "code" might be like a 2FA code, which is less sensitive *after* use,
+                    // but still better not to log values. We'll log receipt and length if needed.
+                    if (userInput != null)
+                    {
+                        _logger.LogInformation("WTC Input Received: User provided input of length {InputLength} for \"{QuestionDisplay}\" from console.",
+                                               userInput.Length,
+                                               trimmedQuestion.Length > 50 ? trimmedQuestion.Substring(0, 50) + "..." : trimmedQuestion);
+                        // Consider if empty input should be treated as null or an empty string.
+                        // `Console.ReadLine()` returns an empty string if user just presses Enter.
+                        // If an empty string is a valid "code", return it. Otherwise, convert to null or handle.
+                        // For this generic `AskCode`, returning the direct input (even if empty) seems reasonable.
+                        return userInput;
+                    }
+                    else
+                    {
+                        // This case (userInput is null) typically occurs if Ctrl+Z (EOF) is pressed on Windows,
+                        // or Ctrl+D on Linux/macOS, without typing anything, or if input stream ends.
+                        _logger.LogWarning("WTC Input Received: User cancelled input (EOF) or input stream ended for \"{QuestionDisplay}\" from console.",
+                                           trimmedQuestion.Length > 50 ? trimmedQuestion.Substring(0, 50) + "..." : trimmedQuestion);
+                        return null; // Indicate no input or cancellation.
+                    }
+                }
+                catch (IOException ioEx) // Handles errors like "Input/output error" if console is detached during read.
+                {
+                    _logger.LogError(ioEx, "WTC Input Error: An IOException occurred while trying to read from console for \"{QuestionDisplay}\".",
+                                     trimmedQuestion.Length > 50 ? trimmedQuestion.Substring(0, 50) + "..." : trimmedQuestion);
+                    return null;
+                }
+                catch (OperationCanceledException ocEx) // Though Console.ReadLine itself doesn't directly accept CancellationToken.
+                {
+                    // This might be relevant if the console host environment raises it for some reason, though rare for direct Console.ReadLine.
+                    _logger.LogWarning(ocEx, "WTC Input Warning: Console read operation was ostensibly cancelled for \"{QuestionDisplay}\".",
+                                       trimmedQuestion.Length > 50 ? trimmedQuestion.Substring(0, 50) + "..." : trimmedQuestion);
+                    return null;
+                }
+                catch (Exception ex) // Catch-all for any other unexpected issues.
+                {
+                    _logger.LogError(ex, "WTC Input Error: An unexpected error occurred during console input for \"{QuestionDisplay}\".",
+                                     trimmedQuestion.Length > 50 ? trimmedQuestion.Substring(0, 50) + "..." : trimmedQuestion);
+                    // Do not rethrow from here unless AskCode is critical and failure should halt the caller significantly.
+                    // Typically for input prompts, returning null to indicate failure is preferred.
+                    return null;
+                }
+                #endregion
+            }
+            else // Source method is not "console"
+            {
+                #region Non-Console Source Handling (Placeholder)
+                // This part handles source methods other than "console".
+                // Currently, it's a placeholder indicating non-implementation.
+                _logger.LogWarning("WTC Input Request: Source method '{SourceMethod}' is not implemented for question \"{QuestionDisplay}\". Returning null.",
+                                   effectiveSourceMethod,
+                                   trimmedQuestion.Length > 50 ? trimmedQuestion.Substring(0, 50) + "..." : trimmedQuestion);
+                // Future: Could involve callback mechanisms, message queues, or other IPC for different `sourceMethod` types.
+                // Example: if (sourceMethod == "gui_prompt") { /* code to show GUI dialog */ }
+                return null;
+                #endregion
+            }
         }
+
         #endregion
 
         #region WTelegramClient Update Handler
@@ -1051,7 +1199,8 @@ namespace Infrastructure.Services
         }
         #endregion
 
-        // Helper class for async locking
+        #region Helper class for async locking
+
         private class AsyncLock
         {
             private static readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new();
@@ -1070,5 +1219,6 @@ namespace Infrastructure.Services
                 public void Dispose() => _action();
             }
         }
+        #endregion
     }
 }

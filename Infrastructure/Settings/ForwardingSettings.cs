@@ -48,5 +48,6 @@ namespace Infrastructure.Settings
         public bool IgnoreServiceMessages { get; set; } = true;
         public int? MinMessageLength { get; set; }
         public int? MaxMessageLength { get; set; }
+        public List<string>? BlockedTexts { get; set; }
     }
 } 

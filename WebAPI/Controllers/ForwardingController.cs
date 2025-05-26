@@ -10,6 +10,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using System.Collections.Generic;
+using System.Text.RegularExpressions;
 
 namespace WebAPI.Controllers
 {
@@ -17,7 +18,7 @@ namespace WebAPI.Controllers
     /// Controller for managing message forwarding rules and processing
     /// </summary>
     [ApiController]
-    [Route("api/[controller]")]
+    [Route("api/v2/[controller]")]
     [Authorize]
     public class ForwardingController : ControllerBase
     {
@@ -30,12 +31,7 @@ namespace WebAPI.Controllers
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
-        /// <summary>
-        /// Processes a message for forwarding based on configured rules
-        /// </summary>
-        /// <param name="request">The message processing request containing source channel ID and message ID</param>
-        /// <returns>OK if the message processing job was enqueued successfully</returns>
-        [HttpPost("process")]
+        [HttpPost("process/background")]
         public IActionResult ProcessMessage([FromBody] ProcessMessageRequest request)
         {
             if (request == null)
@@ -47,11 +43,6 @@ namespace WebAPI.Controllers
             return Ok("Message processing job enqueued");
         }
 
-        /// <summary>
-        /// Gets all forwarding rules
-        /// </summary>
-        /// <param name="cancellationToken">Cancellation token</param>
-        /// <returns>List of all forwarding rules</returns>
         [HttpGet("rules")]
         public async Task<ActionResult<IEnumerable<ForwardingRule>>> GetAllRules(CancellationToken cancellationToken)
         {
@@ -67,12 +58,6 @@ namespace WebAPI.Controllers
             }
         }
 
-        /// <summary>
-        /// Gets a specific forwarding rule by name
-        /// </summary>
-        /// <param name="ruleName">Name of the rule to retrieve</param>
-        /// <param name="cancellationToken">Cancellation token</param>
-        /// <returns>The forwarding rule if found</returns>
         [HttpGet("rules/{ruleName}")]
         public async Task<ActionResult<ForwardingRule>> GetRule(string ruleName, CancellationToken cancellationToken)
         {
@@ -92,12 +77,6 @@ namespace WebAPI.Controllers
             }
         }
 
-        /// <summary>
-        /// Gets all forwarding rules for a specific source channel
-        /// </summary>
-        /// <param name="sourceChannelId">ID of the source channel</param>
-        /// <param name="cancellationToken">Cancellation token</param>
-        /// <returns>List of forwarding rules for the specified channel</returns>
         [HttpGet("rules/channel/{sourceChannelId}")]
         public async Task<ActionResult<IEnumerable<ForwardingRule>>> GetRulesBySourceChannel(long sourceChannelId, CancellationToken cancellationToken)
         {
@@ -113,42 +92,21 @@ namespace WebAPI.Controllers
             }
         }
 
-        /// <summary>
-        /// Creates a new forwarding rule
-        /// </summary>
-        /// <param name="request">The forwarding rule creation request</param>
-        /// <returns>The created forwarding rule</returns>
         [HttpPost("rules")]
-        public async Task<ActionResult> CreateRule([FromBody] CreateForwardingRuleRequest request)
+        public async Task<ActionResult> CreateRule([FromBody] ForwardingRule rule, CancellationToken cancellationToken)
         {
             try
             {
-                var rule = new ForwardingRule(
-                    ruleName: request.RuleName,
-                    isEnabled: true,
-                    sourceChannelId: request.SourceChannelId,
-                    targetChannelIds: new List<long> { request.TargetChannelId },
-                    editOptions: new MessageEditOptions(),
-                    filterOptions: new MessageFilterOptions()
-                );
-
-                await _forwardingService.CreateRuleAsync(rule, CancellationToken.None);
+                await _forwardingService.CreateRuleAsync(rule, cancellationToken);
                 return CreatedAtAction(nameof(GetRule), new { ruleName = rule.RuleName }, rule);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error creating forwarding rule");
+                _logger.LogError(ex, "Error creating forwarding rule {RuleName}", rule.RuleName);
                 return StatusCode(500, "Error creating forwarding rule");
             }
         }
 
-        /// <summary>
-        /// Updates an existing forwarding rule
-        /// </summary>
-        /// <param name="ruleName">Name of the rule to update</param>
-        /// <param name="rule">The updated rule data</param>
-        /// <param name="cancellationToken">Cancellation token</param>
-        /// <returns>OK if the rule was updated successfully</returns>
         [HttpPut("rules/{ruleName}")]
         public async Task<ActionResult> UpdateRule(string ruleName, [FromBody] ForwardingRule rule, CancellationToken cancellationToken)
         {
@@ -169,12 +127,6 @@ namespace WebAPI.Controllers
             }
         }
 
-        /// <summary>
-        /// Deletes a forwarding rule
-        /// </summary>
-        /// <param name="ruleName">Name of the rule to delete</param>
-        /// <param name="cancellationToken">Cancellation token</param>
-        /// <returns>OK if the rule was deleted successfully</returns>
         [HttpDelete("rules/{ruleName}")]
         public async Task<ActionResult> DeleteRule(string ruleName, CancellationToken cancellationToken)
         {
@@ -189,12 +141,11 @@ namespace WebAPI.Controllers
                 return StatusCode(500, "Error deleting forwarding rule");
             }
         }
-    }
 
-    /// <summary>
-    /// Request model for processing a message
-    /// </summary>
-    public class ProcessMessageRequest
+        /// <summary>
+        /// Request model for processing a message
+        /// </summary>
+        public class ProcessMessageRequest
     {
         /// <summary>
         /// ID of the source channel

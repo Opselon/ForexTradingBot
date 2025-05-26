@@ -71,8 +71,11 @@ namespace Infrastructure.Data
             // از اسمبلی جاری. این روش برای سازماندهی بهتر پیکربندی‌ها توصیه می‌شود.
             // modelBuilder.ApplyConfigurationsFromAssembly(Assembly.GetExecutingAssembly());
             // اگر از روش بالا استفاده نمی‌کنید، پیکربندی‌ها را مستقیماً در اینجا تعریف کنید:
+
+
             modelBuilder.ApplyConfigurationsFromAssembly(Assembly.GetExecutingAssembly());
             // --- User Configuration ---
         }
+
     }
 }

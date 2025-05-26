@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 namespace Infrastructure.Migrations
 {
     /// <inheritdoc />
-    public partial class AddForwardingRulesTable : Migration
+    public partial class TestWithOrchestratorCommen21312312tedAndSqlTryCatch : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
@@ -85,9 +85,9 @@ namespace Infrastructure.Migrations
                 name: "TextReplacementRule",
                 columns: table => new
                 {
-                    MessageEditOptionsForwardingRuleRuleName = table.Column<string>(type: "nvarchar(100)", nullable: false),
                     Id = table.Column<int>(type: "int", nullable: false)
                         .Annotation("SqlServer:Identity", "1, 1"),
+                    EditOptionsForwardingRuleName = table.Column<string>(type: "nvarchar(100)", nullable: false),
                     Find = table.Column<string>(type: "nvarchar(max)", nullable: false),
                     ReplaceWith = table.Column<string>(type: "nvarchar(max)", nullable: false),
                     IsRegex = table.Column<bool>(type: "bit", nullable: false),
@@ -95,10 +95,10 @@ namespace Infrastructure.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_TextReplacementRule", x => new { x.MessageEditOptionsForwardingRuleRuleName, x.Id });
+                    table.PrimaryKey("PK_TextReplacementRule", x => new { x.Id, x.EditOptionsForwardingRuleName });
                     table.ForeignKey(
-                        name: "FK_TextReplacementRule_ForwardingRules_MessageEditOptionsForwardingRuleRuleName",
-                        column: x => x.MessageEditOptionsForwardingRuleRuleName,
+                        name: "FK_TextReplacementRule_ForwardingRules_EditOptionsForwardingRuleName",
+                        column: x => x.EditOptionsForwardingRuleName,
                         principalTable: "ForwardingRules",
                         principalColumn: "RuleName",
                         onDelete: ReferentialAction.Cascade);
@@ -390,6 +390,11 @@ namespace Infrastructure.Migrations
                 name: "IX_Subscriptions_UserId",
                 table: "Subscriptions",
                 column: "UserId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_TextReplacementRule_EditOptionsForwardingRuleName",
+                table: "TextReplacementRule",
+                column: "EditOptionsForwardingRuleName");
 
             migrationBuilder.CreateIndex(
                 name: "IX_TokenWallets_UserId",

@@ -164,7 +164,7 @@ namespace Infrastructure.Services
                     await UpdateRssSourceFetchStatusAsync(rssSource, false, etag, lastModified, cancellationToken, "XML Parsing Error");
                     return Result<IEnumerable<NewsItemDto>>.Failure($"Invalid XML format in feed: {xmlEx.Message}");
                 }
-                catch (OperationCanceledException opCancelledEx) when (cancellationToken.IsCancellationRequested)
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) // Removed opCancelledEx
                 {
                     _logger.LogInformation("RSS feed fetch operation was cancelled by the main CancellationToken for {SourceName}.", rssSource.SourceName);
                     return Result<IEnumerable<NewsItemDto>>.Failure("RSS fetch operation cancelled by request.");
@@ -280,38 +280,32 @@ namespace Infrastructure.Services
         private async Task<Result<IEnumerable<NewsItemDto>>> SaveProcessedItemsAndDispatchNotificationsAsync(
             RssSource rssSource,
             List<NewsItem> newNewsEntitiesToSave,
-            HttpResponseMessage httpResponse, //  این باید non-nullable باشد اگر به اینجا رسیده‌ایم
+            HttpResponseMessage httpResponse,
             CancellationToken cancellationToken)
         {
-            // لاگ کردن شروع این مرحله مهم
             _logger.LogInformation("Attempting to save {NewItemCount} new news items and dispatch notifications for RssSource: {SourceName}",
                 newNewsEntitiesToSave.Count, rssSource.SourceName);
 
-            // اگر هیچ آیتم جدیدی برای ذخیره وجود ندارد، فقط متادیتای منبع RSS را آپدیت کن
             if (newNewsEntitiesToSave == null || !newNewsEntitiesToSave.Any())
             {
                 _logger.LogInformation("No new unique news items to save for '{SourceName}'. Updating RssSource metadata only.", rssSource.SourceName);
-                //  ETag و LastModified از پاسخ HTTP (حتی اگر 304 بوده و اینجا رسیده‌ایم، یعنی در HandleNotModifiedResponseAsync خطا بوده)
                 string? etagFromResponse = CleanETag(httpResponse?.Headers.ETag?.Tag);
                 string? lastModifiedFromResponse = GetLastModifiedFromHeaders(httpResponse?.Content?.Headers);
                 return await UpdateRssSourceFetchStatusAsync(rssSource, true, etagFromResponse, lastModifiedFromResponse, cancellationToken, "No new news items were found to save; RssSource metadata updated if changed.");
             }
 
-            // اضافه کردن موجودیت‌های NewsItem جدید به DbContext برای ذخیره‌سازی
             await _dbContext.NewsItems.AddRangeAsync(newNewsEntitiesToSave, cancellationToken);
             _logger.LogDebug("Added {Count} new NewsItem entities to DbContext for RssSource '{SourceName}'.", newNewsEntitiesToSave.Count, rssSource.SourceName);
 
-            // آپدیت کردن متادیتای RssSource بر اساس پاسخ HTTP موفق
-            rssSource.LastSuccessfulFetchAt = rssSource.LastFetchAttemptAt; // زمان آخرین تلاش موفق، همین الان بود
-            rssSource.FetchErrorCount = 0; // ریست کردن تعداد خطاها در صورت fetch موفق
-            rssSource.UpdatedAt = DateTime.UtcNow; // زمان آپدیت رکورد RssSource
-            rssSource.ETag = CleanETag(httpResponse.Headers.ETag?.Tag); // ذخیره ETag جدید (اگر وجود دارد)
-            rssSource.LastModifiedHeader = GetLastModifiedFromHeaders(httpResponse.Content?.Headers); // ذخیره LastModified جدید (اگر وجود دارد)
+            rssSource.LastSuccessfulFetchAt = rssSource.LastFetchAttemptAt;
+            rssSource.FetchErrorCount = 0;
+            rssSource.UpdatedAt = DateTime.UtcNow;
+            rssSource.ETag = CleanETag(httpResponse.Headers.ETag?.Tag);
+            rssSource.LastModifiedHeader = GetLastModifiedFromHeaders(httpResponse.Content?.Headers);
 
             int changesSaved = 0;
             try
             {
-                // ذخیره تمام تغییرات (NewsItems جدید و RssSource آپدیت شده) در یک تراکنش واحد
                 changesSaved = await _dbContext.SaveChangesAsync(cancellationToken);
                 _logger.LogInformation("Successfully saved {ChangesCount} changes to the database (including {NewItemCount} news items and metadata for RssSource '{SourceName}').",
                     changesSaved, newNewsEntitiesToSave.Count, rssSource.SourceName);
@@ -319,91 +313,82 @@ namespace Infrastructure.Services
             catch (DbUpdateException dbEx)
             {
                 _logger.LogError(dbEx, "Database update error while saving new news items or updating RssSource '{SourceName}'. New items will not be dispatched for notification.", rssSource.SourceName);
-                // در صورت بروز خطا در ذخیره‌سازی، از ارسال نوتیفیکیشن صرف نظر می‌کنیم
                 return Result<IEnumerable<NewsItemDto>>.Failure($"Database error during save operation for {rssSource.SourceName}: {dbEx.InnerException?.Message ?? dbEx.Message}");
             }
-            catch (Exception ex) // سایر خطاهای احتمالی SaveChangesAsync
+            catch (Exception ex)
             {
                 _logger.LogError(ex, "Unexpected error during SaveChangesAsync for RssSource '{SourceName}'. New items will not be dispatched.", rssSource.SourceName);
                 return Result<IEnumerable<NewsItemDto>>.Failure($"Unexpected error saving data for {rssSource.SourceName}: {ex.Message}");
             }
 
-            // اگر هیچ تغییری ذخیره نشده (که بعید است اگر newNewsEntitiesToSave آیتم داشته باشد)،
-            // یا اگر آیتم جدیدی وجود نداشته، از ارسال نوتیفیکیشن صرف نظر کن.
-            if (changesSaved == 0 || !newNewsEntitiesToSave.Any())
+            if (changesSaved == 0 || !newNewsEntitiesToSave.Any()) // This condition is likely already covered by the initial check, but fine as a safeguard.
             {
                 _logger.LogInformation("No database changes were saved or no new news items to dispatch for RssSource '{SourceName}'. Skipping notification dispatch.", rssSource.SourceName);
-                //  اگرچه آیتم جدیدی نبود، اما متادیتای RssSource ممکن است آپدیت شده باشد (اگر changesSaved > 0 بود).
-                //  در این حالت، یک نتیجه موفقیت‌آمیز بدون DTO برمی‌گردانیم.
                 return Result<IEnumerable<NewsItemDto>>.Success(
-                    Enumerable.Empty<NewsItemDto>(), //  هیچ NewsItemDto جدیدی برای برگرداندن نیست
+                    Enumerable.Empty<NewsItemDto>(),
                     $"No new news items were saved from {rssSource.SourceName}, but RssSource metadata might have been updated."
                 );
             }
 
-            // مرحله ارسال نوتیفیکیشن برای اخبار جدیدی که با موفقیت در دیتابیس ذخیره شده‌اند.
-            // این موجودیت‌ها حالا Id معتبر از دیتابیس دارند.
             _logger.LogInformation("Starting to enqueue notification dispatch jobs for {NewItemCount} newly saved news items from '{SourceName}'.",
                 newNewsEntitiesToSave.Count, rssSource.SourceName);
 
             var dispatchTasks = new List<Task>();
-            foreach (var savedNewsItemEntity in newNewsEntitiesToSave) //  حالا savedNewsItemEntity.Id معتبر است
+            foreach (var savedNewsItemEntity in newNewsEntitiesToSave)
             {
                 if (cancellationToken.IsCancellationRequested)
                 {
                     _logger.LogInformation("Notification dispatch enqueueing process was cancelled for RssSource '{SourceName}'. Not all items may have been enqueued.", rssSource.SourceName);
-                    break; // خروج از حلقه در صورت کنسل شدن
+                    break;
                 }
 
-                // کپی کردن متغیر حلقه برای جلوگیری از مشکلات Closure در Task.Run (اگرچه در C# جدیدتر کمتر مشکل‌ساز است)
                 var currentNewsItem = savedNewsItemEntity;
-                dispatchTasks.Add(Task.Run(async () => // استفاده از Task.Run برای اجرای Enqueue به صورت ناهمزمان (اختیاری)
+                // ✅ Remove 'async' from the lambda, as there's no 'await' inside.
+                dispatchTasks.Add(Task.Run(() => // No 'async' here
                 {
-                    if (cancellationToken.IsCancellationRequested) return; // بررسی مجدد توکن در داخل Task
+                    if (cancellationToken.IsCancellationRequested) return;
                     try
                     {
                         _logger.LogDebug("Enqueueing notification dispatch job for NewsItem ID: {NewsId}, Title: '{NewsTitle}'",
                             currentNewsItem.Id, currentNewsItem.Title.Truncate(50));
 
-                        // ✅✅✅ اصلاح: فقط currentNewsItem.Id را به عنوان پارامتر پاس دهید ✅✅✅
                         _backgroundJobClient.Enqueue<INotificationDispatchService>(dispatcher =>
-                            dispatcher.DispatchNewsNotificationAsync(currentNewsItem.Id, CancellationToken.None) // CancellationToken.None برای خود جاب Hangfire
+                            dispatcher.DispatchNewsNotificationAsync(currentNewsItem.Id, CancellationToken.None)
                         );
                         _logger.LogDebug("Successfully enqueued dispatch job for NewsItem ID: {NewsId}", currentNewsItem.Id);
                     }
                     catch (Exception enqueueEx)
                     {
-                        // ثبت خطای مربوط به قرار دادن جاب در صف Hangfire.
-                        // این خطا معمولاً به معنی مشکل در سریالایز کردن آرگومان‌ها یا ارتباط با Storage هنگ‌فایر است.
                         _logger.LogError(enqueueEx, "Failed to ENQUEUE notification dispatch job for NewsItemID {NewsId} from '{SourceName}'. This item will not be processed by notification service in this cycle.",
                             currentNewsItem.Id, rssSource.SourceName);
-                        //  می‌توانید این NewsItem.Id را در یک لیست خطاها برای بررسی‌های بعدی ذخیره کنید.
                     }
-                }, cancellationToken)); // پاس دادن توکن به Task.Run
+                }, cancellationToken));
             }
 
             try
             {
-                await Task.WhenAll(dispatchTasks); // منتظر بمانید تا تمام عملیات Enqueue تکمیل شوند (معمولاً سریع است)
+                await Task.WhenAll(dispatchTasks);
                 _logger.LogInformation("All {TaskCount} notification dispatch jobs have been enqueued for news items from '{SourceName}'.",
                     dispatchTasks.Count, rssSource.SourceName);
             }
             catch (OperationCanceledException)
             {
                 _logger.LogInformation("Enqueueing of some notification dispatch jobs was cancelled for '{SourceName}'.", rssSource.SourceName);
+                // Optionally re-throw or handle partially completed state if critical
             }
-            catch (Exception ex) // خطای احتمالی در Task.WhenAll (اگر یکی از Task ها Exception مدیریت نشده داشته باشد)
+            catch (Exception ex)
             {
                 _logger.LogError(ex, "Error occurred while waiting for all notification dispatch enqueue tasks to complete for RssSource '{SourceName}'. Some notifications might not have been enqueued.", rssSource.SourceName);
+                // Depending on requirements, you might want to propagate this error or handle it.
             }
 
-            // تبدیل موجودیت‌های ذخیره شده به DTO برای بازگرداندن نتیجه
             var resultDtos = _mapper.Map<IEnumerable<NewsItemDto>>(newNewsEntitiesToSave);
             return Result<IEnumerable<NewsItemDto>>.Success(
                 resultDtos,
                 $"{newNewsEntitiesToSave.Count} new news items were successfully fetched, saved, and notification jobs enqueued from {rssSource.SourceName}."
             );
         }
+
         #endregion
 
         private async Task<Result<IEnumerable<NewsItemDto>>> UpdateRssSourceFetchStatusAsync(
@@ -432,7 +417,11 @@ namespace Infrastructure.Services
                 }
             }
             try { await _dbContext.SaveChangesAsync(cancellationToken); }
-            catch (DbUpdateException dbEx) { /* ... */ return Result<IEnumerable<NewsItemDto>>.Failure("DB error updating status."); }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) // Removed opCancelledEx
+            {
+                _logger.LogInformation("RSS feed fetch operation was cancelled by the main CancellationToken for {SourceName}.", rssSource.SourceName);
+                return Result<IEnumerable<NewsItemDto>>.Failure("RSS fetch operation cancelled by request.");
+            }
 
             if (success) return Result<IEnumerable<NewsItemDto>>.Success(Enumerable.Empty<NewsItemDto>(), operationMessage ?? "Status updated.");
             return Result<IEnumerable<NewsItemDto>>.Failure($"Failed to update status. Errors: {rssSource.FetchErrorCount}");

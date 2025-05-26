@@ -109,7 +109,7 @@ namespace TelegramPanel.Application.CommandHandlers
         public bool CanHandle(Update update)
         {
             // This handler only processes CallbackQuery updates.
-            if (update.Type != UpdateType.CallbackQuery || string.IsNullOrWhiteSpace(update.CallbackQuery?.Data))
+            if (update.Type != UpdateType.CallbackQuery || update.CallbackQuery?.Data == null)
                 return false;
 
             string data = update.CallbackQuery.Data;
@@ -136,14 +136,26 @@ namespace TelegramPanel.Application.CommandHandlers
         /// </summary>
         public async Task HandleAsync(Update update, CancellationToken cancellationToken = default)
         {
-            var callbackQuery = update.CallbackQuery!; // Null checks performed in CanHandle
-            var message = callbackQuery.Message!;
-            var telegramFromUser = callbackQuery.From; // This is Telegram.Bot.Types.User
+            if (update.CallbackQuery == null || update.CallbackQuery.Message == null)
+            {
+                _logger.LogWarning("Received invalid callback query or message is null");
+                return;
+            }
+
+            var callbackQuery = update.CallbackQuery;
+            var message = callbackQuery.Message;
+            var telegramFromUser = callbackQuery.From;
+
+            if (telegramFromUser == null)
+            {
+                _logger.LogWarning("Received callback query with null From user");
+                return;
+            }
 
             long chatId = message.Chat.Id;
-            long telegramUserId = telegramFromUser.Id; // Telegram's unique ID for the user (long)
-            int originalMessageId = message.MessageId; // The ID of the message with the inline keyboard
-            string callbackData = callbackQuery.Data;
+            long telegramUserId = telegramFromUser.Id;
+            int originalMessageId = message.MessageId;
+            string callbackData = callbackQuery.Data ?? string.Empty;
 
             // Using a logging scope adds context (like UserId, CallbackData) to all logs within this handler's execution.
             using (_logger.BeginScope(new Dictionary<string, object?>
@@ -210,8 +222,8 @@ namespace TelegramPanel.Application.CommandHandlers
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "An unhandled error occurred while handling settings callback query data '{CallbackData}'.", callbackData);
-                    await _messageSender.SendTextMessageAsync(chatId, "An unexpected error occurred while processing your request. Please try again, or contact support if the issue persists.", cancellationToken: cancellationToken);
+                    _logger.LogError(ex, "Error processing settings callback query");
+                    await _messageSender.SendTextMessageAsync(chatId, "An error occurred while processing your request. Please try again later.", cancellationToken: cancellationToken);
                 }
             }
         }

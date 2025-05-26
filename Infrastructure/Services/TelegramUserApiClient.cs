@@ -34,7 +34,7 @@ namespace Infrastructure.Services
         #endregion
 
         #region Public Properties & Events
-        public WTelegram.Client NativeClient => _client;
+        public WTelegram.Client NativeClient => _client!;
         public event Action<Update> OnCustomUpdateReceived = delegate { }; // TL.Update
         #endregion
 
@@ -254,16 +254,16 @@ namespace Infrastructure.Services
         #endregion
 
         #region WTelegramClient Update Handler
-        private async Task HandleUpdatesBaseAsync(UpdatesBase updatesBase) // From _client.OnUpdates
+        private Task HandleUpdatesBaseAsync(UpdatesBase updatesBase) // Removed async
         {
             // --- Start of Method Logging ---
             _logger.LogDebug("HandleUpdatesBaseAsync: Received UpdatesBase of type {UpdatesBaseType}. Update content (partial): {UpdatesBaseContent}",
                 updatesBase.GetType().Name,
-                TruncateString(updatesBase.ToString(), 200)); // Log partial content for context
+                TruncateString(updatesBase.ToString(), 200));
 
             // --- User/Chat Collection Logging ---
-            int initialUserCacheCount = _userCache.Count; // Assuming .Count is available
-            int initialChatCacheCount = _chatCache.Count; // Assuming .Count is available
+            int initialUserCacheCount = _userCache.Count;
+            int initialChatCacheCount = _chatCache.Count;
 
             updatesBase.CollectUsersChats(_userCache, _chatCache);
 
@@ -282,7 +282,6 @@ namespace Infrastructure.Services
 
             List<Update> updatesToDispatch = new List<Update>();
 
-            // 1. Handle container updates like Updates and UpdatesCombined
             if (updatesBase is Updates updatesContainer && updatesContainer.updates != null)
             {
                 _logger.LogDebug("HandleUpdatesBaseAsync: Processing 'Updates' container with {UpdateCount} inner updates.", updatesContainer.updates.Length);
@@ -293,7 +292,6 @@ namespace Infrastructure.Services
                 _logger.LogDebug("HandleUpdatesBaseAsync: Processing 'UpdatesCombined' container with {UpdateCount} inner updates.", updatesCombinedContainer.updates.Length);
                 updatesToDispatch.AddRange(updatesCombinedContainer.updates);
             }
-            // 2. Handle standalone "short" updates by converting them to their "fuller" TL.Update equivalents
             else if (updatesBase is UpdateShortMessage usm)
             {
                 _logger.LogDebug("HandleUpdatesBaseAsync: Processing 'UpdateShortMessage'. MsgID: {MessageId}, UserID: {UserId}, PTS: {Pts}",
@@ -307,37 +305,16 @@ namespace Infrastructure.Services
                 else
                 {
                     userPeer = new PeerUser { user_id = usm.user_id };
-                    _logger.LogWarning("HandleUpdatesBaseAsync (USM): User {UserId} from UpdateShortMessage not in cache, using minimal PeerUser. This may affect functionality requiring access_hash.", usm.user_id);
+                    _logger.LogWarning("HandleUpdatesBaseAsync (USM): User {UserId} from UpdateShortMessage not in cache, using minimal PeerUser.", usm.user_id);
                 }
-
-                // Detailed construction logging (optional, can be Trace)
                 _logger.LogTrace("HandleUpdatesBaseAsync (USM): Constructing Message for MsgID {MessageId}. FromID: {FromId}, PeerID: {PeerId}, Message: {MessageContent}",
                     usm.id, usm.user_id, usm.user_id, TruncateString(usm.message, 50));
-
-                var msg = new Message
-                {
-                    // ... (your existing message construction) ...
-                    // No changes needed here unless you want to log specific flag settings
-                    flags = 0,
-                    id = usm.id,
-                    peer_id = userPeer,
-                    from_id = userPeer,
-                    message = usm.message,
-                    date = usm.date,
-                    entities = usm.entities,
-                    media = null,
-                    reply_to = usm.reply_to,
-                    fwd_from = usm.fwd_from,
-                    via_bot_id = usm.via_bot_id,
-                    ttl_period = usm.ttl_period
-                };
+                var msg = new Message { /* ... */ flags = 0, id = usm.id, peer_id = userPeer, from_id = userPeer, message = usm.message, date = usm.date, entities = usm.entities, media = null, reply_to = usm.reply_to, fwd_from = usm.fwd_from, via_bot_id = usm.via_bot_id, ttl_period = usm.ttl_period };
                 var uf = usm.flags;
                 if (uf.HasFlag(UpdateShortMessage.Flags.out_)) msg.flags |= Message.Flags.out_;
                 if (uf.HasFlag(UpdateShortMessage.Flags.mentioned)) msg.flags |= Message.Flags.mentioned;
                 if (uf.HasFlag(UpdateShortMessage.Flags.silent)) msg.flags |= Message.Flags.silent;
                 if (uf.HasFlag(UpdateShortMessage.Flags.media_unread)) msg.flags |= Message.Flags.media_unread;
-
-
                 updatesToDispatch.Add(new UpdateNewMessage { message = msg, pts = usm.pts, pts_count = usm.pts_count });
                 _logger.LogDebug("HandleUpdatesBaseAsync (USM): Added UpdateNewMessage for MsgID {MessageId} to dispatch list.", usm.id);
             }
@@ -348,27 +325,16 @@ namespace Infrastructure.Services
                 Peer chatPeer;
                 if (_chatCache.TryGetValue(uscm.chat_id, out var cachedChat))
                 {
-                    if (cachedChat is Channel channel)
-                    {
-                        chatPeer = new PeerChannel { channel_id = channel.id };
-                    }
-                    else // Assuming Chat or ChatForbidden
-                    {
-                        chatPeer = new PeerChat { chat_id = cachedChat.ID };
-                    }
+                    if (cachedChat is Channel channel) { chatPeer = new PeerChannel { channel_id = channel.id }; }
+                    else { chatPeer = new PeerChat { chat_id = cachedChat.ID }; }
                     _logger.LogTrace("HandleUpdatesBaseAsync (USCM): Chat {ChatId} (Type: {ChatType}) found in cache.", uscm.chat_id, cachedChat.GetType().Name);
                 }
                 else
                 {
-                    // If chat is not in cache, we only have the chat_id.
-                    // For channels, this is problematic as PeerChannel requires channel_id.
-                    // WTelegramClient often resolves this internally or through subsequent updates.
-                    // Defaulting to PeerChat if unknown is a common fallback but might be inaccurate for channels.
                     chatPeer = new PeerChat { chat_id = uscm.chat_id };
-                    _logger.LogWarning("HandleUpdatesBaseAsync (USCM): Chat {ChatId} from UpdateShortChatMessage not in cache, using minimal PeerChat. This may be inaccurate if it's a channel and might affect functionality requiring access_hash or channel specifics.", uscm.chat_id);
+                    _logger.LogWarning("HandleUpdatesBaseAsync (USCM): Chat {ChatId} from UpdateShortChatMessage not in cache, using minimal PeerChat.", uscm.chat_id);
                 }
-
-                Peer? fromPeer = null; // from_id is critical for group messages
+                Peer? fromPeer = null;
                 if (_userCache.TryGetValue(uscm.from_id, out var cachedFromUser))
                 {
                     fromPeer = new PeerUser { user_id = cachedFromUser.id };
@@ -377,47 +343,19 @@ namespace Infrastructure.Services
                 else
                 {
                     fromPeer = new PeerUser { user_id = uscm.from_id };
-                    _logger.LogWarning("HandleUpdatesBaseAsync (USCM): Sender User {UserId} (from_id) from UpdateShortChatMessage not in cache, using minimal PeerUser. This may affect functionality requiring access_hash.", uscm.from_id);
+                    _logger.LogWarning("HandleUpdatesBaseAsync (USCM): Sender User {UserId} from UpdateShortChatMessage not in cache, using minimal PeerUser.", uscm.from_id);
                 }
-
-                // --- CORRECTED PART ---
-                // Define targetChatIdForLog by checking the type of chatPeer
                 long targetChatIdForLog = 0;
-                if (chatPeer is PeerUser pu) targetChatIdForLog = pu.user_id; // Should not happen for chatPeer in USCM, but for safety
+                if (chatPeer is PeerUser pu) targetChatIdForLog = pu.user_id;
                 else if (chatPeer is PeerChat pc) targetChatIdForLog = pc.chat_id;
                 else if (chatPeer is PeerChannel pch) targetChatIdForLog = pch.channel_id;
-                // --- END OF CORRECTED PART ---
-
                 _logger.LogTrace("HandleUpdatesBaseAsync (USCM): Constructing Message for MsgID {MessageId}. FromID: {FromId}, TargetChatID: {TargetChatId}, Message: {MessageContent}",
                    uscm.id, uscm.from_id, targetChatIdForLog, TruncateString(uscm.message, 50));
-
-                var msg = new Message
-                {
-                    flags = 0, // Initialize
-                    id = uscm.id,
-                    peer_id = chatPeer, // The group/channel/chat where message appeared
-                    from_id = fromPeer, // The user who sent it
-                    message = uscm.message,
-                    date = uscm.date,
-                    entities = uscm.entities,
-                    media = null, // UpdateShortChatMessage schema does not directly provide a full MessageMedia object
-                    reply_to = uscm.reply_to,
-                    fwd_from = uscm.fwd_from,
-                    via_bot_id = uscm.via_bot_id,
-                    ttl_period = uscm.ttl_period
-                };
-                // Note: UpdateShortChatMessage flags (uscm.flags) are not directly mapped to Message flags
-                // in the same way as UpdateShortMessage.flags are.
-                // If uscm.flags has bits like 'out', 'mentioned', etc., you'd need to map them:
-                // Example: if (uscm.flags.HasFlag(UpdateShortChatMessage.Flags.out_)) msg.flags |= Message.Flags.out_;
-                // Consult WTelegramClient documentation or TL schema for UpdateShortChatMessage.Flags if needed.
-
-
+                var msg = new Message { /* ... */ flags = 0, id = uscm.id, peer_id = chatPeer, from_id = fromPeer, message = uscm.message, date = uscm.date, entities = uscm.entities, media = null, reply_to = uscm.reply_to, fwd_from = uscm.fwd_from, via_bot_id = uscm.via_bot_id, ttl_period = uscm.ttl_period };
                 updatesToDispatch.Add(new UpdateNewMessage { message = msg, pts = uscm.pts, pts_count = uscm.pts_count });
                 _logger.LogDebug("HandleUpdatesBaseAsync (USCM): Added UpdateNewMessage for MsgID {MessageId} to dispatch list.", uscm.id);
             }
 
-            // --- Dispatching Collected Updates ---
             if (updatesToDispatch.Any())
             {
                 _logger.LogInformation("HandleUpdatesBaseAsync: Dispatching {DispatchCount} TL.Update object(s) via OnCustomUpdateReceived.", updatesToDispatch.Count);
@@ -427,13 +365,12 @@ namespace Infrastructure.Services
                         update.GetType().Name, TruncateString(update.ToString(), 100));
                     try
                     {
-                        OnCustomUpdateReceived?.Invoke(update); // Assuming this is synchronous or fire-and-forget. If it's async, consider how to handle it.
+                        OnCustomUpdateReceived?.Invoke(update); // This remains a synchronous call
                     }
                     catch (Exception ex)
                     {
                         _logger.LogError(ex, "HandleUpdatesBaseAsync: Exception during OnCustomUpdateReceived invocation for update type {UpdateType}. Update content (partial): {UpdateContent}",
                             update.GetType().Name, TruncateString(update.ToString(), 100));
-                        // Decide if one failing subscriber should stop others, or if you should continue.
                     }
                 }
                 _logger.LogInformation("HandleUpdatesBaseAsync: Finished dispatching {DispatchCount} TL.Update object(s).", updatesToDispatch.Count);
@@ -442,9 +379,10 @@ namespace Infrastructure.Services
             {
                 _logger.LogDebug("HandleUpdatesBaseAsync: No TL.Update objects to dispatch from this UpdatesBase of type {UpdatesBaseType}.", updatesBase.GetType().Name);
             }
-            // No explicit 'await Task.CompletedTask;' needed if the method is already async due to other awaits (or if OnCustomUpdateReceived.Invoke is async itself and awaited).
-            // If the method signature has 'async Task' but there are no awaits, then `return Task.CompletedTask;` can be used. Here it seems implicitly async.
+
+            return Task.CompletedTask; // Add this line
         }
+   
 
         // Helper function to truncate strings for logging to avoid overly long log messages
         private string TruncateString(string? str, int maxLength)
@@ -737,6 +675,12 @@ namespace Infrastructure.Services
             long? replyToMsgId = null,
             bool noWebpage = false)
         {
+            if (_client == null)
+            {
+                _logger.LogError("SendMessageAsync: Telegram client (_client) is not initialized. Cannot send message.");
+                return null; // Or throw new InvalidOperationException("Client not initialized.");
+            }
+
             // --- Define variables for logging at the top of the method scope ---
             long peerIdForLog = 0;
             string peerTypeForLog = peer?.GetType().Name ?? "Unknown";
@@ -1037,14 +981,35 @@ namespace Infrastructure.Services
             if (peer is InputPeerSelf) return -1; // Or some other indicator for "self"
             return 0; // Default for unknown or null
         }
+
+
         public async Task<User?> GetSelfAsync()
         {
-            try { return await _client.LoginUserIfNeeded(); }
-            catch (Exception ex) { _logger.LogError(ex, "GetSelfAsync failed."); return null; }
+            // Add client null check here as well for consistency and safety
+            if (_client == null)
+            {
+                _logger.LogError("GetSelfAsync: Telegram client (_client) is not initialized.");
+                return null;
+            }
+            try
+            {
+                return await _client.LoginUserIfNeeded();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "GetSelfAsync failed."); return null;
+            }
         }
 
         public async Task<InputPeer?> ResolvePeerAsync(long peerId)
         {
+            if (_client == null)
+            {
+                _logger.LogError("ResolvePeerAsync: Telegram client (_client) is not initialized. Cannot resolve peer ID {PeerId}.", peerId);
+                return null;
+            }
+            // --- End of client null check ---
+
             if (peerId == 0)
             {
                 _logger.LogWarning("ResolvePeerAsync: Peer ID is 0, cannot resolve. Returning null.");

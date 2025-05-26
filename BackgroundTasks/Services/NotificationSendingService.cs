@@ -104,6 +104,11 @@ namespace BackgroundTasks.Services
                 _logger.LogError("SendNotificationAsync job received a null payload. Job cannot be processed.");
                 throw new ArgumentNullException(nameof(payload), "NotificationJobPayload cannot be null.");
             }
+
+            // Ensure messageTextToSend is never null
+            string messageTextToSend = payload.MessageText ?? string.Empty;
+            ParseMode? parseMode = payload.UseMarkdown ? ParseMode.MarkdownV2 : null;
+
             var logScope = new Dictionary<string, object?>
             {
                 ["JobType"] = "NewsNotification",
@@ -111,12 +116,13 @@ namespace BackgroundTasks.Services
                 ["NewsItemId"] = payload.NewsItemId,
                 ["NewsItemSignalCategoryId"] = payload.NewsItemSignalCategoryId
             };
+
             using (_logger.BeginScope(new Dictionary<string, object?>
             {
                 ["JobType"] = "TelegramNotification",
                 ["TargetTelegramUserId"] = payload.TargetTelegramUserId,
                 ["RelatedNewsImageUrl"] = payload.ImageUrl,
-                ["NotificationMessageHash"] = payload.MessageText?.GetHashCode() // لاگ کردن هش پیام
+                ["NotificationMessageHash"] = messageTextToSend.GetHashCode() // Using non-null messageTextToSend
             }))
             {
                 _logger.LogInformation("Starting to process news notification job.");
@@ -131,9 +137,6 @@ namespace BackgroundTasks.Services
                     //     _logger.LogInformation("User {TelegramUserId} no longer exists or has disabled this type of notification. Skipping.", payload.TargetTelegramUserId);
                     //     return;
                     // }
-
-                    string messageTextToSend = payload.MessageText;
-                    ParseMode? parseMode = payload.UseMarkdown ? ParseMode.MarkdownV2 : null;
 
                     // ✅ اگر از MarkdownV2 استفاده می‌کنید، مطمئن شوید متن به درستی escape شده است.
                     // این کار باید یا در NotificationDispatchService هنگام ساخت MessageText انجام شده باشد،
@@ -220,8 +223,6 @@ namespace BackgroundTasks.Services
 
                     _logger.LogDebug("Attempting to send formatted news notification to Telegram UserID {TelegramUserId}.", payload.TargetTelegramUserId);
 
-
-
                     if (!string.IsNullOrWhiteSpace(payload.ImageUrl))
                     {
                         await _telegramApiRetryPolicy.ExecuteAsync(async (ctx, ct) =>
@@ -245,12 +246,11 @@ namespace BackgroundTasks.Services
 
                             await _telegramMessageSender.SendTextMessageAsync(
                                 payload.TargetTelegramUserId,
-                                messageTextToSend,
+                                messageTextToSend, // Using non-null messageTextToSend
                                 parseMode: parseMode,
-                                finalKeyboard,
-                                ct, // CancellationToken از Polly context
-                                    // disableWebPagePreview: true // 📛 حذف شد
-                                linkPreviewOptions: defaultLinkPreviewOptions // ✅ استفاده از پارامتر جدید
+                                replyMarkup: finalKeyboard,
+                                cancellationToken: ct,
+                                linkPreviewOptions: defaultLinkPreviewOptions
                             );
                         }, pollyContext, jobCancellationToken);
                     }
@@ -273,9 +273,8 @@ namespace BackgroundTasks.Services
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Failed to send notification to UserID {TelegramUserId} after all retries. Job will be marked as failed. Payload Hash: {JobPayloadHash}",
-                        payload.TargetTelegramUserId, payload.GetHashCode());
-                    throw; //  خطا را دوباره throw کنید تا Hangfire آن را به عنوان ناموفق ثبت کند.
+                    _logger.LogError(ex, "Failed to send notification to Telegram UserID {TelegramUserId}.", payload.TargetTelegramUserId);
+                    throw; // Re-throw to let Hangfire handle the failure
                 }
             }
         }

@@ -18,6 +18,7 @@ using Hangfire.MemoryStorage;             // برای UseMemoryStorage (Storage 
 using Infrastructure;                     // برای متد توسعه‌دهنده AddInfrastructureServices
 using Infrastructure.Services;
 using Infrastructure.Settings;
+using EFCore.AutomaticMigrations;
 using Microsoft.OpenApi.Models;             // برای OpenApiInfo
 using Serilog;                              // برای Log, LoggerConfiguration, UseSerilog
 using Shared.Helpers;
@@ -68,6 +69,19 @@ try
     builder.Services.AddControllers();
     // فعال کردن API Explorer برای تولید مستندات Swagger/OpenAPI
     builder.Services.AddEndpointsApiExplorer();
+
+    // Add CORS
+    builder.Services.AddCors(options =>
+    {
+        options.AddDefaultPolicy(builder =>
+        {
+            builder.WithOrigins("http://localhost:3000", "http://localhost:4200")
+                   .AllowAnyMethod()
+                   .AllowAnyHeader()
+                   .AllowCredentials();
+        });
+    });
+
     // پیکربندی Swagger/OpenAPI برای مستندسازی API
     builder.Services.AddSwaggerGen(options =>
     {
@@ -76,20 +90,53 @@ try
             Version = "v1",
             Title = "Forex Signal Bot API",
             Description = "API endpoints for the Forex Signal Bot application, including Telegram webhook and administrative functions.",
-            // TermsOfService = new Uri("https://example.com/terms"),
-            // Contact = new OpenApiContact { Name = "Support", Email = "support@example.com" },
-            // License = new OpenApiLicense { Name = "License", Url = new Uri("https://example.com/license") }
+            Contact = new OpenApiContact
+            {
+                Name = "Support",
+                Email = "support@example.com"
+            }
         });
 
         // Add XML documentation
         var xmlFile = $"{System.Reflection.Assembly.GetExecutingAssembly().GetName().Name}.xml";
         var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
-        options.IncludeXmlComments(xmlPath);
+        if (File.Exists(xmlPath))
+        {
+            options.IncludeXmlComments(xmlPath);
+        }
 
-        //  در صورت نیاز، می‌توانید امنیت (مانند JWT Bearer) را به Swagger اضافه کنید
-        // var jwtSecurityScheme = new OpenApiSecurityScheme { ... };
-        // options.AddSecurityDefinition("Bearer", jwtSecurityScheme);
-        // options.AddSecurityRequirement(new OpenApiSecurityRequirement { { jwtSecurityScheme, Array.Empty<string>() } });
+        // Add JWT Authentication
+        options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+        {
+            Description = "JWT Authorization header using the Bearer scheme. Example: \"Authorization: Bearer {token}\"",
+            Name = "Authorization",
+            In = ParameterLocation.Header,
+            Type = SecuritySchemeType.ApiKey,
+            Scheme = "Bearer"
+        });
+
+        options.AddSecurityRequirement(new OpenApiSecurityRequirement
+        {
+            {
+                new OpenApiSecurityScheme
+                {
+                    Reference = new OpenApiReference
+                    {
+                        Type = ReferenceType.SecurityScheme,
+                        Id = "Bearer"
+                    }
+                },
+                Array.Empty<string>()
+            }
+        });
+
+        // Configure Swagger to handle conflicting routes
+        options.CustomSchemaIds(type => type.FullName);
+        options.ResolveConflictingActions(apiDescriptions =>
+        {
+            var first = apiDescriptions.First();
+            return first;
+        });
     });
     Log.Information("Core ASP.NET Core services (Controllers, API Explorer, Swagger) added.");
     #endregion
@@ -137,22 +184,29 @@ try
     builder.Services.AddForwardingOrchestratorServices();
     Log.Information("Forwarding orchestrator services registered.");
 
-    SqlServiceManager.EnsureSqlServicesRunning();
+    try
+    {
+        SqlServiceManager.EnsureSqlServicesRunning();
+    }
+    catch (Exception exSql)
+    {
+        Log.Error(exSql, "Error during SqlServiceManager.EnsureSqlServicesRunning()");
+        // Optionally rethrow if it's critical, or decide if the app can continue
+    }
+
     //  ❌❌ یادآوری: رجیستری‌های تکراری یا جابجا شده باید از اینجا حذف شده باشند ❌❌
     //  MediatR باید در AddApplicationServices با اسمبلی لایه Application رجیستر شود.
     //  ISignalService و سایر سرویس‌های لایه Application باید در AddApplicationServices رجیستر شوند.
     #endregion
 
     #region Configure Hangfire
-
-
     // ------------------- ۵. پیکربندی Hangfire برای اجرای کارهای پس‌زمینه -------------------
     builder.Services.AddHangfire(config => config
         .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
         .UseSimpleAssemblyNameTypeSerializer()
         .UseRecommendedSerializerSettings()
         .UseSqlServerStorage(builder.Configuration.GetConnectionString("DefaultConnection")));
-    builder.Services.AddHangfireServer();
+   // builder.Services.AddHangfireServer();
     Log.Information("Hangfire services (with SQL Server for production) added.");
     builder.Services.Configure<List<Infrastructure.Settings.ForwardingRule>>( // <<< Fully qualified
       builder.Configuration.GetSection("ForwardingRules"));
@@ -163,8 +217,8 @@ try
 
     // ------------------- ساخت WebApplication instance -------------------
     var app = builder.Build(); //  ساخت برنامه با تمام سرویس‌های پیکربندی شده
-    // ------------------- دریافت لاگر از DI برای استفاده در ادامه Program.cs -------------------
-    //  این لاگر، لاگری است که توسط UseSerilog پیکربندی شده است.
+                               // ------------------- دریافت لاگر از DI برای استفاده در ادامه Program.cs -------------------
+                               //  این لاگر، لاگری است که توسط UseSerilog پیکربندی شده است.
     var programLogger = app.Services.GetRequiredService<ILogger<Program>>(); //  استفاده از ILogger<Program> برای لاگ‌های مختص Program.cs
 
     #region Configure HTTP Request Pipeline
@@ -184,11 +238,13 @@ try
     {
         c.SwaggerEndpoint("/swagger/v1/swagger.json", "Forex Signal Bot API V1");
         c.RoutePrefix = string.Empty; // This will make Swagger UI the root page
+        c.DefaultModelsExpandDepth(-1); // Hide models section by default
     });
 
     //  پیکربندی‌های مختص محیط توسعه
     if (app.Environment.IsDevelopment())
     {
+
         programLogger.LogInformation("Development environment detected. Enabling Developer Exception Page.");
         app.UseDeveloperExceptionPage(); //  نمایش صفحه خطای با جزئیات برای توسعه‌دهندگان
     }
@@ -218,8 +274,6 @@ try
         //  ⚠️ برای محیط توسعه، اجازه دسترسی بدون احراز هویت به داشبورد داده شده است.
         //  برای محیط Production، باید حتماً از یک فیلتر احراز هویت امن استفاده کنید.
         Authorization = Array.Empty<IDashboardAuthorizationFilter>() //  ⚠️ فقط برای توسعه و تست محلی! ⚠️
-        //  مثال برای فعال کردن فیلتر سفارشی (اگر کلاس HangfireNoAuthFilter را دارید):
-        //  Authorization = new[] { new WebAPI.Filters.HangfireNoAuthFilter() }
     };
     app.UseHangfireDashboard("/hangfire", hangfireDashboardOptions); //  داشبورد در مسیر /hangfire در دسترس خواهد بود
     programLogger.LogInformation("Hangfire Dashboard configured at /hangfire (For development, open to all. Secure for production!).");
@@ -240,14 +294,6 @@ try
                 options: new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc } //  اجرای Job بر اساس زمان UTC
             );
             programLogger.LogInformation("Recurring job 'fetch-all-active-rss-feeds' scheduled to run every 1 minute (for testing).");
-
-            //  می‌توانید Job های تکرارشونده دیگری را نیز در اینجا اضافه کنید.
-            // RecurringJob.AddOrUpdate("daily-cleanup", () => Console.WriteLine("Daily cleanup job!"), Cron.Daily);
-
-            //  (اختیاری) اجرای فوری Job برای اولین بار پس از شروع برنامه (فقط برای تست)
-            // var backgroundJobClient = app.Services.GetRequiredService<IBackgroundJobClient>();
-            // backgroundJobClient.Enqueue<IRssFetchingCoordinatorService>(service => service.FetchAllActiveFeedsAsync(CancellationToken.None));
-            // programLogger.LogInformation("Manually enqueued 'FetchAllActiveFeedsAsync' job for immediate initial run for testing purposes.");
         }
         catch (Exception ex)
         {
@@ -261,11 +307,16 @@ try
     // ------------------- مپ کردن کنترلرها و اجرای برنامه -------------------
     app.MapControllers(); //  مسیردهی درخواست‌ها به Action های کنترلرها
     programLogger.LogInformation("Application setup complete. Starting web host now...");
-    using (var scope = app.Services.CreateScope())
-    {
-        var orchestrator = scope.ServiceProvider.GetRequiredService<UserApiForwardingOrchestrator>();
-        // Use orchestrator if needed
-    }
+
+    // Get the application URL from configuration or use default
+    var urls = builder.Configuration["Urls"] ?? "https://localhost:5001;http://localhost:5000";
+    var firstUrl = urls.Split(';')[0].Trim();
+    
+    //using (var scope = app.Services.CreateScope())
+    //{
+    //    var orchestrator = scope.ServiceProvider.GetRequiredService<UserApiForwardingOrchestrator>();
+    //    // Use orchestrator if needed
+    //}
     app.Run(); //  شروع به گوش دادن به درخواست‌های HTTP و اجرای برنامه
     #endregion
 }

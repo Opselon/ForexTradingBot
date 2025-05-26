@@ -8,9 +8,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Remove="Migrations\20250516013951_InitialCreate.cs" />
-    <Compile Remove="Migrations\20250516013951_InitialCreate.Designer.cs" />
-    <Compile Remove="Migrations\AppDbContextModelSnapshot.cs" />
+    <Compile Remove="Data\NewFolder\**" />
+    <EmbeddedResource Remove="Data\NewFolder\**" />
+    <None Remove="Data\NewFolder\**" />
   </ItemGroup>
 
   <ItemGroup>
@@ -43,7 +43,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Folder Include="Migrations\" />
+    <Folder Include="Data\Extensions\" />
+    <Folder Include="Data\Migrations\" />
   </ItemGroup>
 
 </Project>

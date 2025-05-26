@@ -12,8 +12,8 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20250522103127_UpdateForwardingRuleTargetChannelIdsFormat")]
-    partial class UpdateForwardingRuleTargetChannelIdsFormat
+    [Migration("20250526103608_TestWithOrchestratorCommen21312312tedAndSqlTryCatch")]
+    partial class TestWithOrchestratorCommen21312312tedAndSqlTryCatch
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -691,14 +691,14 @@ namespace Infrastructure.Migrations
 
                             b1.OwnsMany("Domain.Features.Forwarding.ValueObjects.TextReplacementRule", "TextReplacements", b2 =>
                                 {
-                                    b2.Property<string>("MessageEditOptionsForwardingRuleRuleName")
-                                        .HasColumnType("nvarchar(100)");
-
                                     b2.Property<int>("Id")
                                         .ValueGeneratedOnAdd()
                                         .HasColumnType("int");
 
                                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b2.Property<int>("Id"));
+
+                                    b2.Property<string>("EditOptionsForwardingRuleName")
+                                        .HasColumnType("nvarchar(100)");
 
                                     b2.Property<string>("Find")
                                         .IsRequired()
@@ -714,12 +714,14 @@ namespace Infrastructure.Migrations
                                         .IsRequired()
                                         .HasColumnType("nvarchar(max)");
 
-                                    b2.HasKey("MessageEditOptionsForwardingRuleRuleName", "Id");
+                                    b2.HasKey("Id", "EditOptionsForwardingRuleName");
+
+                                    b2.HasIndex("EditOptionsForwardingRuleName");
 
                                     b2.ToTable("TextReplacementRule");
 
                                     b2.WithOwner()
-                                        .HasForeignKey("MessageEditOptionsForwardingRuleRuleName");
+                                        .HasForeignKey("EditOptionsForwardingRuleName");
                                 });
 
                             b1.Navigation("TextReplacements");

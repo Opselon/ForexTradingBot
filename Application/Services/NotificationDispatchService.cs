@@ -94,7 +94,7 @@ namespace Application.Services
             using (_logger.BeginScope(new Dictionary<string, object?>
             {
                 ["NewsItemId"] = newsItem.Id,
-                ["NewsTitleScope"] = newsItem.Title.Truncate(50), // Scope variable to avoid conflict with local 'title'
+                ["NewsTitleScope"] = newsItem.Title?.Truncate(50) ?? "No Title", // Handle null title
                 ["NewsItemIsVip"] = newsItem.IsVipOnly,
                 ["NewsItemCategoryId"] = newsItem.AssociatedSignalCategoryId
             }))
@@ -178,24 +178,6 @@ namespace Application.Services
                         continue;
                     }
 
-                    // Optional: Additional fine-grained filtering if GetUsersForNewsNotificationAsync isn't exhaustive.
-                    // This is commented out as per your code, assuming primary filtering is done in the repository.
-                    // If re-enabled, ensure `_userPrefsRepository` is injected and uncomment related code.
-                    /*
-                    if (newsItem.AssociatedSignalCategoryId.HasValue && _userPrefsRepository != null)
-                    {
-                        // Performance: This would be an N+1 query issue if GetPreferencesByUserIdAsync hits DB per user.
-                        // Should be batch-loaded or integrated into GetUsersForNewsNotificationAsync.
-                        var userPreferences = await _userPrefsRepository.GetPreferencesByUserIdAsync(user.Id, cancellationToken);
-                        if (!userPreferences.Any(p => p.CategoryId == newsItem.AssociatedSignalCategoryId.Value))
-                        {
-                            _logger.LogDebug("User {UserId} (TG:{TelegramId}) filtered out by specific category {CategoryId} preference.",
-                                user.Id, telegramUserId, newsItem.AssociatedSignalCategoryId.Value);
-                            continue;
-                        }
-                    }
-                    */
-
                     var payload = new NotificationJobPayload
                     {
                         TargetTelegramUserId = telegramUserId,
@@ -204,7 +186,7 @@ namespace Application.Services
                         ImageUrl = imageUrl,
                         NewsItemId = newsItem.Id,
                         NewsItemSignalCategoryId = newsItem.AssociatedSignalCategoryId,
-                        NewsItemSignalCategoryName = newsItem.AssociatedSignalCategory?.Name, // Requires `AssociatedSignalCategory` to be eager-loaded or available
+                        NewsItemSignalCategoryName = newsItem.AssociatedSignalCategory?.Name ?? string.Empty, // Handle null category name
                         Buttons = buttons, // Using pre-built buttons
                         CustomData = new Dictionary<string, string> { { "NewsItemId", newsItem.Id.ToString() } }
                         // Consider adding UserId, Username to CustomData if NotificationSendingService needs them for advanced logic.
@@ -249,7 +231,11 @@ namespace Application.Services
         /// </remarks>
         private string BuildMessageText(NewsItem newsItem)
         {
-            // Consider moving complex message building logic to a dedicated service or template engine if it grows.
+            if (newsItem == null)
+            {
+                throw new ArgumentNullException(nameof(newsItem));
+            }
+
             var messageTextBuilder = new StringBuilder();
 
             // Security & Robustness: Null checks and trimming for all text parts.
@@ -257,7 +243,7 @@ namespace Application.Services
             string title = EscapeMarkdownV2Lenient(newsItem.Title?.Trim() ?? "Untitled News");
             string sourceName = EscapeMarkdownV2Lenient(newsItem.SourceName?.Trim() ?? "Unknown Source");
             string summary = EscapeMarkdownV2Lenient(TruncateWithEllipsis(newsItem.Summary, 250)?.Trim() ?? string.Empty); // Max length 250
-            string link = newsItem.Link?.Trim(); // URLs in Markdown links generally don't need escaping for V2 unless they contain ')' or '\'.
+            string? link = newsItem.Link?.Trim(); // URLs in Markdown links generally don't need escaping for V2 unless they contain ')' or '\'.
 
             messageTextBuilder.AppendLine($"*{title}*"); // Title bold
             messageTextBuilder.AppendLine($"_📰 Source: {sourceName}_"); // Source italic
@@ -279,8 +265,6 @@ namespace Application.Services
                 else
                 {
                     _logger.LogWarning("Invalid URL format for news item link. NewsItemID: {NewsItemId}, Link: {Link}", newsItem.Id, link);
-                    // Optionally, append the link as plain text if it's invalid but still useful
-                    // messageTextBuilder.Append($"\n\nLink (possibly invalid): {EscapeMarkdownV2Lenient(link)}");
                 }
             }
             return messageTextBuilder.ToString().Trim();
@@ -291,6 +275,11 @@ namespace Application.Services
         /// </summary>
         private List<NotificationButton> BuildNotificationButtons(NewsItem newsItem)
         {
+            if (newsItem == null)
+            {
+                throw new ArgumentNullException(nameof(newsItem));
+            }
+
             var buttons = new List<NotificationButton>();
             if (!string.IsNullOrWhiteSpace(newsItem.Link) && Uri.TryCreate(newsItem.Link, UriKind.Absolute, out _))
             {

@@ -146,12 +146,10 @@ try
     // مپ کردن بخش "TelegramSettings" از appsettings.json به کلاس Domain.Settings.TelegramSettings
     // این کلاس می‌تواند شامل تنظیمات عمومی تلگرام مانند AdminUserId باشد.
     builder.Services.Configure<Domain.Settings.TelegramSettings>(builder.Configuration.GetSection("TelegramSettings"));
-
     // Configure TelegramUserApiSettings
     builder.Services.Configure<Infrastructure.Settings.TelegramUserApiSettings>(builder.Configuration.GetSection("TelegramUserApi"));
     builder.Services.AddSingleton<Application.Common.Interfaces.ITelegramUserApiClient, Infrastructure.Services.TelegramUserApiClient>();
     builder.Services.AddHostedService<Infrastructure.Services.TelegramUserApiInitializationService>();
-
     // مپ کردن بخش CryptoPaySettings.SectionName (که "CryptoPay" است) از appsettings.json به کلاس Shared.Settings.CryptoPaySettings
     builder.Services.Configure<CryptoPaySettings>(builder.Configuration.GetSection(CryptoPaySettings.SectionName));
     // TelegramPanelSettings در متد AddTelegramPanelServices پیکربندی می‌شود.
@@ -206,7 +204,7 @@ try
         .UseSimpleAssemblyNameTypeSerializer()
         .UseRecommendedSerializerSettings()
         .UseSqlServerStorage(builder.Configuration.GetConnectionString("DefaultConnection")));
-   // builder.Services.AddHangfireServer();
+    builder.Services.AddHangfireServer();
     Log.Information("Hangfire services (with SQL Server for production) added.");
     builder.Services.Configure<List<Infrastructure.Settings.ForwardingRule>>( // <<< Fully qualified
       builder.Configuration.GetSection("ForwardingRules"));
@@ -312,11 +310,11 @@ try
     var urls = builder.Configuration["Urls"] ?? "https://localhost:5001;http://localhost:5000";
     var firstUrl = urls.Split(';')[0].Trim();
     
-    //using (var scope = app.Services.CreateScope())
-    //{
-    //    var orchestrator = scope.ServiceProvider.GetRequiredService<UserApiForwardingOrchestrator>();
-    //    // Use orchestrator if needed
-    //}
+    using (var scope = app.Services.CreateScope())
+    {
+        var orchestrator = scope.ServiceProvider.GetRequiredService<UserApiForwardingOrchestrator>();
+        // Use orchestrator if needed
+    }
     app.Run(); //  شروع به گوش دادن به درخواست‌های HTTP و اجرای برنامه
     #endregion
 }

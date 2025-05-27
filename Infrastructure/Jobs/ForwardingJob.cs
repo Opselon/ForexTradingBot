@@ -1,9 +1,10 @@
+﻿// File: Infrastructure\Jobs\ForwardingJob.cs
+using Application.Features.Forwarding.Services; // این using لازم است
+using Microsoft.Extensions.Logging;
 using System;
 using System.Threading;
 using System.Threading.Tasks;
-using Application.Features.Forwarding.Services;
-using Domain.Features.Forwarding.Entities;
-using Microsoft.Extensions.Logging;
+using TL; // این using را اضافه کنید تا بتوانید از MessageEntity و Peer استفاده کنید
 
 namespace Infrastructure.Jobs
 {
@@ -18,11 +19,42 @@ namespace Infrastructure.Jobs
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
-        public async Task ProcessMessageAsync(long sourceChannelId, long messageId, CancellationToken cancellationToken = default)
+        // !!! این متد توسط Hangfire Scheduler صدا زده می‌شود. !!!
+        // !!! پارامترهای ورودی باید دقیقا با پارامترهای IForwardingService.ProcessMessageAsync یکسان باشند. !!!
+        public async Task ProcessMessageAsync(
+           long sourceChannelIdForMatching,
+           long originalMessageId,
+           long rawSourcePeerIdForApi,
+           string messageContent,
+           TL.MessageEntity[]? messageEntities,
+           Peer? senderPeerForFilter,
+           InputMedia? inputMediaToSend, // NEW
+           CancellationToken cancellationToken = default)
         {
-            _logger.LogInformation("Starting message processing job for message {MessageId} from channel {ChannelId}", messageId, sourceChannelId);
-            await _forwardingService.ProcessMessageAsync(sourceChannelId, messageId, cancellationToken);
-            _logger.LogInformation("Completed message processing job for message {MessageId} from channel {ChannelId}", messageId, sourceChannelId);
+            _logger.LogInformation(
+                "HANGFIRE_JOB: Starting job for MsgID: {OriginalMsgId}, SourceForMatching: {SourceForMatching}, RawSourceForApi: {RawSourceForApi}. Content Preview: '{ContentPreview}'. Has Input Media: {HasInputMedia}. Sender Peer: {SenderPeer}",
+                originalMessageId, sourceChannelIdForMatching, rawSourcePeerIdForApi, TruncateString(messageContent, 50), inputMediaToSend != null, senderPeerForFilter?.ToString() ?? "N/A");
+
+            await _forwardingService.ProcessMessageAsync(
+                sourceChannelIdForMatching,
+                originalMessageId,
+                rawSourcePeerIdForApi,
+                messageContent,
+                messageEntities,
+                senderPeerForFilter,
+                inputMediaToSend, // NEW
+                cancellationToken);
+
+            _logger.LogInformation(
+                "HANGFIRE_JOB: Completed job for MsgID: {OriginalMsgId}, SourceForMatching: {SourceForMatching}",
+                originalMessageId, sourceChannelIdForMatching);
+        }
+
+        // Helper function to truncate strings for logging
+        private string TruncateString(string? str, int maxLength)
+        {
+            if (string.IsNullOrEmpty(str)) return "[null_or_empty]";
+            return str.Length <= maxLength ? str : str.Substring(0, maxLength) + "...";
         }
     }
-} 
+}

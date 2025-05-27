@@ -1,3 +1,4 @@
+﻿// File: Domain\Features\Forwarding\Entities\ForwardingRule.cs
 using Domain.Features.Forwarding.ValueObjects;
 using System.Collections.Generic;
 
@@ -9,8 +10,8 @@ namespace Domain.Features.Forwarding.Entities
         public bool IsEnabled { get; private set; }
         public long SourceChannelId { get; private set; }
         public IReadOnlyList<long> TargetChannelIds { get; private set; }
-        public MessageEditOptions EditOptions { get; private set; }
-        public MessageFilterOptions FilterOptions { get; private set; }
+        public MessageEditOptions EditOptions { get; private set; } // باید Private setter باشه برای EF Core
+        public MessageFilterOptions FilterOptions { get; private set; } // باید Private setter باشه برای EF Core
 
         private ForwardingRule() { } // For EF Core
 
@@ -19,20 +20,27 @@ namespace Domain.Features.Forwarding.Entities
             bool isEnabled,
             long sourceChannelId,
             IReadOnlyList<long> targetChannelIds,
-            MessageEditOptions editOptions,
-            MessageFilterOptions filterOptions)
+            MessageEditOptions editOptions, // نوع پارامتر درست است
+            MessageFilterOptions filterOptions) // نوع پارامتر درست است
         {
             RuleName = ruleName;
             IsEnabled = isEnabled;
             SourceChannelId = sourceChannelId;
             TargetChannelIds = targetChannelIds;
-            EditOptions = editOptions;
-            FilterOptions = filterOptions;
+            EditOptions = editOptions; // مقادیر از ورودی گرفته می‌شوند
+            FilterOptions = filterOptions; // مقادیر از ورودی گرفته می‌شوند
         }
 
         public void UpdateStatus(bool isEnabled)
         {
             IsEnabled = isEnabled;
         }
+
+        // یک متد برای آپدیت EditOptions/FilterOptions به صورت Atomic (اگر لازم شد)
+        public void UpdateOptions(MessageEditOptions newEditOptions, MessageFilterOptions newFilterOptions)
+        {
+            EditOptions = newEditOptions;
+            FilterOptions = newFilterOptions;
+        }
     }
-} 
+}

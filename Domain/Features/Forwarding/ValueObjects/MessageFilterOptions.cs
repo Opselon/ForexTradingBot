@@ -1,3 +1,4 @@
+// File: Domain\Features\Forwarding\ValueObjects\MessageFilterOptions.cs
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
 
@@ -32,17 +33,17 @@ namespace Domain.Features.Forwarding.ValueObjects
             int? minMessageLength,
             int? maxMessageLength)
         {
-            AllowedMessageTypes = allowedMessageTypes;
-            AllowedMimeTypes = allowedMimeTypes;
+            AllowedMessageTypes = allowedMessageTypes ?? new List<string>();
+            AllowedMimeTypes = allowedMimeTypes ?? new List<string>();
             ContainsText = containsText;
             ContainsTextIsRegex = containsTextIsRegex;
             ContainsTextRegexOptions = containsTextRegexOptions;
-            AllowedSenderUserIds = allowedSenderUserIds;
-            BlockedSenderUserIds = blockedSenderUserIds;
+            AllowedSenderUserIds = allowedSenderUserIds ?? new List<long>();
+            BlockedSenderUserIds = blockedSenderUserIds ?? new List<long>();
             IgnoreEditedMessages = ignoreEditedMessages;
             IgnoreServiceMessages = ignoreServiceMessages;
             MinMessageLength = minMessageLength;
             MaxMessageLength = maxMessageLength;
         }
     }
-} 
+}

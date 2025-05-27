@@ -1,17 +1,19 @@
+﻿// File: Domain\Features\Forwarding\ValueObjects\TextReplacement.cs
 using System.Text.RegularExpressions;
 
 namespace Domain.Features.Forwarding.ValueObjects
 {
-    public class TextReplacementRule
+    // A single rule for text replacement within a message
+    public class TextReplacement // <<<< نام کلاس را به TextReplacement تغییر دادم
     {
         public string Find { get; private set; }
         public string ReplaceWith { get; private set; }
         public bool IsRegex { get; private set; }
         public RegexOptions RegexOptions { get; private set; }
 
-        private TextReplacementRule() { } // For EF Core
+        private TextReplacement() { } // For EF Core
 
-        public TextReplacementRule(
+        public TextReplacement(
             string find,
             string replaceWith,
             bool isRegex = false,
@@ -23,4 +25,4 @@ namespace Domain.Features.Forwarding.ValueObjects
             RegexOptions = regexOptions;
         }
     }
-} 
+}

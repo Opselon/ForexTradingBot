@@ -1,12 +1,9 @@
 ﻿// File: Infrastructure/Services/UserApiForwardingOrchestrator.cs
 using Application.Common.Interfaces; // For ITelegramUserApiClient
-using Application.Features.Forwarding.Services; // For IForwardingService
+using Hangfire; // For Update, Message, Peer types
 // Domain.Features.Forwarding.Entities - Assuming used by IForwardingService
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.DependencyInjection; // For IServiceProvider, CreateScope, GetRequiredService
-using System; // For IServiceProvider, ArgumentNullException, Exception
-using System.Threading.Tasks; // For Task.Run
-using TL; // For Update, Message, Peer types
+using TL;
 
 namespace Infrastructure.Services
 {
@@ -15,12 +12,14 @@ namespace Infrastructure.Services
         private readonly ITelegramUserApiClient _userApiClient;
         private readonly IServiceProvider _serviceProvider;
         private readonly ILogger<UserApiForwardingOrchestrator> _logger;
-
+        private readonly IBackgroundJobClient _backgroundJobClient;
         public UserApiForwardingOrchestrator(
             ITelegramUserApiClient userApiClient,
             IServiceProvider serviceProvider,
+            IBackgroundJobClient backgroundJobClient,
             ILogger<UserApiForwardingOrchestrator> logger)
         {
+            _backgroundJobClient = backgroundJobClient ?? throw new ArgumentNullException(nameof(backgroundJobClient));
             _userApiClient = userApiClient ?? throw new ArgumentNullException(nameof(userApiClient));
             _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -30,147 +29,142 @@ namespace Infrastructure.Services
         }
 
         // Retaining `async void` as this is a common pattern for event handlers.
-        // The core logic is offloaded to Task.Run to avoid blocking and to manage exceptions.
         private void HandleUserApiUpdateAsync(Update update)
         {
-            #region Initial Checks and Task Offloading
-            // Defensive null check for the incoming update.
-            if (update == null)
-            {
-                _logger.LogWarning("UserApiForwardingOrchestrator: Received a null update. Skipping processing.");
-                return;
-            }
-
-            // Log the initial reception of the update type before offloading.
-            _logger.LogDebug("UserApiForwardingOrchestrator: Received TL.Update of type {UpdateType}. Offloading processing.", update.GetType().Name);
-
-            // Offload the processing to a background thread.
-            // This prevents blocking the User API client's event loop and isolates errors.
             _ = Task.Run(async () =>
             {
-                // System.Diagnostics.Stopwatch stopwatch = System.Diagnostics.Stopwatch.StartNew(); // For performance diagnostics
+                TL.Message? messageToProcess = null;
+                Peer? sourceApiPeer = null;
+                long messageIdForLog = 0;
+                string messageContent = string.Empty;
+                TL.MessageEntity[]? messageEntities = null;
+                Peer? senderPeerForFilter = null;
+                InputMedia? inputMediaForJob = null; // NEW: To store prepared InputMedia
+
+                string updateTypeForLog = update?.GetType().Name ?? "NullUpdateType";
+                string messageContentPreview = "[N/A]";
+
                 try
                 {
-                    _logger.LogDebug("UserApiForwardingOrchestrator: Async processing task started for update (Type: {UpdateType}).", update.GetType().Name);
+                    if (update == null) { /* ... */ return; }
 
-                    #region Message Extraction (Original Structure)
-                    // Using the original if-else if structure for message and peer extraction.
-                    Message? messageToProcess = null;
-                    Peer? sourceApiPeer = null;
+                    if (update is UpdateNewMessage unm)
+                    {
+                        messageToProcess = unm.message as TL.Message;
+                    }
+                    else if (update is UpdateNewChannelMessage uncm)
+                    {
+                        messageToProcess = uncm.message as TL.Message;
+                    }
+                    else { /* ... */ return; }
 
-                    if (update is UpdateNewMessage unm && unm.message is Message msg1)
-                    {
-                        messageToProcess = msg1;
-                        sourceApiPeer = msg1.peer_id;
-                        _logger.LogInformation("UserApiForwardingOrchestrator: Processing UpdateNewMessage. MsgID: {MsgId}, FromPeer: {PeerId}", msg1.id, sourceApiPeer?.ToString());
-                    }
-                    else if (update is UpdateNewChannelMessage uncm && uncm.message is Message msg2)
-                    {
-                        messageToProcess = msg2;
-                        sourceApiPeer = msg2.peer_id;
-                        _logger.LogInformation("UserApiForwardingOrchestrator: Processing UpdateNewChannelMessage. MsgID: {MsgId}, FromChannel: {PeerId}", msg2.id, sourceApiPeer?.ToString());
-                    }
-                    // Note: Consider if other update types like UpdateEditMessage should be processed.
+                    if (messageToProcess == null) { /* ... */ return; }
 
-                    // Validate if a message and peer were successfully extracted.
-                    if (messageToProcess == null || sourceApiPeer == null)
-                    {
-                        _logger.LogTrace("UserApiForwardingOrchestrator: Update (Type: {UpdateType}) is not a new message to process or message/peer content is null. Skipping task.", update.GetType().Name);
-                        return; // Exit the task for this update.
-                    }
-                    #endregion
+                    sourceApiPeer = messageToProcess.peer_id;
+                    messageIdForLog = messageToProcess.id;
+                    senderPeerForFilter = messageToProcess.from_id;
 
-                    #region Source ID Determination (Original Structure)
-                    // Determine the positive source ID using the original if-else if structure.
-                    long currentSourcePositiveId = 0;
+                    messageContent = messageToProcess.message ?? string.Empty;
+                    messageEntities = messageToProcess.entities?.ToArray();
 
-                    if (sourceApiPeer is PeerChannel scp)
+                    // --- NEW LOGIC: Prepare InputMedia directly from the Update ---
+                    if (messageToProcess.media != null)
                     {
-                        currentSourcePositiveId = scp.channel_id;
+                        _logger.LogTrace("ORCHESTRATOR_TASK: Detected media in message {MsgId}. Attempting to prepare InputMedia.", messageToProcess.id);
+                        if (messageToProcess.media is MessageMediaPhoto mmp && mmp.photo is Photo p)
+                        {
+                            inputMediaForJob = new InputMediaPhoto
+                            {
+                                id = new InputPhoto { id = p.id, access_hash = p.access_hash, file_reference = p.file_reference ?? Array.Empty<byte>() }
+                            };
+                            _logger.LogTrace("ORCHESTRATOR_TASK: Prepared InputMediaPhoto for MsgID {MsgId}. Photo ID: {PhotoId}", messageToProcess.id, p.id);
+                        }
+                        else if (messageToProcess.media is MessageMediaDocument mmd && mmd.document is Document d)
+                        {
+                            inputMediaForJob = new InputMediaDocument
+                            {
+                                id = new InputDocument { id = d.id, access_hash = d.access_hash, file_reference = d.file_reference ?? Array.Empty<byte>() }
+                            };
+                            _logger.LogTrace("ORCHESTRATOR_TASK: Prepared InputMediaDocument for MsgID {MsgId}. Document ID: {DocumentId}", messageToProcess.id, d.id);
+                        }
+                        else
+                        {
+                            _logger.LogWarning("ORCHESTRATOR_TASK: Unsupported media type {MediaType} in message {MsgId}. Cannot prepare InputMedia.", messageToProcess.media.GetType().Name, messageToProcess.id);
+                        }
                     }
-                    else if (sourceApiPeer is PeerChat scc)
-                    {
-                        currentSourcePositiveId = scc.chat_id;
-                    }
-                    else if (sourceApiPeer is PeerUser spu)
-                    {
-                        // Business rule: Messages from individual users might be ignored.
-                        _logger.LogDebug("UserApiForwardingOrchestrator: Message from PeerUser, UserID: {UserId}. Not typically forwarded by channel/group rules. Skipping task.", spu.user_id);
-                        return; // Exit the task.
-                    }
-                    // If sourceApiPeer is none of the above (e.g., null or an unknown type), currentSourcePositiveId remains 0.
+                    // --- END NEW LOGIC ---
 
-                    // Validate the determined source ID.
-                    if (currentSourcePositiveId <= 0) // Catches PeerUser (if not returned above) or other invalid scenarios
-                    {
-                        _logger.LogWarning("UserApiForwardingOrchestrator: Could not determine a valid positive source channel/chat ID from Peer: {PeerString} (Resolved ID: {ResolvedId}). Skipping task.",
-                                           sourceApiPeer.ToString(), currentSourcePositiveId);
-                        return; // Exit the task.
-                    }
-                    #endregion
+                    messageContentPreview = TruncateString(messageContent, 50);
+                    _logger.LogInformation("ORCHESTRATOR_TASK: Extracted new message. MsgID: {MsgId}, SourcePeerType: {PeerType}, SourcePeerIDValue: {PeerIdValue}. Message Content Preview: '{MsgContentPreview}'. Has Media: {HasMedia}. Sender Peer: {SenderPeer}",
+                        messageToProcess.id, sourceApiPeer?.GetType().Name, GetPeerIdValue(sourceApiPeer), messageContentPreview, messageToProcess.media != null, senderPeerForFilter?.ToString() ?? "N/A");
 
-                    #region Rule-Specific ID Transformation
-                    // Transform the positive ID to the format used for matching forwarding rules.
-                    // Using a specific long literal for the prefix part of the ID.
+                    // Filter out messages from PeerUser (direct user messages)
+                    if (sourceApiPeer is PeerUser userPeer)
+                    {
+                        _logger.LogDebug("ORCHESTRATOR_TASK: Message from PeerUser (direct user message). UserID: {UserId}. SKIPPING automatic forwarding enqueue.", userPeer.user_id);
+                        return;
+                    }
+
+                    long currentSourcePositiveId = GetPeerIdValue(sourceApiPeer);
+
+                    if (currentSourcePositiveId == 0)
+                    {
+                        _logger.LogWarning("ORCHESTRATOR_TASK: Could not determine a valid positive source ID from Peer: {PeerString} for Hangfire enqueue. SKIPPING.", sourceApiPeer.ToString());
+                        return;
+                    }
+
                     long sourceIdForMatchingRules = -100_000_000_000L - currentSourcePositiveId;
+                    long rawSourcePeerIdForApi = currentSourcePositiveId;
 
-                    _logger.LogInformation("UserApiForwardingOrchestrator: Message ready for service processing. MsgID: {MessageId}, API Source Positive ID: {ApiSourcePositiveId}, Rule Matching Source ID: {RuleMatchSourceId}",
-                                           messageToProcess.id,
-                                           currentSourcePositiveId,
-                                           sourceIdForMatchingRules);
-                    #endregion
+                    _logger.LogInformation("ORCHESTRATOR_TASK: Enqueuing to Hangfire IForwardingService.ProcessMessageAsync for MsgID: {MsgId}. RuleMatchingID: {RuleMatchID}, RawApiPeerID (Positive): {RawApiPeerID}. Content Preview: '{ContentPreview}'. Has Input Media: {HasInputMedia}. Sender Peer: {SenderPeer}",
+                                           messageToProcess.id, sourceIdForMatchingRules, rawSourcePeerIdForApi, messageContentPreview, inputMediaForJob != null, senderPeerForFilter?.ToString() ?? "N/A");
 
-                    #region Service Invocation within a DI Scope
-                    // Create a DI scope to resolve IForwardingService with correct lifetime.
-                    // 'using' ensures proper disposal of the scope and its services.
-                    // Security Reminder: IForwardingService and dependencies must handle data safely.
-                    try
-                    {
-                        using var scope = _serviceProvider.CreateScope();
-                        var forwardingService = scope.ServiceProvider.GetRequiredService<IForwardingService>();
+                    _backgroundJobClient.Enqueue<IForwardingService>(service =>
+                        service.ProcessMessageAsync(
+                            sourceIdForMatchingRules,
+                            messageToProcess.id,
+                            rawSourcePeerIdForApi,
+                            messageContent,
+                            messageEntities,
+                            senderPeerForFilter,
+                            inputMediaForJob, // NEW: Pass the prepared InputMedia
+                            CancellationToken.None
+                        ));
 
-                        // Asynchronously process the message via the forwarding service.
-                        await forwardingService.ProcessMessageAsync(sourceIdForMatchingRules, messageToProcess.id);
-
-                        _logger.LogDebug("UserApiForwardingOrchestrator: Message (MsgID: {MessageId}, RuleMatchSourceId: {RuleMatchSourceId}) successfully submitted to forwarding service.",
-                                         messageToProcess.id, sourceIdForMatchingRules);
-                    }
-                    catch (ObjectDisposedException odEx) // Handle cases where DI provider/scope is disposed (app shutdown)
-                    {
-                        _logger.LogWarning(odEx, "UserApiForwardingOrchestrator: DI Scope/Service operation failed due to object disposal (likely app shutdown). MsgID: {MessageId}, RuleMatchSourceId: {RuleMatchSourceId}",
-                                           messageToProcess?.id, sourceIdForMatchingRules);
-                    }
-                    catch (Exception serviceEx) // Catch errors from IForwardingService or its dependencies.
-                    {
-                        _logger.LogError(serviceEx, "UserApiForwardingOrchestrator: Error during IForwardingService invocation for MsgID: {MessageId}, RuleMatchSourceId: {RuleMatchSourceId}.",
-                                         messageToProcess?.id, sourceIdForMatchingRules);
-                        // The task for this message will end here; other messages are unaffected.
-                    }
-                    #endregion
+                    _logger.LogInformation("ORCHESTRATOR_TASK: Successfully enqueued job to Hangfire for IForwardingService.ProcessMessageAsync. MsgID: {MsgId}.", messageToProcess.id);
                 }
-                catch (Exception ex) // Catch-all for any unhandled errors within the Task.Run lambda.
+                catch (Exception ex)
                 {
-                    // Critical fallback to prevent silent failures of the async task.
-                    string updateDebugInfo = "Update object was null or could not be stringified.";
-                    if (update != null) // 'update' is captured from the outer scope
-                    {
-                        try { updateDebugInfo = update.ToString(); }
-                        catch { /* Safeguard against ToString() throwing an exception */ }
-                    }
+                    string finalMessageIdForLog = messageIdForLog != 0 ? messageIdForLog.ToString() : "N/A";
+                    string finalUpdateTypeForLog = updateTypeForLog ?? "N/A";
+                    string finalMessageContentPreview = messageContentPreview ?? "N/A";
 
-                    _logger.LogCritical(ex, "UserApiForwardingOrchestrator: Unhandled critical exception during asynchronous processing of update type {UpdateType}. Update Snippet: {UpdateDebugSnippet}",
-                                       update?.GetType().Name, // update might be null if an error occurs before it's used within the task.
-                                       updateDebugInfo.Substring(0, Math.Min(updateDebugInfo.Length, 250))); // Log a snippet for diagnostics
-                    // Consider additional critical error alerting if necessary.
+                    _logger.LogCritical(ex, "ORCHESTRATOR_TASK: CRITICAL EXCEPTION during Hangfire Enqueue for MsgID: {MsgId}. UpdateType: {UpdateType}. Message Content: '{MsgContentPreview}'.",
+                                       finalMessageIdForLog, finalUpdateTypeForLog, finalMessageContentPreview);
                 }
-                finally
-                {
-                    // stopwatch.Stop();
-                    // _logger.LogTrace("UserApiForwardingOrchestrator: Async processing task finished for update (Type: {UpdateType}). Elapsed: {ElapsedMilliseconds}ms.",
-                    //                  update?.GetType().Name, stopwatch.ElapsedMilliseconds);
-                }
-            }); // End of Task.Run
-            #endregion
+            });
+        
+        }
+
+      
+
+        // Helper function to truncate strings for logging
+        private string TruncateString(string? str, int maxLength)
+        {
+            if (string.IsNullOrEmpty(str)) return "[null_or_empty]";
+            return str.Length <= maxLength ? str : str.Substring(0, maxLength) + "...";
+        }
+
+        // متد کمکی برای گرفتن شناسه عددی از انواع Peer
+        private long GetPeerIdValue(Peer? peer)
+        {
+            return peer switch
+            {
+                PeerUser user => user.user_id,
+                PeerChat chat => chat.chat_id,
+                PeerChannel channel => channel.channel_id,
+                _ => 0
+            };
         }
     }
 }

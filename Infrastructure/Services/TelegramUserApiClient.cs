@@ -854,12 +854,12 @@ namespace Infrastructure.Services
         // Assuming _client is an instance of WTelegram.Client
 
         public async Task<UpdatesBase?> ForwardMessagesAsync(
-            InputPeer toPeer,
-            int[] messageIds,
-            InputPeer fromPeer,
-            bool dropAuthor = false,
-            bool dropMediaCaptions = false,
-            bool noForwards = false)
+       InputPeer toPeer, // NAMED toPeer
+       int[] messageIds,
+       InputPeer fromPeer,
+       bool dropAuthor = false,
+       bool dropMediaCaptions = false,
+       bool noForwards = false)
         {
             // ... (logging setup for peer types, IDs, messageIdsString remains the same) ...
             string toPeerType = toPeer?.GetType().Name ?? "Unknown";
@@ -1001,148 +1001,151 @@ namespace Infrastructure.Services
             }
         }
 
-        public async Task<InputPeer?> ResolvePeerAsync(long peerId)
+        public async Task<InputPeer?> ResolvePeerAsync(long positivePeerId)
         {
             if (_client == null)
             {
-                _logger.LogError("ResolvePeerAsync: Telegram client (_client) is not initialized. Cannot resolve peer ID {PeerId}.", peerId);
+                _logger.LogError("ResolvePeerAsync: Client not initialized for PositivePeerId {PositivePeerId}.", positivePeerId);
                 return null;
             }
-            // --- End of client null check ---
-
-            if (peerId == 0)
+            if (positivePeerId == 0)
             {
-                _logger.LogWarning("ResolvePeerAsync: Peer ID is 0, cannot resolve. Returning null.");
+                _logger.LogWarning("ResolvePeerAsync: PositivePeerId is 0. Cannot resolve.");
                 return null;
             }
 
+            _logger.LogDebug("ResolvePeerAsync: Attempting to resolve PositivePeerId: {PositivePeerId}", positivePeerId);
+
+            // 1. ابتدا کش سفارشی خودتان را با شناسه مثبت بررسی کنید
+            // این کش توسط Messages_GetAllDialogs و آپدیت‌ها پر می‌شود.
+            if (_userCacheWithExpiry.TryGetValue(positivePeerId, out var userCacheEntry) &&
+                userCacheEntry.Expiry > DateTime.UtcNow && userCacheEntry.User != null)
+            {
+                _logger.LogInformation("ResolvePeerAsync: Found User {UserId} (AH: {AccessHash}) in LOCAL USER CACHE for PositivePeerId {PositivePeerId}.",
+                    positivePeerId, userCacheEntry.User.access_hash, positivePeerId);
+                return new InputPeerUser(positivePeerId, userCacheEntry.User.access_hash);
+            }
+
+            if (_chatCacheWithExpiry.TryGetValue(positivePeerId, out var chatCacheEntry) &&
+                chatCacheEntry.Expiry > DateTime.UtcNow && chatCacheEntry.Chat != null)
+            {
+                if (chatCacheEntry.Chat is Channel channelFromCache)
+                {
+                    _logger.LogInformation("ResolvePeerAsync: Found Channel {ChannelId} (AH: {AccessHash}) in LOCAL CHAT CACHE for PositivePeerId {PositivePeerId}.",
+                        positivePeerId, channelFromCache.access_hash, positivePeerId);
+                    return new InputPeerChannel(positivePeerId, channelFromCache.access_hash);
+                }
+                else if (chatCacheEntry.Chat is Chat chatFromCache) // گروه کوچک
+                {
+                    _logger.LogInformation("ResolvePeerAsync: Found Chat {ChatId} in LOCAL CHAT CACHE for PositivePeerId {PositivePeerId}.",
+                        positivePeerId, positivePeerId);
+                    return new InputPeerChat(positivePeerId); // چت‌های کوچک معمولا access_hash نیاز ندارند
+                }
+            }
+            _logger.LogDebug("ResolvePeerAsync: PositivePeerId {PositivePeerId} not found in active local cache. Attempting API calls.", positivePeerId);
+
+
+            // 2. استراتژی اول API: Contacts_ResolveUsername (با شناسه مثبت به عنوان رشته)
+            // این متد برای یوزرنیم‌ها، شناسه عددی کاربر/ربات (به عنوان رشته) و گاهی کانال عمومی با ID عددی‌اش کار می‌کند.
+            // این بهترین راه برای Resolve کردن Peer هایی است که کاربر قبلاً با آنها تعامل نداشته است.
+            string resolveString = positivePeerId.ToString();
+            _logger.LogDebug("ResolvePeerAsync: Attempting API call with Contacts_ResolveUsername for string '{ResolveString}' (PositivePeerId {PositivePeerId}).", resolveString, positivePeerId);
             try
             {
-                if (peerId.ToString().StartsWith("-100"))
+                // Contacts_ResolveUsername یک آبجکت Contacts_ResolvedPeer برمی‌گرداند
+                Contacts_ResolvedPeer resolvedUsernameResponse = await _client.Contacts_ResolveUsername(resolveString);
+
+                // آپدیت کش‌ها با اطلاعات دریافتی از این پاسخ
+                if (resolvedUsernameResponse?.users != null)
                 {
-                    long channelId = Math.Abs(peerId) - 1000000000000;
-                    _logger.LogDebug("ResolvePeerAsync: Handling canonical channel ID {PeerId} (shortened to: {ChannelId})", peerId, channelId);
-
-                    if (_chatCacheWithExpiry.TryGetValue(channelId, out var cachedData))
-                    {
-                        if (cachedData.Chat is Channel channelFromCache && cachedData.Expiry > DateTime.UtcNow)
-                        {
-                            _logger.LogDebug("ResolvePeerAsync: Found channel {ChannelId} (API ID: {ApiChannelId}) in cache. AccessHash: {AccessHash}",
-                                             channelId, channelFromCache.id, channelFromCache.access_hash);
-                            return new InputPeerChannel(channelFromCache.id, channelFromCache.access_hash);
-                        }
-                        else if (cachedData.Expiry <= DateTime.UtcNow)
-                        {
-                            _logger.LogDebug("ResolvePeerAsync: Found channel {ChannelId} in cache, but it has expired.", channelId);
-                        }
-                    }
-
-                    _logger.LogDebug("ResolvePeerAsync: Channel {ChannelId} not found in cache or expired. Fetching from API.", channelId);
-                    try
-                    {
-                        var channelsResponse = await _client.Channels_GetChannels(new[] { new InputChannel(channelId, 0) });
-
-                        // --- Declaration and Assignment Correction for chatFromApi ---
-                        // Declare chatFromApi here, initializing to null.
-                        // This ensures it's in scope and definitely assigned before use in the 'else' path.
-                        ChatBase? chatFromApi = null;
-
-                        if (channelsResponse?.chats != null &&
-                            channelsResponse.chats.TryGetValue(channelId, out chatFromApi) && // chatFromApi is assigned by 'out'.
-                            chatFromApi is Channel telegramChannel)
-                        {
-                            // Success path: channel found and is of type Channel
-                            _chatCacheWithExpiry[channelId] = (telegramChannel, DateTime.UtcNow.Add(_cacheExpiration));
-                            _logger.LogDebug("ResolvePeerAsync: Retrieved channel {ChannelIdFromInput} (API ID: {ApiChannelId}) from API. AccessHash: {AccessHash}. Cache updated.",
-                                             channelId, telegramChannel.id, telegramChannel.access_hash);
-                            return new InputPeerChannel(telegramChannel.id, telegramChannel.access_hash);
-                        }
-
-                        // Failure path: If we didn't return above, something went wrong.
-                        // chatFromApi is guaranteed to be assigned at this point:
-                        // - null if channelsResponse or .chats was null (retains initial null).
-                        // - null if TryGetValue returned false (out param set to default).
-                        // - non-null if TryGetValue returned true but it wasn't a Channel.
-
-                        // Now log the specific reason for failure using chatFromApi safely.
-                        if (channelsResponse == null)
-                        {
-                            _logger.LogWarning("ResolvePeerAsync: Call to Channels_GetChannels returned null for input channel ID {InputChannelId}.", channelId);
-                        }
-                        else if (channelsResponse.chats == null)
-                        {
-                            _logger.LogWarning("ResolvePeerAsync: Channels_GetChannels response for input channel ID {InputChannelId} had a null chats collection.", channelId);
-                        }
-                        else if (chatFromApi == null) // True if TryGetValue returned false (key not found) OR if preceding conditions were false.
-                        {
-                            _logger.LogWarning("ResolvePeerAsync: Input channel ID {InputChannelId} not found in Channels_GetChannels response chats dictionary (TryGetValue returned false or was not reached).", channelId);
-                        }
-                        else // chatFromApi is not null here, so TryGetValue succeeded but 'chatFromApi is Channel' was false.
-                        {
-                            _logger.LogWarning("ResolvePeerAsync: Chat object for input ID {InputChannelId} (API ID: {ApiChatId}) from API was found but is not a Channel type. Actual type: {ActualType}.",
-                                               channelId, chatFromApi.ID, chatFromApi.GetType().FullName);
-                        }
-
-                        _logger.LogWarning("ResolvePeerAsync: Could not resolve channel ID {PeerId} (short ID: {ChannelId}) via Channels_GetChannels due to previous warnings.", peerId, channelId);
-                        return null; // Explicitly return null for this resolution path
-                    }
-                    catch (RpcException rpcEx) // Catch RpcException from Channels_GetChannels
-                    {
-                        _logger.LogError(rpcEx, "ResolvePeerAsync: RpcException during Channels_GetChannels for channelId {ChannelId} (original peerId {PeerId}). Error: {ErrorType}, Code: {ErrorCode}",
-                                         channelId, peerId, rpcEx.Message, rpcEx.Code);
-                        return null;
-                    }
-                    catch (Exception ex) // Catch other exceptions from Channels_GetChannels
-                    {
-                        _logger.LogWarning(ex, "ResolvePeerAsync: Generic exception during Channels_GetChannels for channelId {ChannelId} (original peerId {PeerId}).", channelId, peerId);
-                        return null;
-                    }
+                    foreach (var uEntry in resolvedUsernameResponse.users)
+                        _userCacheWithExpiry[uEntry.Key] = (uEntry.Value, DateTime.UtcNow.Add(_cacheExpiration));
                 }
-                else // Not a "-100" prefixed ID
+                if (resolvedUsernameResponse?.chats != null)
                 {
-                    _logger.LogDebug("ResolvePeerAsync: Peer ID {PeerId} is not a canonical channel ID. Attempting to resolve via Contacts_ResolveUsername.", peerId);
-                    var resolved = await _client.Contacts_ResolveUsername(peerId.ToString());
+                    foreach (var cEntry in resolvedUsernameResponse.chats)
+                        _chatCacheWithExpiry[cEntry.Key] = (cEntry.Value, DateTime.UtcNow.Add(_cacheExpiration));
+                }
 
-                    if (resolved?.peer != null)
+                if (resolvedUsernameResponse?.peer != null)
+                {
+                    if (resolvedUsernameResponse.peer is PeerUser pu)
                     {
-                        if (resolved.peer is PeerUser peerUser)
-                        {
-                            _logger.LogDebug("ResolvePeerAsync: Resolved peer ID {PeerId} to User {UserId} via Contacts_ResolveUsername.", peerId, peerUser.user_id);
-                            return new InputPeerUser(peerUser.user_id, 0);
-                        }
-                        else if (resolved.peer is PeerChat peerChat)
-                        {
-                            _logger.LogDebug("ResolvePeerAsync: Resolved peer ID {PeerId} to Chat {ChatId} via Contacts_ResolveUsername.", peerId, peerChat.chat_id);
-                            return new InputPeerChat(peerChat.chat_id);
-                        }
-                        else if (resolved.peer is PeerChannel peerChannel)
-                        {
-                            _logger.LogDebug("ResolvePeerAsync: Resolved peer ID {PeerId} to Channel {ChannelId} via Contacts_ResolveUsername.", peerId, peerChannel.channel_id);
-                            return new InputPeerChannel(peerChannel.channel_id, 0);
-                        }
-                        else
-                        {
-                            _logger.LogWarning("ResolvePeerAsync: Contacts_ResolveUsername for {PeerId} returned an unknown peer type: {PeerType}", peerId, resolved.peer.GetType().Name);
-                        }
+                        User? userObj = resolvedUsernameResponse.users.GetValueOrDefault(pu.user_id);
+                        long accessHash = userObj?.access_hash ?? 0;
+                        _logger.LogInformation("ResolvePeerAsync: Resolved via Contacts_ResolveUsername to User {UserId} (AH: {AccessHash}) for string '{ResolveString}'.",
+                            pu.user_id, accessHash, resolveString);
+                        return new InputPeerUser(pu.user_id, accessHash);
                     }
-                    else
+                    else if (resolvedUsernameResponse.peer is PeerChat pc)
                     {
-                        _logger.LogWarning("ResolvePeerAsync: Could not resolve peer ID {PeerId} via Contacts_ResolveUsername (result or peer was null).", peerId);
+                        _logger.LogInformation("ResolvePeerAsync: Resolved via Contacts_ResolveUsername to Chat {ChatId} for string '{ResolveString}'.",
+                            pc.chat_id, resolveString);
+                        return new InputPeerChat(pc.chat_id);
                     }
-                    return null; // Return null if Contacts_ResolveUsername didn't yield a usable peer
+                    else if (resolvedUsernameResponse.peer is PeerChannel pchan)
+                    {
+                        Channel? channelObj = resolvedUsernameResponse.chats.GetValueOrDefault(pchan.channel_id) as Channel;
+                        long accessHash = channelObj?.access_hash ?? 0;
+                        _logger.LogInformation("ResolvePeerAsync: Resolved via Contacts_ResolveUsername to Channel {ChannelId} (AH: {AccessHash}) for string '{ResolveString}'.",
+                            pchan.channel_id, accessHash, resolveString);
+                        return new InputPeerChannel(pchan.channel_id, accessHash);
+                    }
+                    _logger.LogWarning("ResolvePeerAsync: Contacts_ResolveUsername for string '{ResolveString}' returned an unhandled peer type: {PeerType}. PositivePeerId: {PositivePeerId}",
+                        resolveString, resolvedUsernameResponse.peer.GetType().Name, positivePeerId);
+                }
+                else
+                {
+                    _logger.LogWarning("ResolvePeerAsync: Contacts_ResolveUsername for string '{ResolveString}' (PositivePeerId {PositivePeerId}) returned null or null peer.",
+                       resolveString, positivePeerId);
                 }
             }
-            catch (RpcException rpcEx) // Catch RpcException from peerId.ToString() or other top-level operations.
+            catch (RpcException rpcEx) when (rpcEx.Code == 400 && (rpcEx.Message.Contains("USERNAME_INVALID") || rpcEx.Message.Contains("USERNAME_NOT_OCCUPIED") || rpcEx.Message.Contains("PEER_ID_INVALID")))
             {
-                _logger.LogError(rpcEx, "ResolvePeerAsync: RpcException at top-level for peer ID {PeerId}. Error: {ErrorType}, Code: {ErrorCode}", peerId, rpcEx.Message, rpcEx.Code);
-                return null;
+                _logger.LogWarning("ResolvePeerAsync: Contacts_ResolveUsername for string '{ResolveString}' (PositivePeerId {PositivePeerId}) failed with RPC Error: {RpcError}. This ID string is likely not a known username or public peer ID that can be resolved this way.",
+                    resolveString, positivePeerId, rpcEx.Message);
             }
-            catch (Exception ex) // Catch other exceptions at top-level
+            catch (Exception ex)
             {
-                _logger.LogError(ex, "ResolvePeerAsync: General exception at top-level for peer ID {PeerId}.", peerId);
-                return null;
+                _logger.LogError(ex, "ResolvePeerAsync: Exception during Contacts_ResolveUsername for string '{ResolveString}' (PositivePeerId {PositivePeerId}).", resolveString, positivePeerId);
             }
+
+            // 3. استراتژی دوم API (Fallback): Channels_GetChannels
+            // این متد به طور خاص برای کانال‌ها و سوپرگروه‌هاست، حتی اگر خصوصی باشند و کاربر عضو باشد.
+            // این متد با شناسه "کوتاه" مثبت کانال کار می‌کند. positivePeerId باید همین شناسه باشد.
+            _logger.LogDebug("ResolvePeerAsync: Attempting API call with Channels_GetChannels for PositivePeerId: {PositivePeerId} as a fallback (if it's a channel and previous methods failed).", positivePeerId);
+            try
+            {
+                Messages_Chats channelsResponse = await _client.Channels_GetChannels(new[] { new InputChannel(positivePeerId, 0) });
+                if (channelsResponse?.chats != null)
+                {
+                    foreach (var cEntry in channelsResponse.chats) // آپدیت کش چت خودمان
+                        _chatCacheWithExpiry[cEntry.Key] = (cEntry.Value, DateTime.UtcNow.Add(_cacheExpiration));
+                }
+                // اگر Messages_Chats شامل users هم می‌بود (که نیست)، اینجا آپدیت می‌کردیم
+
+                if (channelsResponse?.chats != null && channelsResponse.chats.TryGetValue(positivePeerId, out var chatFromApi) && chatFromApi is Channel telegramChannel)
+                {
+                    _logger.LogInformation("ResolvePeerAsync: Successfully resolved Channel {PositivePeerId} (API ID: {ApiChannelId}, AH: {AccessHash}) via Channels_GetChannels (fallback).",
+                                       positivePeerId, telegramChannel.id, telegramChannel.access_hash);
+                    return new InputPeerChannel(telegramChannel.id, telegramChannel.access_hash);
+                }
+                _logger.LogWarning("ResolvePeerAsync: Fallback Channels_GetChannels for PositivePeerId {PositivePeerId} did not find it in the response or it wasn't a Channel. Chats in response: {ChatCount}",
+                                   positivePeerId, channelsResponse?.chats?.Count ?? 0);
+            }
+            catch (RpcException rpcEx) when (rpcEx.Message.Contains("CHANNEL_INVALID") || rpcEx.Message.Contains("PEER_ID_INVALID"))
+            {
+                _logger.LogWarning("ResolvePeerAsync: Fallback Channels_GetChannels for PositivePeerId {PositivePeerId} failed with RPC Error: {RpcError}. This ID might not be a channel, is inaccessible, or access_hash problem.", positivePeerId, rpcEx.Message);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "ResolvePeerAsync: Exception during fallback Channels_GetChannels for PositivePeerId {PositivePeerId}.", positivePeerId);
+            }
+
+            _logger.LogError("ResolvePeerAsync: FAILED to resolve PositivePeerId {PositivePeerId} using all implemented strategies.", positivePeerId);
+            return null;
         }
+
         public async ValueTask DisposeAsync()
         {
             _logger.LogInformation("Disposing TelegramUserApiClient...");

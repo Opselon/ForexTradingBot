@@ -57,7 +57,13 @@ namespace Application.Common.Interfaces
         /// <param name="dropMediaCaptions">If true, media captions will be removed. WTelegram equivalent is `drop_media_captions`.</param>
         /// <param name="noForwards">If true, the forwarded message will not be linkable to the original message (removes "forwarded from" header). WTelegram equivalent is `noforwards`.</param>
         /// <returns>An UpdatesBase object representing the result of the forward operation, or null on error.</returns>
-        Task<UpdatesBase?> ForwardMessagesAsync(InputPeer toPeer, int[] messageIds, InputPeer fromPeer, bool dropAuthor = false, bool dropMediaCaptions = false, bool noForwards = false);
+        Task<UpdatesBase?> ForwardMessagesAsync(
+              InputPeer toPeer, // PARAMETER IS NAMED toPeer
+              int[] messageIds,
+              InputPeer fromPeer,
+              bool dropAuthor = false,
+              bool dropMediaCaptions = false, // This was in your interface
+              bool noForwards = false);
 
         /// <summary>
         /// Gets the currently logged-in user's information.

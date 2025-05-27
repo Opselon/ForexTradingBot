@@ -686,7 +686,7 @@ namespace Infrastructure.Migrations
                             b1.WithOwner()
                                 .HasForeignKey("ForwardingRuleRuleName");
 
-                            b1.OwnsMany("Domain.Features.Forwarding.ValueObjects.TextReplacementRule", "TextReplacements", b2 =>
+                            b1.OwnsMany("Domain.Features.Forwarding.ValueObjects.TextReplacement", "TextReplacements", b2 =>
                                 {
                                     b2.Property<int>("Id")
                                         .ValueGeneratedOnAdd()
@@ -715,7 +715,7 @@ namespace Infrastructure.Migrations
 
                                     b2.HasIndex("EditOptionsForwardingRuleName");
 
-                                    b2.ToTable("TextReplacementRule");
+                                    b2.ToTable("TextReplacement");
 
                                     b2.WithOwner()
                                         .HasForeignKey("EditOptionsForwardingRuleName");

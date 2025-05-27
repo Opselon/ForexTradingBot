@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 namespace Infrastructure.Migrations
 {
     /// <inheritdoc />
-    public partial class TestWithOrchestratorCommen21312312tedAndSqlTryCatch : Migration
+    public partial class DummyMigration : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
@@ -82,7 +82,7 @@ namespace Infrastructure.Migrations
                 });
 
             migrationBuilder.CreateTable(
-                name: "TextReplacementRule",
+                name: "TextReplacement",
                 columns: table => new
                 {
                     Id = table.Column<int>(type: "int", nullable: false)
@@ -95,9 +95,9 @@ namespace Infrastructure.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_TextReplacementRule", x => new { x.Id, x.EditOptionsForwardingRuleName });
+                    table.PrimaryKey("PK_TextReplacement", x => new { x.Id, x.EditOptionsForwardingRuleName });
                     table.ForeignKey(
-                        name: "FK_TextReplacementRule_ForwardingRules_EditOptionsForwardingRuleName",
+                        name: "FK_TextReplacement_ForwardingRules_EditOptionsForwardingRuleName",
                         column: x => x.EditOptionsForwardingRuleName,
                         principalTable: "ForwardingRules",
                         principalColumn: "RuleName",
@@ -392,8 +392,8 @@ namespace Infrastructure.Migrations
                 column: "UserId");
 
             migrationBuilder.CreateIndex(
-                name: "IX_TextReplacementRule_EditOptionsForwardingRuleName",
-                table: "TextReplacementRule",
+                name: "IX_TextReplacement_EditOptionsForwardingRuleName",
+                table: "TextReplacement",
                 column: "EditOptionsForwardingRuleName");
 
             migrationBuilder.CreateIndex(
@@ -459,7 +459,7 @@ namespace Infrastructure.Migrations
                 name: "Subscriptions");
 
             migrationBuilder.DropTable(
-                name: "TextReplacementRule");
+                name: "TextReplacement");
 
             migrationBuilder.DropTable(
                 name: "TokenWallets");

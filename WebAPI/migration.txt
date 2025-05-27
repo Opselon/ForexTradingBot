@@ -34,7 +34,7 @@ Update all
 
 .\Update-EfDatabase.ps1 -MigrationName "ReinitUserAndTokenWallettT" -InfrastructureProject "Infrastructure" -StartupProject "WebAPI" -CleanBuild -ForceRecreateSnapshot -ForceConfirmDeleteSnapshot -ApplyToDatabase -DropAndRecreateDatabase -Confirm:$false
 
-
+.\Update-EfDatabase.ps1 -UpdateGlobalEfTools -MigrationName "DummyMigration" -InfrastructureProject "Infrastructure" -StartupProject "WebAPI"
 
 Get-Service | Where-Object { $_.Name -like "*SQL*" -or $_.DisplayName -like "*SQL*" } | ForEach-Object {
     if ($_.Status -eq 'Stopped') {

@@ -26,35 +26,55 @@ namespace Application.Features.Forwarding.Services
             _userApiClient = userApiClient ?? throw new ArgumentNullException(nameof(userApiClient));
         }
 
-        public async Task ProcessAndRelayMessageAsync(
-            int sourceMessageId,
-            long rawSourcePeerId,
-            long targetChannelId,
-            ForwardingRule rule,
-            CancellationToken cancellationToken)
+
+
+public async Task ProcessAndRelayMessageAsync(
+    int sourceMessageId,
+    long rawSourcePeerId, // This should be the ID TelegramUserApiClient can use to fetch the message
+    long targetChannelId,
+    Domain.Features.Forwarding.Entities.ForwardingRule rule,
+    CancellationToken cancellationToken)
         {
-            _logger.LogInformation(
-                "Processing message {SourceMsgId} from {RawSourcePeerId} to {TargetChannelId} via rule '{RuleName}'",
+            _logger.LogInformation(">>>> JOB_ACTIONS: ProcessAndRelay MsgID {SourceMsgId} from RawSourcePeer {RawSourcePeerId} to Target {TargetChannelId} via Rule '{RuleName}'",
                 sourceMessageId, rawSourcePeerId, targetChannelId, rule.RuleName);
 
-            var fromPeer = await _userApiClient.ResolvePeerAsync(rawSourcePeerId);
-            var toPeer = await _userApiClient.ResolvePeerAsync(targetChannelId);
-
-            if (fromPeer == null || toPeer == null)
-            {
-                _logger.LogError(
-                    "Could not resolve FromPeer (RawId: {RawSourcePeerId}) or ToPeer (TargetId: {TargetChannelId}) for MsgID {SourceMsgId}.",
-                    rawSourcePeerId, targetChannelId, sourceMessageId);
-                return;
-            }
-
+            // Rule null/disabled check already done.
             bool needsCustomSend = rule.EditOptions != null &&
-                                   (!string.IsNullOrEmpty(rule.EditOptions.PrependText) ||
-                                    !string.IsNullOrEmpty(rule.EditOptions.AppendText) ||
-                                    (rule.EditOptions.TextReplacements != null && rule.EditOptions.TextReplacements.Any()) ||
-                                    rule.EditOptions.RemoveLinks ||
-                                    rule.EditOptions.StripFormatting ||
-                                    !string.IsNullOrEmpty(rule.EditOptions.CustomFooter));
+                     (!string.IsNullOrEmpty(rule.EditOptions.PrependText) ||
+                      !string.IsNullOrEmpty(rule.EditOptions.AppendText) ||
+                      (rule.EditOptions.TextReplacements != null && rule.EditOptions.TextReplacements.Any()) ||
+                       rule.EditOptions.RemoveLinks ||
+                       rule.EditOptions.StripFormatting ||
+                      !string.IsNullOrEmpty(rule.EditOptions.CustomFooter));
+
+    
+                _logger.LogDebug(">>>> JOB_ACTIONS: Resolving FromPeer: {RawSourcePeerId}", rawSourcePeerId);
+                var fromPeer = await _userApiClient.ResolvePeerAsync(rawSourcePeerId); // e.g. -100123...
+                _logger.LogDebug(">>>> JOB_ACTIONS: Resolving ToPeer: {TargetChannelId}", targetChannelId);
+                var toPeer = await _userApiClient.ResolvePeerAsync(targetChannelId);   // e.g. -100789... or a user ID
+
+                if (fromPeer == null || toPeer == null)
+                {
+                    _logger.LogError(">>>> JOB_ACTIONS: Could not resolve FromPeer (Resolved: {FromPeerResolved}) or ToPeer (Resolved: {ToPeerResolved}). RawSourcePeerId: {RawSourcePeerId}, TargetId: {TargetChannelId} for MsgID {SourceMsgId}.",
+                        fromPeer?.ToString(), toPeer?.ToString(), rawSourcePeerId, targetChannelId, sourceMessageId);
+                    throw new InvalidOperationException("Could not resolve source or target peer");
+                }
+                _logger.LogInformation(">>>> JOB_ACTIONS: FromPeer resolved to: {FromPeerString}, ToPeer resolved to: {ToPeerString}", fromPeer.ToString(), toPeer.ToString());
+
+                // ... (needsCustomSend logic using rule.EditOptions)
+                _logger.LogDebug(">>>> JOB_ACTIONS: Rule EditOptions Prepend: '{Prepend}', Append: '{Append}', RemoveLinks: {RemoveLinks}",
+                    rule.EditOptions?.PrependText, rule.EditOptions?.AppendText, rule.EditOptions?.RemoveLinks);
+
+                if (needsCustomSend && rule.EditOptions != null)
+                {
+                    _logger.LogInformation(">>>> JOB_ACTIONS: Processing custom send for MsgID {SourceMsgId}", sourceMessageId);
+                    await ProcessCustomSendAsync(fromPeer, toPeer, sourceMessageId, rule, cancellationToken);
+                }
+                else
+                {
+                    _logger.LogInformation(">>>> JOB_ACTIONS: Processing simple forward for MsgID {SourceMsgId}", sourceMessageId);
+                    await ProcessSimpleForwardAsync(fromPeer, toPeer, sourceMessageId, rule, cancellationToken);
+                }
 
             if (needsCustomSend && rule.EditOptions != null)
             {
@@ -65,6 +85,7 @@ namespace Application.Features.Forwarding.Services
                 await ProcessSimpleForwardAsync(fromPeer, toPeer, sourceMessageId, rule, cancellationToken);
             }
         }
+
 
         private async Task ProcessCustomSendAsync(
             InputPeer fromPeer,

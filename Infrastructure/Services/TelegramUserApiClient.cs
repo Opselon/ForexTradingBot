@@ -788,7 +788,7 @@ namespace Infrastructure.Services
 
         // EDITED METHOD: SendMediaGroupAsync - Changed call to _client.Messages_SendMediaGroupAsync and schedule_date type
         public async Task SendMediaGroupAsync(InputPeer peer, InputSingleMedia[] media, long? replyToMsgId = null,
-                                              bool background = false, DateTime? schedule_date = null,
+                                              bool background = false, DateTime? schedule_date = null, // Type is DateTime?
                                               bool sendAsBot = false, int[]? parsedMentions = null)
         {
             if (_client == null)
@@ -827,19 +827,19 @@ namespace Infrastructure.Services
                 InputPeer? sendAsPeer = null; // Default to null for user API
 
                 // FIXED: Call _client.Messages_SendMultiMediaAsync with correct parameter names and order from your image.
-                long rpcRandomId = WTelegram.Helpers.RandomLong();
-
                 await _client.Messages_SendMultiMedia(
                     peer: peer,
-                    multi_media: media,
-                    random_id: rpcRandomId, // ADDED: This is the random_id for the RPC request
-                    reply_to: inputReplyTo,
-                    schedule_date: schedule_date,
-                    send_as: sendAsPeer,
-                    silent: false,
-                    background: background,
-                    clear_draft: false,
-                    noforwards: false
+                    multi_media: media, // Parameter name from image
+
+                    reply_to: inputReplyTo, // Parameter name from image
+                    schedule_date: schedule_date, // Parameter name from image
+                    send_as: sendAsPeer, // Parameter name from image
+                    silent: false, // Optional: default to false
+                    background: background, // Parameter name from image
+                    clear_draft: false, // Optional: default to false
+                    noforwards: false // Optional: default to false
+                                      // Other optional parameters from image not included for brevity:
+                                      // effect, allow_paid_stars, update_stickersets_order, invert_media, allow_paid_floodskip
                 );
                 _logger.LogInformation("SendMediaGroupAsync: Successfully sent media group to Peer (Type: {PeerType}, LoggedID: {PeerId}).",
                     peerTypeForLog, peerIdForLog);

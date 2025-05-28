@@ -9,16 +9,21 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Clone repository
-      uses: actions/checkout@v3
+      - name: Clone repository
+        uses: actions/checkout@v3
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: 3.x
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.x
 
-    - name: Install ggshield
-      run: pip install ggshield
+      - name: Install ggshield
+        run: pip install ggshield
 
-    - name: Run ggshield scan
-      run: ggshield secret scan repo .
+      - name: Authenticate with GitGuardian
+        run: ggshield auth login --method=token
+        env:
+          GITGUARDIAN_API_KEY: ${{ secrets.GITGUARDIAN_API_KEY }}
+
+      - name: Run ggshield scan
+        run: ggshield secret scan repo .

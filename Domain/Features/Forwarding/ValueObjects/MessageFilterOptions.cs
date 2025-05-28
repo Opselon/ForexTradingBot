@@ -7,6 +7,8 @@ namespace Domain.Features.Forwarding.ValueObjects
     public class MessageFilterOptions
     {
         public IReadOnlyList<string>? AllowedMessageTypes { get; private set; }
+        public IReadOnlyList<string>? AllowedMediaTypes { get; private set; }
+        public bool ForwardMediaGroupsAsAlbum { get; private set; }
         public IReadOnlyList<string>? AllowedMimeTypes { get; private set; }
         public string? ContainsText { get; private set; }
         public bool ContainsTextIsRegex { get; private set; }
@@ -22,6 +24,8 @@ namespace Domain.Features.Forwarding.ValueObjects
 
         public MessageFilterOptions(
             IReadOnlyList<string>? allowedMessageTypes,
+            IReadOnlyList<string>? allowedMediaTypes,
+            bool forwardMediaGroupsAsAlbum,
             IReadOnlyList<string>? allowedMimeTypes,
             string? containsText,
             bool containsTextIsRegex,
@@ -34,6 +38,8 @@ namespace Domain.Features.Forwarding.ValueObjects
             int? maxMessageLength)
         {
             AllowedMessageTypes = allowedMessageTypes ?? new List<string>();
+            AllowedMediaTypes = allowedMediaTypes ?? new List<string>();
+            ForwardMediaGroupsAsAlbum = forwardMediaGroupsAsAlbum;
             AllowedMimeTypes = allowedMimeTypes ?? new List<string>();
             ContainsText = containsText;
             ContainsTextIsRegex = containsTextIsRegex;

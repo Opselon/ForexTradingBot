@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Application.Features.Forwarding.Services;
@@ -124,13 +124,10 @@ namespace WebAPI.Controllers
             BackgroundJob.Enqueue<ForwardingJob>(job =>
                 job.ProcessMessageAsync(
                     request.SourceChannelId,
-                    request.MessageId,
+ (int)request.MessageId, // Casting to int as per the method signature
                     peerIdForJob,
-                    string.Empty,                  // messageContent
-                    null,                          // messageEntities
-                    null,                          // senderPeerForFilter
-                    null,                          // NEW: inputMediaToSend (pass null here)
-                    CancellationToken.None));      // CancellationToken
+ null, // Pass null for the TL.Message object
+                    CancellationToken.None));
             return Ok($"Message processing job enqueued for message ID {request.MessageId} from source {request.SourceChannelId}.");
         }
 

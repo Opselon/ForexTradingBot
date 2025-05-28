@@ -1,4 +1,4 @@
-﻿// File: Infrastructure/Services/UserApiForwardingOrchestrator.cs
+// File: Infrastructure/Services/UserApiForwardingOrchestrator.cs
 using Application.Common.Interfaces; // For ITelegramUserApiClient
 using Hangfire; // For Update, Message, Peer types
 // Domain.Features.Forwarding.Entities - Assuming used by IForwardingService
@@ -36,10 +36,6 @@ namespace Infrastructure.Services
                 TL.Message? messageToProcess = null;
                 Peer? sourceApiPeer = null;
                 long messageIdForLog = 0;
-                string messageContent = string.Empty;
-                TL.MessageEntity[]? messageEntities = null;
-                Peer? senderPeerForFilter = null;
-                InputMedia? inputMediaForJob = null; // NEW: To store prepared InputMedia
 
                 string updateTypeForLog = update?.GetType().Name ?? "NullUpdateType";
                 string messageContentPreview = "[N/A]";
@@ -62,32 +58,8 @@ namespace Infrastructure.Services
 
                     sourceApiPeer = messageToProcess.peer_id;
                     messageIdForLog = messageToProcess.id;
-                    senderPeerForFilter = messageToProcess.from_id;
 
-                    messageContent = messageToProcess.message ?? string.Empty;
-                    messageEntities = messageToProcess.entities?.ToArray();
-
-                    // --- NEW LOGIC: Prepare InputMedia directly from the Update ---
-                    if (messageToProcess.media != null)
-                    {
-                        _logger.LogTrace("ORCHESTRATOR_TASK: Detected media in message {MsgId}. Attempting to prepare InputMedia.", messageToProcess.id);
-                        if (messageToProcess.media is MessageMediaPhoto mmp && mmp.photo is Photo p)
-                        {
-                            inputMediaForJob = new InputMediaPhoto
-                            {
-                                id = new InputPhoto { id = p.id, access_hash = p.access_hash, file_reference = p.file_reference ?? Array.Empty<byte>() }
-                            };
-                            _logger.LogTrace("ORCHESTRATOR_TASK: Prepared InputMediaPhoto for MsgID {MsgId}. Photo ID: {PhotoId}", messageToProcess.id, p.id);
-                        }
-                        else if (messageToProcess.media is MessageMediaDocument mmd && mmd.document is Document d)
-                        {
-                            inputMediaForJob = new InputMediaDocument
-                            {
-                                id = new InputDocument { id = d.id, access_hash = d.access_hash, file_reference = d.file_reference ?? Array.Empty<byte>() }
-                            };
-                            _logger.LogTrace("ORCHESTRATOR_TASK: Prepared InputMediaDocument for MsgID {MsgId}. Document ID: {DocumentId}", messageToProcess.id, d.id);
-                        }
-                        else
+                    if (messageToProcess.media != null && !(messageToProcess.media is MessageMediaPhoto || messageToProcess.media is MessageMediaDocument)) // Log unsupported media types that are not photo or document
                         {
                             _logger.LogWarning("ORCHESTRATOR_TASK: Unsupported media type {MediaType} in message {MsgId}. Cannot prepare InputMedia.", messageToProcess.media.GetType().Name, messageToProcess.id);
                         }
@@ -95,8 +67,8 @@ namespace Infrastructure.Services
                     // --- END NEW LOGIC ---
 
                     messageContentPreview = TruncateString(messageContent, 50);
-                    _logger.LogInformation("ORCHESTRATOR_TASK: Extracted new message. MsgID: {MsgId}, SourcePeerType: {PeerType}, SourcePeerIDValue: {PeerIdValue}. Message Content Preview: '{MsgContentPreview}'. Has Media: {HasMedia}. Sender Peer: {SenderPeer}",
-                        messageToProcess.id, sourceApiPeer?.GetType().Name, GetPeerIdValue(sourceApiPeer), messageContentPreview, messageToProcess.media != null, senderPeerForFilter?.ToString() ?? "N/A");
+                    _logger.LogInformation("ORCHESTRATOR_TASK: Extracted new message. MsgID: {MsgId}, SourcePeerType: {PeerType}, SourcePeerIDValue: {PeerIdValue}. Has Media: {HasMedia}. Is Media Group: {IsMediaGroup}",
+                        messageToProcess.id, sourceApiPeer?.GetType().Name, GetPeerIdValue(sourceApiPeer), messageToProcess.media != null, messageToProcess.grouped_id != null);
 
                     // Filter out messages from PeerUser (direct user messages)
                     if (sourceApiPeer is PeerUser userPeer)
@@ -116,18 +88,14 @@ namespace Infrastructure.Services
                     long sourceIdForMatchingRules = -100_000_000_000L - currentSourcePositiveId;
                     long rawSourcePeerIdForApi = currentSourcePositiveId;
 
-                    _logger.LogInformation("ORCHESTRATOR_TASK: Enqueuing to Hangfire IForwardingService.ProcessMessageAsync for MsgID: {MsgId}. RuleMatchingID: {RuleMatchID}, RawApiPeerID (Positive): {RawApiPeerID}. Content Preview: '{ContentPreview}'. Has Input Media: {HasInputMedia}. Sender Peer: {SenderPeer}",
-                                           messageToProcess.id, sourceIdForMatchingRules, rawSourcePeerIdForApi, messageContentPreview, inputMediaForJob != null, senderPeerForFilter?.ToString() ?? "N/A");
+                    _logger.LogInformation("ORCHESTRATOR_TASK: Enqueuing to Hangfire IForwardingService.ProcessMessageAsync for MsgID: {MsgId}. RuleMatchingID: {RuleMatchID}, RawApiPeerID (Positive): {RawApiPeerID}. Is Media Group: {IsMediaGroup}",
+                                           messageToProcess.id, sourceIdForMatchingRules, rawSourcePeerIdForApi, messageToProcess.grouped_id != null);
 
                     _backgroundJobClient.Enqueue<IForwardingService>(service =>
                         service.ProcessMessageAsync(
                             sourceIdForMatchingRules,
-                            messageToProcess.id,
                             rawSourcePeerIdForApi,
-                            messageContent,
-                            messageEntities,
-                            senderPeerForFilter,
-                            inputMediaForJob, // NEW: Pass the prepared InputMedia
+                            messageToProcess, // Pass the entire TL.Message object
                             CancellationToken.None
                         ));
 

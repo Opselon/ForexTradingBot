@@ -1,4 +1,4 @@
-﻿// File: Application\Features\Forwarding\Services\ForwardingService.cs
+// File: Application\Features\Forwarding\Services\ForwardingService.cs
 using Application.Features.Forwarding.Interfaces;
 using Domain.Features.Forwarding.Entities; // برای ForwardingRule
 using Domain.Features.Forwarding.Repositories; // برای IForwardingRuleRepository
@@ -86,16 +86,12 @@ namespace Application.Features.Forwarding.Services
       
         public async Task ProcessMessageAsync(
             long sourceChannelIdForMatching,
-            long originalMessageId,
+            TL.Message originalMessage,
             long rawSourcePeerIdForApi,
-            string messageContent,
-            TL.MessageEntity[]? messageEntities,
-            Peer? senderPeerForFilter,
-            InputMedia? inputMediaToSend, // NEW
             CancellationToken cancellationToken = default)
         {
-            _logger.LogInformation(">>>> FORWARDING_SERVICE: ProcessMessageAsync called. SourceForMatching: {SourceForMatching}, OriginalMsgId: {OriginalMsgId}, RawSourceForApi: {RawSourceForApi}. Content Preview: '{ContentPreview}'. Has Input Media: {HasInputMedia}. Sender Peer: {SenderPeer}",
-                sourceChannelIdForMatching, originalMessageId, rawSourcePeerIdForApi, TruncateString(messageContent, 50), inputMediaToSend != null, senderPeerForFilter?.ToString() ?? "N/A");
+            _logger.LogInformation(">>>> FORWARDING_SERVICE: ProcessMessageAsync called. SourceForMatching: {SourceForMatching}, OriginalMsgId: {OriginalMsgId}, RawSourceForApi: {RawSourceForApi}. Content Preview: '{ContentPreview}'. Has Media: {HasMedia}. Sender Peer: {SenderPeer}",
+                sourceChannelIdForMatching, originalMessage.id, rawSourcePeerIdForApi, TruncateString(originalMessage.message, 50), originalMessage.media != null, originalMessage.from_id?.ToString() ?? "N/A");
 
             var rules = await _ruleRepository.GetBySourceChannelAsync(sourceChannelIdForMatching, cancellationToken);
             _logger.LogInformation(">>>> FORWARDING_SERVICE: Found {RuleCount} rules for SourceChannelId {SourceChannelId} from DB.", rules.Count(), sourceChannelIdForMatching);
@@ -104,11 +100,11 @@ namespace Application.Features.Forwarding.Services
             _logger.LogInformation(">>>> FORWARDING_SERVICE: Found {ActiveRuleCount} ACTIVE rules for channel {SourceChannelIdForMatching}.", activeRules.Count, sourceChannelIdForMatching);
 
             if (!activeRules.Any())
-            {
+            { 
                 _logger.LogWarning(">>>> FORWARDING_SERVICE: No active forwarding rules found for channel {ChannelId} (Matching ID from DB).", sourceChannelIdForMatching);
                 return;
             }
-
+            
             foreach (var rule in activeRules) // rule is Domain.Features.Forwarding.Entities.ForwardingRule
             {
                 _logger.LogInformation(">>>> FORWARDING_SERVICE: Processing with ACTIVE rule: '{RuleName}' for MsgID: {OriginalMsgId}. Targets: {TargetCount}",
@@ -116,33 +112,29 @@ namespace Application.Features.Forwarding.Services
                 try
                 {
                     if (rule.TargetChannelIds == null || !rule.TargetChannelIds.Any())
-                    {
-                        _logger.LogWarning(">>>> FORWARDING_SERVICE: Rule '{RuleName}' has no target channels defined. Skipping message {OriginalMsgId}.", rule.RuleName, originalMessageId);
+                    { 
+                        _logger.LogWarning(">>>> FORWARDING_SERVICE: Rule '{RuleName}' has no target channels defined. Skipping message {OriginalMsgId}. दिली", rule.RuleName, originalMessage.id);
                         continue;
                     }
 
                     foreach (var targetChannelIdFromDb in rule.TargetChannelIds) // از db اومده (-100xxxx یا مثبت)
-                    {
-                        _logger.LogInformation(">>>> FORWARDING_SERVICE: Enqueuing Hangfire job for Rule '{RuleName}', MsgID {OriginalMsgId}, RawSourcePeer {RawSourcePeerIdForApi}, Target DB ID {TargetChannelIdFromDb}. Content Preview: '{ContentPreview}'. Has Input Media: {HasInputMedia}. Sender Peer: {SenderPeer}",
-                    rule.RuleName, originalMessageId, rawSourcePeerIdForApi, targetChannelIdFromDb, TruncateString(messageContent, 50), inputMediaToSend != null, senderPeerForFilter?.ToString() ?? "N/A");
+                    { 
+                        _logger.LogInformation(">>>> FORWARDING_SERVICE: Enqueuing Hangfire job for Rule '{RuleName}', MsgID {OriginalMsgId}, RawSourcePeer {RawSourcePeerIdForApi}, Target DB ID {TargetChannelIdFromDb}. Content Preview: '{ContentPreview}'. Has Media: {HasMedia}. Sender Peer: {SenderPeer}",
+                    rule.RuleName, originalMessage.id, rawSourcePeerIdForApi, targetChannelIdFromDb, TruncateString(originalMessage.message, 50), originalMessage.media != null, originalMessage.from_id?.ToString() ?? "N/A");
 
                         // استفاده از _backgroundJobClient برای انکیو کردن IForwardingJobActions
                         _backgroundJobClient.Enqueue<IForwardingJobActions>(processor =>
                             processor.ProcessAndRelayMessageAsync(
-                        (int)originalMessageId,
+                        originalMessage,
                         rawSourcePeerIdForApi,
                         targetChannelIdFromDb,
                         rule,
-                        messageContent,
-                        messageEntities,
-                        senderPeerForFilter,
-                        inputMediaToSend, // NEW
                         CancellationToken.None
                     ));
                         _logger.LogInformation(">>>> FORWARDING_SERVICE: Successfully enqueued Hangfire job for Rule '{RuleName}', Target DB ID {TargetChannelIdFromDb}.", rule.RuleName, targetChannelIdFromDb);
                     }
                 }
-                catch (Exception ex)
+                catch (Exception ex) 
                 {
                     _logger.LogError(ex, ">>>> FORWARDING_SERVICE: Error processing message {MessageId} from SourceForMatching {SourceForMatching} for rule '{RuleName}'.",
                         originalMessageId, sourceChannelIdForMatching, rule.RuleName);

@@ -33,7 +33,7 @@ public async Task ProcessAndRelayMessageAsync(
     long rawSourcePeerId, // This should be the ID TelegramUserApiClient can use to fetch the message
     long targetChannelId,
     Domain.Features.Forwarding.Entities.ForwardingRule rule,
-    CancellationToken cancellationToken)
+    CancellationToken cancellationToken = default)
         {
             _logger.LogInformation(">>>> JOB_ACTIONS: ProcessAndRelay MsgID {SourceMsgId} from RawSourcePeer {RawSourcePeerId} to Target {TargetChannelId} via Rule '{RuleName}'",
                 sourceMessageId, rawSourcePeerId, targetChannelId, rule.RuleName);
@@ -47,6 +47,46 @@ public async Task ProcessAndRelayMessageAsync(
                        rule.EditOptions.StripFormatting ||
                       !string.IsNullOrEmpty(rule.EditOptions.CustomFooter));
 
+            // Fetch the original message object to inspect media type, grouped_id, etc.
+            // Assuming ResolvePeerAsync is synchronous or can be awaited outside GetMessagesAsync
+            var messagesBase = await _userApiClient.GetMessagesAsync(await _userApiClient.ResolvePeerAsync(rawSourcePeerId), sourceMessageId, cancellationToken);
+            if (messagesBase is not Messages_Messages { messages: var msgList } || !msgList.Any())
+            {
+                _logger.LogWarning(
+                    ">>>> JOB_ACTIONS: Could not retrieve original message {SourceMsgId} from RawSourcePeer {RawSourcePeerId}. Skipping.",
+                    sourceMessageId, rawSourcePeerId);
+                return;
+            }
+
+            var originalMessage = msgList.FirstOrDefault(m => m.ID == sourceMessageId) as Message;
+            if (originalMessage == null)
+            {
+                _logger.LogWarning(
+                    ">>>> JOB_ACTIONS: Retrieved message {SourceMsgId} is not of type TL.Message or not found in the list. Skipping.",
+                    sourceMessageId);
+                return;
+            }
+
+            _logger.LogTrace(">>>> JOB_ACTIONS: Original message {SourceMsgId} content: Text present: {HasText}, Media present: {HasMedia}, Media Type: {MediaType}, GroupedId: {GroupedId}",
+                sourceMessageId, !string.IsNullOrWhiteSpace(originalMessage.message), originalMessage.media != null, originalMessage.media?.GetType().Name, originalMessage.grouped_id);
+
+            // Check if the message should be filtered based on media type
+            if (!ShouldForwardMediaType(originalMessage.media, rule.FilterOptions?.AllowedMediaTypes))
+            {
+                _logger.LogInformation(">>>> JOB_ACTIONS: Message {SourceMsgId} media type is filtered out by rule '{RuleName}'. Skipping.",
+                    sourceMessageId, rule.RuleName);
+                return;
+            }
+
+            // Check if the message is part of a media group and if the rule says to ignore grouped messages
+            if (originalMessage.grouped_id.HasValue && !(rule.FilterOptions?.ForwardMediaGroupsAsSingle ?? false))
+            {
+                 _logger.LogInformation(">>>> JOB_ACTIONS: Message {SourceMsgId} is part of a media group but rule '{RuleName}' is configured to not forward media groups as single or ignores grouped messages. Skipping.",
+                    sourceMessageId, rule.RuleName);
+
+                return;
+            }
+
     
                 _logger.LogDebug(">>>> JOB_ACTIONS: Resolving FromPeer: {RawSourcePeerId}", rawSourcePeerId);
                 var fromPeer = await _userApiClient.ResolvePeerAsync(rawSourcePeerId); // e.g. -100123...
@@ -58,35 +98,41 @@ public async Task ProcessAndRelayMessageAsync(
                     _logger.LogError(">>>> JOB_ACTIONS: Could not resolve FromPeer (Resolved: {FromPeerResolved}) or ToPeer (Resolved: {ToPeerResolved}). RawSourcePeerId: {RawSourcePeerId}, TargetId: {TargetChannelId} for MsgID {SourceMsgId}.",
                         fromPeer?.ToString(), toPeer?.ToString(), rawSourcePeerId, targetChannelId, sourceMessageId);
                     throw new InvalidOperationException("Could not resolve source or target peer");
-                }
+            }
                 _logger.LogInformation(">>>> JOB_ACTIONS: FromPeer resolved to: {FromPeerString}, ToPeer resolved to: {ToPeerString}", fromPeer.ToString(), toPeer.ToString());
 
-                // ... (needsCustomSend logic using rule.EditOptions)
-                _logger.LogDebug(">>>> JOB_ACTIONS: Rule EditOptions Prepend: '{Prepend}', Append: '{Append}', RemoveLinks: {RemoveLinks}",
-                    rule.EditOptions?.PrependText, rule.EditOptions?.AppendText, rule.EditOptions?.RemoveLinks);
-
-                if (needsCustomSend && rule.EditOptions != null)
-                {
-                    _logger.LogInformation(">>>> JOB_ACTIONS: Processing custom send for MsgID {SourceMsgId}", sourceMessageId);
-                    await ProcessCustomSendAsync(fromPeer, toPeer, sourceMessageId, rule, cancellationToken);
-                }
-                else
-                {
-                    _logger.LogInformation(">>>> JOB_ACTIONS: Processing simple forward for MsgID {SourceMsgId}", sourceMessageId);
-                    await ProcessSimpleForwardAsync(fromPeer, toPeer, sourceMessageId, rule, cancellationToken);
-                }
-
-            if (needsCustomSend && rule.EditOptions != null)
+            // Determine if we are processing a single message or a media group
+            if (originalMessage.grouped_id.HasValue && (rule.FilterOptions?.ForwardMediaGroupsAsSingle ?? false))
             {
-                await ProcessCustomSendAsync(fromPeer, toPeer, sourceMessageId, rule, cancellationToken);
+                // Media group processing
+                 _logger.LogInformation(">>>> JOB_ACTIONS: Processing media group for message {SourceMsgId} (Group ID: {GroupId}) via Rule '{RuleName}'",
+                     sourceMessageId, originalMessage.grouped_id.Value, rule.RuleName);
+                var mediaGroupMessages = await GetMediaGroupAsync(fromPeer, originalMessage.grouped_id.Value, cancellationToken);
+
+                if (mediaGroupMessages != null && mediaGroupMessages.Any())
+                {
+                     // For albums, we typically do a simple forward as custom sending albums is more complex and less common.
+                     // If custom sending is needed for albums (e.g., caption editing for the whole album),
+                     // a dedicated method or more complex logic would be required.
+                     // For now, we'll fall back to simple forward for albums if custom send is requested.
+                    if (needsCustomSend)
+                    {
+                        _logger.LogWarning(">>>> JOB_ACTIONS: Custom send requested for media group. Falling back to simple forward for MsgID {SourceMsgId}.", sourceMessageId);
+                        await ProcessSimpleForwardAsync(fromPeer, toPeer, mediaGroupMessages.Select(m => m.ID).ToArray(), rule, cancellationToken);
+                    }
+                    else
+                    {
+                        await ProcessSimpleForwardAsync(fromPeer, toPeer, mediaGroupMessages.Select(m => m.ID).ToArray(), rule, cancellationToken);
+                    }
+                }
             }
-            else
+            else // Process as a single message
             {
-                await ProcessSimpleForwardAsync(fromPeer, toPeer, sourceMessageId, rule, cancellationToken);
+                await ProcessCustomSendAsync(fromPeer, toPeer, new List<Message> { originalMessage }, rule, cancellationToken);
             }
         }
 
-
+        // Handles custom sending for a single message or a media group as an album
         private async Task ProcessCustomSendAsync(
             InputPeer fromPeer,
             InputPeer toPeer,
@@ -94,57 +140,53 @@ public async Task ProcessAndRelayMessageAsync(
             ForwardingRule rule,
             CancellationToken cancellationToken)
         {
-            var messagesBase = await _userApiClient.GetMessagesAsync(fromPeer, sourceMessageId);
-            if (messagesBase is not Messages_Messages { messages: var msgList } || !msgList.Any())
+            if (messages.Count == 0)
             {
-                _logger.LogWarning(
-                    "Could not retrieve original message {SourceMsgId} from {RawSourcePeerId} for custom send.",
-                    sourceMessageId, fromPeer.ID);
+                _logger.LogWarning(">>>> JOB_ACTIONS: ProcessCustomSendAsync received an empty message list for Target {TargetChannelId}. Skipping.", toPeer.ID);
                 return;
             }
 
-            var originalMessage = msgList.FirstOrDefault(m => m.ID == sourceMessageId) as Message;
-            if (originalMessage == null)
+            var firstMessage = messages.First(); // Caption and entities will be applied to the first item in an album
+
+            string newCaption = firstMessage.message ?? "";
+            MessageEntity[]? newEntities = firstMessage.entities?.ToArray();
+
+            (newCaption, newEntities) = ApplyEditOptions(newCaption, newEntities, rule.EditOptions, firstMessage.media);
+
+            if (messages.Count > 1) // Handle media group
             {
-                _logger.LogWarning(
-                    "Retrieved message {SourceMsgId} is not of type TL.Message or not found.",
-                    sourceMessageId);
-                return;
-            }
+                var inputMediaList = new List<InputMedia>();
+                foreach (var msg in messages)
+                {
+                    if (msg.media != null)
+                    {
+                        var inputMedia = CreateInputMedia(msg.media);
+                        if (inputMedia != null)
+                        {
+                            // Apply caption and entities only to the first media item in the album
+                            if (msg == firstMessage)
+                            {
+                                if (inputMedia is InputMediaPhoto imp) imp.caption = newCaption;
+                                if (inputMedia is InputMediaPhoto imp) imp.entities = newEntities;
+                                if (inputMedia is InputMediaDocument imd) imd.caption = newCaption;
+                                if (inputMedia is InputMediaDocument imd) imd.entities = newEntities;
+                                // Need to handle other InputMedia types if their constructors/properties support caption/entities
+                            }
+                            inputMediaList.Add(inputMedia);
+                        }
+                    }
+                }
 
-            if (string.IsNullOrWhiteSpace(originalMessage.message) && originalMessage.media == null)
+                if (inputMediaList.Any())
+                {
+                    await _userApiClient.SendMediaGroupAsync(toPeer, inputMediaList.ToArray()); // Assuming SendMediaGroupAsync exists
+                }
+            }
+            else // Handle single message
             {
-                _logger.LogWarning(
-                    "Message {SourceMsgId} has no content (empty text and no media). Skipping forwarding.",
-                    sourceMessageId);
-                return;
+                InputMedia? finalMediaToSend = firstMessage.media != null ? CreateInputMedia(firstMessage.media) : null;
+                await _userApiClient.SendMessageAsync(toPeer, newCaption, entities: newEntities, media: finalMediaToSend, noWebpage: rule.EditOptions.RemoveLinks);
             }
-
-            string newCaption = originalMessage.message ?? "";
-            MessageEntity[]? newEntities = originalMessage.entities?.ToArray();
-
-            (newCaption, newEntities) = ApplyEditOptions(newCaption, newEntities, rule.EditOptions, originalMessage.media);
-
-            if (string.IsNullOrWhiteSpace(newCaption) && originalMessage.media == null)
-            {
-                _logger.LogWarning(
-                    "After processing, message {SourceMsgId} has no content. Skipping forwarding.",
-                    sourceMessageId);
-                return;
-            }
-
-            InputMedia? finalMediaToSend = null;
-            if (originalMessage.media != null)
-            {
-                finalMediaToSend = CreateInputMedia(originalMessage.media);
-            }
-
-            await _userApiClient.SendMessageAsync(
-                toPeer,
-                newCaption,
-                entities: newEntities,
-                media: finalMediaToSend,
-                noWebpage: rule.EditOptions.RemoveLinks);
 
             _logger.LogInformation(
                 "Custom message sent for original MsgID {SourceMsgId} to Target {TargetChannelId} via Rule '{RuleName}'.",
@@ -153,14 +195,14 @@ public async Task ProcessAndRelayMessageAsync(
 
         private async Task ProcessSimpleForwardAsync(
             InputPeer fromPeer,
-            InputPeer toPeer,
-            int sourceMessageId,
+            InputPeer toPeer,            
+            IEnumerable<Message> messages, // Accept list of messages
             ForwardingRule rule,
             CancellationToken cancellationToken)
         {
             await _userApiClient.ForwardMessagesAsync(
                 toPeer,
-                new[] { sourceMessageId },
+                messages.Select(m => m.ID).ToArray(), // Extract IDs
                 fromPeer,
                 dropAuthor: rule.EditOptions?.RemoveSourceForwardHeader ?? false,
                 noForwards: rule.EditOptions?.RemoveSourceForwardHeader ?? false);
@@ -254,13 +296,33 @@ public async Task ProcessAndRelayMessageAsync(
             {
                 MessageMediaPhoto mmp when mmp.photo is Photo p => new InputMediaPhoto
                 {
-                    id = new InputPhoto { id = p.id, access_hash = p.access_hash, file_reference = p.file_reference }
+                    id = new InputPhoto { id = p.id, access_hash = p.access_hash, file_reference = p.file_reference },
+                    // Add other relevant properties if needed, e.g., caption, entities, flags
                 },
                 MessageMediaDocument mmd when mmd.document is Document d => new InputMediaDocument
                 {
-                    id = new InputDocument { id = d.id, access_hash = d.access_hash, file_reference = d.file_reference }
+                    id = new InputDocument { id = d.id, access_hash = d.access_hash, file_reference = d.file_reference },
+                    // Add other relevant properties if needed, e.g., caption, entities, flags
                 },
-                _ => null
+                MessageMediaSticker mms when mms.document is Document sd => new InputMediaDocument // Stickers are documents
+                {
+                    id = new InputDocument { id = sd.id, access_hash = sd.access_hash, file_reference = sd.file_reference },
+                    // Stickers don't typically have captions or entities when sent as media
+                },
+                MessageMediaAnimation mma when mma.document is Document ad => new InputMediaDocument // Animations are documents
+                {
+                    id = new InputDocument { id = ad.id, access_hash = ad.access_hash, file_reference = ad.file_reference },
+                    // Add other relevant properties if needed, e.g., caption, entities, flags
+                },
+                 MessageMediaVideo mmv when mmv.document is Document vd => new InputMediaDocument // Videos can be documents
+                {
+                    id = new InputDocument { id = vd.id, access_hash = vd.access_hash, file_reference = vd.file_reference },
+                    // Add other relevant properties if needed, e.g., caption, entities, flags, duration, w, h
+                },
+                MessageMediaUnsupported or MessageMediaEmpty => null, // Do not forward unsupported or empty media
+                _ => DefaultCreateInputMediaCaseHandler(media) // Handle other potential media types
+
+
             };
         }
 
@@ -309,6 +371,16 @@ public async Task ProcessAndRelayMessageAsync(
             return oldEntity;
         }
 
- 
+        private InputMedia? DefaultCreateInputMediaCaseHandler(MessageMedia media)
+        {
+            _logger.LogWarning(
+                "CreateInputMedia: Unhandled media type {MediaType}. Returning null, media will not be forwarded.",
+                media.GetType().Name);
+            return null;
+        }
+
+        // TODO: Implement GetMediaGroupAsync - This method is needed to fetch all messages in an album
+        private Task<List<Message>> GetMediaGroupAsync(InputPeer fromPeer, long groupedId, CancellationToken cancellationToken)
+        { throw new NotImplementedException("GetMediaGroupAsync is not implemented yet."); }
     }
 } 

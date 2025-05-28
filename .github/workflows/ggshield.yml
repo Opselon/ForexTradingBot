@@ -21,4 +21,4 @@ jobs:
       run: pip install ggshield
 
     - name: Run ggshield scan
-      run: ggshield scan repo .
+      run: ggshield secret scan repo .

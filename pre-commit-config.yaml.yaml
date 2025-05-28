@@ -1,0 +1,8 @@
+# این فایل باید در ریشه مخزن شما باشد
+# برای اینکه pre-commit روی سرور GitHub Actions یا روی کامپیوتر شما ggshield را اجرا کند.
+repos:
+  - repo: https://github.com/gitguardian/ggshield
+    rev: v1.23.0 # از آخرین نسخه ggshield استفاده کنید
+    hooks:
+      - id: ggshield
+        # args: ['secret', 'scan', 'path', '.', '--all-secrets'] # می توانید آرگومان ها را اینجا هم تعریف کنید

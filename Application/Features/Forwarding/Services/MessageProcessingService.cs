@@ -167,8 +167,8 @@ public async Task ProcessAndRelayMessageAsync(
 
                             if (inputMedia is InputMediaPhoto imp)
                             {
-                                if (inputMedia is InputMediaPhoto imp) imp.entities = newEntities;
                                 if (inputMedia is InputMediaDocument imd) imd.caption = newCaption;
+ imp.Caption = newCaption;
                                 if (inputMedia is InputMediaDocument imd) imd.entities = newEntities;
                                 // Need to handle other InputMedia types if their constructors/properties support caption/entities
                             }
@@ -189,7 +189,13 @@ public async Task ProcessAndRelayMessageAsync(
             }
             else // Handle single message
             {
+                string newCaption = firstMessage.message ?? "";
+                MessageEntity[]? newEntities = firstMessage.entities?.ToArray();
+
+                // Apply edit options to the single message's caption/entities
+                (newCaption, newEntities) = ApplyEditOptions(newCaption, newEntities, rule.EditOptions, firstMessage.media);
                 InputMedia? finalMediaToSend = firstMessage.media != null ? CreateInputMedia(firstMessage.media) : null;
+
                 await _userApiClient.SendMessageAsync(toPeer, newCaption, entities: newEntities, media: finalMediaToSend, noWebpage: rule.EditOptions.RemoveLinks);
 
                 _logger.LogInformation(
@@ -308,16 +314,20 @@ public async Task ProcessAndRelayMessageAsync(
                 {
                     id = new InputPhoto { id = p.id, access_hash = p.access_hash, file_reference = p.file_reference },
                     // Add other relevant properties if needed, e.g., caption, entities, flags
+                    Caption = string.Empty, // Assuming default empty caption
+ Entities = Array.Empty<MessageEntity>() // Assuming default empty entities
                 },
                 MessageMediaDocument mmd when mmd.document is Document d => new InputMediaDocument
                 {
                     id = new InputDocument { id = d.id, access_hash = d.access_hash, file_reference = d.file_reference },
                     // Add other relevant properties if needed, e.g., caption, entities, flags
+                    Caption = string.Empty, // Assuming default empty caption
+                    Entities = Array.Empty<MessageEntity>() // Assuming default empty entities
                 },
                 MessageMediaSticker mms when mms.document is Document sd => new InputMediaDocument // Stickers are documents
                 {
                     id = new InputDocument { id = sd.id, access_hash = sd.access_hash, file_reference = sd.file_reference },
-                    // Stickers don't typically have captions or entities when sent as media
+ // Stickers don't typically have captions or entities when sent as media
                 },
                 MessageMediaAnimation mma when mma.document is Document ad => new InputMediaDocument // Animations are documents
                 {
@@ -328,6 +338,8 @@ public async Task ProcessAndRelayMessageAsync(
                 {
                     id = new InputDocument { id = vd.id, access_hash = vd.access_hash, file_reference = vd.file_reference },
                     // Add other relevant properties if needed, e.g., caption, entities, flags, duration, w, h
+                    Caption = string.Empty, // Assuming default empty caption
+                    Entities = Array.Empty<MessageEntity>() // Assuming default empty entities
                 },
                 MessageMediaUnsupported or MessageMediaEmpty => null, // Do not forward unsupported or empty media
                 _ => DefaultCreateInputMediaCaseHandler(media) // Handle other potential media types

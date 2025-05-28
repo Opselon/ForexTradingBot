@@ -30,16 +30,15 @@ jobs:
         uses: actions/setup-python@v5 # Use v5 for latest features and security
         with:
           python-version: '3.x' # Use the latest stable 3.x version
-          cache: 'pip' # Cache pip dependencies to speed up subsequent runs
+          # Removed 'cache: pip' because your repository likely doesn't have
+          # a requirements.txt or pyproject.toml in the root, which causes the error.
+          # For installing just ggshield, caching is not critical.
 
       - name: 📦 Install ggshield
         run: |
           echo "Installing ggshield..."
           pip install ggshield
           echo "ggshield installed successfully."
-
-      # The 'Authenticating with GitGuardian' step is removed.
-      # ggshield uses the GITGUARDIAN_API_KEY environment variable directly.
 
       - name: 🔎 Run ggshield Secret Scan on Repository
         run: |

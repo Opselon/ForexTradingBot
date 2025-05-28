@@ -6,7 +6,7 @@ on:
       - main
       - master
       - develop
-  pull_request: # It's good practice to also scan Pull Requests
+  pull_request: # اسکن روی Pull Request ها برای شناسایی زودهنگام رازها
     branches:
       - main
       - master
@@ -17,49 +17,63 @@ jobs:
     name: 🕵️ Run GGShield Secret Scan
     runs-on: ubuntu-latest
 
-    # Set the GitGuardian API Key as an environment variable for the entire job.
-    # ggshield will automatically detect and use this environment variable.
+    # کلید API گیت‌گاردین را به عنوان یک متغیر محیطی برای کل Job تنظیم می‌کند.
+    # ggshield به صورت خودکار این متغیر محیطی را شناسایی و استفاده خواهد کرد.
     env:
       GITGUARDIAN_API_KEY: ${{ secrets.GITGUARDIAN_API_KEY }}
 
     steps:
       - name: ⬇️ Checkout Repository
-        uses: actions/checkout@v4 # Use v4 for latest features and security
+        uses: actions/checkout@v4 # استفاده از v4 برای آخرین ویژگی‌ها و امنیت
 
       - name: 🐍 Set up Python Environment
-        uses: actions/setup-python@v5 # Use v5 for latest features and security
+        uses: actions/setup-python@v5 # استفاده از v5 برای آخرین ویژگی‌ها و امنیت
         with:
-          python-version: '3.x' # Use the latest stable 3.x version
-          # Removed 'cache: pip' because your repository likely doesn't have
-          # a requirements.txt or pyproject.toml in the root, which causes the error.
-          # For installing just ggshield, caching is not critical.
+          python-version: '3.x' # استفاده از آخرین نسخه پایدار 3.x
+          # 'cache: pip' حذف شد زیرا مخزن شما احتمالا فایل requirements.txt یا pyproject.toml در ریشه ندارد
+          # که باعث خطای قبلی می‌شد. برای نصب فقط ggshield، کش‌کردن حیاتی نیست.
 
       - name: 📦 Install ggshield
         run: |
           echo "Installing ggshield..."
           pip install ggshield
           echo "ggshield installed successfully."
+          echo "ggshield version: $(ggshield --version)" # نمایش نسخه ggshield
 
-      - name: 🔎 Run ggshield Secret Scan on Repository
+      - name: 🔎 Run ggshield Secret Scan on Repository (Show All Secrets)
         run: |
           echo "Starting ggshield secret scan..."
-          ggshield secret scan repo .
-          echo "ggshield secret scan completed."
-        # If ggshield finds secrets, it will exit with a non-zero code,
-        # which will cause this step (and thus the job) to fail.
-        # This is the desired behavior to indicate a secret leak.
+          # استفاده از --all-secrets برای نمایش تمام رازهای شناسایی شده، حتی آن‌هایی که معمولاً نادیده گرفته می‌شوند.
+          # این باعث می‌شود ggshield خطای واضح‌تری دهد و پایپ‌لاین را با شکست مواجه کند.
+          ggshield secret scan repo . --all-secrets
+          echo "ggshield secret scan completed without immediate failure check."
+        # اگر ggshield رازهایی پیدا کند، با یک کد خروج غیرصفر (معمولاً 1) از برنامه خارج می‌شود،
+        # که باعث شکست این مرحله (و در نتیجه کل Job) خواهد شد.
+        # این رفتار مطلوب برای نشان دادن نشت راز است.
+        # هیچ "خودکار-رفع" در این مرحله انجام نمی‌شود؛ فقط شناسایی و هشدار.
 
-      # Optional: Add a step for notifications if needed, e.g., to Slack/Teams
-      # - name: 🔔 Notify on Scan Completion (Example)
-      #   if: always() # Run this step even if the scan fails
-      #   run: |
-      #     echo "GGShield scan finished. Check results above."
-      #     # Add your notification logic here, e.g., using a Slack action
-      #     # if: ${{ success() }}
-      #     #   uses: ...
-      #     #   with:
-      #     #     status: success
-      #     # if: ${{ failure() }}
-      #     #   uses: ...
-      #     #   with:
-      #     #     status: failure
+      # این مرحله برای اطلاع‌رسانی در مورد وضعیت اسکن است، چه موفق باشد چه ناموفق
+      - name: 🔔 Scan Status Notification
+        if: always() # این مرحله همیشه اجرا می‌شود، حتی اگر اسکن ناموفق باشد
+        run: |
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "✅ GGShield scan completed successfully. No secrets detected in the current push/PR."
+            echo "You can merge this code securely."
+          else
+            echo "❌ GGShield scan FAILED: Secrets detected or an error occurred!"
+            echo "--------------------------------------------------------"
+            echo "ACTION REQUIRED: A secret was found in your repository or commit history."
+            echo "Please review the logs above for details (look for 'Secret detected' messages)."
+            echo "You MUST remediate these secrets MANUALLY. Here's what to do:"
+            echo "1. NEVER commit secrets directly to your repository."
+            echo "2. If a .env file is involved, add it to your .gitignore."
+            echo "3. Go to your GitGuardian dashboard (https://dashboard.gitguardian.com/incidents) to see details of the detected incidents."
+            echo "4. Rotate (change) the compromised secret immediately (e.g., get a new Telegram bot token)."
+            echo "5. Remove the secret from your Git history (this is a manual, advanced git operation like 'git filter-repo')."
+            echo "   (Search 'GitGuardian secret remediation' for detailed steps)."
+            echo "6. Store secrets securely as GitHub Repository Secrets (Settings -> Secrets and variables -> Actions)."
+            echo "7. Update your application to read secrets from environment variables, not hardcoded in files."
+            echo "8. Consider using Git pre-commit hooks to catch secrets locally before pushing."
+            echo "--------------------------------------------------------"
+            echo "This workflow will continue to fail until the secrets are removed from your repository's history."
+          fi

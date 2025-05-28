@@ -46,11 +46,11 @@ namespace Application.Features.Forwarding.Services
             string messageContent,
             TL.MessageEntity[]? messageEntities,
             Peer? senderPeerForFilter,
-            InputMedia? inputMediaToSend, // NEW: اطلاعات مدیا از Orchestrator
+            List<InputMediaWithCaption>? mediaGroupItems, // Changed as per previous steps
             CancellationToken cancellationToken)
         {
-            _logger.LogInformation("Job: Starting ProcessAndRelay for MsgID {SourceMsgId} from RawSourcePeer {RawSourcePeerId} to Target {TargetChannelId} via DB Rule '{RuleName}'. Initial Content Preview: '{MessageContentPreview}'. Has Input Media: {HasInputMedia}. Sender Peer: {SenderPeer}",
-                sourceMessageId, rawSourcePeerId, targetChannelId, rule.RuleName, TruncateString(messageContent, 50), inputMediaToSend != null, senderPeerForFilter?.ToString() ?? "N/A");
+            _logger.LogInformation("Job: Starting ProcessAndRelay for MsgID {SourceMsgId} from RawSourcePeer {RawSourcePeerId} to Target {TargetChannelId} via DB Rule '{RuleName}'. Initial Content Preview: '{MessageContentPreview}'. Has Media Group: {HasMediaGroup}. Sender Peer: {SenderPeer}",
+                sourceMessageId, rawSourcePeerId, targetChannelId, rule.RuleName, TruncateString(messageContent, 50), mediaGroupItems != null && mediaGroupItems.Any(), senderPeerForFilter?.ToString() ?? "N/A");
 
             if (rule == null)
             {
@@ -73,7 +73,6 @@ namespace Application.Features.Forwarding.Services
 
             try
             {
-                // ... (بقیه کدهای موجود برای Resolve Peer و needsCustomSend) ...
                 _logger.LogDebug("Job: Resolving FromPeer using positive ID: {RawSourcePeerId} for Rule: {RuleName}", rawSourcePeerId, rule.RuleName);
                 var fromPeer = await _userApiClient.ResolvePeerAsync(rawSourcePeerId);
 
@@ -114,7 +113,8 @@ namespace Application.Features.Forwarding.Services
                 }
                 _logger.LogInformation("Job: Peers resolved. FromPeer: {FromPeerString}, ToPeer: {ToPeerString} for Rule: {RuleName}", GetInputPeerTypeAndIdForLogging(fromPeer), GetInputPeerTypeAndIdForLogging(toPeer), rule.RuleName);
 
-                bool needsCustomSend = rule.EditOptions != null &&
+                // Determine if custom send is needed based on edit options OR if it's a media group
+                bool needsCustomSend = (rule.EditOptions != null &&
                         (
                          !string.IsNullOrEmpty(rule.EditOptions.PrependText) ||
                          !string.IsNullOrEmpty(rule.EditOptions.AppendText) ||
@@ -122,15 +122,17 @@ namespace Application.Features.Forwarding.Services
                          rule.EditOptions.RemoveLinks ||
                          rule.EditOptions.StripFormatting ||
                          !string.IsNullOrEmpty(rule.EditOptions.CustomFooter) ||
-                         rule.EditOptions.DropMediaCaptions || // این شرط مهم است اگر کپشن مدیا را میخواهید حذف کنید
-                         inputMediaToSend != null // اگر مدیایی برای ارسال هست، پس نیاز به کاستوم سِند داریم
-                        );
-                _logger.LogDebug("Job: NeedsCustomSend: {NeedsCustomSend} for Rule: {RuleName}. EditOptions is null: {IsEditOptionsNull}. InputMediaToSend is null: {IsInputMediaNull}", needsCustomSend, rule.RuleName, rule.EditOptions == null, inputMediaToSend == null);
+                         rule.EditOptions.DropMediaCaptions || // This is crucial for media caption removal
+                         rule.EditOptions.NoForwards // NoForwards implies custom send if ForwardMessages cannot handle it
+                        )) ||
+                        (mediaGroupItems != null && mediaGroupItems.Any()); // If media group exists, always custom send
 
-                if (needsCustomSend && rule.EditOptions != null || inputMediaToSend != null) // اگر EditOptions داریم یا مدیایی برای ارسال هست، Custom Send می‌کنیم
+                _logger.LogDebug("Job: NeedsCustomSend: {NeedsCustomSend} for Rule: {RuleName}. EditOptions is null: {IsEditOptionsNull}. Has MediaGroup: {HasMediaGroup}.", needsCustomSend, rule.RuleName, rule.EditOptions == null, mediaGroupItems != null && mediaGroupItems.Any());
+
+                if (needsCustomSend)
                 {
                     _logger.LogInformation("Job: Processing custom send for MsgID {SourceMsgId} using DB Rule '{RuleName}'", sourceMessageId, rule.RuleName);
-                    await ProcessCustomSendAsync(fromPeer, toPeer, sourceMessageId, rule, messageContent, messageEntities, inputMediaToSend, cancellationToken);
+                    await ProcessCustomSendAsync(toPeer, rule, messageContent, messageEntities, mediaGroupItems, cancellationToken);
                 }
                 else
                 {
@@ -220,192 +222,150 @@ namespace Application.Features.Forwarding.Services
             _logger.LogTrace("ShouldProcessMessageBasedOnFilters: Message {MessageId} passed all active filters for Rule '{RuleName}'.", messageId, ruleName);
             return true;
         }
+      
 
-
-
+        // UPDATED: ProcessCustomSendAsync to handle List<InputMediaWithCaption> for albums
+        // UPDATED: ProcessCustomSendAsync to handle List<InputMediaWithCaption> for albums
         private async Task ProcessCustomSendAsync(
-               InputPeer fromPeer,
                InputPeer toPeer,
-               int sourceMessageId,
                Domain.Features.Forwarding.Entities.ForwardingRule rule,
                string initialMessageContentFromOrchestrator,
                TL.MessageEntity[]? initialEntitiesFromOrchestrator,
-               InputMedia? inputMediaToSendFromOrchestrator, // NEW: مدیا را مستقیماً دریافت می‌کنیم
+               List<InputMediaWithCaption>? mediaGroupItems, // CHANGED: List of media items
                CancellationToken cancellationToken)
         {
-            _logger.LogInformation("ProcessCustomSendAsync: >>> Starting for MsgID {SourceMessageId} (Rule: '{RuleName}'). FromPeer: {FromPeerIdString}. ToPeer: {ToPeerIdString}. Content from Orchestrator Preview: '{OrchestratorContentPreview}'. Has Input Media From Orchestrator: {HasInputMedia}",
-                sourceMessageId, rule.RuleName, GetInputPeerTypeAndIdForLogging(fromPeer), GetInputPeerTypeAndIdForLogging(toPeer), TruncateString(initialMessageContentFromOrchestrator, 50), inputMediaToSendFromOrchestrator != null);
-   
-            TL.Message? originalMessageForMedia = null;
+            _logger.LogInformation("ProcessCustomSendAsync: >>> Starting for Rule: '{RuleName}'. Has MediaGroup: {HasMediaGroup}. Initial Content Preview: '{OrchestratorContentPreview}'.",
+                rule.RuleName, mediaGroupItems != null && mediaGroupItems.Any(), TruncateString(initialMessageContentFromOrchestrator, 50));
 
-            _logger.LogDebug("ProcessCustomSendAsync: Attempting GetMessagesAsync for MsgID {SourceMessageId} from Peer: {FromPeerTypeAndId} (primarily for media and full message details).",
-                sourceMessageId, GetInputPeerTypeAndIdForLogging(fromPeer));
+            string finalCaption = initialMessageContentFromOrchestrator;
+            TL.MessageEntity[]? finalEntities = initialEntitiesFromOrchestrator?.ToArray();
 
-            Messages_MessagesBase messagesBaseResponse = null;
-            try
+            // Apply edits to the main caption IF it's not a media group or if it's the main caption of the group
+            // For a media group, the "main" caption to be edited is typically the one from the first item
+            // or the item explicitly designated by the orchestrator.
+            // For simplicity here, we assume the initialMessageContentFromOrchestrator is the relevant caption.
+            // If DropMediaCaptions is true AND we have media (either single or group), clear the initial content.
+            if (rule.EditOptions?.DropMediaCaptions == true && (mediaGroupItems != null && mediaGroupItems.Any()))
             {
-                messagesBaseResponse = await _userApiClient.GetMessagesAsync(fromPeer, sourceMessageId);
+                finalCaption = string.Empty;
+                finalEntities = null;
+                _logger.LogInformation("ProcessCustomSendAsync: DropMediaCaptions is TRUE and media group is present. Clearing main caption.");
             }
-            catch (Exception ex)
+            else if (rule.EditOptions?.DropMediaCaptions == true && mediaGroupItems == null)
             {
-                _logger.LogError(ex, "ProcessCustomSendAsync: Error fetching full message details for media from API for MsgID {SourceMessageId}. Proceeding without media.", sourceMessageId);
-                // اگر خطایی در دریافت اطلاعات مدیا رخ داد، ادامه می‌دهیم ولی بدون مدیا
+                // This block handles the case where mediaGroupItems is null but logic still wants to clear caption.
+                // This path is less likely if orchestrator always puts media into mediaGroupItems (even for single media).
+                finalCaption = string.Empty;
+                finalEntities = null;
+                _logger.LogInformation("ProcessCustomSendAsync: DropMediaCaptions is TRUE and single media implied. Clearing caption.");
             }
 
-            if (messagesBaseResponse != null)
+            // Apply text transformations (prepend, append, replacements) to the main caption
+            if (rule.EditOptions != null)
             {
-                IReadOnlyList<MessageBase>? msgListSource = null;
-                if (messagesBaseResponse is Messages_Messages messagesMessages)
-                {
-                    msgListSource = messagesMessages.messages;
-                }
-                else if (messagesBaseResponse is Messages_ChannelMessages channelMessages)
-                {
-                    msgListSource = channelMessages.messages;
-                }
+                _logger.LogInformation("ProcessCustomSendAsync: Applying text edit options for Rule: '{RuleName}'. Original Text Preview: '{InitialTextPreview}'.",
+                    rule.RuleName, TruncateString(finalCaption, 50));
+                (finalCaption, finalEntities) = ApplyEditOptions(finalCaption, finalEntities, rule.EditOptions, null);
+                _logger.LogInformation("ProcessCustomSendAsync: After ApplyEditOptions. Final Text Preview: '{FinalTextPreview}'.",
+                    TruncateString(finalCaption, 50));
+            }
+            else
+            {
+                _logger.LogDebug("ProcessCustomSendAsync: No EditOptions defined for Rule: '{RuleName}'. Using original content.", rule.RuleName);
+            }
 
-                if (msgListSource != null && msgListSource.Any())
+            // Determine if sending as a media group or single message
+            if (mediaGroupItems != null && mediaGroupItems.Any())
+            {
+                _logger.LogInformation("ProcessCustomSendAsync: Sending as Media Group ({Count} items).", mediaGroupItems.Count);
+                var mediaToSend = new List<InputSingleMedia>(); // WTelegramClient expects InputSingleMedia[] for albums
+
+                for (int i = 0; i < mediaGroupItems.Count; i++)
                 {
-                    originalMessageForMedia = msgListSource.OfType<TL.Message>().FirstOrDefault(m => m.ID == sourceMessageId);
-                    if (originalMessageForMedia != null)
+                    var item = mediaGroupItems[i];
+                    if (item.Media != null)
                     {
-                        _logger.LogInformation("ProcessCustomSendAsync: Full TL.Message (ID: {OriginalMessageId}, Type: {OriginalMessageType}) retrieved for media and full details. Text preview from API: '{MessageTextPreview}'. Rule: '{RuleName}'",
-                            originalMessageForMedia.id, originalMessageForMedia.GetType().Name, TruncateString(originalMessageForMedia.message, 50), rule.RuleName);
+                        // FIXED: Correct usage of InputSingleMedia with its properties
+                        var singleMedia = new InputSingleMedia { media = item.Media };
+
+                        // Assign the final (edited) caption/entities to the first media item in the group.
+                        // Subsequent items will have their original captions (if any) or empty if DropMediaCaptions is true.
+                        if (i == 0) // Apply edited caption/entities to the first media item
+                        {
+                            singleMedia.message = finalCaption; // Correct property name: Message
+                            singleMedia.entities = finalEntities; // Correct property name: Entities
+                        }
+                        else // For subsequent media items, clear caption if DropMediaCaptions is true
+                        {
+                            if (rule.EditOptions?.DropMediaCaptions == true)
+                            {
+                                singleMedia.message = string.Empty; // Correct property name: Message
+                                singleMedia.entities = null; // Correct property name: Entities
+                            }
+                            else
+                            {
+                                // If DropMediaCaptions is false, keep original captions for subsequent items
+                                // as provided by orchestrator (item.Caption, item.Entities)
+                                singleMedia.message = item.Caption; // Correct property name: Message
+                                singleMedia.entities = item.Entities; // Correct property name: Entities
+                            }
+                        }
+                        mediaToSend.Add(singleMedia);
                     }
                     else
                     {
-                        _logger.LogWarning("ProcessCustomSendAsync: Message with ID {SourceMessageId} not found or not TL.Message in GetMessagesAsync response. Cannot get full details for media handling. Rule: '{RuleName}'. List contents: {ListContent}",
-                            sourceMessageId, rule.RuleName, string.Join(";", msgListSource.Select(m => $"ID:{m.ID} Type:{m.GetType().Name}")));
+                        _logger.LogWarning("ProcessCustomSendAsync: Media item {Index} in group is null. Skipping.", i);
                     }
                 }
+
+                if (mediaToSend.Any())
+                {
+                    // FIXED: Removed cancellationToken: cancellationToken as SendMediaGroupAsync overload does not have it.
+                    await _userApiClient.SendMediaGroupAsync(toPeer, mediaToSend.ToArray()); // Removed cancellationToken
+                    _logger.LogInformation("ProcessCustomSendAsync: Media group sent to Target {TargetChannelId} via Rule '{RuleName}'.",
+                        GetInputPeerIdValueForLogging(toPeer), rule.RuleName);
+                }
                 else
                 {
-                    _logger.LogWarning("ProcessCustomSendAsync: GetMessagesAsync returned empty or null message list for MsgID {SourceMessageId}. Rule: '{RuleName}'.",
-                        sourceMessageId, rule.RuleName);
+                    _logger.LogWarning("ProcessCustomSendAsync: No valid media items to send in the media group. Skipping send.", rule.RuleName);
                 }
             }
-            else
+            else // It's a single text-only message (or single media if orchestrator didn't put it in mediaGroupItems)
             {
-                _logger.LogWarning("ProcessCustomSendAsync: GetMessagesAsync returned NULL for MsgID {SourceMessageId}. FromPeer: {FromPeerTypeAndId}. Rule: '{RuleName}'. No media can be extracted.",
-                    sourceMessageId, GetInputPeerTypeAndIdForLogging(fromPeer), rule.RuleName);
-            }
+                // This path is for text-only messages. If single media was passed to the Job
+                // not as a List<InputMediaWithCaption> but as a single InputMedia (from older signature),
+                // it would NOT be handled correctly here, as `mediaGroupItems` is null.
+                // The current orchestrator design implies single media should be a List with one item.
 
-
-            // 2. Prepare content for sending based on EditOptions
-            // از محتوای پیام و انتشاراتی که از ارکستریتور مستقیماً دریافت کرده‌ایم استفاده می‌کنیم.
-            string newCaption = initialMessageContentFromOrchestrator;
-            TL.MessageEntity[]? newEntities = initialEntitiesFromOrchestrator?.ToArray();
-
-            // Apply edit options
-            if (rule.EditOptions != null)
-            {
-                _logger.LogInformation("ProcessCustomSendAsync: Applying edit options for Rule: '{RuleName}'. Original Text (from Orchestrator) Preview: '{InitialTextPreview}'.",
-                    rule.RuleName, TruncateString(newCaption, 50));
-                // اگر DropMediaCaptions فعال باشد، کپشن را از بین می‌بریم.
-                // متد ApplyEditOptions باید به گونه‌ای تغییر کند که MessageMedia را به عنوان ورودی نگیرد.
-                // یا صرفا برای بررسی DropMediaCaptions از آن استفاده کند
-                (newCaption, newEntities) = ApplyEditOptions(newCaption, newEntities, rule.EditOptions, null); // Pass null for originalMedia, as media logic is now outside this method.
-                if (rule.EditOptions.DropMediaCaptions && inputMediaToSendFromOrchestrator != null)
+                if (string.IsNullOrEmpty(finalCaption))
                 {
-                    newCaption = string.Empty;
-                    newEntities = null;
-                    _logger.LogInformation("ProcessCustomSendAsync: DropMediaCaptions is TRUE and media is present. Caption cleared.");
+                    _logger.LogWarning("ProcessCustomSendAsync: After edits, no text and no media group for MsgID. Rule: '{RuleName}'. Skipping SendMessageAsync.", rule.RuleName);
+                    return;
                 }
 
-                _logger.LogInformation("ProcessCustomSendAsync: After ApplyEditOptions. Final Text Preview: '{FinalTextPreview}'. Rule: '{RuleName}'",
-                    TruncateString(newCaption, 50), rule.RuleName);
+                _logger.LogInformation("ProcessCustomSendAsync: Sending as single text message. Final Caption Length: {CaptionLength}, NoWebpagePreview: {NoWebpagePreview}. Rule: '{RuleName}'",
+                    finalCaption.Length, rule.EditOptions?.RemoveLinks ?? false, rule.RuleName);
+
+                await _userApiClient.SendMessageAsync(
+                    toPeer,
+                    finalCaption, // The modified text/caption
+                    entities: finalEntities, // The modified entities
+                    media: null, // If mediaGroupItems is null/empty, we're sending text-only
+                    noWebpage: rule.EditOptions?.RemoveLinks ?? false
+                );
+                _logger.LogInformation("ProcessCustomSendAsync: Single text message sent to Target {TargetChannelId} via Rule '{RuleName}'.",
+                    GetInputPeerIdValueForLogging(toPeer), rule.RuleName);
             }
-            else
-            {
-                _logger.LogDebug("ProcessCustomSendAsync: No EditOptions defined for Rule: '{RuleName}'. Using original caption/entities.", rule.RuleName);
-            }
-            // The final media to send is simply what we received from the orchestrator
-            InputMedia? finalMediaToSend = inputMediaToSendFromOrchestrator;
-            // Final check before sending message
-            if (string.IsNullOrEmpty(newCaption) && finalMediaToSend == null)
-            {
-                _logger.LogWarning("ProcessCustomSendAsync: After all edits, final caption is empty AND no media prepared to send for MsgID {SourceMessageId}. Rule: '{RuleName}'. Skipping SendMessageAsync.", sourceMessageId, rule.RuleName);
-                return;
-            }
-            await _userApiClient.SendMessageAsync(
-               toPeer,
-               newCaption, // This is the potentially modified text/caption
-               entities: newEntities, // This is the potentially modified entities
-               media: finalMediaToSend, // This is the media to send (now directly from orchestrator)
-               noWebpage: rule.EditOptions?.RemoveLinks ?? false
-           );
-            _logger.LogInformation("ProcessCustomSendAsync: Custom message sent for original MsgID {SourceMessageId} to Target {TargetChannelId} via Rule '{RuleName}'.",
-                sourceMessageId, GetInputPeerIdValueForLogging(toPeer), rule.RuleName);
-
-            // Decide on media inclusion for SendMessageAsync using the fetched originalMessageForMedia
-            // This is the crucial section to fix for media
-            if (originalMessageForMedia?.media != null)
-            {
-                _logger.LogDebug("ProcessCustomSendAsync: Preparing original media from full fetched message for sending as final media for Rule: '{RuleName}'. Media Type: {MediaType}", rule.RuleName, originalMessageForMedia.media.GetType().Name);
-
-                if (originalMessageForMedia.media is MessageMediaPhoto mmp && mmp.photo is Photo p)
-                {
-                    // Ensure file_reference is handled correctly (can be null if media is recent or not yet processed by Telegram)
-                    // It's safer to provide an empty byte array than null for file_reference when constructing InputPhoto.
-                    finalMediaToSend = new InputMediaPhoto
-                    {
-                        id = new InputPhoto { id = p.id, access_hash = p.access_hash, file_reference = p.file_reference ?? Array.Empty<byte>() },
-                        // caption = newCaption, // Caption is passed separately to SendMessageAsync
-                        // entities = newEntities // Entities are passed separately to SendMessageAsync
-                    };
-                    _logger.LogInformation("ProcessCustomSendAsync: Prepared InputMediaPhoto for sending. Photo ID: {PhotoId}", p.id);
-                }
-                else if (originalMessageForMedia.media is MessageMediaDocument mmd && mmd.document is Document d)
-                {
-                    // Similar handling for documents
-                    finalMediaToSend = new InputMediaDocument
-                    {
-                        id = new InputDocument { id = d.id, access_hash = d.access_hash, file_reference = d.file_reference ?? Array.Empty<byte>() },
-                        // caption = newCaption, // Caption is passed separately to SendMessageAsync
-                        // entities = newEntities // Entities are passed separately to SendMessageAsync
-                    };
-                    _logger.LogInformation("ProcessCustomSendAsync: Prepared InputMediaDocument for sending. Document ID: {DocumentId}", d.id);
-                }
-                // Add more media types if you need to support them (e.g., MessageMediaWebPage, MessageMediaContact, etc.)
-                // These might not be directly convertible to InputMediaPhoto/InputMediaDocument and might require different SendMessageAsync overloads.
-                else
-                {
-                    _logger.LogWarning("ProcessCustomSendAsync: Unsupported media type {MediaType} for custom send for Rule '{RuleName}'. Media will NOT be re-sent.",
-                        originalMessageForMedia.media.GetType().Name, rule.RuleName);
-                }
-            }
-
-
-            // 3. Final check before sending message.
-            // If there's no text content but there IS media, we should still send it.
-            // If there's no text and no media, then skip.
-            if (string.IsNullOrEmpty(newCaption) && finalMediaToSend == null)
-            {
-                _logger.LogWarning("ProcessCustomSendAsync: After all edits, final caption is empty AND no media prepared to send for MsgID {SourceMessageId}. Rule: '{RuleName}'. Skipping SendMessageAsync.", sourceMessageId, rule.RuleName);
-                return;
-            }
-
-            // 4. Send the final message
-            _logger.LogInformation("ProcessCustomSendAsync: Calling SendMessageAsync to ToPeer {ToPeerIdString}. Final Caption Length: {CaptionLength}, Media Present: {MediaPresent}, NoWebpagePreview: {NoWebpagePreview}. Rule: '{RuleName}'",
-                GetInputPeerTypeAndIdForLogging(toPeer), newCaption.Length, finalMediaToSend != null, rule.EditOptions?.RemoveLinks ?? false, rule.RuleName);
-
-            await _userApiClient.SendMessageAsync(
-                toPeer,
-                newCaption, // This is the potentially modified text/caption
-                entities: newEntities, // This is the potentially modified entities
-                media: finalMediaToSend, // This is the media to send (might be null if no media or not supported)
-                noWebpage: rule.EditOptions?.RemoveLinks ?? false // Controls web preview for links
-            );
-
-            _logger.LogInformation("ProcessCustomSendAsync: Custom message sent for original MsgID {SourceMessageId} to Target {TargetChannelId} via Rule '{RuleName}'.",
-                sourceMessageId, GetInputPeerIdValueForLogging(toPeer), rule.RuleName);
         }
+
+
         private string TruncateString(string? str, int maxLength)
         {
             if (string.IsNullOrEmpty(str)) return "[null_or_empty]";
             return str.Length <= maxLength ? str : str.Substring(0, maxLength) + "...";
         }
-    
+
+
         private string GetInputPeerTypeAndIdForLogging(InputPeer peer)
         {
             return peer switch
@@ -418,6 +378,7 @@ namespace Application.Features.Forwarding.Services
             };
         }
 
+
         private string GetInputPeerIdValueForLogging(InputPeer peer)
         {
             return peer switch
@@ -429,28 +390,24 @@ namespace Application.Features.Forwarding.Services
                 _ => peer?.ToString() ?? "NullPeer"
             };
         }
-        
+
 
         // ... (CloneEntityWithOffset and DefaultCaseHandler) ...
-    
+
 
         private async Task ProcessSimpleForwardAsync(
-              InputPeer fromPeer,
-              InputPeer toPeer,
-              int sourceMessageId,
-              ForwardingRule rule, // This is Domain.Features.Forwarding.Entities.ForwardingRule
-              CancellationToken cancellationToken)
+            InputPeer fromPeer,
+            InputPeer toPeer,
+            int sourceMessageId,
+            ForwardingRule rule, // This is Domain.Features.Forwarding.Entities.ForwardingRule
+            CancellationToken cancellationToken)
         {
+            // Simple forward cannot drop captions for media groups; WTelegramClient ForwardMessagesAsync doesn't support it directly.
+            // If dropMediaCaptions was true and it was a media message, it should have gone through ProcessCustomSendAsync.
+            // If it's a simple forward of a media group, WTelegramClient will forward the entire group as is.
             bool dropAuthor = rule.EditOptions?.DropAuthor ?? rule.EditOptions?.RemoveSourceForwardHeader ?? false;
             bool noForwards = rule.EditOptions?.NoForwards ?? false;
-            bool dropMediaCaptionsSetting = rule.EditOptions?.DropMediaCaptions ?? false;
-
-            if (dropMediaCaptionsSetting)
-            {
-                _logger.LogWarning("ProcessSimpleForwardAsync: DropMediaCaptions is true for Rule '{RuleName}' but simple forward cannot drop captions. Consider custom send or removing this option for simple forwards.", rule.RuleName);
-                // For simple forward, cannot drop media captions. This option will be ignored by Telegram API for ForwardMessages.
-            }
-
+            // Removed dropMediaCaptionsSetting check as it's not applicable for simple forward here.
 
             _logger.LogDebug("ProcessSimpleForwardAsync: Parameters for Rule '{RuleName}': DropAuthor={DropAuthor}, NoForwards={NoForwards}",
                 rule.RuleName, dropAuthor, noForwards);
@@ -460,10 +417,8 @@ namespace Application.Features.Forwarding.Services
                 messageIds: new[] { sourceMessageId },
                 fromPeer: fromPeer,
                 dropAuthor: dropAuthor,
-                noForwards: noForwards,
-                dropMediaCaptions: false // WTelegramClient.ForwardMessagesAsync does not take this. Captions are handled by custom send.
-                                         // Or, if your ITelegramUserApiClient.ForwardMessagesAsync takes it, ensure the implementation handles it
-                                         // (likely by doing a custom send if this is true). For a true simple forward, this is false.
+                noForwards: noForwards
+            // Removed dropMediaCaptions: false from here to resolve ambiguity
             );
 
             _logger.LogInformation("Job: Message {SourceMsgId} forwarded to Target {TargetChannelId} via Rule '{RuleName}'.",
@@ -592,9 +547,35 @@ namespace Application.Features.Forwarding.Services
             _logger.LogDebug("ApplyEditOptions: Final text length: {FinalTextLength}. Entities count: {EntitiesCount}", finalText.Length, currentEntities?.Count ?? 0);
             return (finalText, currentEntities?.ToArray());
         }
+        private MessageEntity DefaultCaseHandler(MessageEntity oldEntity, int offsetDelta)
+        {
+            _logger.LogWarning("CloneEntityWithOffset (DefaultCaseHandler): Unhandled or generic entity type {EntityType}. Attempting generic clone. Offset adjustment WILL BE INCORRECT if text was prepended and this entity type is not specifically handled.", oldEntity.GetType().Name);
+            try
+            {
+                if (Activator.CreateInstance(oldEntity.GetType()) is MessageEntity newGenericEntity)
+                {
+                    newGenericEntity.Offset = oldEntity.Offset + offsetDelta;
+                    newGenericEntity.Length = oldEntity.Length;
+                    // This does not copy other properties specific to the unknown entity type.
+                    return newGenericEntity;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "CloneEntityWithOffset (DefaultCaseHandler): Failed to create or clone instance for entity type {EntityType}.", oldEntity.GetType().Name);
+            }
+            _logger.LogError("CloneEntityWithOffset (DefaultCaseHandler): FALLBACK - returning original entity type {EntityType} with potentially incorrect offset. THIS IS A BUG if text was prepended.", oldEntity.GetType().Name);
+            // Modifying the original entity's offset is dangerous if it's a reference shared elsewhere.
+            // However, if it's a new list from ToArray(), it's a shallow copy of references.
+            // A true deep clone is safer but more complex.
+            // For now, let's create a new instance if possible, otherwise modify (which is risky).
+            // The Activator approach above is better than directly modifying oldEntity.Offset here.
+            // If Activator fails, returning oldEntity without modification is safer than modifying its offset.
+            return oldEntity;
+        }
 
-        // ... (TruncateString, GetInputPeerTypeAndIdForLogging, GetInputPeerIdValueForLogging, ProcessSimpleForwardAsync, CloneEntityWithOffset, DefaultCaseHandler) ...
-    
+
+        
 
 
 
@@ -622,33 +603,6 @@ private MessageEntity CloneEntityWithOffset(MessageEntity oldEntity, int offsetD
                 MessageEntityHashtag hashtag => new MessageEntityHashtag { Offset = newOffset, Length = newLength },
                 _ => DefaultCaseHandler(oldEntity, offsetDelta)
             };
-        }
-
-        private MessageEntity DefaultCaseHandler(MessageEntity oldEntity, int offsetDelta)
-        {
-            _logger.LogWarning("CloneEntityWithOffset (DefaultCaseHandler): Unhandled or generic entity type {EntityType}. Attempting generic clone. Offset adjustment WILL BE INCORRECT if text was prepended and this entity type is not specifically handled.", oldEntity.GetType().Name);
-            try
-            {
-                if (Activator.CreateInstance(oldEntity.GetType()) is MessageEntity newGenericEntity)
-                {
-                    newGenericEntity.Offset = oldEntity.Offset + offsetDelta;
-                    newGenericEntity.Length = oldEntity.Length;
-                    // This does not copy other properties specific to the unknown entity type.
-                    return newGenericEntity;
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "CloneEntityWithOffset (DefaultCaseHandler): Failed to create or clone instance for entity type {EntityType}.", oldEntity.GetType().Name);
-            }
-            _logger.LogError("CloneEntityWithOffset (DefaultCaseHandler): FALLBACK - returning original entity type {EntityType} with potentially incorrect offset. THIS IS A BUG if text was prepended.", oldEntity.GetType().Name);
-            // Modifying the original entity's offset is dangerous if it's a reference shared elsewhere.
-            // However, if it's a new list from ToArray(), it's a shallow copy of references.
-            // A true deep clone is safer but more complex.
-            // For now, let's create a new instance if possible, otherwise modify (which is risky).
-            // The Activator approach above is better than directly modifying oldEntity.Offset here.
-            // If Activator fails, returning oldEntity without modification is safer than modifying its offset.
-            return oldEntity;
         }
     }
 }

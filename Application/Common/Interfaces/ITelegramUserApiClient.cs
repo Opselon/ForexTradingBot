@@ -33,7 +33,20 @@ namespace Application.Common.Interfaces
         /// <param name="peer">The InputPeer of the chat/channel where messages are located.</param>
         /// <param name="messageIds">An array of message IDs to retrieve.</param>
         /// <returns>A Messages_MessagesBase object containing the fetched messages, or null on error.</returns>
-        Task<Messages_MessagesBase?> GetMessagesAsync(InputPeer peer, params int[] messageIds);
+        Task<Messages_MessagesBase> GetMessagesAsync(InputPeer peer, params int[] msgIds);
+
+        Task<UpdatesBase> SendMessageAsync(InputPeer peer, string message, long? replyToMsgId = null,
+                                              ReplyMarkup? replyMarkup = null, IEnumerable<MessageEntity>? entities = null,
+                                              bool noWebpage = false, bool background = false, bool clearDraft = false,
+                                              DateTime? schedule_date = null, // Changed from int?
+                                              bool sendAsBot = false, // Keep as this is in interface
+                                              InputMedia? media = null, int[]? parsedMentions = null);
+
+        Task SendMediaGroupAsync(InputPeer peer, InputSingleMedia[] media, long? replyToMsgId = null,
+                            bool background = false, DateTime? schedule_date = null, // Changed from int?
+                            bool sendAsBot = false, int[]? parsedMentions = null);
+
+
 
         /// <summary>
         /// Sends a message (text or media) to a peer.
@@ -45,25 +58,11 @@ namespace Application.Common.Interfaces
         /// <param name="replyToMsgId">Optional ID of the message to reply to.</param>
         /// <param name="noWebpage">If true, disables link previews for this message.</param>
         /// <returns>An UpdatesBase object representing the result of the send operation, or null on error.</returns>
-        Task<UpdatesBase?> SendMessageAsync(InputPeer peer, string message, MessageEntity[]? entities = null, InputMedia? media = null, long? replyToMsgId = null, bool noWebpage = false);
+        Task<UpdatesBase?> ForwardMessagesAsync(InputPeer toPeer, int[] messageIds, InputPeer fromPeer,
+                                                           bool dropAuthor = false, bool noForwards = false,
+                                                           int? topMsgId = null, DateTime? scheduleDate = null, // Changed from int?
+                                                           bool sendAsBot = false);
 
-        /// <summary>
-        /// Forwards messages from one peer to another.
-        /// </summary>
-        /// <param name="toPeer">The target InputPeer to forward messages to.</param>
-        /// <param name="messageIds">An array of message IDs to forward from the fromPeer.</param>
-        /// <param name="fromPeer">The source InputPeer from which messages are forwarded.</param>
-        /// <param name="dropAuthor">If true, sender's name will be hidden (message appears as sent by you). WTelegram equivalent is `drop_author`.</param>
-        /// <param name="dropMediaCaptions">If true, media captions will be removed. WTelegram equivalent is `drop_media_captions`.</param>
-        /// <param name="noForwards">If true, the forwarded message will not be linkable to the original message (removes "forwarded from" header). WTelegram equivalent is `noforwards`.</param>
-        /// <returns>An UpdatesBase object representing the result of the forward operation, or null on error.</returns>
-        Task<UpdatesBase?> ForwardMessagesAsync(
-              InputPeer toPeer, // PARAMETER IS NAMED toPeer
-              int[] messageIds,
-              InputPeer fromPeer,
-              bool dropAuthor = false,
-              bool dropMediaCaptions = false, // This was in your interface
-              bool noForwards = false);
 
         /// <summary>
         /// Gets the currently logged-in user's information.

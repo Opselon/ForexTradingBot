@@ -103,61 +103,60 @@ namespace TelegramPanel.Infrastructure.Services
                 _logger.LogTrace("TelegramPanel.MessageForwardingService: Sender information (From/SenderChat) is null for message {MessageId}. Skipping sender peer for filter.", message.MessageId);
             }
 
-            // 3. Extract and convert Media to TL.InputMedia
-            TL.InputMedia? tlInputMedia = null;
+            // 3. Extract and convert Media to TL.InputMedia and then to List<InputMediaWithCaption>
+            // IMPORTANT: Direct conversion of Telegram.Bot.Types.FileId (Photo.FileId, Video.FileId, Document.FileId)
+            // to WTelegramClient's TL.InputPhoto / TL.InputDocument (which require 'id', 'access_hash', 'file_reference')
+            // is NOT possible without re-downloading the file and re-uploading it via WTelegramClient.
+            // WTelegramClient's IDs are internal and different from Telegram.Bot's FileIds.
+            // So, `tlInputMedia` as a simple conversion will likely be null or result in invalid media.
+            List<InputMediaWithCaption>? mediaGroupItems = null;
+
+            // Handling for a single media item
+            TL.InputMedia? currentPreparedMedia = null;
             if (message.Photo != null && message.Photo.Any())
             {
                 var largestPhoto = message.Photo.OrderByDescending(p => p.Width * p.Height).FirstOrDefault();
                 if (largestPhoto != null)
                 {
-                    // For Telegram.Bot.Types.PhotoSize, FileId is usually sufficient for InputMediaPhoto.
-                    // Access_hash and file_reference are internal WTelegramClient properties
-                    // and are not directly available from Telegram.Bot.
-                    // For now, we'll try to create it with what we have.
-                    // WTelegramClient's SendMessageAsync might fetch full details if needed,
-                    // but it's best to supply it here if possible.
-                    // However, Telegram.Bot doesn't give us the access_hash or file_reference.
-                    // THIS WILL LIKELY BE A PROBLEM IF WTELEGRAMCLIENT REQUIRES access_hash or file_reference for Photo
-                    // We'll proceed with FileId and rely on WTelegramClient to handle it, or it will fail.
-                    _logger.LogWarning("TelegramPanel.MessageForwardingService: Attempting to create InputMediaPhoto from Telegram.Bot PhotoSize. Note: access_hash and file_reference are NOT available from Telegram.Bot, this might fail in WTelegramClient.");
-                    tlInputMedia = new  TL.InputMediaPhoto { id = new InputPhoto { id = 0, access_hash = 0, file_reference = Array.Empty<byte>() } };
-                    // If WTelegramClient can fetch the photo by FileId, you might need a different approach here.
-                    // For now, sending with 0 for id/access_hash and empty file_reference may not work.
-                    // A better solution would be to use SendPhotoAsync/SendDocumentAsync directly with Telegram.Bot's FileId,
-                    // or to fetch full media details via WTelegramClient using FileId first (which is complex).
-                    // As per conversation, user wants to use SendMessageAsync with InputMedia to handle media.
-                    // The issue is converting Telegram.Bot's FileId to TL.InputPhoto's id/access_hash/file_reference.
-                    // This is the core incompatibility.
-                    // A quick fix for this would be to re-download the media using Telegram.Bot, then upload with WTelegramClient.
-                    // OR, if WTelegramClient supports sending by Telegram.Bot's FileId (which it doesn't directly).
-
-                    // Temporarily, we'll indicate media is present, but conversion might not be perfect.
-                    // For now, we will mark inputMedia as not null, and rely on `WTelegramClient.SendMessageAsync` behavior.
-                    // A robust solution for Telegram.Bot FileId to TL.InputMedia needs more.
-                    // This is usually handled by downloading the file first, then uploading with WTelegram.Client.Upload_File.
-                    // For direct Telegram.Bot FileId -> TL.InputPhoto, it's not straightforward.
-                    // We will pass the FileId as a string placeholder if possible, or leave it null.
-                    // For now, to make the code compile and proceed, we acknowledge this limitation.
-                    tlInputMedia = null; // Revert to null as direct conversion is not feasible for FileId.
-                    _logger.LogWarning("TelegramPanel.MessageForwardingService: Direct conversion of Telegram.Bot Photo to TL.InputMedia (with access_hash/file_reference) is NOT supported without re-downloading. Media will likely NOT be sent via InputMedia. MessageId: {MessageId}", message.MessageId);
+                    _logger.LogWarning("TelegramPanel.MessageForwardingService: Attempting to create InputMediaPhoto from Telegram.Bot PhotoSize (FileId: {FileId}). Direct conversion to TL.InputMedia's 'id', 'access_hash', 'file_reference' is NOT supported. Media will likely NOT be sent correctly.", largestPhoto.FileId);
+                    // Create a dummy InputMediaPhoto. This will likely fail in WTelegramClient API unless it resolves FileId internally (which it won't).
+                    // The correct way is to download largestPhoto.FileId and then upload it with WTelegramClient.
+                    currentPreparedMedia = new TL.InputMediaPhoto { id = new InputPhoto { id = 0, access_hash = 0, file_reference = Array.Empty<byte>() } };
                 }
             }
             else if (message.Video != null)
             {
-                _logger.LogWarning("TelegramPanel.MessageForwardingService: Direct conversion of Telegram.Bot Video to TL.InputMedia is NOT supported without re-downloading. Media will likely NOT be sent via InputMedia. MessageId: {MessageId}", message.MessageId);
-                tlInputMedia = null; // Revert to null
+                _logger.LogWarning("TelegramPanel.MessageForwardingService: Attempting to create InputMediaDocument from Telegram.Bot Video (FileId: {FileId}). Direct conversion is NOT supported. Media will likely NOT be sent correctly.", message.Video.FileId);
+                currentPreparedMedia = new TL.InputMediaDocument { id = new InputDocument { id = 0, access_hash = 0, file_reference = Array.Empty<byte>() } };
             }
             else if (message.Document != null)
             {
-                _logger.LogWarning("TelegramPanel.MessageForwardingService: Direct conversion of Telegram.Bot Document to TL.InputMedia is NOT supported without re-downloading. Media will likely NOT be sent via InputMedia. MessageId: {MessageId}", message.MessageId);
-                tlInputMedia = null; // Revert to null
+                _logger.LogWarning("TelegramPanel.MessageForwardingService: Attempting to create InputMediaDocument from Telegram.Bot Document (FileId: {FileId}). Direct conversion is NOT supported. Media will likely NOT be sent correctly.", message.Document.FileId);
+                currentPreparedMedia = new TL.InputMediaDocument { id = new InputDocument { id = 0, access_hash = 0, file_reference = Array.Empty<byte>() } };
+            }
+            // IMPORTANT: If you need to handle media groups from Telegram.Bot, you'll need to check message.MediaGroupId
+            // and implement a caching mechanism (like a ConcurrentDictionary with a timer) to collect all parts of the media group
+            // before enqueuing *one* Hangfire job that passes the complete list of InputMediaWithCaption.
+            // The current code sends each media item as a separate job, which will result in individual messages.
+
+            if (currentPreparedMedia != null)
+            {
+                mediaGroupItems = new System.Collections.Generic.List<InputMediaWithCaption>
+               {
+                   new InputMediaWithCaption
+                   {
+                       Media = currentPreparedMedia,
+                       Caption = messageContent, // Use combined content for caption
+                       Entities = tlMessageEntities // Use combined entities
+                   }
+               };
             }
 
 
             var telegramApiSourceChatId = message.Chat.Id;
             _logger.LogInformation(
                 "TelegramPanel.MessageForwardingService: Processing message {MessageId} from chat {SourceChannelId} (Bot API Type: {MessageType}). Content Preview: '{ContentPreview}'. Has Media: {HasMedia}. Sender Peer: {SenderPeer}",
-                message.MessageId, telegramApiSourceChatId, message.Type, TruncateString(messageContent, 50), tlInputMedia != null, tlSenderPeer?.ToString() ?? "N/A");
+                message.MessageId, telegramApiSourceChatId, message.Type, TruncateString(messageContent, 50), mediaGroupItems != null && mediaGroupItems.Any(), tlSenderPeer?.ToString() ?? "N/A");
 
             long sourceIdForMatchingRules;
             long positiveSourceId = Math.Abs(telegramApiSourceChatId); // Get positive ID
@@ -206,7 +205,7 @@ namespace TelegramPanel.Infrastructure.Services
                     {
                         _logger.LogInformation(
                             "TelegramPanel.MessageForwardingService: Scheduling forwarding job for message {MessageId} to target {TargetChannelId} using DB rule '{RuleName}'. Content Preview: '{ContentPreview}'. Has Media: {HasMedia}",
-                            message.MessageId, targetChannelId, dbRule.RuleName, TruncateString(messageContent, 50), tlInputMedia != null);
+                            message.MessageId, targetChannelId, dbRule.RuleName, TruncateString(messageContent, 50), mediaGroupItems != null && mediaGroupItems.Any());
 
                         long rawSourcePeerIdForJob = positiveSourceId;
 
@@ -219,7 +218,7 @@ namespace TelegramPanel.Infrastructure.Services
                                 messageContent,          // Pass the extracted message content
                                 tlMessageEntities,       // Pass the converted TL message entities
                                 tlSenderPeer,            // Pass the converted TL sender peer
-                                tlInputMedia,            // Pass the converted TL InputMedia (NEW ARGUMENT HERE)
+                                mediaGroupItems,         // CHANGED: Pass the List<InputMediaWithCaption>
                                 CancellationToken.None   // CancellationToken for Hangfire job
                             ));
 

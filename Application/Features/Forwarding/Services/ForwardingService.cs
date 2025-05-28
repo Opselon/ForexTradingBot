@@ -83,7 +83,8 @@ namespace Application.Features.Forwarding.Services
             _logger.LogInformation("Deleted forwarding rule: {RuleName}", ruleName);
         }
 
-      
+
+
         public async Task ProcessMessageAsync(
             long sourceChannelIdForMatching,
             long originalMessageId,
@@ -91,11 +92,11 @@ namespace Application.Features.Forwarding.Services
             string messageContent,
             TL.MessageEntity[]? messageEntities,
             Peer? senderPeerForFilter,
-            InputMedia? inputMediaToSend, // NEW
+            List<InputMediaWithCaption>? mediaGroupItems, // CHANGED: Now a list
             CancellationToken cancellationToken = default)
         {
-            _logger.LogInformation(">>>> FORWARDING_SERVICE: ProcessMessageAsync called. SourceForMatching: {SourceForMatching}, OriginalMsgId: {OriginalMsgId}, RawSourceForApi: {RawSourceForApi}. Content Preview: '{ContentPreview}'. Has Input Media: {HasInputMedia}. Sender Peer: {SenderPeer}",
-                sourceChannelIdForMatching, originalMessageId, rawSourcePeerIdForApi, TruncateString(messageContent, 50), inputMediaToSend != null, senderPeerForFilter?.ToString() ?? "N/A");
+            _logger.LogInformation(">>>> FORWARDING_SERVICE: ProcessMessageAsync called. SourceForMatching: {SourceForMatching}, OriginalMsgId: {OriginalMsgId}, RawSourceForApi: {RawSourceForApi}. Content Preview: '{ContentPreview}'. Has Media Group: {HasMediaGroup}. Sender Peer: {SenderPeer}",
+                sourceChannelIdForMatching, originalMessageId, rawSourcePeerIdForApi, TruncateString(messageContent, 50), mediaGroupItems != null && mediaGroupItems.Any(), senderPeerForFilter?.ToString() ?? "N/A");
 
             var rules = await _ruleRepository.GetBySourceChannelAsync(sourceChannelIdForMatching, cancellationToken);
             _logger.LogInformation(">>>> FORWARDING_SERVICE: Found {RuleCount} rules for SourceChannelId {SourceChannelId} from DB.", rules.Count(), sourceChannelIdForMatching);
@@ -109,7 +110,7 @@ namespace Application.Features.Forwarding.Services
                 return;
             }
 
-            foreach (var rule in activeRules) // rule is Domain.Features.Forwarding.Entities.ForwardingRule
+            foreach (var rule in activeRules)
             {
                 _logger.LogInformation(">>>> FORWARDING_SERVICE: Processing with ACTIVE rule: '{RuleName}' for MsgID: {OriginalMsgId}. Targets: {TargetCount}",
                     rule.RuleName, originalMessageId, rule.TargetChannelIds?.Count ?? 0);
@@ -121,12 +122,11 @@ namespace Application.Features.Forwarding.Services
                         continue;
                     }
 
-                    foreach (var targetChannelIdFromDb in rule.TargetChannelIds) // از db اومده (-100xxxx یا مثبت)
+                    foreach (var targetChannelIdFromDb in rule.TargetChannelIds)
                     {
-                        _logger.LogInformation(">>>> FORWARDING_SERVICE: Enqueuing Hangfire job for Rule '{RuleName}', MsgID {OriginalMsgId}, RawSourcePeer {RawSourcePeerIdForApi}, Target DB ID {TargetChannelIdFromDb}. Content Preview: '{ContentPreview}'. Has Input Media: {HasInputMedia}. Sender Peer: {SenderPeer}",
-                    rule.RuleName, originalMessageId, rawSourcePeerIdForApi, targetChannelIdFromDb, TruncateString(messageContent, 50), inputMediaToSend != null, senderPeerForFilter?.ToString() ?? "N/A");
+                        _logger.LogInformation(">>>> FORWARDING_SERVICE: Enqueuing Hangfire job for Rule '{RuleName}', MsgID {OriginalMsgId}, RawSourcePeer {RawSourcePeerIdForApi}, Target DB ID {TargetChannelIdFromDb}. Content Preview: '{ContentPreview}'. Has Media Group: {HasMediaGroup}. Sender Peer: {SenderPeer}",
+                    rule.RuleName, originalMessageId, rawSourcePeerIdForApi, targetChannelIdFromDb, TruncateString(messageContent, 50), mediaGroupItems != null && mediaGroupItems.Any(), senderPeerForFilter?.ToString() ?? "N/A");
 
-                        // استفاده از _backgroundJobClient برای انکیو کردن IForwardingJobActions
                         _backgroundJobClient.Enqueue<IForwardingJobActions>(processor =>
                             processor.ProcessAndRelayMessageAsync(
                         (int)originalMessageId,
@@ -136,7 +136,7 @@ namespace Application.Features.Forwarding.Services
                         messageContent,
                         messageEntities,
                         senderPeerForFilter,
-                        inputMediaToSend, // NEW
+                        mediaGroupItems, // CHANGED: Now a list
                         CancellationToken.None
                     ));
                         _logger.LogInformation(">>>> FORWARDING_SERVICE: Successfully enqueued Hangfire job for Rule '{RuleName}', Target DB ID {TargetChannelIdFromDb}.", rule.RuleName, targetChannelIdFromDb);
@@ -150,6 +150,7 @@ namespace Application.Features.Forwarding.Services
             }
             _logger.LogInformation(">>>> FORWARDING_SERVICE: Finished processing message {OriginalMsgId} for source {SourceForMatching}. All applicable jobs enqueued.", originalMessageId, sourceChannelIdForMatching);
         }
+
 
         // Helper function to truncate strings for logging
         private string TruncateString(string? str, int maxLength)

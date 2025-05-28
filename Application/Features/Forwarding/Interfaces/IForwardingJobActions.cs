@@ -19,6 +19,10 @@ namespace Application.Features.Forwarding.Interfaces
         /// <param name="rawSourcePeerId">Positive ID of the source peer (channel/chat/user) for Telegram API calls</param>
         /// <param name="targetChannelId">The ID of the target channel/chat/user (from database, could be -100xxxx)</param>
         /// <param name="rule">The Domain ForwardingRule object</param>
+        /// <param name="messageContent">Main caption/text for the message or media group. Only applies if mediaGroupItems is null or for the first media item in a group.</param>
+        /// <param name="messageEntities">Entities for the main caption.</param>
+        /// <param name="senderPeerForFilter">Original sender peer for filtering.</param>
+        /// <param name="mediaGroupItems">NEW: A list of media items with their individual captions/entities for media groups.</param>
         /// <param name="cancellationToken">Token for cancellation</param>
         /// <returns>A task representing the asynchronous operation</returns>
         Task ProcessAndRelayMessageAsync(
@@ -28,8 +32,8 @@ namespace Application.Features.Forwarding.Interfaces
                Domain.Features.Forwarding.Entities.ForwardingRule rule,
                string messageContent,
                MessageEntity[]? messageEntities,
-               Peer? senderPeerForFilter,          // جدید: FromPeer اصلی پیام (از آبجکت Update)
-                 InputMedia? inputMediaToSend, // اگر مدیا دارد، اینجا آماده
+               Peer? senderPeerForFilter,
+               List<InputMediaWithCaption>? mediaGroupItems, // CHANGED: Now a list
                CancellationToken cancellationToken);
     }
 }

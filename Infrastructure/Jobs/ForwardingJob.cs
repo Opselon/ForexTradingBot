@@ -1,4 +1,5 @@
 ﻿// File: Infrastructure\Jobs\ForwardingJob.cs
+using Application.Features.Forwarding.Interfaces;
 using Application.Features.Forwarding.Services; // این using لازم است
 using Microsoft.Extensions.Logging;
 using System;
@@ -22,18 +23,18 @@ namespace Infrastructure.Jobs
         // !!! این متد توسط Hangfire Scheduler صدا زده می‌شود. !!!
         // !!! پارامترهای ورودی باید دقیقا با پارامترهای IForwardingService.ProcessMessageAsync یکسان باشند. !!!
         public async Task ProcessMessageAsync(
-           long sourceChannelIdForMatching,
-           long originalMessageId,
-           long rawSourcePeerIdForApi,
-           string messageContent,
-           TL.MessageEntity[]? messageEntities,
-           Peer? senderPeerForFilter,
-           InputMedia? inputMediaToSend, // NEW
-           CancellationToken cancellationToken = default)
+       long sourceChannelIdForMatching,
+       long originalMessageId,
+       long rawSourcePeerIdForApi,
+       string messageContent,
+       TL.MessageEntity[]? messageEntities,
+       Peer? senderPeerForFilter,
+       List<InputMediaWithCaption>? mediaGroupItems, // CHANGED: Now a list
+       CancellationToken cancellationToken = default)
         {
             _logger.LogInformation(
-                "HANGFIRE_JOB: Starting job for MsgID: {OriginalMsgId}, SourceForMatching: {SourceForMatching}, RawSourceForApi: {RawSourceForApi}. Content Preview: '{ContentPreview}'. Has Input Media: {HasInputMedia}. Sender Peer: {SenderPeer}",
-                originalMessageId, sourceChannelIdForMatching, rawSourcePeerIdForApi, TruncateString(messageContent, 50), inputMediaToSend != null, senderPeerForFilter?.ToString() ?? "N/A");
+                "HANGFIRE_JOB: Starting job for MsgID: {OriginalMsgId}, SourceForMatching: {SourceForMatching}, RawSourceForApi: {RawSourceForApi}. Content Preview: '{ContentPreview}'. Has Media Group: {HasMediaGroup}. Sender Peer: {SenderPeer}",
+                originalMessageId, sourceChannelIdForMatching, rawSourcePeerIdForApi, TruncateString(messageContent, 50), mediaGroupItems != null && mediaGroupItems.Any(), senderPeerForFilter?.ToString() ?? "N/A");
 
             await _forwardingService.ProcessMessageAsync(
                 sourceChannelIdForMatching,
@@ -42,7 +43,7 @@ namespace Infrastructure.Jobs
                 messageContent,
                 messageEntities,
                 senderPeerForFilter,
-                inputMediaToSend, // NEW
+                mediaGroupItems, // CHANGED: Now a list
                 cancellationToken);
 
             _logger.LogInformation(

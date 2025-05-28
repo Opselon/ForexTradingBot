@@ -1,4 +1,5 @@
-﻿using Domain.Features.Forwarding.Entities;
+﻿using Application.Features.Forwarding.Interfaces;
+using Domain.Features.Forwarding.Entities;
 using TL;
 
 public interface IForwardingService
@@ -12,13 +13,13 @@ public interface IForwardingService
 
     // THIS IS THE SIGNATURE THAT ForwardingService.cs NOW IMPLEMENTS
     Task ProcessMessageAsync(
-               long sourceChannelIdForMatching,
-               long originalMessageId,
-               long rawSourcePeerIdForApi,
-               string messageContent,
-               TL.MessageEntity[]? messageEntities,
-               Peer? senderPeerForFilter,
-               InputMedia? inputMediaToSend, // NEW
-               CancellationToken cancellationToken);
+              long sourceChannelIdForMatching,
+              long originalMessageId,
+              long rawSourcePeerIdForApi,
+              string messageContent,
+              TL.MessageEntity[]? messageEntities,
+              Peer? senderPeerForFilter,
+              List<InputMediaWithCaption>? mediaGroupItems, // Changed as per previous steps
+              CancellationToken cancellationToken);
 
 }

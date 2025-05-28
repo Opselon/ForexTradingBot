@@ -1,27 +1,66 @@
-name: GGShield Scan on Push
+name: 🛡️ GGShield Scan on Push
 
 on:
   push:
-    branches: [ main, master, develop ]
+    branches:
+      - main
+      - master
+      - develop
+  pull_request: # It's good practice to also scan Pull Requests
+    branches:
+      - main
+      - master
+      - develop
 
 jobs:
-  ggshield-scan:
+  ggshield-secret-scan:
+    name: 🕵️ Run GGShield Secret Scan
     runs-on: ubuntu-latest
 
+    # Set the GitGuardian API Key as an environment variable for the entire job.
+    # ggshield will automatically detect and use this environment variable.
+    env:
+      GITGUARDIAN_API_KEY: ${{ secrets.GITGUARDIAN_API_KEY }}
+
     steps:
-      - name: Clone repository
-        uses: actions/checkout@v3
+      - name: ⬇️ Checkout Repository
+        uses: actions/checkout@v4 # Use v4 for latest features and security
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
+      - name: 🐍 Set up Python Environment
+        uses: actions/setup-python@v5 # Use v5 for latest features and security
         with:
-          python-version: 3.x
+          python-version: '3.x' # Use the latest stable 3.x version
+          cache: 'pip' # Cache pip dependencies to speed up subsequent runs
 
-      - name: Install ggshield
-        run: pip install ggshield
+      - name: 📦 Install ggshield
+        run: |
+          echo "Installing ggshield..."
+          pip install ggshield
+          echo "ggshield installed successfully."
 
-      - name: Authenticate with GitGuardian (non-interactive)
-        run: ggshield auth login --method token --token ${{ secrets.GITGUARDIAN_API_KEY }}
+      # The 'Authenticating with GitGuardian' step is removed.
+      # ggshield uses the GITGUARDIAN_API_KEY environment variable directly.
 
-      - name: Run ggshield scan
-        run: ggshield secret scan repo .
+      - name: 🔎 Run ggshield Secret Scan on Repository
+        run: |
+          echo "Starting ggshield secret scan..."
+          ggshield secret scan repo .
+          echo "ggshield secret scan completed."
+        # If ggshield finds secrets, it will exit with a non-zero code,
+        # which will cause this step (and thus the job) to fail.
+        # This is the desired behavior to indicate a secret leak.
+
+      # Optional: Add a step for notifications if needed, e.g., to Slack/Teams
+      # - name: 🔔 Notify on Scan Completion (Example)
+      #   if: always() # Run this step even if the scan fails
+      #   run: |
+      #     echo "GGShield scan finished. Check results above."
+      #     # Add your notification logic here, e.g., using a Slack action
+      #     # if: ${{ success() }}
+      #     #   uses: ...
+      #     #   with:
+      #     #     status: success
+      #     # if: ${{ failure() }}
+      #     #   uses: ...
+      #     #   with:
+      #     #     status: failure

@@ -21,7 +21,7 @@ jobs:
         run: pip install ggshield
 
       - name: Authenticate with GitGuardian (non-interactive)
-        run: ggshield auth login --api-key ${{ secrets.GITGUARDIAN_API_KEY }}
+        run: ggshield auth login --method token --token ${{ secrets.GITGUARDIAN_API_KEY }}
 
       - name: Run ggshield scan
         run: ggshield secret scan repo .

@@ -20,10 +20,8 @@ jobs:
       - name: Install ggshield
         run: pip install ggshield
 
-      - name: Authenticate with GitGuardian
-        run: ggshield auth login --method=token
-        env:
-          GITGUARDIAN_API_KEY: ${{ secrets.GITGUARDIAN_API_KEY }}
+      - name: Authenticate with GitGuardian (non-interactive)
+        run: ggshield auth login --api-key ${{ secrets.GITGUARDIAN_API_KEY }}
 
       - name: Run ggshield scan
         run: ggshield secret scan repo .

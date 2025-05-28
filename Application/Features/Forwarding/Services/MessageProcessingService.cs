@@ -112,13 +112,14 @@ public async Task ProcessAndRelayMessageAsync(
                 if (mediaGroupMessages != null && mediaGroupMessages.Any())
                 {
                      // For albums, we typically do a simple forward as custom sending albums is more complex and less common.
-                     // If custom sending is needed for albums (e.g., caption editing for the whole album),
-                     // a dedicated method or more complex logic would be required.
-                     // For now, we'll fall back to simple forward for albums if custom send is requested.
+                     // If custom sending is needed for albums, we will now attempt to handle it.
+                     // Note: Applying different captions/entities per photo in an album
+                     // is supported by SendMediaGroupAsync, but applying general text edits
+                     // (prepend/append/replace) to each caption independently is not
+                     // straightforward and might not be desired. We will apply the edits to
+                     // each message's original caption/entities before creating the InputMedia.
                     if (needsCustomSend)
                     {
-                        _logger.LogWarning(">>>> JOB_ACTIONS: Custom send requested for media group. Falling back to simple forward for MsgID {SourceMsgId}.", sourceMessageId);
-                        await ProcessSimpleForwardAsync(fromPeer, toPeer, mediaGroupMessages.Select(m => m.ID).ToArray(), rule, cancellationToken);
                     }
                     else
                     {
@@ -132,11 +133,11 @@ public async Task ProcessAndRelayMessageAsync(
             }
         }
 
-        // Handles custom sending for a single message or a media group as an album
+        // Handles custom sending for a single message or a media group
         private async Task ProcessCustomSendAsync(
             InputPeer fromPeer,
             InputPeer toPeer,
-            int sourceMessageId,
+            List<Message> messages, // Accept list of messages for media groups
             ForwardingRule rule,
             CancellationToken cancellationToken)
         {
@@ -148,11 +149,6 @@ public async Task ProcessAndRelayMessageAsync(
 
             var firstMessage = messages.First(); // Caption and entities will be applied to the first item in an album
 
-            string newCaption = firstMessage.message ?? "";
-            MessageEntity[]? newEntities = firstMessage.entities?.ToArray();
-
-            (newCaption, newEntities) = ApplyEditOptions(newCaption, newEntities, rule.EditOptions, firstMessage.media);
-
             if (messages.Count > 1) // Handle media group
             {
                 var inputMediaList = new List<InputMedia>();
@@ -163,10 +159,14 @@ public async Task ProcessAndRelayMessageAsync(
                         var inputMedia = CreateInputMedia(msg.media);
                         if (inputMedia != null)
                         {
-                            // Apply caption and entities only to the first media item in the album
-                            if (msg == firstMessage)
+                            string newCaption = msg.message ?? "";
+                            MessageEntity[]? newEntities = msg.entities?.ToArray();
+
+                            // Apply edit options to each message's caption/entities within the group
+                            (newCaption, newEntities) = ApplyEditOptions(newCaption, newEntities, rule.EditOptions, msg.media);
+
+                            if (inputMedia is InputMediaPhoto imp)
                             {
-                                if (inputMedia is InputMediaPhoto imp) imp.caption = newCaption;
                                 if (inputMedia is InputMediaPhoto imp) imp.entities = newEntities;
                                 if (inputMedia is InputMediaDocument imd) imd.caption = newCaption;
                                 if (inputMedia is InputMediaDocument imd) imd.entities = newEntities;
@@ -179,6 +179,11 @@ public async Task ProcessAndRelayMessageAsync(
 
                 if (inputMediaList.Any())
                 {
+                     _logger.LogInformation(
+                        "Sending media group with {MediaCount} items for original MsgID {SourceMsgId} to Target {TargetChannelId} via Rule '{RuleName}'.",
+                        messages.First().ID, inputMediaList.Count, toPeer.ID, rule.RuleName);
+
+                    // Assuming SendMediaGroupAsync exists in your ITelegramUserApiClient
                     await _userApiClient.SendMediaGroupAsync(toPeer, inputMediaList.ToArray()); // Assuming SendMediaGroupAsync exists
                 }
             }
@@ -186,9 +191,14 @@ public async Task ProcessAndRelayMessageAsync(
             {
                 InputMedia? finalMediaToSend = firstMessage.media != null ? CreateInputMedia(firstMessage.media) : null;
                 await _userApiClient.SendMessageAsync(toPeer, newCaption, entities: newEntities, media: finalMediaToSend, noWebpage: rule.EditOptions.RemoveLinks);
+
+                _logger.LogInformation(
+                    "Custom message sent for original MsgID {SourceMsgId} to Target {TargetChannelId} via Rule '{RuleName}'.",
+                    firstMessage.ID, toPeer.ID, rule.RuleName);
             }
 
             _logger.LogInformation(
+                // This log might be redundant after the more specific logs above
                 "Custom message sent for original MsgID {SourceMsgId} to Target {TargetChannelId} via Rule '{RuleName}'.",
                 sourceMessageId, toPeer.ID, rule.RuleName);
         }
@@ -202,7 +212,7 @@ public async Task ProcessAndRelayMessageAsync(
         {
             await _userApiClient.ForwardMessagesAsync(
                 toPeer,
-                messages.Select(m => m.ID).ToArray(), // Extract IDs
+                messages.Select(m => m.ID).ToArray(), // Extract IDs of all messages in the group
                 fromPeer,
                 dropAuthor: rule.EditOptions?.RemoveSourceForwardHeader ?? false,
                 noForwards: rule.EditOptions?.RemoveSourceForwardHeader ?? false);

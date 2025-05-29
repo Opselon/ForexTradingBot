@@ -8,6 +8,7 @@ using Telegram.Bot.Polling; // ✅ برای IUpdateHandler, DefaultUpdateHandler
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums; // ✅ برای UpdateType
 using TelegramPanel.Queue;
+using TelegramPanel.Infrastructure.Services; // برای BotCommandSetupService
 using TelegramPanel.Settings;
 
 namespace TelegramPanel.Infrastructure
@@ -19,18 +20,22 @@ namespace TelegramPanel.Infrastructure
         private readonly TelegramPanelSettings _settings;
         private readonly ITelegramUpdateChannel _updateChannel;
         private CancellationTokenSource? _cancellationTokenSourceForPolling; // جداگانه برای Polling
+        private readonly BotCommandSetupService _commandSetupService; // برای تنظیم کامندها
 
         public TelegramBotService(
             ILogger<TelegramBotService> logger,
             ITelegramBotClient botClient,
             IOptions<TelegramPanelSettings> settingsOptions,
-            ITelegramUpdateChannel updateChannel)
+            ITelegramUpdateChannel updateChannel,
+            IBotCommandSetupService commandSetupService) // تزریق BotCommandSetupService
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _botClient = botClient ?? throw new ArgumentNullException(nameof(botClient));
             _settings = settingsOptions?.Value ?? throw new ArgumentNullException(nameof(settingsOptions));
             _updateChannel = updateChannel ?? throw new ArgumentNullException(nameof(updateChannel));
+            _commandSetupService = (BotCommandSetupService?)commandSetupService ?? throw new ArgumentNullException(nameof(commandSetupService));
         }
+
 
         public async Task StartAsync(CancellationToken hostCancellationToken)
         {
@@ -56,8 +61,16 @@ namespace TelegramPanel.Infrastructure
             }
             #endregion
 
-            // bool useWebhookMode = _settings.UseWebhook && !string.IsNullOrWhiteSpace(_settings.WebhookAddress);
-            bool useWebhookMode = false;
+            #region Bot Command Setup
+            _logger.LogInformation("Setting up bot commands...");
+            await _commandSetupService.SetupCommandsAsync(_cancellationTokenSourceForPolling.Token);
+            _logger.LogInformation("Bot commands setup complete.");
+            #endregion
+
+            // Ensure cancellation is linked to the host's token for proper shutdown
+            _cancellationTokenSourceForPolling = CancellationTokenSource.CreateLinkedTokenSource(hostCancellationToken);
+
+            bool useWebhookMode = _settings.UseWebhook && !string.IsNullOrWhiteSpace(_settings.WebhookAddress);
             bool webhookSuccessfullySet = false;
 
             // Always try to delete webhook first to ensure clean state
@@ -66,41 +79,53 @@ namespace TelegramPanel.Infrastructure
             if (useWebhookMode)
             {
                 #region Webhook Setup Attempt
-                _logger.LogInformation("Webhook usage is enabled in settings. Attempting to configure Webhook to address: {WebhookAddress}", _settings.WebhookAddress);
                 try
                 {
+                    _logger.LogInformation("Webhook usage is enabled in settings. Attempting to configure Webhook to address: {WebhookAddress}", _settings.WebhookAddress);
                     // ابتدا هرگونه Webhook قبلی را حذف می‌کنیم تا از تداخل جلوگیری شود.
                     await TryDeleteWebhookAsync(_cancellationTokenSourceForPolling.Token, "Preparing for new Webhook setup.");
 
                     var allowedUpdatesForWebhook = _settings.AllowedUpdates?.ToArray() ?? Array.Empty<UpdateType>();
 
-                    await _botClient.SetWebhook(
-                        url: _settings.WebhookAddress!, // Non-null due to IsNullOrWhiteSpace check
-                        allowedUpdates: allowedUpdatesForWebhook,
-                        dropPendingUpdates: _settings.DropPendingUpdatesOnWebhookSet,
-                        secretToken: _settings.WebhookSecretToken,
-                        cancellationToken: _cancellationTokenSourceForPolling.Token);
+                    try
+                    {
+                        // Add this logging before the _botClient.SetWebhook call
+                        _logger.LogInformation("Webhook setup details: useWebhookMode={UseWebhookMode}, UseWebhookSetting={UseWebhookSetting}, WebhookAddress={WebhookAddress}, WebhookSecretToken={WebhookSecretToken}",
+                                                   useWebhookMode, _settings.UseWebhook, _settings.WebhookAddress, _settings.WebhookSecretToken ?? "Not Set");
 
-                    var webhookInfo = await _botClient.GetWebhookInfo(cancellationToken: _cancellationTokenSourceForPolling.Token);
-                    if (webhookInfo != null && webhookInfo.Url.Equals(_settings.WebhookAddress, StringComparison.OrdinalIgnoreCase))
-                    {
-                        _logger.LogInformation("Webhook configured successfully to: {WebhookAddress}. Pending updates: {PendingUpdates}. Last error: {LastErrorMsg} at {LastErrorDate}",
-                            webhookInfo.Url, webhookInfo.PendingUpdateCount, webhookInfo.LastErrorMessage ?? "None", webhookInfo.LastErrorDate?.ToLocalTime().ToString() ?? "N/A");
-                        webhookSuccessfullySet = true;
+                        await _botClient.SetWebhook(
+                            url: _settings.WebhookAddress!, // Non-null due to IsNullOrWhiteSpace check
+                            allowedUpdates: allowedUpdatesForWebhook,
+                            dropPendingUpdates: _settings.DropPendingUpdatesOnWebhookSet,
+                            secretToken: _settings.WebhookSecretToken,
+                            cancellationToken: _cancellationTokenSourceForPolling.Token);
+
+                        var webhookInfo = await _botClient.GetWebhookInfo(cancellationToken: _cancellationTokenSourceForPolling.Token);
+                        if (webhookInfo != null && webhookInfo.Url.Equals(_settings.WebhookAddress, StringComparison.OrdinalIgnoreCase))
+                        {
+                            _logger.LogInformation("Webhook configured successfully to: {WebhookAddress}. Pending updates: {PendingUpdates}. Last error: {LastErrorMsg} at {LastErrorDate}",
+                                webhookInfo.Url, webhookInfo.PendingUpdateCount, webhookInfo.LastErrorMessage ?? "None", webhookInfo.LastErrorDate?.ToLocalTime().ToString() ?? "N/A");
+                        //    webhookSuccessfullySet = true;
+                        }
+                        else
+                        {
+                            _logger.LogWarning("Webhook URL was set, but GetWebhookInfo verification failed. Actual URL: '{ActualUrl}', Configured: '{ConfiguredUrl}', Last Error: '{LastError}'. Will fall back to polling.",
+                                webhookInfo?.Url ?? "Not Set", _settings.WebhookAddress, webhookInfo?.LastErrorMessage ?? "N/A");
+                            // تلاش برای حذف Webhook ناموفق، چون می‌خواهیم به Polling برویم.
+                            await TryDeleteWebhookAsync(_cancellationTokenSourceForPolling.Token, "Webhook verification failed after setting, preparing for polling.");
+                        }
                     }
-                    else
+                    catch (OperationCanceledException)
                     {
-                        _logger.LogWarning("Webhook URL was set, but GetWebhookInfo verification failed. Actual URL: '{ActualUrl}', Configured: '{ConfiguredUrl}', Last Error: '{LastError}'. Will fall back to polling.",
-                            webhookInfo?.Url ?? "Not Set", _settings.WebhookAddress, webhookInfo?.LastErrorMessage ?? "N/A");
-                        // تلاش برای حذف Webhook ناموفق، چون می‌خواهیم به Polling برویم.
-                        await TryDeleteWebhookAsync(_cancellationTokenSourceForPolling.Token, "Webhook verification failed after setting, preparing for polling.");
+                        _logger.LogWarning("Webhook setup was canceled during SetWebhook or GetWebhookInfo. This might happen during application shutdown. Falling back to polling if not already stopping.");
+                        // No need to rethrow, just let the code proceed to the polling section if not stopping.
                     }
                 }
                 catch (Exception ex) // شامل ApiRequestException
                 {
                     _logger.LogError(ex, "Failed to set or verify webhook at {WebhookAddress}. Error: {ErrorMessage}. Will fall back to polling.",
                         _settings.WebhookAddress, ex.Message);
-                    // تلاش برای حذف Webhook اگر تنظیم آن با خطا مواجه شد.
+                    // Attempt to delete Webhook if its setup failed.
                     await TryDeleteWebhookAsync(_cancellationTokenSourceForPolling.Token, "Webhook setup failed, preparing for polling.");
                 }
                 #endregion
@@ -108,14 +133,13 @@ namespace TelegramPanel.Infrastructure
             else // UseWebhook is false or WebhookAddress is not configured
             {
                 _logger.LogInformation("Webhook usage is disabled or WebhookAddress is not configured in settings. Bot will use polling.");
-                // No need to delete webhook here as we already did it above
+                // No need to delete webhook here as we already tried above
             }
 
             // اگر تنظیم Webhook ناموفق بود یا از ابتدا برای Polling پیکربندی شده بود
             if (!webhookSuccessfullySet)
             {
                 #region Polling Setup
-                _logger.LogInformation("Starting Polling for bot {BotUsername}...", me.Username);
                 try
                 {
                     // Double check webhook is deleted before starting polling
@@ -124,6 +148,7 @@ namespace TelegramPanel.Infrastructure
                     {
                         _logger.LogWarning("Webhook still active at {WebhookUrl}. Attempting to delete before starting polling.", webhookInfo.Url);
                         await _botClient.DeleteWebhook(dropPendingUpdates: true, cancellationToken: _cancellationTokenSourceForPolling.Token);
+                        _logger.LogInformation("Webhook deleted successfully before starting polling.");
                     }
 
                     var allowedUpdatesForPolling = _settings.AllowedUpdates?.ToArray() ?? Array.Empty<UpdateType>();

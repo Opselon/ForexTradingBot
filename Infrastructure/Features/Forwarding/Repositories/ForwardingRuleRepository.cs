@@ -1,4 +1,4 @@
-// File: Infrastructure/Features/Forwarding/Repositories/ForwardingRuleRepository.cs
+﻿// File: Infrastructure/Features/Forwarding/Repositories/ForwardingRuleRepository.cs
 
 #region Usings
 // Standard .NET & NuGet
@@ -23,6 +23,11 @@ namespace Infrastructure.Features.Forwarding.Repositories
         private readonly AppDbContext _dbContext;
         private readonly ILogger<ForwardingRuleRepository> _logger;
 
+        /// <summary>
+        /// نمونه جدیدی از کلاس ForwardingRuleRepository را ایجاد می‌کند.
+        /// </summary>
+        /// <param name="dbContext">زمینه پایگاه داده برنامه.</param>
+        /// <param name="logger">لاگر برای ثبت اطلاعات و خطاها.</param>
         public ForwardingRuleRepository(
             AppDbContext dbContext,
             ILogger<ForwardingRuleRepository> logger)
@@ -33,6 +38,12 @@ namespace Infrastructure.Features.Forwarding.Repositories
 
         #region Read Operations
 
+        /// <summary>
+        /// یک قانون فورواردینگ را بر اساس نام آن به صورت ناهمزمان بازیابی می‌کند.
+        /// </summary>
+        /// <param name="ruleName">نام قانون فورواردینگ.</param>
+        /// <param name="cancellationToken">توکن لغو برای لغو عملیات به صورت ناهمزمان.</param>
+        /// <returns>قانون فورواردینگ یافت شده یا null اگر یافت نشود.</returns>
         public async Task<ForwardingRule?> GetByIdAsync(string ruleName, CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(ruleName))
@@ -45,6 +56,11 @@ namespace Infrastructure.Features.Forwarding.Repositories
                 .FirstOrDefaultAsync(r => r.RuleName == ruleName, cancellationToken);
         }
 
+        /// <summary>
+        /// تمام قوانین فورواردینگ را به صورت ناهمزمان بازیابی می‌کند.
+        /// </summary>
+        /// <param name="cancellationToken">توکن لغو برای لغو عملیات به صورت ناهمزمان.</param>
+        /// <returns>لیستی از تمام قوانین فورواردینگ.</returns>
         public async Task<IEnumerable<ForwardingRule>> GetAllAsync(CancellationToken cancellationToken = default)
         {
             _logger.LogTrace("ForwardingRuleRepository: Fetching all forwarding rules, AsNoTracking.");
@@ -54,6 +70,12 @@ namespace Infrastructure.Features.Forwarding.Repositories
                 .ToListAsync(cancellationToken);
         }
 
+        /// <summary>
+        /// قوانین فورواردینگ را بر اساس شناسه کانال منبع به صورت ناهمزمان بازیابی می‌کند.
+        /// </summary>
+        /// <param name="sourceChannelId">شناسه کانال منبع.</param>
+        /// <param name="cancellationToken">توکن لغو برای لغو عملیات به صورت ناهمزمان.</param>
+        /// <returns>لیستی از قوانین فورواردینگ مرتبط با کانال منبع.</returns>
         public async Task<IEnumerable<ForwardingRule>> GetBySourceChannelAsync(long sourceChannelId, CancellationToken cancellationToken = default)
         {
             _logger.LogTrace("ForwardingRuleRepository: Fetching forwarding rules by SourceChannelId: {SourceChannelId}, AsNoTracking.", sourceChannelId);
@@ -64,10 +86,50 @@ namespace Infrastructure.Features.Forwarding.Repositories
                 .ToListAsync(cancellationToken);
         }
 
+        /// <summary>
+        /// قوانین فورواردینگ را به صورت صفحه بندی شده به صورت ناهمزمان بازیابی می‌کند.
+        /// </summary>
+        /// <param name="pageNumber">شماره صفحه (شروع از 1).</param>
+        /// <param name="pageSize">تعداد آیتم‌ها در هر صفحه.</param>
+        /// <param name="cancellationToken">توکن لغو برای لغو عملیات به صورت ناهمزمان.</param>
+        /// <returns>لیستی از قوانین فورواردینگ برای صفحه مشخص شده.</returns>
+        public async Task<IEnumerable<ForwardingRule>> GetPaginatedAsync(int pageNumber, int pageSize, CancellationToken cancellationToken = default)
+        {
+            if (pageNumber <= 0) pageNumber = 1;
+            if (pageSize <= 0) pageSize = 10; // Default page size
+
+            _logger.LogTrace("ForwardingRuleRepository: Fetching paginated forwarding rules - Page: {PageNumber}, Size: {PageSize}, AsNoTracking.", pageNumber, pageSize);
+
+            return await _dbContext.ForwardingRules
+                .AsNoTracking()
+                .OrderBy(r => r.RuleName)
+                .Skip((pageNumber - 1) * pageSize)
+                .Take(pageSize)
+                .ToListAsync(cancellationToken);
+        }
+
+        /// <summary>
+        /// تعداد کل قوانین فورواردینگ را به صورت ناهمزمان دریافت می‌کند.
+        /// </summary>
+        /// <param name="cancellationToken">توکن لغو برای لغو عملیات به صورت ناهمزمان.</param>
+        /// <returns>تعداد کل قوانین فورواردینگ.</returns>
+        public async Task<int> GetTotalCountAsync(CancellationToken cancellationToken = default)
+        {
+            _logger.LogTrace("ForwardingRuleRepository: Getting total count of forwarding rules.");
+            return await _dbContext.ForwardingRules
+                .AsNoTracking()
+                .CountAsync(cancellationToken);
+        }
+
         #endregion
 
         #region Write Operations (with SaveChangesAsync inside Repository)
 
+        /// <summary>
+        /// یک قانون فورواردینگ جدید را به صورت ناهمزمان اضافه می‌کند.
+        /// </summary>
+        /// <param name="rule">قانون فورواردینگ برای اضافه کردن.</param>
+        /// <param name="cancellationToken">توکن لغو برای لغو عملیات به صورت ناهمزمان.</param>
         public async Task AddAsync(ForwardingRule rule, CancellationToken cancellationToken = default)
         {
             if (rule == null)
@@ -95,6 +157,11 @@ namespace Infrastructure.Features.Forwarding.Repositories
             }
         }
 
+        /// <summary>
+        /// یک قانون فورواردینگ موجود را به صورت ناهمزمان به‌روزرسانی می‌کند.
+        /// </summary>
+        /// <param name="rule">قانون فورواردینگ برای به‌روزرسانی.</param>
+        /// <param name="cancellationToken">توکن لغو برای لغو عملیات به صورت ناهمزمان.</param>
         public async Task UpdateAsync(ForwardingRule rule, CancellationToken cancellationToken = default)
         {
             if (rule == null)
@@ -126,6 +193,11 @@ namespace Infrastructure.Features.Forwarding.Repositories
             }
         }
 
+        /// <summary>
+        /// یک قانون فورواردینگ را بر اساس نام آن به صورت ناهمزمان حذف می‌کند.
+        /// </summary>
+        /// <param name="ruleName">نام قانون فورواردینگ برای حذف.</param>
+        /// <param name="cancellationToken">توکن لغو برای لغو عملیات به صورت ناهمزمان.</param>
         public async Task DeleteAsync(string ruleName, CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(ruleName))

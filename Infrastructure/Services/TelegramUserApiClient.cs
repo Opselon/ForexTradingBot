@@ -384,7 +384,7 @@ namespace Infrastructure.Services
 
             return Task.CompletedTask; // Add this line
         }
-   
+
 
         // Helper function to truncate strings for logging to avoid overly long log messages
         private string TruncateString(string? str, int maxLength)
@@ -424,7 +424,7 @@ namespace Infrastructure.Services
                 {
                     User loggedInUser = await _client.LoginUserIfNeeded();
                     _logger.LogInformation("User API Logged in: {User}", loggedInUser?.ToString());
-                    
+
                     // Pre-fetch and cache dialogs
                     var dialogs = await _client.Messages_GetAllDialogs();
                     dialogs.CollectUsersChats(_userCache, _chatCache);
@@ -569,6 +569,8 @@ namespace Infrastructure.Services
 
             try
             {
+
+
                 string cacheKeySuffix = peer is InputPeerUser p_u ? $"u{p_u.user_id}" :
                                         peer is InputPeerChat p_c ? $"c{p_c.chat_id}" :
                                         peer is InputPeerChannel p_ch ? $"ch{p_ch.channel_id}" :
@@ -700,6 +702,13 @@ namespace Infrastructure.Services
 
             try
             {
+
+                // Temporary replacement as instructed
+                if (message != null && message.Contains("https://wa.me/message/W6HXT7VWR3U2C1"))
+                {
+                    message = message.Replace("https://wa.me/message/W6HXT7VWR3U2C1", "@capxi");
+                }
+
                 _logger.LogTrace("SendMessageAsync: Attempting to acquire send lock with key: {LockKey}", lockKey);
                 using var sendLock = await AsyncLock.LockAsync(lockKey);
                 _logger.LogDebug("SendMessageAsync: Acquired send lock with key: {LockKey} for Peer (Type: {PeerType}, LoggedID: {PeerId})",
@@ -822,6 +831,10 @@ namespace Infrastructure.Services
                 _logger.LogDebug("SendMediaGroupAsync: Acquired send lock with key: {LockKey} for Peer (Type: {PeerType}, LoggedID: {PeerId})",
                     lockKey, peerTypeForLog, peerIdForLog);
 
+                // Generate a single random_id for the entire media group
+                long random_id = WTelegram.Helpers.RandomLong();
+
+
                 InputReplyTo? inputReplyTo = replyToMsgId.HasValue ? new InputReplyToMessage { reply_to_msg_id = (int)replyToMsgId.Value } : null;
 
                 InputPeer? sendAsPeer = null; // Default to null for user API
@@ -829,7 +842,19 @@ namespace Infrastructure.Services
                 // FIXED: Call _client.Messages_SendMultiMediaAsync with correct parameter names and order from your image.
                 await _client.Messages_SendMultiMedia(
                     peer: peer,
-                    multi_media: media, // Parameter name from image
+                  multi_media: media.Select(m =>
+                  {
+                      // Assign the same random_id to each InputSingleMedia object
+                      m.random_id = random_id;
+                      // Temporary replacement as instructed
+                      if (m.message != null && m.message.Contains("https://wa.me/message/W6HXT7VWR3U2C1"))
+                      {
+                          m.message = m.message.Replace("https://wa.me/message/W6HXT7VWR3U2C1", "@capxi");
+                      }
+                      return m;
+                  }).ToArray(),  // Parameter name from image
+
+
 
                     reply_to: inputReplyTo, // Parameter name from image
                     schedule_date: schedule_date, // Parameter name from image
@@ -870,7 +895,7 @@ namespace Infrastructure.Services
         bool dropAuthor = false,
         bool noForwards = false,
         int? topMsgId = null,
-        DateTime? scheduleDate = null, // Type is DateTime?
+        DateTime? scheduleDate = null,
         bool sendAsBot = false)
         {
             if (_client == null)
@@ -879,26 +904,7 @@ namespace Infrastructure.Services
                 return null;
             }
 
-            string toPeerType = toPeer?.GetType().Name ?? "Unknown";
-            long toPeerId = GetPeerIdForLog(toPeer);
-            string fromPeerType = fromPeer?.GetType().Name ?? "Unknown";
-            long fromPeerId = GetPeerIdForLog(fromPeer);
-            string messageIdsString = messageIds != null && messageIds.Any()
-                ? (messageIds.Length > 3 ? $"{string.Join(", ", messageIds.Take(3))}... (Total: {messageIds.Length})" : string.Join(", ", messageIds))
-                : "None";
-            string lockKey = $"forward_peer_{fromPeerType}_{fromPeerId}_to_{toPeerType}_{toPeerId}";
-
-            _logger.LogInformation(
-                "ForwardMessagesAsync: Attempting to forward messages. " +
-                "From Peer (Type: {FromPeerType}, ID: {FromPeerId}) " +
-                "To Peer (Type: {ToPeerType}, ID: {ToPeerId}). " +
-                "Message IDs: [{MessageIdsArray}]. " +
-                "DropAuthor: {DropAuthorFlag}, NoForwards: {NoForwardsFlag}. TopMsgId: {TopMsgId}. ScheduleDate: {ScheduleDate}. SendAsBot: {SendAsBotFlag}",
-                fromPeerType, fromPeerId,
-                toPeerType, toPeerId,
-                messageIdsString,
-                dropAuthor, noForwards, topMsgId.HasValue ? topMsgId.Value.ToString() : "N/A", scheduleDate.HasValue ? scheduleDate.Value.ToString() : "N/A", sendAsBot);
-
+            // Early return for invalid parameters
             if (toPeer == null || fromPeer == null || messageIds == null || !messageIds.Any())
             {
                 _logger.LogWarning(
@@ -910,16 +916,22 @@ namespace Infrastructure.Services
                 return null;
             }
 
+            // Extract peer types and IDs for logging
+            string toPeerType = toPeer?.GetType().Name ?? "Unknown";
+            long toPeerId = GetPeerIdForLog(toPeer);
+            string fromPeerType = fromPeer?.GetType().Name ?? "Unknown";
+            long fromPeerId = GetPeerIdForLog(fromPeer);
+
+            // Generate random IDs for forwarding
+            var randomIdArray = messageIds.Select(_ => WTelegram.Helpers.RandomLong()).ToArray();
+
+            // Acquire forward lock
+            string lockKey = $"forward_peer_{fromPeerType}_{fromPeerId}_to_{toPeerType}_{toPeerId}";
+            using var forwardLock = await AsyncLock.LockAsync(lockKey);
+
             try
             {
-                var randomIdArray = messageIds.Select(_ => WTelegram.Helpers.RandomLong()).ToArray();
-                _logger.LogDebug("ForwardMessagesAsync: Generated {RandomIdCount} random IDs using WTelegram.Helpers.RandomLong() for forwarding.", randomIdArray.Length);
-
-                _logger.LogTrace("ForwardMessagesAsync: Attempting to acquire forward lock with key: {LockKey}", lockKey);
-                using var forwardLock = await AsyncLock.LockAsync(lockKey);
-                _logger.LogDebug("ForwardMessagesAsync: Acquired forward lock with key: {LockKey} for forwarding between peers.", lockKey);
-
-                // FIXED: Removed send_as_bot parameter from this overload (it's not present in this WTelegramClient RPC method).
+                // Forward messages
                 UpdatesBase? result = await _client.Messages_ForwardMessages(
                     to_peer: toPeer,
                     from_peer: fromPeer,
@@ -928,9 +940,10 @@ namespace Infrastructure.Services
                     drop_author: dropAuthor,
                     noforwards: noForwards,
                     top_msg_id: topMsgId,
-                    schedule_date: scheduleDate // DateTime? is passed correctly
+                    schedule_date: scheduleDate
                 );
 
+                // Log result
                 if (result != null)
                 {
                     int updateCount = 0;
@@ -954,7 +967,7 @@ namespace Infrastructure.Services
                         "To Peer (Type: {ToPeerType}, ID: {ToPeerId}). Message IDs: [{MessageIdsArray}]",
                         fromPeerType, fromPeerId,
                         toPeerType, toPeerId,
-                        messageIdsString);
+                        string.Join(", ", messageIds));
                 }
                 return result;
             }
@@ -968,7 +981,7 @@ namespace Infrastructure.Services
                     rpcEx.Code,
                     fromPeerType, fromPeerId,
                     toPeerType, toPeerId,
-                    messageIdsString);
+                    string.Join(", ", messageIds));
                 return null;
             }
             catch (Exception ex)
@@ -979,7 +992,7 @@ namespace Infrastructure.Services
                     "To Peer (Type: {ToPeerType}, ID: {ToPeerId}). Message IDs: [{MessageIdsArray}]",
                     fromPeerType, fromPeerId,
                     toPeerType, toPeerId,
-                    messageIdsString);
+                    string.Join(", ", messageIds));
                 return null;
             }
             finally
@@ -1189,7 +1202,7 @@ namespace Infrastructure.Services
         private class AsyncLock
         {
             private static readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new();
-            
+
             public static async Task<IDisposable> LockAsync(string key)
             {
                 var semaphore = _locks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));

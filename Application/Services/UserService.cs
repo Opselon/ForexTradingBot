@@ -9,10 +9,8 @@ using Microsoft.Extensions.Logging; // برای ILogger
 
 namespace Application.Services // ✅ Namespace صحیح برای پیاده‌سازی سرویس‌ها
 {
-    /// <summary>
-    /// پیاده‌سازی سرویس مدیریت کاربران.
-    /// از Repository ها برای تعامل با داده‌ها و از AutoMapper برای تبدیل DTO استفاده می‌کند.
-    /// </summary>
+    /// <summary>پیاده‌سازی سرویس مدیریت کاربران و انجام عملیات مربوط به کاربران از جمله ثبت‌نام، به‌روزرسانی، حذف و بازیابی اطلاعات آن‌ها.
+    /// این سرویس از Repository ها برای دسترسی به داده‌ها و از AutoMapper برای نگاشت بین موجودیت‌ها و اشیاء انتقال داده (DTOs) استفاده می‌کند.</summary>
     public class UserService : IUserService
     {
         private readonly IUserRepository _userRepository;
@@ -38,6 +36,9 @@ namespace Application.Services // ✅ Namespace صحیح برای پیاده‌�
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
+        /// <summary>کاربری را بر اساس شناسه تلگرام او به صورت غیرهمزمان بازیابی می‌کند.</summary>
+        /// <param name="telegramId">شناسه تلگرام کاربر.</param>
+        /// <param name="cancellationToken">توکن لغو عملیات.</param>
         public async Task<UserDto?> GetUserByTelegramIdAsync(string telegramId, CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(telegramId))
@@ -68,6 +69,9 @@ namespace Application.Services // ✅ Namespace صحیح برای پیاده‌�
             return userDto;
         }
 
+        /// <summary>تمام کاربران سیستم را به صورت غیرهمزمان بازیابی می‌کند.</summary>
+        /// <returns>لیستی از DTO کاربران.</returns>
+        /// <param name="cancellationToken">توکن لغو عملیات.</param>
         public async Task<List<UserDto>> GetAllUsersAsync(CancellationToken cancellationToken = default)
         {
             _logger.LogInformation("Fetching all users.");
@@ -87,6 +91,10 @@ namespace Application.Services // ✅ Namespace صحیح برای پیاده‌�
             return userDtos;
         }
 
+        /// <summary>کاربری را بر اساس شناسه منحصر به فرد داخلی او به صورت غیرهمزمان بازیابی می‌کند.</summary>
+        /// <param name="id">شناسه منحصر به فرد کاربر (Guid).</param>
+        /// <param name="cancellationToken">توکن لغو عملیات.</param>
+        /// <returns>DTO کاربر یا null اگر کاربر پیدا نشود.</returns>
         public async Task<UserDto?> GetUserByIdAsync(Guid id, CancellationToken cancellationToken = default)
         {
             _logger.LogInformation("Fetching user by ID: {UserId}", id);
@@ -108,6 +116,10 @@ namespace Application.Services // ✅ Namespace صحیح برای پیاده‌�
             return userDto;
         }
 
+        /// <summary>کاربر جدیدی را در سیستم ثبت‌نام می‌کند.</summary>
+        /// <param name="registerDto">اطلاعات ثبت‌نام کاربر.</param>
+        /// <param name="cancellationToken">توکن لغو عملیات.</param>
+        /// <returns>DTO کاربر تازه ثبت‌نام شده.</returns>
         public async Task<UserDto> RegisterUserAsync(RegisterUserDto registerDto, CancellationToken cancellationToken = default)
         {
             _logger.LogInformation("Attempting to register new user. TelegramID: {TelegramId}, Email: {Email}, Username: {Username}",
@@ -181,6 +193,10 @@ namespace Application.Services // ✅ Namespace صحیح برای پیاده‌�
             return userDto;
         }
 
+        /// <summary>اطلاعات کاربری موجود را به صورت غیرهمزمان به‌روزرسانی می‌کند.</summary>
+        /// <param name="userId">شناسه کاربر مورد نظر برای به‌روزرسانی.</param>
+        /// <param name="updateDto">اطلاعات به‌روزرسانی کاربر.</param>
+        /// <param name="cancellationToken">توکن لغو عملیات.</param>
         public async Task UpdateUserAsync(Guid userId, UpdateUserDto updateDto, CancellationToken cancellationToken = default) // ✅ نوع بازگشتی به Task تغییر کرد
         {
             _logger.LogInformation("Attempting to update user with ID: {UserId}", userId);
@@ -220,6 +236,9 @@ namespace Application.Services // ✅ Namespace صحیح برای پیاده‌�
             _logger.LogInformation("User with ID {UserId} updated successfully.", userId);
         }
 
+        /// <summary>کاربری را بر اساس شناسه منحصر به فرد او به صورت غیرهمزمان حذف می‌کند.</summary>
+        /// <param name="id">شناسه کاربر مورد نظر برای حذف.</param>
+        /// <param name="cancellationToken">توکن لغو عملیات.</param>
         public async Task DeleteUserAsync(Guid id, CancellationToken cancellationToken = default)
         {
             _logger.LogInformation("Attempting to delete user with ID: {UserId}", id);
@@ -227,7 +246,6 @@ namespace Application.Services // ✅ Namespace صحیح برای پیاده‌�
 
             if (user == null)
             {
-                _logger.LogWarning("User with ID {UserId} not found for deletion. No action taken.", id);
                 // throw new NotFoundException(nameof(User), id); // یا به سادگی بازگردید اگر "عدم وجود" به معنی "عملیات انجام شده" است
                 return;
             }

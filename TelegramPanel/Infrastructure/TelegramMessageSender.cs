@@ -214,6 +214,7 @@ namespace TelegramPanel.Infrastructure
                     if (userToDelete != null)
                     {
                         await _userRepository.DeleteAsync(userToDelete, cancellationToken);
+       
                         _logger.LogInformation("Hangfire Job (ActualSend): Successfully removed user with Telegram ID {TelegramId} (ChatID: {ChatId}) from database due to 'chat not found' or deactivated/blocked status.", userToDelete.TelegramId, chatId);
                     }
                     else

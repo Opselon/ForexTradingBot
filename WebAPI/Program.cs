@@ -27,6 +27,7 @@ using TelegramPanel.Extensions;
 using TelegramPanel.Infrastructure;
 // using WebAPI.Filters; //  Namespace برای HangfireNoAuthFilter (اگر در این مسیر است و استفاده می‌کنید)
 using Infrastructure.Features.Forwarding.Extensions;
+using TL;
 #endregion
 
 // ------------------- پیکربندی اولیه لاگر Serilog (Bootstrap Logger) -------------------
@@ -182,6 +183,7 @@ try
     builder.Services.AddForwardingOrchestratorServices();
     Log.Information("Forwarding orchestrator services registered.");
 
+
     try
     {
         SqlServiceManager.EnsureSqlServicesRunning();
@@ -211,6 +213,7 @@ try
     builder.Services.AddScoped<IActualTelegramMessageActions, ActualTelegramMessageActions>();
     builder.Services.AddScoped<ITelegramMessageSender, HangfireRelayTelegramMessageSender>();
     builder.Services.AddScoped<IForwardingJobActions, ForwardingJobActions>();
+    builder.Services.AddTransient<IBotCommandSetupService, BotCommandSetupService>();
     #endregion
 
     // ------------------- ساخت WebApplication instance -------------------

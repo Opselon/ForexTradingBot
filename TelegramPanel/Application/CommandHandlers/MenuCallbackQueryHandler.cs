@@ -13,6 +13,7 @@ using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Formatters;
 using TelegramPanel.Infrastructure;
 using TelegramPanel.Infrastructure.Helpers;
+using TelegramPanel.Application.States;
 #endregion
 
 namespace TelegramPanel.Application.CommandHandlers
@@ -27,6 +28,7 @@ namespace TelegramPanel.Application.CommandHandlers
         private readonly ISignalService _signalService;
         private readonly IMapper _mapper;
         private readonly IPaymentService _paymentService; //✅ تزریق سرویس پرداخت
+        private readonly IUserConversationStateService _stateService; // Inject the state service
         public const string BackToMainMenuGeneral = "main_menu_back"; // ✅ این ثابت تعریف شد
 
         // Callback Data Prefix برای انتخاب پلن
@@ -63,7 +65,8 @@ namespace TelegramPanel.Application.CommandHandlers
             ISignalService signalService,
             IMapper mapper,
             IPaymentService paymentService
-            // MenuCommandHandler menuCommandHandler // ✅ تزریق اگر می‌خواهید مستقیم فراخوانی کنید
+            // MenuCommandHandler menuCommandHandler // ✅ تزریق اگر می‌خواهید مستقیم فراخوانی کنید,
+            , IUserConversationStateService stateService
             )
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -73,6 +76,7 @@ namespace TelegramPanel.Application.CommandHandlers
             _signalService = signalService ?? throw new ArgumentNullException(nameof(signalService));
             _mapper = mapper ?? throw new ArgumentNullException(nameof(mapper));
             _paymentService = paymentService ?? throw new ArgumentNullException(nameof(paymentService));
+            _stateService = stateService ?? throw new ArgumentNullException(nameof(stateService)); // Initialize the state service
             // _menuCommandHandler = menuCommandHandler; // ✅ مقداردهی
         }
         #endregion
@@ -165,9 +169,8 @@ namespace TelegramPanel.Application.CommandHandlers
                                 break;
                             case BackToMainMenuGeneral:
                                 _logger.LogInformation("User requested to go back to main menu.");
-                                await ShowMainMenuAsync(chatId, messageId, cancellationToken);
+                                await ShowMainMenuAndClearStateAsync(chatId, userId, messageId, cancellationToken);
                                 break;
-
                             default:
                                 _logger.LogWarning("Unhandled CallbackQuery data: {CallbackData}", callbackData);
                                 await _messageSender.SendTextMessageAsync(chatId, "Sorry, this option is not recognized or is under development.", cancellationToken: cancellationToken);
@@ -345,12 +348,22 @@ namespace TelegramPanel.Application.CommandHandlers
             }
 
             var backKeyboard = MarkupBuilder.CreateInlineKeyboard(
-        InlineKeyboardButton.WithCallbackData("⬅️ Back to Main Menu", GeneralBackToMainMenuCallback)
+        InlineKeyboardButton.WithCallbackData("⬅️ Back to Main Menu", BackToMainMenuGeneral)
         );
 
             await EditMessageOrSendNewAsync(chatId, messageIdToEdit, sb.ToString(), backKeyboard, ParseMode.Markdown, cancellationToken);
         }
 
+        /// <summary>
+        /// Handles the "Back to Main Menu" callback data.
+        /// Shows the main menu and clears the user's conversation state.
+        /// </summary>
+        private async Task ShowMainMenuAndClearStateAsync(long chatId, long userId, int messageIdToEdit, CancellationToken cancellationToken)
+        {
+            _logger.LogInformation("User requested to go back to main menu. Clearing state for UserID {UserId}.", userId);
+            await ShowMainMenuAsync(chatId, messageIdToEdit, cancellationToken);
+            await _stateService.ClearAsync(userId, cancellationToken); // Clear the user's state
+        }
         // مثال برای ShowSubscriptionPlansAsync
 
 
@@ -405,7 +418,7 @@ namespace TelegramPanel.Application.CommandHandlers
             }
 
             var backKeyboard = MarkupBuilder.CreateInlineKeyboard(
-     InlineKeyboardButton.WithCallbackData("⬅️ Back to Main Menu", GeneralBackToMainMenuCallback));
+     InlineKeyboardButton.WithCallbackData("⬅️ Back to Main Menu", BackToMainMenuGeneral));
             await EditMessageOrSendNewAsync(chatId, messageIdToEdit, sb.ToString(), backKeyboard, ParseMode.MarkdownV2, cancellationToken);
         }
 
@@ -422,7 +435,7 @@ namespace TelegramPanel.Application.CommandHandlers
             var plansKeyboard = MarkupBuilder.CreateInlineKeyboard(
       new[] { InlineKeyboardButton.WithCallbackData("🌟 Premium Monthly", "subscribe_premium_1m") },
       new[] { InlineKeyboardButton.WithCallbackData("✨ Premium Quarterly", "subscribe_premium_3m") },
-      new[] { InlineKeyboardButton.WithCallbackData("⬅️ Back to Main Menu", GeneralBackToMainMenuCallback) }
+      new[] { InlineKeyboardButton.WithCallbackData("⬅️ Back to Main Menu", BackToMainMenuGeneral) }
   );
 
             await EditMessageOrSendNewAsync(chatId, messageIdToEdit, plansText, plansKeyboard, ParseMode.Markdown, cancellationToken);
@@ -476,23 +489,8 @@ namespace TelegramPanel.Application.CommandHandlers
         private async Task ShowMainMenuAsync(long chatId, int messageIdToEdit, CancellationToken cancellationToken)
         {
             _logger.LogInformation("Showing main menu again for ChatID {ChatId}", chatId);
-            var text = "Welcome to the Main Menu! Please choose an option:";
-
-            var inlineKeyboard = new InlineKeyboardMarkup(new[]
-            {
-                new []
-                {
-                    InlineKeyboardButton.WithCallbackData("📈 View Signals", MenuCommandHandler.SignalsCallbackData),
-                    InlineKeyboardButton.WithCallbackData("👤 My Profile", MenuCommandHandler.ProfileCallbackData),
-                },
-                new []
-                {
-                    InlineKeyboardButton.WithCallbackData("💎 Subscribe", MenuCommandHandler.SubscribeCallbackData),
-                    InlineKeyboardButton.WithCallbackData("⚙️ Settings", MenuCommandHandler.SettingsCallbackData),
-                }
-            });
-
-            //  ویرایش پیام قبلی برای نمایش مجدد منو
+            // Use the static GetMainMenuMarkup method from MenuCommandHandler
+            var (text, inlineKeyboard) = MenuCommandHandler.GetMainMenuMarkup();
             await EditMessageOrSendNewAsync(chatId, messageIdToEdit, text, inlineKeyboard, cancellationToken: cancellationToken);
         }
 

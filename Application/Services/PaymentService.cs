@@ -56,7 +56,7 @@ namespace Application.Services
             //  دریافت اطلاعات پلن (قیمت و ...) از PlanRepository یا یک منبع دیگر
             //  فرض می‌کنیم قیمت پلن 10 USDT است و یک ماه اعتبار دارد.
             //  این بخش باید با سیستم مدیریت پلن‌های شما جایگزین شود.
-            decimal planPrice = 10.0m; //  به عنوان مثال
+            decimal planPrice = 125.0m; //  به عنوان مثال
             string planDescription = $"Subscription to Premium Plan (1 Month) for {user.Username}";
             string internalOrderId = $"SUB-{planId}-{userId}-{DateTime.UtcNow.Ticks}"; // یک شناسه سفارش داخلی
 

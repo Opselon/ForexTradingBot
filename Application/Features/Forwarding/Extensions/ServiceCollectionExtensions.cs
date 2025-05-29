@@ -9,6 +9,7 @@ namespace Application.Features.Forwarding.Extensions
         public static IServiceCollection AddForwardingServices(this IServiceCollection services)
         {
             // Register services
+
             services.AddScoped<IForwardingService, ForwardingService>();
             services.AddScoped<MessageProcessingService>();
             return services;

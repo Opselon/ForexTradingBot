@@ -46,21 +46,43 @@ try
     Log.Information("--------------------------------------------------");
 
     var builder = WebApplication.CreateBuilder(args);
+    builder.Logging.ClearProviders();
+    builder.Logging.AddFilter("Default", LogLevel.None) // Silence all categories by default
+               .AddFilter("Microsoft", LogLevel.None); // Silence Microsoft categories too
+
+    // Alternatively, for granular control and silence:
+    builder.Logging.AddFilter((category, level) =>
+    {
+        // Return false for all categories and levels.
+        // This is the most aggressive way to disable ALL logging output.
+        // If you need *any* specific log (e.g., Fatal errors from your app),
+        // you would modify this condition.
+        return false; // Effectively logs nothing
+    });
 
     #region Configure Serilog Logging
     // ------------------- ۱. پیکربندی Serilog با تنظیمات از appsettings.json -------------------
     // این بخش Serilog را به عنوان سیستم لاگینگ اصلی برنامه تنظیم می‌کند.
     builder.Host.UseSerilog((context, services, loggerConfiguration) => loggerConfiguration
-        .ReadFrom.Configuration(context.Configuration) // خواندن تنظیمات Serilog از appsettings.json (بخش "Serilog")
-        .ReadFrom.Services(services)                   // امکان غنی‌سازی لاگ‌ها با استفاده از سرویس‌های DI
-        .Enrich.FromLogContext()                       // اضافه کردن اطلاعات context به لاگ‌ها (مانند RequestId)
-        .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}") // فرمت خروجی کنسول
-                                                                                                               //  می‌توانید Sink های دیگری مانند File, Seq, ElasticSearch و ... را اینجا اضافه کنید
-                                                                                                               // .WriteTo.File($"logs/ForexBot_{builder.Environment.EnvironmentName}_.txt",
-                                                                                                               //               rollingInterval: RollingInterval.Day,
-                                                                                                               //               restrictedToMinimumLevel: Serilog.Events.LogEventLevel.Information,
-                                                                                                               //               outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] ({SourceContext}) {Message:lj}{NewLine}{Exception}")
-    );
+     .ReadFrom.Configuration(context.Configuration)
+     .ReadFrom.Services(services)
+     .Enrich.FromLogContext()
+
+     // MODIFIED LINE: Set the DEFAULT minimum level for ALL logs.
+     // Change '.Information()' to '.Warning()' or '.Error()' or '.Fatal()'.
+     // Setting it to '.Error()' will suppress all Info/Warn/Debug from your custom logs too.
+     .MinimumLevel.Warning() // Or .MinimumLevel.Error(), or .MinimumLevel.Fatal() if you want very few logs.
+
+     // Keep overrides for Microsoft/System/Hangfire for finer control (e.g., if you set default to Info for YOUR app, but suppress theirs to Error).
+     // If you set default to Error/Fatal, these overrides are less necessary but can still be left.
+     .MinimumLevel.Override("Microsoft", Serilog.Events.LogEventLevel.Warning)
+     .MinimumLevel.Override("System", Serilog.Events.LogEventLevel.Warning)
+     .MinimumLevel.Override("Hangfire", Serilog.Events.LogEventLevel.Warning)
+
+     .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
+                                                                       //  می‌توانید Sink های دیگری مانند File, Seq, ElasticSearch و ... را اینجا اضافه کنید                                                                                             //               restrictedToMinimumLevel: Serilog.Events.LogEventLevel.Information,
+                                                                                                            //               outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] ({SourceContext}) {Message:lj}{NewLine}{Exception}")
+ );
     Log.Information("Serilog configured as the primary logging provider.");
     #endregion
 
@@ -153,6 +175,7 @@ try
     builder.Services.AddHostedService<Infrastructure.Services.TelegramUserApiInitializationService>();
     // مپ کردن بخش CryptoPaySettings.SectionName (که "CryptoPay" است) از appsettings.json به کلاس Shared.Settings.CryptoPaySettings
     builder.Services.Configure<CryptoPaySettings>(builder.Configuration.GetSection(CryptoPaySettings.SectionName));
+    builder.Services.AddMemoryCache();
     // TelegramPanelSettings در متد AddTelegramPanelServices پیکربندی می‌شود.
     Log.Information("Application settings (Options pattern) configured.");
     #endregion

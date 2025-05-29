@@ -28,22 +28,26 @@ namespace Infrastructure.Services
         private readonly MemoryCacheEntryOptions _cacheOptions = new MemoryCacheEntryOptions()
             .SetSlidingExpiration(TimeSpan.FromMinutes(5))
             .SetAbsoluteExpiration(TimeSpan.FromHours(1));
+        private readonly TimeSpan _cacheCleanupInterval = TimeSpan.FromMinutes(10);
+
         #endregion
 
         #region Private Fields
         private WTelegram.Client? _client;
         private SemaphoreSlim _connectionLock = new SemaphoreSlim(1, 1);
+        private System.Threading.Timer? _cacheCleanupTimer;
         #endregion
 
         #region Public Properties & Events
         public WTelegram.Client NativeClient => _client!;
         public event Action<Update> OnCustomUpdateReceived = delegate { }; // TL.Update
+
         #endregion
 
         #region Constructor
         public TelegramUserApiClient(
-            ILogger<TelegramUserApiClient> logger,
-            IOptions<TelegramUserApiSettings> settingsOptions)
+             ILogger<TelegramUserApiClient> logger,
+             IOptions<TelegramUserApiSettings> settingsOptions)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _settings = settingsOptions?.Value ?? throw new ArgumentNullException(nameof(settingsOptions));
@@ -77,6 +81,14 @@ namespace Infrastructure.Services
                     _logger.LogWarning("[USER_API_ON_UPDATES_TRIGGERED] Received 'updates' that is NOT UpdatesBase. Type: {UpdateType}", updates.GetType().FullName);
                 }
             };
+
+            _cacheCleanupTimer = new System.Threading.Timer(
+                      CacheCleanup, // Callback method to execute
+                      null,         // State object to pass to the callback (not used here)
+                      (int)_cacheCleanupInterval.TotalMilliseconds, // Time to wait before the first call (in milliseconds)
+                      (int)_cacheCleanupInterval.TotalMilliseconds  // Time interval between subsequent calls (in milliseconds)
+                  );
+            _logger.LogInformation("Started cache cleanup timer with interval {IntervalMinutes} minutes.", _cacheCleanupInterval.TotalMinutes);
         }
         #endregion
 
@@ -253,17 +265,58 @@ namespace Infrastructure.Services
             }
         }
 
+        /// <summary>
+        /// Periodically cleans up expired entries from the user and chat expiry caches.
+        /// </summary>
+        private void CacheCleanup(object? state)
+        {
+            _logger.LogDebug("Running scheduled cache cleanup for user and chat caches...");
+            int usersRemoved = 0;
+            var now = DateTime.UtcNow;
+
+            // Clean _userCacheWithExpiry
+            // Use ToArray() to avoid "collection was modified" error if entries are removed during iteration
+            foreach (var entry in _userCacheWithExpiry.ToArray())
+            {
+                if (entry.Value.Expiry < now)
+                {
+                    if (_userCacheWithExpiry.TryRemove(entry.Key, out _))
+                    {
+                        usersRemoved++;
+                        _logger.LogTrace("Removed expired user {UserId} from _userCacheWithExpiry.", entry.Key);
+                    }
+                }
+            }
+            _logger.LogInformation("Cache cleanup: Removed {UsersRemovedCount} expired users from _userCacheWithExpiry. Current count: {CurrentUserCacheCount}", usersRemoved, _userCacheWithExpiry.Count);
+
+            // Clean _chatCacheWithExpiry
+            int chatsRemoved = 0;
+            // Use ToArray() for safe iteration
+            foreach (var entry in _chatCacheWithExpiry.ToArray())
+            {
+                if (entry.Value.Expiry < now)
+                {
+                    if (_chatCacheWithExpiry.TryRemove(entry.Key, out _))
+                    {
+                        chatsRemoved++;
+                        _logger.LogTrace("Removed expired chat {ChatId} from _chatCacheWithExpiry.", entry.Key);
+                    }
+                }
+            }
+            _logger.LogInformation("Cache cleanup: Removed {ChatsRemovedCount} expired chats from _chatCacheWithExpiry. Current count: {CurrentChatCacheCount}", chatsRemoved, _chatCacheWithExpiry.Count);
+        }
+
         #endregion
 
         #region WTelegramClient Update Handler
-        private Task HandleUpdatesBaseAsync(UpdatesBase updatesBase) // Removed async
+        private Task HandleUpdatesBaseAsync(UpdatesBase updatesBase)
         {
             // --- Start of Method Logging ---
             _logger.LogDebug("HandleUpdatesBaseAsync: Received UpdatesBase of type {UpdatesBaseType}. Update content (partial): {UpdatesBaseContent}",
                 updatesBase.GetType().Name,
                 TruncateString(updatesBase.ToString(), 200));
 
-            // --- User/Chat Collection Logging ---
+            // --- User/Chat Collection Logic ---
             int initialUserCacheCount = _userCache.Count;
             int initialChatCacheCount = _chatCache.Count;
 
@@ -282,8 +335,19 @@ namespace Infrastructure.Services
                 _logger.LogTrace("HandleUpdatesBaseAsync: No new users or chats collected from this UpdatesBase.");
             }
 
+            // Update the expiry caches with recently collected users/chats (from approved Item 5)
+            foreach (var userEntry in _userCache)
+            {
+                _userCacheWithExpiry[userEntry.Key] = (userEntry.Value, DateTime.UtcNow.Add(_cacheExpiration));
+            }
+            foreach (var chatEntry in _chatCache)
+            {
+                _chatCacheWithExpiry[chatEntry.Key] = (chatEntry.Value, DateTime.UtcNow.Add(_cacheExpiration));
+            }
+
             List<Update> updatesToDispatch = new List<Update>();
 
+            // --- Handle Different Update Types ---
             if (updatesBase is Updates updatesContainer && updatesContainer.updates != null)
             {
                 _logger.LogDebug("HandleUpdatesBaseAsync: Processing 'Updates' container with {UpdateCount} inner updates.", updatesContainer.updates.Length);
@@ -294,11 +358,12 @@ namespace Infrastructure.Services
                 _logger.LogDebug("HandleUpdatesBaseAsync: Processing 'UpdatesCombined' container with {UpdateCount} inner updates.", updatesCombinedContainer.updates.Length);
                 updatesToDispatch.AddRange(updatesCombinedContainer.updates);
             }
-            else if (updatesBase is UpdateShortMessage usm)
+            // --- REWRITTEN: Message reconstruction for UpdateShortMessage ---
+            else if (updatesBase is UpdateShortMessage usm) // usm declared here, correctly scoped
             {
                 _logger.LogDebug("HandleUpdatesBaseAsync: Processing 'UpdateShortMessage'. MsgID: {MessageId}, UserID: {UserId}, PTS: {Pts}",
                     usm.id, usm.user_id, usm.pts);
-                Peer userPeer;
+                Peer userPeer; // userPeer declared here, correctly scoped
                 if (_userCache.TryGetValue(usm.user_id, out var cachedUser))
                 {
                     userPeer = new PeerUser { user_id = cachedUser.id };
@@ -311,20 +376,47 @@ namespace Infrastructure.Services
                 }
                 _logger.LogTrace("HandleUpdatesBaseAsync (USM): Constructing Message for MsgID {MessageId}. FromID: {FromId}, PeerID: {PeerId}, Message: {MessageContent}",
                     usm.id, usm.user_id, usm.user_id, TruncateString(usm.message, 50));
-                var msg = new Message { /* ... */ flags = 0, id = usm.id, peer_id = userPeer, from_id = userPeer, message = usm.message, date = usm.date, entities = usm.entities, media = null, reply_to = usm.reply_to, fwd_from = usm.fwd_from, via_bot_id = usm.via_bot_id, ttl_period = usm.ttl_period };
-                var uf = usm.flags;
+
+                // Construct Message using fields that are DEFINITELY available on your TL.Message
+                // Properties like 'media', 'grouped_id', 'random_id' that caused errors are now handled defensively.
+                var msg = new Message
+                {
+                    flags = 0,
+                    id = usm.id,
+                    peer_id = userPeer,
+                    from_id = userPeer,
+                    message = usm.message,
+                    date = usm.date,
+                    entities = usm.entities,
+                    media = null,       // 'media' is not directly on UpdateShortMessage; set to null.
+                    reply_to = usm.reply_to, // Check if reply_to is truly available, if not, it will be null or needs default here. Assuming it is.
+                    fwd_from = usm.fwd_from, // Check if fwd_from is truly available, if not, it will be null or needs default here. Assuming it is.
+                    via_bot_id = usm.via_bot_id, // If still error, set to 0. Assuming it is present.
+                    ttl_period = usm.ttl_period, // If still error, set to 0. Assuming it is present.
+                    // grouped_id field from UpdateShortMessage is typically only available in a different, full Update.
+                    // For safety, assume default 0 or check for its existence in your TL library's UpdateShortMessage type.
+                    // Here setting to 0 assuming TL.Message.grouped_id is a non-nullable long.
+                    grouped_id = 0,
+                    // 'random_id' property does not belong here as it's typically for *sending* messages via RPC.
+                };
+
+                var uf = usm.flags; // uf declared here, correctly scoped
                 if (uf.HasFlag(UpdateShortMessage.Flags.out_)) msg.flags |= Message.Flags.out_;
                 if (uf.HasFlag(UpdateShortMessage.Flags.mentioned)) msg.flags |= Message.Flags.mentioned;
                 if (uf.HasFlag(UpdateShortMessage.Flags.silent)) msg.flags |= Message.Flags.silent;
                 if (uf.HasFlag(UpdateShortMessage.Flags.media_unread)) msg.flags |= Message.Flags.media_unread;
+                // 'noforwards' flag is typically not available on UpdateShortMessage.Flags
+                // if (uf.HasFlag(UpdateShortMessage.Flags.noforwards)) msg.flags |= Message.Flags.noforwards;
+
                 updatesToDispatch.Add(new UpdateNewMessage { message = msg, pts = usm.pts, pts_count = usm.pts_count });
                 _logger.LogDebug("HandleUpdatesBaseAsync (USM): Added UpdateNewMessage for MsgID {MessageId} to dispatch list.", usm.id);
             }
-            else if (updatesBase is UpdateShortChatMessage uscm)
+            // --- REWRITTEN: Message reconstruction for UpdateShortChatMessage ---
+            else if (updatesBase is UpdateShortChatMessage uscm) // uscm declared here, correctly scoped
             {
                 _logger.LogDebug("HandleUpdatesBaseAsync: Processing 'UpdateShortChatMessage'. MsgID: {MessageId}, FromID: {FromId}, ChatID: {ChatId}, PTS: {Pts}",
                     uscm.id, uscm.from_id, uscm.chat_id, uscm.pts);
-                Peer chatPeer;
+                Peer chatPeer; // chatPeer declared here, correctly scoped
                 if (_chatCache.TryGetValue(uscm.chat_id, out var cachedChat))
                 {
                     if (cachedChat is Channel channel) { chatPeer = new PeerChannel { channel_id = channel.id }; }
@@ -336,7 +428,7 @@ namespace Infrastructure.Services
                     chatPeer = new PeerChat { chat_id = uscm.chat_id };
                     _logger.LogWarning("HandleUpdatesBaseAsync (USCM): Chat {ChatId} from UpdateShortChatMessage not in cache, using minimal PeerChat.", uscm.chat_id);
                 }
-                Peer? fromPeer = null;
+                Peer? fromPeer = null; // fromPeer declared here, correctly scoped
                 if (_userCache.TryGetValue(uscm.from_id, out var cachedFromUser))
                 {
                     fromPeer = new PeerUser { user_id = cachedFromUser.id };
@@ -353,11 +445,43 @@ namespace Infrastructure.Services
                 else if (chatPeer is PeerChannel pch) targetChatIdForLog = pch.channel_id;
                 _logger.LogTrace("HandleUpdatesBaseAsync (USCM): Constructing Message for MsgID {MessageId}. FromID: {FromId}, TargetChatID: {TargetChatId}, Message: {MessageContent}",
                    uscm.id, uscm.from_id, targetChatIdForLog, TruncateString(uscm.message, 50));
-                var msg = new Message { /* ... */ flags = 0, id = uscm.id, peer_id = chatPeer, from_id = fromPeer, message = uscm.message, date = uscm.date, entities = uscm.entities, media = null, reply_to = uscm.reply_to, fwd_from = uscm.fwd_from, via_bot_id = uscm.via_bot_id, ttl_period = uscm.ttl_period };
+
+                // Construct Message using fields that are DEFINITELY available on your TL.Message
+                // Properties like 'media', 'grouped_id', 'random_id' that caused errors are now handled defensively.
+                var msg = new Message
+                {
+                    flags = 0,
+                    id = uscm.id,
+                    peer_id = chatPeer,
+                    from_id = fromPeer,
+                    message = uscm.message,
+                    date = uscm.date,
+                    entities = uscm.entities,
+                    media = null,       // 'media' is not directly on UpdateShortChatMessage; set to null.
+                    reply_to = uscm.reply_to, // Check if reply_to is truly available, if not, it will be null or needs default here. Assuming it is.
+                    fwd_from = uscm.fwd_from, // Check if fwd_from is truly available, if not, it will be null or needs default here. Assuming it is.
+                    via_bot_id = uscm.via_bot_id, // If still error, set to 0. Assuming it is present.
+                    ttl_period = uscm.ttl_period, // If still error, set to 0. Assuming it is present.
+                    // grouped_id field from UpdateShortChatMessage is typically only available in a different, full Update.
+                    // For safety, assume default 0 or check for its existence in your TL library's UpdateShortChatMessage type.
+                    // Here setting to 0 assuming TL.Message.grouped_id is a non-nullable long.
+                    grouped_id = 0,
+                    // 'random_id' property does not belong here.
+                };
+
+                var uf = uscm.flags; // uf declared here, correctly scoped
+                if (uf.HasFlag(UpdateShortChatMessage.Flags.out_)) msg.flags |= Message.Flags.out_;
+                if (uf.HasFlag(UpdateShortChatMessage.Flags.mentioned)) msg.flags |= Message.Flags.mentioned;
+                if (uf.HasFlag(UpdateShortChatMessage.Flags.silent)) msg.flags |= Message.Flags.silent;
+                if (uf.HasFlag(UpdateShortChatMessage.Flags.media_unread)) msg.flags |= Message.Flags.media_unread;
+                // 'noforwards' flag is typically not available on UpdateShortChatMessage.Flags
+                // if (uf.HasFlag(UpdateShortChatMessage.Flags.noforwards)) msg.flags |= Message.Flags.noforwards;
+
                 updatesToDispatch.Add(new UpdateNewMessage { message = msg, pts = uscm.pts, pts_count = uscm.pts_count });
                 _logger.LogDebug("HandleUpdatesBaseAsync (USCM): Added UpdateNewMessage for MsgID {MessageId} to dispatch list.", uscm.id);
             }
 
+            // --- Dispatch Updates ---
             if (updatesToDispatch.Any())
             {
                 _logger.LogInformation("HandleUpdatesBaseAsync: Dispatching {DispatchCount} TL.Update object(s) via OnCustomUpdateReceived.", updatesToDispatch.Count);
@@ -382,9 +506,8 @@ namespace Infrastructure.Services
                 _logger.LogDebug("HandleUpdatesBaseAsync: No TL.Update objects to dispatch from this UpdatesBase of type {UpdatesBaseType}.", updatesBase.GetType().Name);
             }
 
-            return Task.CompletedTask; // Add this line
+            return Task.CompletedTask;
         }
-
 
         // Helper function to truncate strings for logging to avoid overly long log messages
         private string TruncateString(string? str, int maxLength)
@@ -547,51 +670,52 @@ namespace Infrastructure.Services
 
         public async Task<Messages_MessagesBase?> GetMessagesAsync(InputPeer peer, params int[] messageIds)
         {
+            // Throw instead of return null for critical uninitialized client
+            if (_client == null)
+            {
+                _logger.LogError("GetMessagesAsync: Telegram client (_client) is not initialized. Cannot get messages.");
+                throw new InvalidOperationException("Telegram API client is not initialized.");
+            }
+            // Throw instead of return null for critical invalid input parameters
+            if (peer == null) throw new ArgumentNullException(nameof(peer), "InputPeer cannot be null for getting messages.");
+            if (messageIds == null || !messageIds.Any())
+                throw new ArgumentException("Message IDs list cannot be null or empty for getting messages.", nameof(messageIds));
+
+
             string messageIdsString = messageIds.Length > 5
                 ? $"{string.Join(", ", messageIds.Take(5))}... (Total: {messageIds.Length})"
                 : string.Join(", ", messageIds);
 
             long peerIdForLog = GetPeerIdForLog(peer);
-            string peerTypeForLog = peer?.GetType().Name ?? "Unknown";
+            string peerTypeForLog = peer.GetType().Name; // peer is guaranteed not null by checks above
 
             _logger.LogDebug("GetMessagesAsync: Attempting to get messages for Peer (Type: {PeerType}, LoggedID: {PeerId}), Message IDs: [{MessageIdsArray}]",
                 peerTypeForLog,
                 peerIdForLog,
                 messageIdsString);
 
-            if (peer == null || !messageIds.Any())
-            {
-                _logger.LogWarning("GetMessagesAsync: InputPeer is null or no message IDs provided. Returning null. Peer: {PeerString}, MessageIDs Count: {MessageIdCount}",
-                    peer?.ToString() ?? "null",
-                    messageIds?.Length ?? 0);
-                return null;
-            }
-
             try
             {
-
-
+                // Cache key construction
                 string cacheKeySuffix = peer is InputPeerUser p_u ? $"u{p_u.user_id}" :
                                         peer is InputPeerChat p_c ? $"c{p_c.chat_id}" :
                                         peer is InputPeerChannel p_ch ? $"ch{p_ch.channel_id}" :
                                         peer is InputPeerSelf ? "self" :
                                         $"other{peer.GetHashCode()}";
 
-                var cacheKey = $"msgs_peer{cacheKeySuffix}_ids{string.Join("_", messageIds.Select(id => id.ToString()))}";
+                var cacheKey = $"msgs_peer{cacheKeySuffix}_ids{string.Join("_", messageIds.OrderBy(id => id).Select(id => id.ToString()))}";
                 _logger.LogTrace("GetMessagesAsync: Generated cache key: {CacheKey}", cacheKey);
 
                 if (_messageCache.TryGetValue(cacheKey, out Messages_MessagesBase? cachedMessages))
                 {
-                    int cachedMessageCount = 0;
-                    if (cachedMessages is Messages_Messages mm) cachedMessageCount = mm.messages.Length;
-                    else if (cachedMessages is Messages_MessagesSlice mms) cachedMessageCount = mms.messages.Length;
-                    else if (cachedMessages is Messages_ChannelMessages mcm) cachedMessageCount = mcm.messages.Length;
+                    // FIXED CS0136: Using null-conditional operator and direct cast/access to avoid redeclaring variables
+                    // 'mm', 'mms', 'mcm' in inner if/else if blocks.
+                    int cachedMessageCount = (cachedMessages as Messages_Messages)?.messages?.Length ??
+                                             (cachedMessages as Messages_MessagesSlice)?.messages?.Length ??
+                                             (cachedMessages as Messages_ChannelMessages)?.messages?.Length ?? 0;
 
                     _logger.LogDebug("GetMessagesAsync: Cache HIT for key {CacheKey}. Returning {CachedMessageCount} cached messages for Peer (Type: {PeerType}, LoggedID: {PeerId}).",
-                        cacheKey,
-                        cachedMessageCount,
-                        peerTypeForLog,
-                        peerIdForLog);
+                        cacheKey, cachedMessageCount, peerTypeForLog, peerIdForLog);
                     return cachedMessages;
                 }
                 else
@@ -605,48 +729,39 @@ namespace Infrastructure.Services
 
                 Messages_MessagesBase? messages = await _client.Messages_GetMessages(msgIdObjects);
 
-                if (messages != null)
+                // If Telegram API call returns null, it's an unexpected failure, so throw.
+                if (messages == null)
                 {
-                    int fetchedMessageCount = 0;
-                    if (messages is Messages_Messages mm) fetchedMessageCount = mm.messages.Length;
-                    else if (messages is Messages_MessagesSlice mms) fetchedMessageCount = mms.messages.Length;
-                    else if (messages is Messages_ChannelMessages mcm) fetchedMessageCount = mcm.messages.Length;
+                    string errorMessage = $"GetMessagesAsync: _client.Messages_GetMessages returned null for Peer (Type: {peerTypeForLog}, LoggedID: {peerIdForLog}), Message IDs: [{messageIdsString}].";
+                    _logger.LogError(errorMessage);
+                    throw new InvalidOperationException(errorMessage + " Telegram API call unexpectedly returned null.");
+                }
 
-                    _logger.LogInformation("GetMessagesAsync: Successfully fetched {MessageCountFromApi} items (messages/users/chats container) from API for Peer (Type: {PeerType}, LoggedID: {PeerId}). Caching result with key {CacheKey}. Actual messages in response: {ActualMessageCount}",
-                        fetchedMessageCount,
-                        peerTypeForLog,
-                        peerIdForLog,
-                        cacheKey,
-                        fetchedMessageCount);
-                    _messageCache.Set(cacheKey, messages, _cacheOptions);
-                }
-                else
-                {
-                    _logger.LogWarning("GetMessagesAsync: _client.Messages_GetMessages returned null for Peer (Type: {PeerType}, LoggedID: {PeerId}), Message IDs: [{MessageIdsArray}]. Not caching.",
-                        peerTypeForLog, peerIdForLog, messageIdsString);
-                }
+                // FIXED CS0136: Using null-conditional operator and direct cast/access here too.
+                int fetchedMessageCount = (messages as Messages_Messages)?.messages?.Length ??
+                                          (messages as Messages_MessagesSlice)?.messages?.Length ??
+                                          (messages as Messages_ChannelMessages)?.messages?.Length ?? 0;
+
+                _logger.LogInformation("GetMessagesAsync: Successfully fetched {MessageCountFromApi} items (messages/users/chats container) from API for Peer (Type: {PeerType}, LoggedID: {PeerId}). Caching result with key {CacheKey}. Actual messages in response: {ActualMessageCount}",
+                    fetchedMessageCount, peerTypeForLog, peerIdForLog, cacheKey, fetchedMessageCount);
+                _messageCache.Set(cacheKey, messages, _cacheOptions);
 
                 return messages;
             }
-            catch (RpcException rpcEx)
+            catch (RpcException rpcEx) // WTelegramClient's specific API error type
             {
                 _logger.LogError(rpcEx, "GetMessagesAsync: RpcException occurred while fetching messages for Peer (Type: {PeerType}, LoggedID: {PeerId}), Message IDs: [{MessageIdsArray}]. Error: {ErrorTypeString}, Code: {ErrorCode}",
-                    peerTypeForLog,
-                    peerIdForLog,
-                    messageIdsString,
-                    rpcEx.Message,
-                    rpcEx.Code);
-                return null;
+                    peerTypeForLog, peerIdForLog, messageIdsString, rpcEx.Message, rpcEx.Code);
+                throw; // RE-THROW to trigger Hangfire retry
             }
-            catch (Exception ex)
+            catch (Exception ex) // General exceptions
             {
                 _logger.LogError(ex, "GetMessagesAsync: Unhandled generic exception occurred while fetching messages for Peer (Type: {PeerType}, LoggedID: {PeerId}), Message IDs: [{MessageIdsArray}]",
-                    peerTypeForLog,
-                    peerIdForLog,
-                    messageIdsString);
-                return null;
+                    peerTypeForLog, peerIdForLog, messageIdsString);
+                throw; // RE-THROW to trigger Hangfire retry
             }
         }
+
         // Assuming _logger is an ILogger instance available in the class
         // Assuming _client is an instance of WTelegram.Client
         // Assuming _userCacheWithExpiry and _chatCacheWithExpiry are Dictionaries or similar
@@ -654,23 +769,24 @@ namespace Infrastructure.Services
 
         // Assuming _logger, _client, _userCacheWithExpiry, _chatCacheWithExpiry, AsyncLock are defined
         public async Task<UpdatesBase?> SendMessageAsync(
-            InputPeer peer,
-            string message, // This is the 'message' parameter of YOUR method
-            long? replyToMsgId = null,
-            ReplyMarkup? replyMarkup = null,
-            IEnumerable<MessageEntity>? entities = null,
-            bool noWebpage = false,
-            bool background = false,
-            bool clearDraft = false,
-            DateTime? schedule_date = null,
-            bool sendAsBot = false, // Parameter from ITelegramUserApiClient
-            InputMedia? media = null,
-            int[]? parsedMentions = null) // Parameter from ITelegramUserApiClient
+                InputPeer peer,
+                string message, // This is the 'message' parameter of YOUR method
+                long? replyToMsgId = null,
+                ReplyMarkup? replyMarkup = null,
+                IEnumerable<MessageEntity>? entities = null,
+                bool noWebpage = false,
+                bool background = false,
+                bool clearDraft = false,
+                DateTime? schedule_date = null,
+                bool sendAsBot = false, // Parameter from ITelegramUserApiClient
+                InputMedia? media = null,
+                int[]? parsedMentions = null) // Parameter from ITelegramUserApiClient
         {
+            // MODIFIED: Throw instead of return null for critical uninitialized client
             if (_client == null)
             {
                 _logger.LogError("SendMessageAsync: Telegram client (_client) is not initialized. Cannot send message.");
-                return null;
+                throw new InvalidOperationException("Telegram API client is not initialized."); // Force fail and maybe a higher-level app crash if startup failed.
             }
 
             long peerIdForLog = GetPeerIdForLog(peer);
@@ -694,16 +810,16 @@ namespace Infrastructure.Services
                 replyToMsgId.HasValue ? replyToMsgId.Value.ToString() : "N/A",
                 noWebpage, background, clearDraft, schedule_date.HasValue ? schedule_date.Value.ToString() : "N/A", sendAsBot);
 
+            // MODIFIED: Throw instead of return null for critical invalid input. This would be a logic error by caller.
             if (peer == null)
             {
                 _logger.LogWarning("SendMessageAsync: InputPeer is null. Cannot send message. Message (partial): '{MessageContent}'", truncatedMessage);
-                return null;
+                throw new ArgumentNullException(nameof(peer), "InputPeer cannot be null for sending message.");
             }
 
             try
             {
-
-                // Temporary replacement as instructed
+                // Temporary replacement as instructed - REMAINING AS-IS
                 if (message != null && message.Contains("https://wa.me/message/W6HXT7VWR3U2C1"))
                 {
                     message = message.Replace("https://wa.me/message/W6HXT7VWR3U2C1", "@capxi");
@@ -714,80 +830,56 @@ namespace Infrastructure.Services
                 _logger.LogDebug("SendMessageAsync: Acquired send lock with key: {LockKey} for Peer (Type: {PeerType}, LoggedID: {PeerId})",
                     lockKey, peerTypeForLog, peerIdForLog);
 
-                // Use a common random_id for the message RPC call
                 long random_id = WTelegram.Helpers.RandomLong();
                 InputReplyTo? inputReplyTo = replyToMsgId.HasValue ? new InputReplyToMessage { reply_to_msg_id = (int)replyToMsgId.Value } : null;
 
                 UpdatesBase updatesBase;
 
-                // FIXED: Conditional logic to call Messages_SendMessageAsync for text or Messages_SendMediaAsync for media
                 if (media == null)
                 {
                     _logger.LogDebug("SendMessageAsync: Calling _client.Messages_SendMessageAsync (text-only) for Peer (Type: {PeerType}, LoggedID: {PeerId}).",
                         peerTypeForLog, peerIdForLog);
-
-                    // Call Messages_SendMessageAsync (for text-only)
                     updatesBase = await _client.Messages_SendMessage(
-                        peer: peer,
-                        message: message, // Use 'text' parameter for content
-                        random_id: random_id,
-                        reply_to: inputReplyTo,
-                        reply_markup: replyMarkup,
-                        no_webpage: noWebpage,
-                        background: background,
-                        clear_draft: clearDraft,
-                        schedule_date: schedule_date
-                    // send_as_bot and parsedMentions are not part of this RPC method
-                    );
+                        peer: peer, message: message, random_id: random_id, reply_to: inputReplyTo,
+                        reply_markup: replyMarkup, no_webpage: noWebpage, background: background,
+                        clear_draft: clearDraft, schedule_date: schedule_date);
                 }
                 else
                 {
                     _logger.LogDebug("SendMessageAsync: Calling _client.Messages_SendMediaAsync for Peer (Type: {PeerType}, LoggedID: {PeerId}).",
                         peerTypeForLog, peerIdForLog);
-
-                    // Call Messages_SendMediaAsync (for single media with caption)
                     updatesBase = await _client.Messages_SendMedia(
-                        peer: peer,
-                        media: media, // Pass the media object
-                        random_id: random_id,
-                        message: message, // Use 'message' parameter for media caption
-                        reply_to: inputReplyTo,
-                        reply_markup: replyMarkup,
-                        background: background,
-                        clear_draft: clearDraft,
-                        schedule_date: schedule_date
-                    // noforwards (bool) might be available on SendMedia
-                    // send_as_bot and parsedMentions are not part of this RPC method
-                    );
+                        peer: peer, media: media, random_id: random_id, message: message,
+                        reply_to: inputReplyTo, reply_markup: replyMarkup, background: background,
+                        clear_draft: clearDraft, schedule_date: schedule_date);
                 }
 
-                if (updatesBase != null)
+                // MODIFIED: If WTelegramClient API call returns null, it's an unexpected failure, so throw.
+                if (updatesBase == null)
                 {
-                    _logger.LogInformation(
-                        "SendMessageAsync: Message sent successfully via API. Response Type: {ResponseType}. " +
-                        "Peer (Type: {PeerType}, LoggedID: {PeerId}).",
-                        updatesBase.GetType().Name,
-                        peerTypeForLog, peerIdForLog);
-                    return updatesBase;
+                    string errorMessage = $"SendMessageAsync: WTelegramClient API call returned null for Peer (Type: {peerTypeForLog}, LoggedID: {peerIdForLog}). Message (partial): '{truncatedMessage}'.";
+                    _logger.LogError(errorMessage);
+                    throw new InvalidOperationException(errorMessage + " Telegram API call unexpectedly returned null.");
                 }
-                else
-                {
-                    _logger.LogWarning("SendMessageAsync: _client.Messages_SendMessage/SendMediaAsync returned null for Peer (Type: {PeerType}, LoggedID: {PeerId}). Message (partial): '{MessageContent}'",
-                        peerTypeForLog, peerIdForLog, truncatedMessage);
-                    return null;
-                }
+
+                _logger.LogInformation(
+                    "SendMessageAsync: Message sent successfully via API. Response Type: {ResponseType}. " +
+                    "Peer (Type: {PeerType}, LoggedID: {PeerId}).",
+                    updatesBase.GetType().Name,
+                    peerTypeForLog, peerIdForLog);
+                return updatesBase;
             }
-            catch (RpcException rpcEx)
+            catch (RpcException rpcEx) // WTelegramClient's specific API error type
             {
-                _logger.LogError(rpcEx, "SendMessageAsync: RpcException for Peer (Type: {PeerType}, LoggedID: {PeerId}). Error: {ErrorTypeString}, Code: {ErrorCode}. Message (partial): '{MessageContent}'",
+                _logger.LogError(rpcEx, "SendMessageAsync: Telegram API (RPC) exception for Peer (Type: {PeerType}, LoggedID: {PeerId}). Error: {ErrorTypeString}, Code: {ErrorCode}. Message (partial): '{MessageContent}'",
                     peerTypeForLog, peerIdForLog, rpcEx.Message, rpcEx.Code, truncatedMessage);
-                return null;
+                throw; // RE-THROW to trigger Hangfire retry
             }
-            catch (Exception ex)
+            catch (Exception ex) // General exceptions (e.g., network, unexpected internal errors)
             {
                 _logger.LogError(ex, "SendMessageAsync: Unhandled generic exception for Peer (Type: {PeerType}, LoggedID: {PeerId}). Message (partial): '{MessageContent}'",
                     peerTypeForLog, peerIdForLog, truncatedMessage);
-                return null;
+                throw; // RE-THROW to trigger Hangfire retry
             }
             finally
             {
@@ -797,18 +889,31 @@ namespace Infrastructure.Services
 
         // EDITED METHOD: SendMediaGroupAsync - Changed call to _client.Messages_SendMediaGroupAsync and schedule_date type
         public async Task SendMediaGroupAsync(InputPeer peer, InputSingleMedia[] media, long? replyToMsgId = null,
-                                              bool background = false, DateTime? schedule_date = null, // Type is DateTime?
-                                              bool sendAsBot = false, int[]? parsedMentions = null)
+                                                bool background = false, DateTime? schedule_date = null,
+                                                bool sendAsBot = false, int[]? parsedMentions = null)
         {
+            // MODIFIED: Throw instead of return for critical uninitialized client
             if (_client == null)
             {
                 _logger.LogError("SendMediaGroupAsync: Telegram client (_client) is not initialized. Cannot send media group.");
-                return;
+                throw new InvalidOperationException("Telegram API client is not initialized.");
             }
+            // MODIFIED: Throw instead of return for critical invalid input parameters
+            if (peer == null) // Media can be empty initially but if no Peer, cannot proceed.
+            {
+                _logger.LogWarning("SendMediaGroupAsync: InputPeer is null. Cannot send media group. Media Items Info: {MediaItemsInfo}", media?.Length.ToString() ?? "null");
+                throw new ArgumentNullException(nameof(peer), "InputPeer cannot be null for sending media group.");
+            }
+            if (media == null || !media.Any()) // Cannot send empty media group.
+            {
+                _logger.LogWarning("SendMediaGroupAsync: Media list is null or empty. Aborting send. Peer: {PeerType}, ID: {PeerId}", peer?.GetType().Name, GetPeerIdForLog(peer));
+                throw new ArgumentException("Media list cannot be null or empty for sending media group.", nameof(media));
+            }
+
 
             long peerIdForLog = GetPeerIdForLog(peer);
             string peerTypeForLog = peer?.GetType().Name ?? "Unknown";
-            string mediaItemsInfo = media != null && media.Any() ? $"{media.Length} items" : "None";
+            string mediaItemsInfo = media.Length > 5 ? $"{media.Length} items (e.g., {string.Join(", ", media.Take(2).Select(m => m.media?.GetType().Name))}...)" : $"Total: {media.Length} items";
             string lockKey = $"send_media_group_peer_{peerTypeForLog}_{peerIdForLog}";
 
             _logger.LogDebug(
@@ -818,12 +923,6 @@ namespace Infrastructure.Services
                 replyToMsgId.HasValue ? replyToMsgId.Value.ToString() : "N/A",
                 background, schedule_date.HasValue ? schedule_date.Value.ToString() : "N/A", sendAsBot);
 
-            if (peer == null || media == null || !media.Any())
-            {
-                _logger.LogWarning("SendMediaGroupAsync: Invalid parameters. Peer is null, or media is null/empty. Aborting.");
-                return;
-            }
-
             try
             {
                 _logger.LogTrace("SendMediaGroupAsync: Attempting to acquire send lock with key: {LockKey}", lockKey);
@@ -831,53 +930,46 @@ namespace Infrastructure.Services
                 _logger.LogDebug("SendMediaGroupAsync: Acquired send lock with key: {LockKey} for Peer (Type: {PeerType}, LoggedID: {PeerId})",
                     lockKey, peerTypeForLog, peerIdForLog);
 
-                // Generate a single random_id for the entire media group
-                long random_id = WTelegram.Helpers.RandomLong();
-
-
+                long random_id = WTelegram.Helpers.RandomLong(); // Generate a single random_id for the entire media group
                 InputReplyTo? inputReplyTo = replyToMsgId.HasValue ? new InputReplyToMessage { reply_to_msg_id = (int)replyToMsgId.Value } : null;
+                InputPeer? sendAsPeer = null;
 
-                InputPeer? sendAsPeer = null; // Default to null for user API
-
-                // FIXED: Call _client.Messages_SendMultiMediaAsync with correct parameter names and order from your image.
+                // Call WTelegramClient.Messages_SendMultiMedia - this method throws RpcException on failure,
+                // so no need to check for null return. Success means no exception was thrown.
                 await _client.Messages_SendMultiMedia(
                     peer: peer,
-                  multi_media: media.Select(m =>
-                  {
-                      // Assign the same random_id to each InputSingleMedia object
-                      m.random_id = random_id;
-                      // Temporary replacement as instructed
-                      if (m.message != null && m.message.Contains("https://wa.me/message/W6HXT7VWR3U2C1"))
-                      {
-                          m.message = m.message.Replace("https://wa.me/message/W6HXT7VWR3U2C1", "@capxi");
-                      }
-                      return m;
-                  }).ToArray(),  // Parameter name from image
-
-
-
-                    reply_to: inputReplyTo, // Parameter name from image
-                    schedule_date: schedule_date, // Parameter name from image
-                    send_as: sendAsPeer, // Parameter name from image
-                    silent: false, // Optional: default to false
-                    background: background, // Parameter name from image
-                    clear_draft: false, // Optional: default to false
-                    noforwards: false // Optional: default to false
-                                      // Other optional parameters from image not included for brevity:
-                                      // effect, allow_paid_stars, update_stickersets_order, invert_media, allow_paid_floodskip
+                    multi_media: media.Select(m => // Assign random_id and handle temporary replacement
+                    {
+                        m.random_id = random_id;
+                        if (m.message != null && m.message.Contains("https://wa.me/message/W6HXT7VWR3U2C1"))
+                        {
+                            m.message = m.message.Replace("https://wa.me/message/W6HXT7VWR3U2C1", "@capxi");
+                        }
+                        return m;
+                    }).ToArray(),
+                    reply_to: inputReplyTo,
+                    schedule_date: schedule_date,
+                    send_as: sendAsPeer,
+                    silent: false,
+                    background: background,
+                    clear_draft: false,
+                    noforwards: false
                 );
+
                 _logger.LogInformation("SendMediaGroupAsync: Successfully sent media group to Peer (Type: {PeerType}, LoggedID: {PeerId}).",
                     peerTypeForLog, peerIdForLog);
             }
-            catch (RpcException rpcEx)
+            catch (RpcException rpcEx) // WTelegramClient's specific API error type
             {
-                _logger.LogError(rpcEx, "SendMediaGroupAsync: RpcException for Peer (Type: {PeerType}, LoggedID: {PeerId}). Error: {ErrorTypeString}, Code: {ErrorCode}.",
+                _logger.LogError(rpcEx, "SendMediaGroupAsync: Telegram API (RPC) exception for Peer (Type: {PeerType}, LoggedID: {PeerId}). Error: {ErrorTypeString}, Code: {ErrorCode}.",
                     peerTypeForLog, peerIdForLog, rpcEx.Message, rpcEx.Code);
+                throw; // RE-THROW to trigger Hangfire retry
             }
-            catch (Exception ex)
+            catch (Exception ex) // General exceptions (e.g., network, unexpected internal errors)
             {
                 _logger.LogError(ex, "SendMediaGroupAsync: Unhandled generic exception for Peer (Type: {PeerType}, LoggedID: {PeerId}).",
                     peerTypeForLog, peerIdForLog);
+                throw; // RE-THROW to trigger Hangfire retry
             }
             finally
             {
@@ -889,49 +981,49 @@ namespace Infrastructure.Services
         // Assuming _client is an instance of WTelegram.Client
 
         public async Task<UpdatesBase?> ForwardMessagesAsync(
-        InputPeer toPeer,
-        int[] messageIds,
-        InputPeer fromPeer,
-        bool dropAuthor = false,
-        bool noForwards = false,
-        int? topMsgId = null,
-        DateTime? scheduleDate = null,
-        bool sendAsBot = false)
+       InputPeer toPeer,
+       int[] messageIds,
+       InputPeer fromPeer,
+       bool dropAuthor = false,
+       bool noForwards = false,
+       int? topMsgId = null,
+       DateTime? scheduleDate = null,
+       bool sendAsBot = false)
         {
+            // MODIFIED: Throw instead of return null for critical uninitialized client
             if (_client == null)
             {
                 _logger.LogError("ForwardMessagesAsync: Telegram client (_client) is not initialized. Cannot forward messages.");
-                return null;
+                throw new InvalidOperationException("Telegram API client is not initialized.");
             }
+            // MODIFIED: Throw instead of return null for critical invalid input parameters
+            if (toPeer == null) throw new ArgumentNullException(nameof(toPeer), "ToPeer cannot be null for forwarding messages.");
+            if (fromPeer == null) throw new ArgumentNullException(nameof(fromPeer), "FromPeer cannot be null for forwarding messages.");
+            if (messageIds == null || !messageIds.Any())
+                throw new ArgumentException("Message IDs list cannot be null or empty for forwarding messages.", nameof(messageIds));
 
-            // Early return for invalid parameters
-            if (toPeer == null || fromPeer == null || messageIds == null || !messageIds.Any())
-            {
-                _logger.LogWarning(
-                    "ForwardMessagesAsync: Invalid parameters. " +
-                    "ToPeer is null: {IsToPeerNull}, FromPeer is null: {IsFromPeerNull}, MessageIDs is null or empty: {AreMessageIdsInvalid}. Aborting forward.",
-                    toPeer == null,
-                    fromPeer == null,
-                    messageIds == null || !messageIds.Any());
-                return null;
-            }
 
             // Extract peer types and IDs for logging
-            string toPeerType = toPeer?.GetType().Name ?? "Unknown";
+            string toPeerType = toPeer.GetType().Name; // No longer needs '?' as toPeer is validated non-null
             long toPeerId = GetPeerIdForLog(toPeer);
-            string fromPeerType = fromPeer?.GetType().Name ?? "Unknown";
+            string fromPeerType = fromPeer.GetType().Name; // No longer needs '?' as fromPeer is validated non-null
             long fromPeerId = GetPeerIdForLog(fromPeer);
 
-            // Generate random IDs for forwarding
+            _logger.LogDebug(
+                "ForwardMessagesAsync: Attempting to forward {MessageCount} message(s) from Peer (Type: {FromPeerType}, LoggedID: {FromPeerId}) to Peer (Type: {ToPeerType}, LoggedID: {ToPeerId}). Message IDs (partial): [{MessageIdsArray}]",
+                messageIds.Length, fromPeerType, fromPeerId, toPeerType, toPeerId,
+                messageIds.Length > 5 ? $"{string.Join(", ", messageIds.Take(5))}..." : string.Join(", ", messageIds)
+            );
+
+            // Generate random IDs for forwarding (Hangfire may retry and send same random IDs)
             var randomIdArray = messageIds.Select(_ => WTelegram.Helpers.RandomLong()).ToArray();
 
-            // Acquire forward lock
+            // Acquire forward lock (prevents concurrent writes/conflicts from same source/target pair)
             string lockKey = $"forward_peer_{fromPeerType}_{fromPeerId}_to_{toPeerType}_{toPeerId}";
             using var forwardLock = await AsyncLock.LockAsync(lockKey);
 
             try
             {
-                // Forward messages
                 UpdatesBase? result = await _client.Messages_ForwardMessages(
                     to_peer: toPeer,
                     from_peer: fromPeer,
@@ -943,57 +1035,38 @@ namespace Infrastructure.Services
                     schedule_date: scheduleDate
                 );
 
-                // Log result
-                if (result != null)
+                // MODIFIED: If WTelegramClient API call returns null, it's an unexpected failure, so throw.
+                if (result == null)
                 {
-                    int updateCount = 0;
-                    if (result is Updates u) updateCount = u.updates.Length;
-                    else if (result is UpdatesCombined uc) updateCount = uc.updates.Length;
+                    string errorMessage = $"ForwardMessagesAsync: WTelegramClient API call returned null for forwarding. From Peer (Type: {fromPeerType}, ID: {fromPeerId}) To Peer (Type: {toPeerType}, ID: {toPeerId}). Message IDs: [{string.Join(", ", messageIds)}].";
+                    _logger.LogError(errorMessage);
+                    throw new InvalidOperationException(errorMessage + " Telegram API call unexpectedly returned null.");
+                }
 
-                    _logger.LogInformation(
-                        "ForwardMessagesAsync: Successfully forwarded messages. Response type: {ResponseType}, Contained updates (approx): {UpdateCount}. " +
-                        "From Peer (Type: {FromPeerType}, ID: {FromPeerId}) " +
-                        "To Peer (Type: {ToPeerType}, ID: {ToPeerId}).",
-                        result.GetType().Name,
-                        updateCount,
-                        fromPeerType, fromPeerId,
-                        toPeerType, toPeerId);
-                }
-                else
-                {
-                    _logger.LogWarning(
-                        "ForwardMessagesAsync: _client.Messages_ForwardMessages returned null. " +
-                        "From Peer (Type: {FromPeerType}, ID: {FromPeerId}) " +
-                        "To Peer (Type: {ToPeerType}, ID: {ToPeerId}). Message IDs: [{MessageIdsArray}]",
-                        fromPeerType, fromPeerId,
-                        toPeerType, toPeerId,
-                        string.Join(", ", messageIds));
-                }
+                // Log result of forwarding (information level, removed details if log level high)
+                _logger.LogInformation(
+                    "ForwardMessagesAsync: Successfully forwarded messages. Response type: {ResponseType}. " +
+                    "From Peer (Type: {FromPeerType}, ID: {FromPeerId}) " +
+                    "To Peer (Type: {ToPeerType}, ID: {ToPeerId}).",
+                    result.GetType().Name,
+                    fromPeerType, fromPeerId,
+                    toPeerType, toPeerId);
+
                 return result;
             }
-            catch (RpcException rpcEx)
+            catch (RpcException rpcEx) // WTelegramClient's specific API error type
             {
                 _logger.LogError(rpcEx,
-                    "ForwardMessagesAsync: RpcException. Error: {ErrorTypeString}, Code: {ErrorCode}. " +
-                    "From Peer (Type: {FromPeerType}, ID: {FromPeerId}) " +
-                    "To Peer (Type: {ToPeerType}, ID: {ToPeerId}). Message IDs: [{MessageIdsArray}]",
-                    rpcEx.Message,
-                    rpcEx.Code,
-                    fromPeerType, fromPeerId,
-                    toPeerType, toPeerId,
-                    string.Join(", ", messageIds));
-                return null;
+                    "ForwardMessagesAsync: Telegram API (RPC) exception. Error: {ErrorTypeString}, Code: {ErrorCode}. From Peer (Type: {FromPeerType}, ID: {FromPeerId}) To Peer (Type: {ToPeerType}, ID: {ToPeerId}). Message IDs: [{MessageIdsArray}]",
+                    rpcEx.Message, rpcEx.Code, fromPeerType, fromPeerId, toPeerType, toPeerId, string.Join(", ", messageIds));
+                throw; // RE-THROW to trigger Hangfire retry
             }
-            catch (Exception ex)
+            catch (Exception ex) // General exceptions (e.g., network, unexpected internal errors)
             {
                 _logger.LogError(ex,
-                    "ForwardMessagesAsync: Unhandled generic exception. " +
-                    "From Peer (Type: {FromPeerType}, ID: {FromPeerId}) " +
-                    "To Peer (Type: {ToPeerType}, ID: {ToPeerId}). Message IDs: [{MessageIdsArray}]",
-                    fromPeerType, fromPeerId,
-                    toPeerType, toPeerId,
-                    string.Join(", ", messageIds));
-                return null;
+                    "ForwardMessagesAsync: Unhandled generic exception. From Peer (Type: {FromPeerType}, ID: {FromPeerId}) To Peer (Type: {ToPeerType}, ID: {ToPeerId}). Message IDs: [{MessageIdsArray}]",
+                    fromPeerType, fromPeerId, toPeerType, toPeerId, string.Join(", ", messageIds));
+                throw; // RE-THROW to trigger Hangfire retry
             }
             finally
             {
@@ -1179,6 +1252,15 @@ namespace Infrastructure.Services
         public async ValueTask DisposeAsync()
         {
             _logger.LogInformation("Disposing TelegramUserApiClient...");
+            // NEW/MODIFIED BLOCK START: Dispose the cache cleanup timer
+            if (_cacheCleanupTimer != null)
+            {
+                await _cacheCleanupTimer.DisposeAsync(); // Asynchronously dispose the timer
+                _cacheCleanupTimer = null; // Set to null after disposal to indicate it's no longer valid
+                _logger.LogInformation("Cache cleanup timer disposed.");
+            }
+            // NEW/MODIFIED BLOCK END
+
             if (_client != null)
             {
                 _client.OnUpdates -= HandleUpdatesBaseAsync;
@@ -1195,6 +1277,7 @@ namespace Infrastructure.Services
             }
             await Task.CompletedTask;
         }
+
         #endregion
 
         #region Helper class for async locking

@@ -33,7 +33,7 @@ namespace Application.Features.Forwarding.Interfaces
                string messageContent,
                MessageEntity[]? messageEntities,
                Peer? senderPeerForFilter,
-               List<InputMediaWithCaption>? mediaGroupItems, // CHANGED: Now a list
+               List<InputMediaWithCaption>? mediaGroupItems,
                CancellationToken cancellationToken);
     }
 }

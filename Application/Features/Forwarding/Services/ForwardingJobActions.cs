@@ -54,19 +54,19 @@ namespace Application.Features.Forwarding.Services
 
             if (rule == null)
             {
-                _logger.LogError("Job: Rule object is null for MsgID {SourceMsgId}. Aborting.", sourceMessageId);
+            //    _logger.LogError("Job: Rule object is null for MsgID {SourceMsgId}. Aborting.", sourceMessageId);
                 throw new ArgumentNullException(nameof(rule), "Rule object cannot be null.");
             }
             if (!rule.IsEnabled)
             {
-                _logger.LogInformation("Job: Rule '{RuleName}' is disabled. Skipping message {SourceMsgId}.", rule.RuleName, sourceMessageId);
+              //  _logger.LogInformation("Job: Rule '{RuleName}' is disabled. Skipping message {SourceMsgId}.", rule.RuleName, sourceMessageId);
                 return;
             }
 
             // --- BEGIN FILTERING LOGIC ---
             if (!ShouldProcessMessageBasedOnFilters(messageContent, senderPeerForFilter, rule.FilterOptions, sourceMessageId, rule.RuleName))
             {
-                _logger.LogInformation("Job: Message {SourceMsgId} skipped due to filter options of Rule '{RuleName}'.", sourceMessageId, rule.RuleName);
+              //  _logger.LogInformation("Job: Message {SourceMsgId} skipped due to filter options of Rule '{RuleName}'.", sourceMessageId, rule.RuleName);
                 return;
             }
             // --- END FILTERING LOGIC ---
@@ -100,18 +100,18 @@ namespace Application.Features.Forwarding.Services
                         targetChannelId, targetIdForResolve, rule.RuleName);
                 }
 
-                _logger.LogDebug("Job: Resolving ToPeer with prepared ID: {TargetIdForResolve} (Original TargetId: {TargetChannelId}, TypeHint: {TargetTypeHint}) for Rule: {RuleName}",
-                    targetIdForResolve, targetChannelId, targetTypeHint, rule.RuleName);
+              //  _logger.LogDebug("Job: Resolving ToPeer with prepared ID: {TargetIdForResolve} (Original TargetId: {TargetChannelId}, TypeHint: {TargetTypeHint}) for Rule: {RuleName}",
+          //          targetIdForResolve, targetChannelId, targetTypeHint, rule.RuleName);
                 var toPeer = await _userApiClient.ResolvePeerAsync(targetIdForResolve);
 
 
                 if (fromPeer == null || toPeer == null)
                 {
-                    _logger.LogError("Job: Could not resolve FromPeer (RawId: {RawSourcePeerId}, Resolved: {FromPeerStatus}) or ToPeer (OriginalTargetId: {TargetChannelId}, IDUsedForResolve: {TargetIdForResolve}, Resolved: {ToPeerStatus}) for MsgID {SourceMsgId}. Rule: {RuleName}",
-                        rawSourcePeerId, fromPeer != null, targetChannelId, targetIdForResolve, toPeer != null, sourceMessageId, rule.RuleName);
+               //     _logger.LogError("Job: Could not resolve FromPeer (RawId: {RawSourcePeerId}, Resolved: {FromPeerStatus}) or ToPeer (OriginalTargetId: {TargetChannelId}, IDUsedForResolve: {TargetIdForResolve}, Resolved: {ToPeerStatus}) for MsgID {SourceMsgId}. Rule: {RuleName}",
+                 //       rawSourcePeerId, fromPeer != null, targetChannelId, targetIdForResolve, toPeer != null, sourceMessageId, rule.RuleName);
                     throw new InvalidOperationException($"Could not resolve source (ID: {rawSourcePeerId}) or target (OrigID: {targetChannelId} / ResolveID: {targetIdForResolve}) peer for rule '{rule.RuleName}'.");
                 }
-                _logger.LogInformation("Job: Peers resolved. FromPeer: {FromPeerString}, ToPeer: {ToPeerString} for Rule: {RuleName}", GetInputPeerTypeAndIdForLogging(fromPeer), GetInputPeerTypeAndIdForLogging(toPeer), rule.RuleName);
+               // _logger.LogInformation("Job: Peers resolved. FromPeer: {FromPeerString}, ToPeer: {ToPeerString} for Rule: {RuleName}", GetInputPeerTypeAndIdForLogging(fromPeer), GetInputPeerTypeAndIdForLogging(toPeer), rule.RuleName);
 
                 // Determine if custom send is needed based on edit options OR if it's a media group
                 bool needsCustomSend = (rule.EditOptions != null &&
@@ -127,19 +127,19 @@ namespace Application.Features.Forwarding.Services
                         )) ||
                         (mediaGroupItems != null && mediaGroupItems.Any()); // If media group exists, always custom send
 
-                _logger.LogDebug("Job: NeedsCustomSend: {NeedsCustomSend} for Rule: {RuleName}. EditOptions is null: {IsEditOptionsNull}. Has MediaGroup: {HasMediaGroup}.", needsCustomSend, rule.RuleName, rule.EditOptions == null, mediaGroupItems != null && mediaGroupItems.Any());
+             //   _logger.LogDebug("Job: NeedsCustomSend: {NeedsCustomSend} for Rule: {RuleName}. EditOptions is null: {IsEditOptionsNull}. Has MediaGroup: {HasMediaGroup}.", needsCustomSend, rule.RuleName, rule.EditOptions == null, mediaGroupItems != null && mediaGroupItems.Any());
 
                 if (needsCustomSend)
                 {
-                    _logger.LogInformation("Job: Processing custom send for MsgID {SourceMsgId} using DB Rule '{RuleName}'", sourceMessageId, rule.RuleName);
+                //    _logger.LogInformation("Job: Processing custom send for MsgID {SourceMsgId} using DB Rule '{RuleName}'", sourceMessageId, rule.RuleName);
                     await ProcessCustomSendAsync(toPeer, rule, messageContent, messageEntities, mediaGroupItems, cancellationToken);
                 }
                 else
                 {
-                    _logger.LogInformation("Job: Processing simple forward for MsgID {SourceMsgId} using DB Rule '{RuleName}'", sourceMessageId, rule.RuleName);
+                  //  _logger.LogInformation("Job: Processing simple forward for MsgID {SourceMsgId} using DB Rule '{RuleName}'", sourceMessageId, rule.RuleName);
                     await ProcessSimpleForwardAsync(fromPeer, toPeer, sourceMessageId, rule, cancellationToken);
                 }
-                _logger.LogInformation("Job: Successfully processed message {SourceMsgId} for rule {RuleName}", sourceMessageId, rule.RuleName);
+             //   _logger.LogInformation("Job: Successfully processed message {SourceMsgId} for rule {RuleName}", sourceMessageId, rule.RuleName);
             }
             catch (Exception ex)
             {
@@ -186,19 +186,19 @@ namespace Application.Features.Forwarding.Services
                 {
                     if (!filterOptions.AllowedSenderUserIds.Contains(userSender.user_id))
                     {
-                        _logger.LogDebug("ShouldProcessMessageBasedOnFilters: Message {MessageId} for Rule '{RuleName}' is from unallowed sender {SenderId}. Skipping.",
-                            messageId, ruleName, userSender.user_id);
+                    //    _logger.LogDebug("ShouldProcessMessageBasedOnFilters: Message {MessageId} for Rule '{RuleName}' is from unallowed sender {SenderId}. Skipping.",
+                    //        messageId, ruleName, userSender.user_id);
                         return false;
                     }
-                    _logger.LogTrace("ShouldProcessMessageBasedOnFilters: Message {MessageId} for Rule '{RuleName}' is from allowed sender {SenderId}. Proceeding with filter check.",
-                       messageId, ruleName, userSender.user_id);
+                 //   _logger.LogTrace("ShouldProcessMessageBasedOnFilters: Message {MessageId} for Rule '{RuleName}' is from allowed sender {SenderId}. Proceeding with filter check.",
+                   //    messageId, ruleName, userSender.user_id);
                 }
                 else
                 {
                     // If allowed senders are specified but message is not from a user (e.g., from a channel/chat itself),
                     // you might want to skip or treat as allowed. Current logic skips if not from a user.
-                    _logger.LogDebug("ShouldProcessMessageBasedOnFilters: Message {MessageId} for Rule '{RuleName}' has AllowedSenderUserIds but sender is not a PeerUser ({SenderType}). Skipping.",
-                        messageId, ruleName, senderPeer?.GetType().Name ?? "Null");
+                  //  _logger.LogDebug("ShouldProcessMessageBasedOnFilters: Message {MessageId} for Rule '{RuleName}' has AllowedSenderUserIds but sender is not a PeerUser ({SenderType}). Skipping.",
+                   //     messageId, ruleName, senderPeer?.GetType().Name ?? "Null");
                     return false;
                 }
 
@@ -211,15 +211,15 @@ namespace Application.Features.Forwarding.Services
                 {
                     if (filterOptions.BlockedSenderUserIds.Contains(userSender.user_id))
                     {
-                        _logger.LogDebug("ShouldProcessMessageBasedOnFilters: Message {MessageId} for Rule '{RuleName}' is from BLOCKED sender {SenderId}. Skipping.",
-                            messageId, ruleName, userSender.user_id);
+                    //    _logger.LogDebug("ShouldProcessMessageBasedOnFilters: Message {MessageId} for Rule '{RuleName}' is from BLOCKED sender {SenderId}. Skipping.",
+                  //          messageId, ruleName, userSender.user_id);
                         return false;
                     }
                     _logger.LogTrace("ShouldProcessMessageBasedOnFilters: Message {MessageId} for Rule '{RuleName}' is NOT from a blocked sender {SenderId}. Proceeding with filter check.",
                         messageId, ruleName, userSender.user_id);
                 }
             }
-            _logger.LogTrace("ShouldProcessMessageBasedOnFilters: Message {MessageId} passed all active filters for Rule '{RuleName}'.", messageId, ruleName);
+          //  _logger.LogTrace("ShouldProcessMessageBasedOnFilters: Message {MessageId} passed all active filters for Rule '{RuleName}'.", messageId, ruleName);
             return true;
         }
       
@@ -249,7 +249,7 @@ namespace Application.Features.Forwarding.Services
             {
                 finalCaption = string.Empty;
                 finalEntities = null;
-                _logger.LogInformation("ProcessCustomSendAsync: DropMediaCaptions is TRUE and media group is present. Clearing main caption.");
+           //     _logger.LogInformation("ProcessCustomSendAsync: DropMediaCaptions is TRUE and media group is present. Clearing main caption.");
             }
             else if (rule.EditOptions?.DropMediaCaptions == true && mediaGroupItems == null)
             {
@@ -257,17 +257,17 @@ namespace Application.Features.Forwarding.Services
                 // This path is less likely if orchestrator always puts media into mediaGroupItems (even for single media).
                 finalCaption = string.Empty;
                 finalEntities = null;
-                _logger.LogInformation("ProcessCustomSendAsync: DropMediaCaptions is TRUE and single media implied. Clearing caption.");
+           //     _logger.LogInformation("ProcessCustomSendAsync: DropMediaCaptions is TRUE and single media implied. Clearing caption.");
             }
 
             // Apply text transformations (prepend, append, replacements) to the main caption
             if (rule.EditOptions != null)
             {
-                _logger.LogInformation("ProcessCustomSendAsync: Applying text edit options for Rule: '{RuleName}'. Original Text Preview: '{InitialTextPreview}'.",
-                    rule.RuleName, TruncateString(finalCaption, 50));
+            //    _logger.LogInformation("ProcessCustomSendAsync: Applying text edit options for Rule: '{RuleName}'. Original Text Preview: '{InitialTextPreview}'.",
+              //      rule.RuleName, TruncateString(finalCaption, 50));
                 (finalCaption, finalEntities) = ApplyEditOptions(finalCaption, finalEntities, rule.EditOptions, null);
-                _logger.LogInformation("ProcessCustomSendAsync: After ApplyEditOptions. Final Text Preview: '{FinalTextPreview}'.",
-                    TruncateString(finalCaption, 50));
+           //     _logger.LogInformation("ProcessCustomSendAsync: After ApplyEditOptions. Final Text Preview: '{FinalTextPreview}'.",
+            //        TruncateString(finalCaption, 50));
             }
             else
             {
@@ -327,7 +327,7 @@ namespace Application.Features.Forwarding.Services
                 }
                 else
                 {
-                    _logger.LogWarning("ProcessCustomSendAsync: No valid media items to send in the media group. Skipping send.", rule.RuleName);
+                 //   _logger.LogWarning("ProcessCustomSendAsync: No valid media items to send in the media group. Skipping send.", rule.RuleName);
                 }
             }
             else // It's a single text-only message (or single media if orchestrator didn't put it in mediaGroupItems)
@@ -353,8 +353,8 @@ namespace Application.Features.Forwarding.Services
                     media: null, // If mediaGroupItems is null/empty, we're sending text-only
                     noWebpage: rule.EditOptions?.RemoveLinks ?? false
                 );
-                _logger.LogInformation("ProcessCustomSendAsync: Single text message sent to Target {TargetChannelId} via Rule '{RuleName}'.",
-                    GetInputPeerIdValueForLogging(toPeer), rule.RuleName);
+             //   _logger.LogInformation("ProcessCustomSendAsync: Single text message sent to Target {TargetChannelId} via Rule '{RuleName}'.",
+              //      GetInputPeerIdValueForLogging(toPeer), rule.RuleName);
             }
         }
 
@@ -409,8 +409,8 @@ namespace Application.Features.Forwarding.Services
             bool noForwards = rule.EditOptions?.NoForwards ?? false;
             // Removed dropMediaCaptionsSetting check as it's not applicable for simple forward here.
 
-            _logger.LogDebug("ProcessSimpleForwardAsync: Parameters for Rule '{RuleName}': DropAuthor={DropAuthor}, NoForwards={NoForwards}",
-                rule.RuleName, dropAuthor, noForwards);
+          //  _logger.LogDebug("ProcessSimpleForwardAsync: Parameters for Rule '{RuleName}': DropAuthor={DropAuthor}, NoForwards={NoForwards}",
+            //    rule.RuleName, dropAuthor, noForwards);
 
             await _userApiClient.ForwardMessagesAsync(
                 toPeer: toPeer,

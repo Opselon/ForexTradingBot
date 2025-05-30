@@ -4,7 +4,7 @@ using Application.Common.Interfaces; // ✅ برای INotificationJobScheduler
 using Hangfire;                      // ✅ برای BackgroundJob.Enqueue (نیاز به بسته NuGet Hangfire.Core)
 using System.Linq.Expressions;
 #endregion
-                
+
 namespace Infrastructure.Hangfire // ✅ Namespace صحیح
 {
     /// <summary>
@@ -32,14 +32,14 @@ namespace Infrastructure.Hangfire // ✅ Namespace صحیح
         }
 
 
-       public string Schedule<TService>(Expression<Action<TService>> methodCall, TimeSpan delay)
-       {
-           return BackgroundJob.Schedule<TService>(methodCall, delay);
-       }
+        public string Schedule<TService>(Expression<Action<TService>> methodCall, TimeSpan delay)
+        {
+            return BackgroundJob.Schedule<TService>(methodCall, delay);
+        }
 
-       public void AddOrUpdateRecurringJob<TService>(string recurringJobId, Expression<Action<TService>> methodCall, string cronExpression)
-       {
-           RecurringJob.AddOrUpdate<TService>(recurringJobId, methodCall, cronExpression);
-       }
+        public void AddOrUpdateRecurringJob<TService>(string recurringJobId, Expression<Action<TService>> methodCall, string cronExpression)
+        {
+            RecurringJob.AddOrUpdate<TService>(recurringJobId, methodCall, cronExpression);
+        }
     }
 }

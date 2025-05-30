@@ -4,13 +4,13 @@
 using Domain.Features.Forwarding.Entities;
 using Domain.Features.Forwarding.ValueObjects; // باید به این ValueObjects‌ها اشاره کند.
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Text.Json;
-using System;
 #endregion
 
 namespace Infrastructure.Persistence.Configurations // یا Infrastructure.Data.Configurations اگر ساختارتان متفاوت است

@@ -10,10 +10,10 @@ using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
 using TelegramPanel.Application.Interfaces;
+using TelegramPanel.Application.States;
 using TelegramPanel.Formatters;
 using TelegramPanel.Infrastructure;
 using TelegramPanel.Infrastructure.Helpers;
-using TelegramPanel.Application.States;
 #endregion
 
 namespace TelegramPanel.Application.CommandHandlers

@@ -12,4 +12,4 @@ namespace Infrastructure.Features.Forwarding.Extensions
             return services;
         }
     }
-} 
+}

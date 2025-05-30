@@ -50,4 +50,4 @@ namespace Infrastructure.Settings
         public int? MaxMessageLength { get; set; }
         public List<string>? BlockedTexts { get; set; }
     }
-} 
+}

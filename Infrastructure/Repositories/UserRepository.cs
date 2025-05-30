@@ -2,18 +2,17 @@
 
 #region Usings
 // Standard .NET & NuGet
+// Project specific
+using Application.Common.Interfaces; // For IUserRepository and IAppDbContext
+using Domain.Entities;             // For User, Subscription, UserPreference entities
+using Microsoft.EntityFrameworkCore; // For EF Core specific methods
+using Microsoft.Extensions.Logging; // Added for logging capabilities
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions; // For Expression<Func<User, bool>>
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.EntityFrameworkCore; // For EF Core specific methods
-using Microsoft.Extensions.Logging; // Added for logging capabilities
-
-// Project specific
-using Application.Common.Interfaces; // For IUserRepository and IAppDbContext
-using Domain.Entities;             // For User, Subscription, UserPreference entities
 // using Domain.Enums; // Assuming UserLevel enum exists - uncomment if used
 #endregion
 
@@ -86,7 +85,7 @@ namespace Infrastructure.Persistence.Repositories
             // return subscription.Plan != null && subscription.Plan.IsVip;
             // Or based on SubscriptionType enum:
             // return subscription.Type == SubscriptionType.Premium || subscription.Type == SubscriptionType.Vip;
-      
+
             return true; // Placeholder: If code reaches here and subscription dates are valid, assume VIP.
         }
 
@@ -230,6 +229,21 @@ namespace Infrastructure.Persistence.Repositories
             if (string.IsNullOrWhiteSpace(telegramId)) return false;
             _logger.LogTrace("UserRepository: Checking existence by TelegramID: {TelegramId}.", telegramId);
             return await _context.Users.AnyAsync(u => u.TelegramId == telegramId, cancellationToken);
+        }
+
+        /// <inheritdoc />
+        public async Task DeleteAndSaveAsync(User user, CancellationToken cancellationToken)
+        {
+            if (user == null)
+            {
+                _logger.LogError("UserRepository: Attempted to delete and save a null User object.");
+                throw new ArgumentNullException(nameof(user));
+            }
+            _logger.LogInformation("UserRepository: Marking user for deletion and immediate save. UserID: {UserId}, Username: {Username}.", user.Id, user.Username);
+            _context.Users.Remove(user);
+            // Now, save the changes immediately
+            await _context.SaveChangesAsync(cancellationToken);
+            _logger.LogInformation("UserRepository: Successfully deleted user (ID: {UserId}) and saved changes.", user.Id);
         }
 
         /// <inheritdoc />

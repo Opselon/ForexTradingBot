@@ -2,18 +2,17 @@
 
 #region Usings
 // Standard .NET & NuGet
+// Project specific
+using Domain.Features.Forwarding.Entities;     // For ForwardingRule entity
+using Domain.Features.Forwarding.Repositories; // For IForwardingRuleRepository interface
+using Infrastructure.Data;                     // For AppDbContext (assuming this is the correct namespace)
+using Microsoft.EntityFrameworkCore; // For EF Core functionalities
+using Microsoft.Extensions.Logging;   // For logging
 using System;
 using System.Collections.Generic;
 using System.Linq; // Required for Where extension method
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.EntityFrameworkCore; // For EF Core functionalities
-using Microsoft.Extensions.Logging;   // For logging
-
-// Project specific
-using Domain.Features.Forwarding.Entities;     // For ForwardingRule entity
-using Domain.Features.Forwarding.Repositories; // For IForwardingRuleRepository interface
-using Infrastructure.Data;                     // For AppDbContext (assuming this is the correct namespace)
 #endregion
 
 namespace Infrastructure.Features.Forwarding.Repositories

@@ -1,45 +1,87 @@
 ﻿// File: Application\Features\Forwarding\Services\ForwardingService.cs
+
 using Application.Features.Forwarding.Interfaces;
 using Domain.Features.Forwarding.Entities; // For ForwardingRule
 using Domain.Features.Forwarding.Repositories; // For IForwardingRuleRepository
+using Hangfire; // For [AutomaticRetry], IBackgroundJobClient
+// Specific usings for caching and shared models
+using Microsoft.Extensions.Caching.Memory; // For IMemoryCache, MemoryCacheEntryOptions
 using Microsoft.Extensions.Logging;
-using TL; // For Peer, MessageEntity
+using System; // For ArgumentNullException, InvalidOperationException, TimeSpan
 using System.Collections.Generic; // For List
 using System.Linq; // For Where, Any, ToList
 using System.Threading;
 using System.Threading.Tasks;
-using Hangfire; // For [AutomaticRetry], IBackgroundJobClient
-using System; // For ArgumentNullException, InvalidOperationException, TimeSpan
-
-// Specific usings for caching and shared models
-using Microsoft.Extensions.Caching.Memory; // For IMemoryCache, MemoryCacheEntryOptions
+using TL; // For Peer, MessageEntity
+// MODIFICATION START: Add Polly namespaces for resilience policies
+using Polly;
+using Polly.Retry;
+// MODIFICATION END
 
 namespace Application.Features.Forwarding.Services
 {
     public class ForwardingService : IForwardingService
     {
+
         private readonly IForwardingRuleRepository _ruleRepository;
         private readonly ILogger<ForwardingService> _logger; // Logger type specific to this service
-        private readonly IBackgroundJobClient _backgroundJobClient;
+        private readonly IBackgroundJobClient _backgroundJobClient; // Kept for consistency if other enqueueing is needed
+        private readonly MessageProcessingService _messageProcessingService; // ADDED: Dependency for MessageProcessingService
 
         // Caching fields for performance
-        private readonly IMemoryCache _memoryCache; // This was missing in the user's provided constructor/fields
+        private readonly IMemoryCache _memoryCache;
         private readonly TimeSpan _rulesCacheExpiration = TimeSpan.FromMinutes(5); // Cache rules for 5 minutes
+
+        // MODIFICATION START: Declare Polly retry policy for database operations (rule retrieval)
+        private readonly AsyncRetryPolicy<IEnumerable<ForwardingRule>> _ruleRetrievalRetryPolicy;
+        // MODIFICATION END
 
         // Constructor - All dependencies injected, cleaned up duplicates
         public ForwardingService(
-            IForwardingRuleRepository ruleRepository,
-            ILogger<ForwardingService> logger,
-            IBackgroundJobClient backgroundJobClient,
-            IMemoryCache memoryCache) // IMemoryCache must be injected for caching
+             IForwardingRuleRepository ruleRepository,
+             ILogger<ForwardingService> logger,
+             IBackgroundJobClient backgroundJobClient,
+             IMemoryCache memoryCache,
+             MessageProcessingService messageProcessingService) // ADDED: Inject MessageProcessingService
         {
             _ruleRepository = ruleRepository ?? throw new ArgumentNullException(nameof(ruleRepository));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _backgroundJobClient = backgroundJobClient ?? throw new ArgumentNullException(nameof(backgroundJobClient));
-            _memoryCache = memoryCache ?? throw new ArgumentNullException(nameof(memoryCache)); // Initialize memoryCache
+            _memoryCache = memoryCache ?? throw new ArgumentNullException(nameof(memoryCache));
+            _messageProcessingService = messageProcessingService ?? throw new ArgumentNullException(nameof(messageProcessingService)); // Initialize messageProcessingService
+
+            // MODIFICATION START: Initialize the Polly retry policy for rule retrieval using Policy<IEnumerable<ForwardingRule>>
+            _ruleRetrievalRetryPolicy = Policy<IEnumerable<ForwardingRule>> // <--- Changed from 'Policy' to 'Policy<IEnumerable<ForwardingRule>>'
+                .Handle<Exception>(ex =>
+                {
+                    // Filter exceptions that are transient for database operations.
+                    // Customize these exception types based on your database and ORM.
+                    // Examples for PostgreSQL with Npgsql: Npgsql.NpgsqlException
+                    // Examples for SQL Server: System.Data.SqlClient.SqlException, System.TimeoutException
+                    if (ex is TimeoutException) return true; // Common for transient network/DB issues
+                    // if (ex is Npgsql.NpgsqlException pgEx && pgEx.IsTransient) return true; // Check for transient PostgreSQL errors
+                    // if (ex is System.Data.SqlClient.SqlException sqlEx && IsSqlTransientError(sqlEx)) return true; // Custom check for SQL Server transient errors
+
+                    _logger.LogWarning(ex, "Polly: Transient error occurred while retrieving forwarding rules from the repository. Retrying...");
+                    return true; // Catch-all for other exceptions for now; refine this to be more specific if possible.
+                })
+                .WaitAndRetryAsync(new[] // Async policy with increasing delays
+                {
+                    TimeSpan.FromSeconds(1), // First retry after 1 second
+                    TimeSpan.FromSeconds(3), // Second retry after 3 seconds
+                    TimeSpan.FromSeconds(10) // Third (final) retry after 10 seconds
+                }, (exception, timeSpan, retryCount, context) =>
+                {
+                });
+            // MODIFICATION END
         }
 
         // --- Standard CRUD/Read methods (minimal logging kept if any) ---
+
+        // NOTE: For other CRUD methods (GetRuleAsync, CreateRuleAsync, UpdateRuleAsync, DeleteRuleAsync),
+        // you might also consider applying similar Polly policies if they interact with the database
+        // and require resilience against transient failures. For this request, we are focusing on
+        // ProcessMessageAsync as it's the core forwarding logic.
 
         public async Task<ForwardingRule?> GetRuleAsync(string ruleName, CancellationToken cancellationToken = default)
         {
@@ -53,7 +95,15 @@ namespace Application.Features.Forwarding.Services
 
         public async Task<IEnumerable<ForwardingRule>> GetRulesBySourceChannelAsync(long sourceChannelId, CancellationToken cancellationToken = default)
         {
-            return await _ruleRepository.GetBySourceChannelAsync(sourceChannelId, cancellationToken);
+            // MODIFICATION START: Wrap rule retrieval with the Polly retry policy
+            return await _ruleRetrievalRetryPolicy.ExecuteAsync(async () =>
+            {
+                _logger.LogDebug("ForwardingService: Attempting to retrieve rules for source channel {SourceChannelId} from repository.", sourceChannelId);
+                var rules = await _ruleRepository.GetBySourceChannelAsync(sourceChannelId, cancellationToken);
+                _logger.LogDebug("ForwardingService: Successfully retrieved {RuleCount} rules for source channel {SourceChannelId}.", rules.Count(), sourceChannelId);
+                return rules;
+            });
+            // MODIFICATION END
         }
 
         public async Task CreateRuleAsync(ForwardingRule rule, CancellationToken cancellationToken = default)
@@ -86,7 +136,7 @@ namespace Application.Features.Forwarding.Services
                 throw new InvalidOperationException($"Rule with name '{ruleName}' not found.");
             }
             await _ruleRepository.DeleteAsync(ruleName, cancellationToken);
-            // Removed: _logger.LogInformation("Deleted forwarding rule: {RuleName}", ruleName);
+            // Removed: _logger.LogInformation("Deleted forwarding rule: {RuleName}", rule.RuleName);
         }
 
         // --- Core Message Processing Method ---
@@ -99,7 +149,7 @@ namespace Application.Features.Forwarding.Services
          string messageContent,
          MessageEntity[]? messageEntities,
          Peer? senderPeerForFilter,
-         List<InputMediaWithCaption>? mediaGroupItems, // Type uses Application.Common.Models.InputMediaWithCaption
+         List<InputMediaWithCaption>? mediaGroupItems,
          CancellationToken cancellationToken = default)
         {
             // Logging stripped down for speed (only error logs kept)
@@ -108,20 +158,26 @@ namespace Application.Features.Forwarding.Services
             string cacheKey = $"Rules_SourceChannel_{sourceChannelIdForMatching}";
             IEnumerable<ForwardingRule> rules;
 
+            // This part already calls GetRulesBySourceChannelAsync, which now uses Polly
             if (!_memoryCache.TryGetValue(cacheKey, out rules))
             {
-                rules = await _ruleRepository.GetBySourceChannelAsync(sourceChannelIdForMatching, cancellationToken);
+                rules = await GetRulesBySourceChannelAsync(sourceChannelIdForMatching, cancellationToken); // This call is now protected by Polly
                 _memoryCache.Set(cacheKey, rules, new MemoryCacheEntryOptions()
                     .SetAbsoluteExpiration(_rulesCacheExpiration)
                     .SetSlidingExpiration(_rulesCacheExpiration));
+                _logger.LogInformation("ForwardingService: Rules for source {SourceId} loaded from DB and cached.", sourceChannelIdForMatching);
             }
+            else
+            {
+                _logger.LogInformation("ForwardingService: Rules for source {SourceId} loaded from cache.", sourceChannelIdForMatching);
+            }
+
 
             var activeRules = rules.Where(r => r.IsEnabled).ToList();
 
             if (!activeRules.Any())
             {
-                // Warning kept for cases where no active rule exists
-                // _logger.LogWarning("No active forwarding rules found for channel {ChannelId} (Matching ID from DB).", sourceChannelIdForMatching);
+                _logger.LogInformation("ForwardingService: No active rules found for source {SourceId}. Skipping message {MessageId}.", sourceChannelIdForMatching, originalMessageId);
                 return;
             }
 
@@ -131,39 +187,38 @@ namespace Application.Features.Forwarding.Services
                 {
                     if (rule.TargetChannelIds == null || !rule.TargetChannelIds.Any())
                     {
-                        // Warning kept for misconfigured rules
-                        // _logger.LogWarning("Rule '{RuleName}' has no target channels defined. Skipping message {OriginalMsgId}.", rule.RuleName, originalMessageId);
+                        _logger.LogWarning("ForwardingService: Rule '{RuleName}' for source {SourceId} has no target channels defined. Skipping this rule for message {MessageId}.", rule.RuleName, sourceChannelIdForMatching, originalMessageId);
                         continue;
                     }
 
-                    foreach (var targetChannelIdFromDb in rule.TargetChannelIds)
-                    {
-                        // Enqueue actual relay job to IForwardingJobActions
-                        _backgroundJobClient.Enqueue<IForwardingJobActions>(processor =>
-                            processor.ProcessAndRelayMessageAsync(
-                                (int)originalMessageId,
-                                rawSourcePeerIdForApi,
-                                targetChannelIdFromDb,
-                                rule,
-                                messageContent,
-                                messageEntities,
-                                senderPeerForFilter,
-                                mediaGroupItems,
-                                CancellationToken.None // Enqueue uses CancellationToken.None as Hangfire manages it
-                            ));
-                    }
+                    // This delegation also benefits from Polly because MessageProcessingService.EnqueueAndRelayMessageAsync
+                    // is also internally protected by Polly for its enqueue operations.
+                    await _messageProcessingService.EnqueueAndRelayMessageAsync(
+                        sourceChannelIdForMatching,
+                        originalMessageId,
+                        rawSourcePeerIdForApi,
+                        messageContent,
+                        messageEntities,
+                        senderPeerForFilter,
+                        mediaGroupItems,
+                        rule, // Pass the rule directly to the MessageProcessingService
+                        cancellationToken
+                    );
+                    _logger.LogDebug("ForwardingService: Enqueued job for rule '{RuleName}' (Msg {MessageId}, Source {SourceId}).", rule.RuleName, originalMessageId, sourceChannelIdForMatching);
                 }
                 catch (Exception ex)
                 {
                     // CRITICAL LOG: Always keep error logs for job failures
-                    _logger.LogError(ex, "FORWARDING_SERVICE_ERROR: Error processing message {MessageId} from SourceForMatching {SourceForMatching} for rule '{RuleName}'.",
+                    // This catch block handles exceptions *during the enqueueing process* within the loop.
+                    // The job itself (ProcessMessageAsync) will retry due to its [AutomaticRetry] attribute
+                    // if any of these inner operations throw a persistent error.
+                    _logger.LogError(ex, "FORWARDING_SERVICE_ERROR: Error processing message {MessageId} from SourceForMatching {SourceForMatching} for rule '{RuleName}'. This will cause the main job to retry.",
                         originalMessageId, sourceChannelIdForMatching, rule.RuleName);
-                    // Throwing makes Hangfire retry
+                    // Throwing here ensures Hangfire retries the entire ProcessMessageAsync job,
+                    // which will re-attempt all rules for this message.
                     throw;
                 }
             }
-        
-        // Removed: _logger.LogInformation(">>>> FORWARDING_SERVICE: Finished processing message {OriginalMsgId} for source {SourceForMatching}. All applicable jobs enqueued.", originalMessageId, sourceChannelIdForMatching);
-    }
+        }
     }
 }

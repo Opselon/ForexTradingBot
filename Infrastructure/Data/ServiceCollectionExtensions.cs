@@ -1,6 +1,8 @@
 ﻿using Application.Common.Interfaces;      // اینترفیس‌های Repository و IAppDbContext
 using Application.Interfaces;
 using Application.Services;
+using Hangfire;
+using Hangfire.SqlServer;
 using Infrastructure.Data;               // AppDbContext
 using Infrastructure.ExternalServices;
 using Infrastructure.Hangfire;
@@ -9,8 +11,6 @@ using Infrastructure.Services; // مسیر Repositoryها
 using Microsoft.EntityFrameworkCore;      // EF Core
 using Microsoft.Extensions.Configuration; // IConfiguration
 using Microsoft.Extensions.DependencyInjection; // IServiceCollection
-using Hangfire;
-using Hangfire.SqlServer;
 
 namespace Infrastructure
 {
@@ -109,7 +109,7 @@ namespace Infrastructure
             services.AddSingleton<ITelegramUserApiClient, TelegramUserApiClient>();
             services.AddSingleton<TelegramUserApiClient>();
             services.AddHostedService<TelegramUserApiInitializationService>();
-       
+
 
             services.AddScoped<INewsItemRepository, NewsItemRepository>();
             services.AddScoped<IRssReaderService, RssReaderService>();

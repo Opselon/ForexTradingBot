@@ -1,7 +1,7 @@
+using Domain.Features.Forwarding.Entities;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using Domain.Features.Forwarding.Entities;
 
 namespace Domain.Features.Forwarding.Repositories
 {
@@ -14,4 +14,4 @@ namespace Domain.Features.Forwarding.Repositories
         Task UpdateAsync(ForwardingRule rule, CancellationToken cancellationToken = default);
         Task DeleteAsync(string ruleName, CancellationToken cancellationToken = default);
     }
-} 
+}

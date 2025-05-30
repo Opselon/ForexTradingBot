@@ -1,12 +1,12 @@
 ﻿// File: TelegramPanel/Infrastructure/TelegramMessageSender.cs
 using Application.Common.Interfaces; // برای INotificationJobScheduler
 using Microsoft.Extensions.Logging;
+using System;
 using Telegram.Bot;
 using Telegram.Bot.Exceptions;
 using Telegram.Bot.Types; // برای InputFile, ChatId, LinkPreviewOptions
 using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups; // برای IReplyMarkup, InlineKeyboardMarkup
-
 namespace TelegramPanel.Infrastructure
 {
     // =========================================================================
@@ -31,8 +31,9 @@ namespace TelegramPanel.Infrastructure
         private readonly ITelegramBotClient _botClient;
         private readonly ILogger<ActualTelegramMessageActions> _logger;
         private const ParseMode DefaultParseMode = ParseMode.Markdown;
-        private readonly IUserRepository _userRepository; // Inject IUserRepository
-        public ActualTelegramMessageActions(ITelegramBotClient botClient, ILogger<ActualTelegramMessageActions> logger, IUserRepository userRepository)
+        private readonly IUserRepository _userRepository;
+
+        public ActualTelegramMessageActions(ITelegramBotClient botClient, ILogger<ActualTelegramMessageActions> logger, IUserRepository userRepository, IAppDbContext context)
         {
             _botClient = botClient ?? throw new ArgumentNullException(nameof(botClient));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -83,7 +84,7 @@ namespace TelegramPanel.Infrastructure
                     Domain.Entities.User? userToDelete = await _userRepository.GetByTelegramIdAsync(telegramIdString, cancellationToken);
                     if (userToDelete != null)
                     {
-                        await _userRepository.DeleteAsync(userToDelete, cancellationToken);
+                        await _userRepository.DeleteAndSaveAsync(userToDelete, cancellationToken);
                         _logger.LogInformation("Hangfire Job (ActualSend): Successfully removed user with Telegram ID {TelegramId} (ChatID: {ChatId}) from database due to 'chat not found' or deactivated/blocked status after text message attempt.", userToDelete.TelegramId, chatId);
                     }
                     else
@@ -161,7 +162,7 @@ namespace TelegramPanel.Infrastructure
          long chatId,
          string photoUrlOrFileId,
          string? caption,
-         ParseMode? parseMode , // Consider using this parameter
+         ParseMode? parseMode, // Consider using this parameter
          ReplyMarkup? replyMarkup,
          CancellationToken cancellationToken)
         {
@@ -191,7 +192,7 @@ namespace TelegramPanel.Infrastructure
                     chatId: new ChatId(chatId),
                     photo: photoInput,
                     caption: caption,
-                    parseMode:Telegram.Bot.Types.Enums.ParseMode.Markdown,
+                    parseMode: Telegram.Bot.Types.Enums.ParseMode.Markdown,
                     replyMarkup: replyMarkup,
                     cancellationToken: cancellationToken);
 
@@ -213,8 +214,8 @@ namespace TelegramPanel.Infrastructure
                     Domain.Entities.User? userToDelete = await _userRepository.GetByTelegramIdAsync(telegramIdString, cancellationToken);
                     if (userToDelete != null)
                     {
-                        await _userRepository.DeleteAsync(userToDelete, cancellationToken);
-       
+                        await _userRepository.DeleteAndSaveAsync(userToDelete, cancellationToken);
+
                         _logger.LogInformation("Hangfire Job (ActualSend): Successfully removed user with Telegram ID {TelegramId} (ChatID: {ChatId}) from database due to 'chat not found' or deactivated/blocked status.", userToDelete.TelegramId, chatId);
                     }
                     else

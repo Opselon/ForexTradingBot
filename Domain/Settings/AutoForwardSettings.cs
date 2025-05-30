@@ -10,4 +10,4 @@ namespace Domain.Settings
         public bool StripFormatting { get; set; } = false;
         public string? CustomFooter { get; set; }
     }
-} 
+}

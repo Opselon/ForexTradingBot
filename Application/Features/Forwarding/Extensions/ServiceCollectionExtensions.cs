@@ -1,6 +1,6 @@
+using Application.Features.Forwarding.Interfaces;
 using Application.Features.Forwarding.Services;
 using Microsoft.Extensions.DependencyInjection;
-using Application.Features.Forwarding.Interfaces;
 
 namespace Application.Features.Forwarding.Extensions
 {
@@ -15,4 +15,4 @@ namespace Application.Features.Forwarding.Extensions
             return services;
         }
     }
-} 
+}

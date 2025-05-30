@@ -1,5 +1,8 @@
 ﻿#region Usings
 using Application.Common.Interfaces; // For INotificationService
+using Application.Features.Forwarding.Interfaces;
+using Application.Features.Forwarding.Services;
+using Domain.Features.Forwarding.Entities;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -13,9 +16,6 @@ using TelegramPanel.Infrastructure;         // For concrete service implementati
 using TelegramPanel.Infrastructure.Services; // For concrete service implementations like TelegramMessageSender
 using TelegramPanel.Queue;
 using TelegramPanel.Settings;
-using Application.Features.Forwarding.Interfaces;
-using Application.Features.Forwarding.Services;
-using Domain.Features.Forwarding.Entities;
 // using Scrutor; // Scrutor is available via IServiceCollection extensions, no direct using needed here
 
 #endregion

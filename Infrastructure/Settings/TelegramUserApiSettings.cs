@@ -9,4 +9,4 @@ namespace Infrastructure.Settings
         public string VerificationCodeSource { get; set; } = "Console";
         public string TwoFactorPasswordSource { get; set; } = "Console";
     }
-} 
+}

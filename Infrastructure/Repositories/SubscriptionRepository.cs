@@ -2,17 +2,16 @@
 
 #region Usings
 // Standard .NET & NuGet
+// Project specific
+using Application.Common.Interfaces; // For ISubscriptionRepository and IAppDbContext
+using Domain.Entities;             // For Subscription entity (and potentially User if included)
+using Microsoft.EntityFrameworkCore; // For EF Core specific methods
+using Microsoft.Extensions.Logging; // Added for logging capabilities
 using System;
 using System.Collections.Generic;
 using System.Linq; // For Where, OrderByDescending etc.
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.EntityFrameworkCore; // For EF Core specific methods
-
-// Project specific
-using Application.Common.Interfaces; // For ISubscriptionRepository and IAppDbContext
-using Domain.Entities;             // For Subscription entity (and potentially User if included)
-using Microsoft.Extensions.Logging; // Added for logging capabilities
 #endregion
 
 namespace Infrastructure.Persistence.Repositories

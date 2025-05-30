@@ -3,22 +3,20 @@
 
 #region Usings
 // Standard .NET & NuGet
+// Project specific: Application Layer
+using Application.Common.Interfaces;
+using Application.DTOs.Notifications;
+using Application.Interfaces; // For INotificationDispatchService and INotificationSendingService
+// Project specific: Domain Layer
+using Domain.Entities;      // For NewsItem, User
+using Microsoft.Extensions.Logging; // For ILogger and BeginScope
+using Shared.Extensions;    // For .Truncate()
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text; // Required for StringBuilder
 using System.Threading;
 using System.Threading.Tasks;
-
-// Project specific: Application Layer
-using Application.Common.Interfaces;
-using Application.DTOs.Notifications;
-using Application.Interfaces; // For INotificationDispatchService and INotificationSendingService
-
-// Project specific: Domain Layer
-using Domain.Entities;      // For NewsItem, User
-using Microsoft.Extensions.Logging; // For ILogger and BeginScope
-using Shared.Extensions;    // For .Truncate()
 #endregion
 
 namespace Application.Services

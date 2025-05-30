@@ -1,12 +1,12 @@
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
-using Telegram.Bot.Types;
+using Application.Common.Interfaces;
 using Application.Features.Forwarding.Interfaces;
-using System.Text.RegularExpressions;
 using Domain.Features.Forwarding.Entities;
 using Hangfire;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using System.Text.Json;
-using Application.Common.Interfaces;
+using System.Text.RegularExpressions;
+using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using TL;
 
@@ -263,7 +263,7 @@ namespace TelegramPanel.Infrastructure.Services
                     MessageEntityType.PhoneNumber => new TL.MessageEntityPhone { Offset = tbEntity.Offset, Length = tbEntity.Length },
                     MessageEntityType.TextMention => new TL.MessageEntityMentionName { Offset = tbEntity.Offset, Length = tbEntity.Length, user_id = tbEntity.User?.Id ?? 0 },
                     MessageEntityType.Blockquote => new TL.MessageEntityBlockquote { Offset = tbEntity.Offset, Length = tbEntity.Length, flags = 0 }, // Adjust flags if needed
-              
+
                     // Add more mappings as new types are supported or needed
                     _ => null // Return null for unsupported types or throw an exception if strict
                 };
@@ -318,7 +318,7 @@ namespace TelegramPanel.Infrastructure.Services
                 {
                     try
                     {
-                        var regex = new Regex(filterOptions.ContainsText, 
+                        var regex = new Regex(filterOptions.ContainsText,
                             (RegexOptions)filterOptions.ContainsTextRegexOptions);
                         if (!regex.IsMatch(messageText))
                         {
@@ -379,4 +379,4 @@ namespace TelegramPanel.Infrastructure.Services
             return true;
         }
     }
-} 
+}

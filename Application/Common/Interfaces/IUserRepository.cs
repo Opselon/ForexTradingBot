@@ -82,6 +82,14 @@ namespace Application.Common.Interfaces
         Task DeleteAsync(Guid id, CancellationToken cancellationToken = default);
 
         /// <summary>
+        /// یک کاربر را از پایگاه داده حذف کرده و تغییرات را فوراً ذخیره می‌کند.
+        /// (مناسب برای سناریوهایی که نیاز به حذف فوری پس از تشخیص شرایط خاص دارند).
+        /// </summary>
+        /// <param name="user">موجودیت کاربری که باید حذف شود.</param>
+        /// <param name="cancellationToken">توکن برای لغو عملیات.</param>
+        Task DeleteAndSaveAsync(User user, CancellationToken cancellationToken);
+
+        /// <summary>
         /// بررسی می‌کند که آیا کاربری با ایمیل مشخص شده وجود دارد یا خیر.
         /// </summary>
         /// <param name="email">ایمیل برای بررسی.</param>

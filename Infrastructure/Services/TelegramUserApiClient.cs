@@ -509,6 +509,7 @@ namespace Infrastructure.Services
             return Task.CompletedTask;
         }
 
+
         // Helper function to truncate strings for logging to avoid overly long log messages
         private string TruncateString(string? str, int maxLength)
         {
@@ -614,7 +615,7 @@ namespace Infrastructure.Services
 
                         // Create new client with the correct DC
                         _logger.LogInformation("Creating new WTelegram.Client instance for DC{DCNumber}.", dcNumber);
-                        _client = new WTelegram.Client(ConfigProvider);// <<< UNCOMMENTED & CORRECTED: dcToUse parameter
+                        _client = new WTelegram.Client(ConfigProvider); // dcToUse parameter is handled by WTelegram.Client internally
 
                         _client.OnUpdates += async updates => // Re-attach event handler
                         {
@@ -662,6 +663,7 @@ namespace Infrastructure.Services
                 }
             }
         }
+
 
         // Assuming _logger is an ILogger instance available in the class
         // Assuming _client is an instance of WTelegram.Client
@@ -762,12 +764,6 @@ namespace Infrastructure.Services
             }
         }
 
-        // Assuming _logger is an ILogger instance available in the class
-        // Assuming _client is an instance of WTelegram.Client
-        // Assuming _userCacheWithExpiry and _chatCacheWithExpiry are Dictionaries or similar
-        // Assuming AsyncLock is a class you have for managing named asynchronous locks
-
-        // Assuming _logger, _client, _userCacheWithExpiry, _chatCacheWithExpiry, AsyncLock are defined
         public async Task<UpdatesBase?> SendMessageAsync(
                 InputPeer peer,
                 string message, // This is the 'message' parameter of YOUR method
@@ -887,10 +883,10 @@ namespace Infrastructure.Services
             }
         }
 
-        // EDITED METHOD: SendMediaGroupAsync - Changed call to _client.Messages_SendMediaGroupAsync and schedule_date type
-        public async Task SendMediaGroupAsync(InputPeer peer, InputSingleMedia[] media, long? replyToMsgId = null,
-                                                bool background = false, DateTime? schedule_date = null,
-                                                bool sendAsBot = false, int[]? parsedMentions = null)
+        // EDITED METHOD: SendMediaGroupAsync - Changed call to _client.SendMediaAlbum and removed manual random_id assignment
+        public async Task SendMediaGroupAsync(TL.InputPeer peer, TL.InputSingleMedia[] media, string albumCaption = null, TL.MessageEntity[]? albumEntities = null, long? replyToMsgId = null,
+                                                            bool background = false, DateTime? schedule_date = null,
+                                                            bool sendAsBot = false, int[]? parsedMentions = null)
         {
             // MODIFIED: Throw instead of return for critical uninitialized client
             if (_client == null)
@@ -910,6 +906,13 @@ namespace Infrastructure.Services
                 throw new ArgumentException("Media list cannot be null or empty for sending media group.", nameof(media));
             }
 
+            // Use the explicit albumCaption parameter for logging, fallback to first media's message if null/empty
+            string effectiveAlbumCaptionForLog = string.IsNullOrWhiteSpace(albumCaption)
+                ? (media.FirstOrDefault()?.message is string firstMediaMessage && !string.IsNullOrEmpty(firstMediaMessage)
+                    ? TruncateString(firstMediaMessage, 50)
+                    : "")
+                : TruncateString(albumCaption, 50);
+
 
             long peerIdForLog = GetPeerIdForLog(peer);
             string peerTypeForLog = peer?.GetType().Name ?? "Unknown";
@@ -918,8 +921,8 @@ namespace Infrastructure.Services
 
             _logger.LogDebug(
                 "SendMediaGroupAsync: Attempting to send media group to Peer (Type: {PeerType}, LoggedID: {PeerId}). " +
-                "Media Items: {MediaItemsInfo}. ReplyToMsgID: {ReplyToMsgId}. Background: {BackgroundFlag}. ScheduleDate: {ScheduleDate}. SendAsBot: {SendAsBotFlag}.",
-                peerTypeForLog, peerIdForLog, mediaItemsInfo,
+                "Media Items: {MediaItemsInfo}. Album Caption: '{AlbumCaptionPreview}'. ReplyToMsgID: {ReplyToMsgId}. Background: {BackgroundFlag}. ScheduleDate: {ScheduleDate}. SendAsBot: {SendAsBotFlag}.",
+                peerTypeForLog, peerIdForLog, mediaItemsInfo, effectiveAlbumCaptionForLog,
                 replyToMsgId.HasValue ? replyToMsgId.Value.ToString() : "N/A",
                 background, schedule_date.HasValue ? schedule_date.Value.ToString() : "N/A", sendAsBot);
 
@@ -930,36 +933,48 @@ namespace Infrastructure.Services
                 _logger.LogDebug("SendMediaGroupAsync: Acquired send lock with key: {LockKey} for Peer (Type: {PeerType}, LoggedID: {PeerId})",
                     lockKey, peerTypeForLog, peerIdForLog);
 
-                long random_id = WTelegram.Helpers.RandomLong(); // Generate a single random_id for the entire media group
-                InputReplyTo? inputReplyTo = replyToMsgId.HasValue ? new InputReplyToMessage { reply_to_msg_id = (int)replyToMsgId.Value } : null;
-                InputPeer? sendAsPeer = null;
+                int replyToMsgIdInt = replyToMsgId.HasValue ? (int)replyToMsgId.Value : 0;
+                TL.InputPeer? sendAsPeerForApi = null; // 'sendAsBot' parameter is typically for anonymous channel admin posting, not direct user client sending.
+                                                       // The 'SendAlbumAsync' helper doesn't expose a 'send_as' parameter directly.
 
-                // Call WTelegramClient.Messages_SendMultiMedia - this method throws RpcException on failure,
-                // so no need to check for null return. Success means no exception was thrown.
-                await _client.Messages_SendMultiMedia(
-                    peer: peer,
-                    multi_media: media.Select(m => // Assign random_id and handle temporary replacement
+                // Temporary replacement as instructed for message content within media items
+                foreach (var m in media)
+                {
+                    if (m.message != null && m.message.Contains("https://wa.me/message/W6HXT7VWR3U2C1"))
                     {
-                        m.random_id = random_id;
-                        if (m.message != null && m.message.Contains("https://wa.me/message/W6HXT7VWR3U2C1"))
-                        {
-                            m.message = m.message.Replace("https://wa.me/message/W6HXT7VWR3U2C1", "@capxi");
-                        }
-                        return m;
-                    }).ToArray(),
-                    reply_to: inputReplyTo,
-                    schedule_date: schedule_date,
-                    send_as: sendAsPeer,
-                    silent: false,
-                    background: background,
-                    clear_draft: false,
-                    noforwards: false
+                        m.message = m.message.Replace("https://wa.me/message/W6HXT7VWR3U2C1", "@capxi");
+                    }
+                }
+
+                // Convert InputSingleMedia[] to ICollection<InputMedia>
+                // IMPORTANT NOTE: WTelegramClient's SendAlbumAsync helper (which this method calls internally)
+                // only uses the `media` property of InputSingleMedia when constructing the RPC's `multi_media` array.
+                // It does NOT transfer the `message` or `entities` properties of individual InputSingleMedia objects
+                // to make them per-item captions. It expects a single `caption` and `entities` parameter for the *entire album*.
+                // If you need individual captions for each media item within an album,
+                // you would need to manually construct and send the `messages.sendMultiMedia` RPC request
+                // using `_client.SendRequestAsync`, and populate the `multi_media` list with InputSingleMedia
+                // objects that correctly define their `message` and `entities` properties.
+                // The current implementation provides only one overall album caption (from `albumCaption` and `albumEntities` parameters).
+                ICollection<TL.InputMedia> inputMedias = media.Select(ism => ism.media).ToList();
+
+                // Call WTelegramClient.SendAlbumAsync with correct parameters.
+                // The 'background' parameter is not available on this specific SendAlbumAsync overload.
+                // The 'send_as' parameter for the RPC is not directly exposed on SendAlbumAsync helper,
+                // so we pass null for `sendAsPeerForApi`.
+                await _client.SendAlbumAsync(
+                    peer: peer,
+                    medias: inputMedias, // Pass the converted collection of InputMedia
+                    caption: albumCaption, // Explicitly pass the album caption
+                    reply_to_msg_id: replyToMsgIdInt, // Pass the int ID
+                    entities: albumEntities, // Pass the album-level entities
+                    schedule_date: schedule_date ?? default(DateTime) // schedule_date requires non-nullable DateTime
                 );
 
                 _logger.LogInformation("SendMediaGroupAsync: Successfully sent media group to Peer (Type: {PeerType}, LoggedID: {PeerId}).",
                     peerTypeForLog, peerIdForLog);
             }
-            catch (RpcException rpcEx) // WTelegramClient's specific API error type
+            catch (TL.RpcException rpcEx) // WTelegramClient's specific API error type
             {
                 _logger.LogError(rpcEx, "SendMediaGroupAsync: Telegram API (RPC) exception for Peer (Type: {PeerType}, LoggedID: {PeerId}). Error: {ErrorTypeString}, Code: {ErrorCode}.",
                     peerTypeForLog, peerIdForLog, rpcEx.Message, rpcEx.Code);
@@ -981,14 +996,14 @@ namespace Infrastructure.Services
         // Assuming _client is an instance of WTelegram.Client
 
         public async Task<UpdatesBase?> ForwardMessagesAsync(
-       InputPeer toPeer,
-       int[] messageIds,
-       InputPeer fromPeer,
-       bool dropAuthor = false,
-       bool noForwards = false,
-       int? topMsgId = null,
-       DateTime? scheduleDate = null,
-       bool sendAsBot = false)
+             InputPeer toPeer,
+             int[] messageIds,
+             InputPeer fromPeer,
+             bool dropAuthor = false,
+             bool noForwards = false,
+             int? topMsgId = null,
+             DateTime? scheduleDate = null,
+             bool sendAsBot = false)
         {
             // MODIFIED: Throw instead of return null for critical uninitialized client
             if (_client == null)
@@ -1010,9 +1025,10 @@ namespace Infrastructure.Services
             long fromPeerId = GetPeerIdForLog(fromPeer);
 
             _logger.LogDebug(
-                "ForwardMessagesAsync: Attempting to forward {MessageCount} message(s) from Peer (Type: {FromPeerType}, LoggedID: {FromPeerId}) to Peer (Type: {ToPeerType}, LoggedID: {ToPeerId}). Message IDs (partial): [{MessageIdsArray}]",
+                "ForwardMessagesAsync: Attempting to forward {MessageCount} message(s) from Peer (Type: {FromPeerType}, LoggedID: {FromPeerId}) to Peer (Type: {ToPeerType}, LoggedID: {ToPeerId}). Message IDs (partial): [{MessageIdsArray}]. DropAuthor: {DropAuthor}, NoForwards: {NoForwards}.",
                 messageIds.Length, fromPeerType, fromPeerId, toPeerType, toPeerId,
-                messageIds.Length > 5 ? $"{string.Join(", ", messageIds.Take(5))}..." : string.Join(", ", messageIds)
+                messageIds.Length > 5 ? $"{string.Join(", ", messageIds.Take(5))}..." : string.Join(", ", messageIds),
+                dropAuthor, noForwards
             );
 
             // Generate random IDs for forwarding (Hangfire may retry and send same random IDs)
@@ -1024,6 +1040,13 @@ namespace Infrastructure.Services
 
             try
             {
+                // sendAsBot parameter is typically used for sending as a channel's anonymous admin.
+                // For `Messages_ForwardMessages`, WTelegram.Client does not expose a `send_as` parameter directly on the API call.
+                // This is usually handled by the `to_peer` being a channel, and the client's internal session permissions.
+                // If `sendAsBot` implies anonymous admin, it's not a direct flag here.
+                // Leaving sendAsPeer null as it was, as the direct API method doesn't take it for forwarding.
+                InputPeer? sendAsPeer = null;
+
                 UpdatesBase? result = await _client.Messages_ForwardMessages(
                     to_peer: toPeer,
                     from_peer: fromPeer,
@@ -1073,6 +1096,7 @@ namespace Infrastructure.Services
                 _logger.LogTrace("ForwardMessagesAsync: Forward lock (if acquired) has been released for key: {LockKey}", lockKey);
             }
         }
+
         // Helper function to get a numerical ID from InputPeer for logging
         private long GetPeerIdForLog(InputPeer? peer)
         {

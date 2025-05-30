@@ -1,4 +1,5 @@
 ﻿// File: Infrastructure/Services/UserApiForwardingOrchestrator.cs
+
 using Application.Common.Interfaces; // For ITelegramUserApiClient
 using Application.Features.Forwarding.Interfaces;
 // using Domain.Features.Forwarding.Entities; // Assuming used by IForwardingService
@@ -6,8 +7,12 @@ using Application.Features.Forwarding.Interfaces;
 // not Hangfire directly, but they are used within the Hangfire job context.
 using Hangfire;
 using Microsoft.Extensions.Logging;
-using TL;
 using System.Collections.Concurrent;
+using TL;
+// MODIFICATION START: Add Polly namespaces
+using Polly;
+using Polly.Retry;
+// MODIFICATION END
 
 namespace Infrastructure.Services
 {
@@ -26,6 +31,11 @@ namespace Infrastructure.Services
         private readonly ConcurrentDictionary<long, MediaGroupBuffer> _mediaGroupBuffers = new();
         private readonly TimeSpan _mediaGroupTimeout = TimeSpan.FromSeconds(2); // Wait 2 seconds for all parts of a media group
         private const int MaxMediaGroupSize = 10; // Telegram limit is typically 10 items in a single media group
+
+        // MODIFICATION START: Declare Polly retry policy for enqueueing Hangfire jobs
+        private readonly RetryPolicy<string> _enqueueRetryPolicy;
+        // MODIFICATION END
+
         /// <summary>
         /// سازنده کلاس UserApiForwardingOrchestrator.
         /// وابستگی‌ها را تزریق کرده و در رویداد دریافت آپدیت سفارشی از User API مشترک می‌شود.
@@ -34,7 +44,7 @@ namespace Infrastructure.Services
         public UserApiForwardingOrchestrator(
             ITelegramUserApiClient userApiClient,
             IServiceProvider serviceProvider,
-            IBackgroundJobClient backgroundJobClient,
+            IBackgroundJobClient backgroundJobClient, // Inject IBackgroundJobClient
             ILogger<UserApiForwardingOrchestrator> logger)
         {
             // بررسی نال بودن و تزریق وابستگی‌ها.
@@ -46,9 +56,29 @@ namespace Infrastructure.Services
             _userApiClient.OnCustomUpdateReceived += HandleUserApiUpdateAsync; // Subscribing event handler
             _logger.LogInformation("UserApiForwardingOrchestrator initialized and subscribed to OnCustomUpdateReceived from User API.");
             // لاگ ثبت اشتراک در رویداد.
+
+            // MODIFICATION START: Initialize the Polly retry policy for enqueueing
+            _enqueueRetryPolicy = Policy<string> // Specify the return type is string (Hangfire Job ID)
+                .Handle<Exception>(ex =>
+                {
+                    // Filter exceptions that are transient for enqueueing, e.g., database connectivity issues for Hangfire storage.
+                    _logger.LogWarning(ex, "Polly: Transient error occurred while attempting to enqueue Hangfire job in Orchestrator. Retrying...");
+                    return true; // Retry on any exception for now; refine for specific transient exceptions if needed.
+                })
+                .WaitAndRetry(new[] // Fast, short retries for enqueueing
+                {
+                    TimeSpan.FromMilliseconds(50),  // First retry after 50ms
+                    TimeSpan.FromMilliseconds(100), // Second retry after 100ms
+                    TimeSpan.FromMilliseconds(200), // Third retry after 200ms
+                    TimeSpan.FromMilliseconds(400)  // Fourth (final) retry after 400ms
+                }, (exception, timeSpan, retryCount, context) =>
+                {
+          
+                });
+            // MODIFICATION END
         }
         // NEW CLASS: Buffer to hold information about an incomplete media group
-        public class MediaGroupBuffer
+        private class MediaGroupBuffer // Changed to private as it's only used internally
         {
             public List<InputMediaWithCaption> Items { get; } = new List<InputMediaWithCaption>();
             // CancellationTokenSource to manage the timeout for this specific media group
@@ -66,8 +96,6 @@ namespace Infrastructure.Services
         /// <param name="update">آبجکت Update دریافت شده از تلگرام.</param>
         // Retaining `async void` as this is a common pattern for event handlers.
 
-
-
         private void HandleUserApiUpdateAsync(Update update)
         {
             _ = Task.Run(async () => // Detached task to prevent deadlocks or blocking
@@ -84,6 +112,7 @@ namespace Infrastructure.Services
                 {
                     if (update == null) return; // Silent skip for null updates
 
+
                     // Extract the TL.Message object from various update types
                     // IMPORTANT: TelegramUserApiClient.HandleUpdatesBaseAsync is responsible for creating a robust
                     // TL.Message object for UpdateShortMessage and UpdateShortChatMessage, ensuring .media and .grouped_id are present if applicable.
@@ -91,9 +120,10 @@ namespace Infrastructure.Services
                     else if (update is UpdateNewChannelMessage uncm) messageToProcess = uncm.message as TL.Message;
                     else if (update is UpdateEditMessage uem) messageToProcess = uem.message as TL.Message; // Treat edits as new to trigger forwarding
                     else if (update is UpdateEditChannelMessage uecm) messageToProcess = uecm.message as TL.Message; // Treat edits as new to trigger forwarding
-                    else return; // Silently skip unhandled Update types (e.g., updates for reactions, pins, etc.)
+                    else return; // Silently skip unhandled Update types (e.g., updates for reactions, pins, etc.) for performance
 
                     if (messageToProcess == null) return; // Silently skip if no message was extracted
+
 
                     sourceApiPeer = messageToProcess.peer_id;
                     originalMessageId = messageToProcess.id; // Capture original message ID
@@ -127,7 +157,7 @@ namespace Infrastructure.Services
 
                         // Atomically get or add the MediaGroupBuffer for this unique media group ID.
                         // All parts of the same album will land in the same buffer.
-                        MediaGroupBuffer buffer = _mediaGroupBuffers.GetOrAdd(mediaGroupId, _ =>
+                        MediaGroupBuffer buffer = _mediaGroupBuffers.GetOrAdd(mediaGroupId, (id) => // Use the key from the dictionary
                         {
                             // Initialize buffer only if this is the *first* message received for this group
                             return new MediaGroupBuffer
@@ -139,11 +169,13 @@ namespace Infrastructure.Services
                             };
                         });
 
-                        lock (buffer.Items) // Protect shared list access for adding items
+                        // Protect shared list access for adding items and managing the cancellation token source
+                        lock (buffer) // Lock on the buffer instance for atomicity
                         {
                             buffer.Items.Add(currentMediaItem);
                             if (buffer.Items.Count >= MaxMediaGroupSize)
                             {
+                                _logger.LogDebug("Media group {GroupId} reached max size {MaxSize}. Triggering processing immediately.", mediaGroupId, MaxMediaGroupSize);
                                 // If max size reached, trigger processing immediately to avoid waiting for timeout
                                 buffer.CancellationTokenSource.Cancel();
                             }
@@ -153,7 +185,8 @@ namespace Infrastructure.Services
                                 buffer.CancellationTokenSource.Cancel();
                                 buffer.CancellationTokenSource.Dispose();
                                 buffer.CancellationTokenSource = new CancellationTokenSource();
-                                _ = ProcessMediaGroupAfterDelay(mediaGroupId, buffer.CancellationTokenSource.Token); // Schedule new timeout task
+                                // Schedule new timeout task without awaiting to keep the handler non-blocking
+                                _ = ProcessMediaGroupAfterDelay(mediaGroupId, buffer.CancellationTokenSource.Token).ConfigureAwait(false);
                             }
                         }
                     }
@@ -175,6 +208,7 @@ namespace Infrastructure.Services
                                 };
                             }
                         }
+
                         // Enqueue the job for processing single message or text-only.
                         EnqueueForwardingJob(
                             currentSourcePositiveId,
@@ -199,15 +233,20 @@ namespace Infrastructure.Services
         // Manages the time window for collecting all parts of a media group.
         private async Task ProcessMediaGroupAfterDelay(long mediaGroupId, CancellationToken cancellationToken)
         {
+            // Use ConfigureAwait(false) to avoid capturing the context, which is good practice in background services
             try
             {
-                await Task.Delay(_mediaGroupTimeout, cancellationToken); // Wait for remaining group parts or until cancelled
+                _logger.LogDebug("Scheduling media group processing for Group ID {GroupId} with timeout of {Timeout}ms.", mediaGroupId, _mediaGroupTimeout.TotalMilliseconds);
+                await Task.Delay(_mediaGroupTimeout, cancellationToken).ConfigureAwait(false); // Wait for remaining group parts or until cancelled
             }
             catch (OperationCanceledException)
             {
                 // This is expected: a new item arrived, max size was reached, or app is shutting down.
+                _logger.LogDebug("Media group processing delay for Group ID {GroupId} was cancelled.", mediaGroupId);
                 return; // Do not process this instance, a newer timer is running or it was forcibly triggered.
             }
+            // Use a more specific exception handler if possible, but Exception is okay as a fallback
+
             catch (Exception ex) // Catch unexpected errors during delay
             {
                 _logger.LogError(ex, "ORCHESTRATOR_TASK_ERROR: Unexpected error during media group delay for Group ID {GroupId}.", mediaGroupId);
@@ -215,18 +254,31 @@ namespace Infrastructure.Services
             }
 
             // Timeout occurred; process the collected group (should be complete or maximum size now).
+            _logger.LogDebug("Processing media group {GroupId} after timeout.", mediaGroupId);
             if (_mediaGroupBuffers.TryRemove(mediaGroupId, out MediaGroupBuffer? buffer)) // Atomically remove from buffer
             {
-                if (buffer.Items.Any()) // Ensure buffer is not empty before enqueueing
+                // Find the first valid media item in the buffer to use its caption as the album's main caption
+                var firstMediaItem = buffer.Items.FirstOrDefault(item => item.Media != null);
+
+                if (firstMediaItem != null) // Ensure buffer is not empty and contains at least one item with valid media before enqueueing
                 {
+                    // MODIFICATION START
+                    // Pass the caption and entities of the first media item as the overall message content for the job
+                    string albumOverallCaption = firstMediaItem.Caption ?? string.Empty;
+                    TL.MessageEntity[]? albumOverallEntities = firstMediaItem.Entities;
+                    // MODIFICATION END
+
                     EnqueueForwardingJob(
                         buffer.PeerId,
                         buffer.OriginalMessageId, // The ID of the first message of the group
                         buffer.PeerId, // Source peer is the same
-                        "", // Album captions are handled within individual InputMediaWithCaption items
-                        null,
+                        albumOverallCaption, // Pass the detected overall album caption
+                        albumOverallEntities, // Pass the detected overall album entities
                         buffer.SenderPeer,
-                        buffer.Items); // Pass the entire aggregated list of media items
+                        buffer.Items.Where(item => item.Media != null).ToList()); // Pass the filtered list of valid media items
+
+                    _logger.LogInformation("Enqueued media group job for Group ID {GroupId} with {ItemCount} items. Album Caption: '{AlbumCaptionPreview}'",
+                        mediaGroupId, buffer.Items.Count(item => item.Media != null), TruncateString(albumOverallCaption, 50)); // Added caption to log
                 }
                 else // Log if group was empty despite trigger (e.g. all media types unsupported)
                 {
@@ -266,7 +318,7 @@ namespace Infrastructure.Services
             Peer? senderPeerForFilter,
             List<InputMediaWithCaption>? mediaItems) // Uses shared DTO
         {
-            // BackgroundJob.Enqueue immediately adds the job to the database queue.
+            // BackgroundJob.Enqueue immediately adds the job to the database queue with minimal overhead.
             // Hangfire takes over from here (worker picks it up, retries if fails).
             _backgroundJobClient.Enqueue<IForwardingService>(service =>
                 service.ProcessMessageAsync(
@@ -293,7 +345,7 @@ namespace Infrastructure.Services
         private string TruncateString(string? str, int maxLength)
         {
             if (string.IsNullOrEmpty(str)) return "[null_or_empty]";
-            return str.Length <= maxLength ? str : str.Substring(0, maxLength) + "...";
+            return str.Length <= maxLength ? str : str[..maxLength] + "..."; // Using C# 8.0 range operator for brevity
         }
         // متد کمکی برای گرفتن شناسه عددی از انواع Peer
         private long GetPeerIdValue(Peer? peer)

@@ -4,30 +4,26 @@
 // Using های استاندارد .NET و NuGet Packages
 // Using های مربوط به پروژه‌های شما
 using Application;                          // برای متد توسعه‌دهنده AddApplicationServices
+using Application.Features.Forwarding.Extensions;
 using Application.Features.Forwarding.Interfaces;
 using Application.Features.Forwarding.Services;
-using Application.Features.Forwarding.Extensions;
 using Application.Interfaces; // برای IRssFetchingCoordinatorService (جهت زمان‌بندی Job در Hangfire)
 // using Application.Interfaces;          // معمولاً اینترفیس‌های Application مستقیماً اینجا نیاز نیستند مگر برای موارد خاص
 // using Application.Services;            // و نه پیاده‌سازی‌های آن
 using BackgroundTasks;                    // برای متد توسعه‌دهنده AddBackgroundTasksServices (اگر تعریف کرده‌اید)
 using Hangfire;                             // برای پیکربندی‌های Hangfire مانند CompatibilityLevel, RecurringJob, Cron
 using Hangfire.Dashboard;                   // برای DashboardOptions, IDashboardAuthorizationFilter
-using Hangfire.MemoryStorage;             // برای UseMemoryStorage (Storage پیش‌فرض برای توسعه)
 // using Hangfire.SqlServer;              // اگر از SQL Server برای Hangfire استفاده می‌کنید
 using Infrastructure;                     // برای متد توسعه‌دهنده AddInfrastructureServices
+// using WebAPI.Filters; //  Namespace برای HangfireNoAuthFilter (اگر در این مسیر است و استفاده می‌کنید)
+using Infrastructure.Features.Forwarding.Extensions;
 using Infrastructure.Services;
-using Infrastructure.Settings;
-using EFCore.AutomaticMigrations;
 using Microsoft.OpenApi.Models;             // برای OpenApiInfo
 using Serilog;                              // برای Log, LoggerConfiguration, UseSerilog
 using Shared.Helpers;
 using Shared.Settings;                    // برای CryptoPaySettings (از پروژه Shared)
 using TelegramPanel.Extensions;
 using TelegramPanel.Infrastructure;
-// using WebAPI.Filters; //  Namespace برای HangfireNoAuthFilter (اگر در این مسیر است و استفاده می‌کنید)
-using Infrastructure.Features.Forwarding.Extensions;
-using TL;
 #endregion
 
 // ------------------- پیکربندی اولیه لاگر Serilog (Bootstrap Logger) -------------------
@@ -80,8 +76,8 @@ try
      .MinimumLevel.Override("Hangfire", Serilog.Events.LogEventLevel.Warning)
 
      .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
-                                                                       //  می‌توانید Sink های دیگری مانند File, Seq, ElasticSearch و ... را اینجا اضافه کنید                                                                                             //               restrictedToMinimumLevel: Serilog.Events.LogEventLevel.Information,
-                                                                                                            //               outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] ({SourceContext}) {Message:lj}{NewLine}{Exception}")
+ //  می‌توانید Sink های دیگری مانند File, Seq, ElasticSearch و ... را اینجا اضافه کنید                                                                                             //               restrictedToMinimumLevel: Serilog.Events.LogEventLevel.Information,
+ //               outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] ({SourceContext}) {Message:lj}{NewLine}{Exception}")
  );
     Log.Information("Serilog configured as the primary logging provider.");
     #endregion
@@ -335,7 +331,7 @@ try
     // Get the application URL from configuration or use default
     var urls = builder.Configuration["Urls"] ?? "https://localhost:5001;http://localhost:5000";
     var firstUrl = urls.Split(';')[0].Trim();
-    
+
     using (var scope = app.Services.CreateScope())
     {
         var orchestrator = scope.ServiceProvider.GetRequiredService<UserApiForwardingOrchestrator>();

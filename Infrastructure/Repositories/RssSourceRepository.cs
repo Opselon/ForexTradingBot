@@ -2,17 +2,16 @@
 
 #region Usings
 // Standard .NET & NuGet
+// Project specific
+using Application.Common.Interfaces; // For IRssSourceRepository and IAppDbContext
+using Domain.Entities;
+using Microsoft.EntityFrameworkCore; // For EF Core specific methods like FirstOrDefaultAsync, ToListAsync, AnyAsync, AsNoTracking
+using Microsoft.Extensions.Logging;             // For RssSource entity
 using System;
 using System.Collections.Generic;
 using System.Linq; // For Where, OrderBy etc. on IQueryable
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.EntityFrameworkCore; // For EF Core specific methods like FirstOrDefaultAsync, ToListAsync, AnyAsync, AsNoTracking
-
-// Project specific
-using Application.Common.Interfaces; // For IRssSourceRepository and IAppDbContext
-using Domain.Entities;
-using Microsoft.Extensions.Logging;             // For RssSource entity
 #endregion
 
 namespace Infrastructure.Persistence.Repositories
@@ -92,7 +91,7 @@ namespace Infrastructure.Persistence.Repositories
         public async Task<IEnumerable<RssSource>> GetActiveSourcesAsync(CancellationToken cancellationToken = default)
         {
             // Performance: Filtering by IsActive and ordering. AsNoTracking() is beneficial here too.
-     
+
             return await _context.RssSources
                 .Where(rs => rs.IsActive)
                 .AsNoTracking() // Optimization for read-only scenarios

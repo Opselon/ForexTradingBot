@@ -7,8 +7,8 @@ using Telegram.Bot.Exceptions;  // ✅ برای ApiRequestException
 using Telegram.Bot.Polling; // ✅ برای IUpdateHandler, DefaultUpdateHandlerOptions
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums; // ✅ برای UpdateType
-using TelegramPanel.Queue;
 using TelegramPanel.Infrastructure.Services; // برای BotCommandSetupService
+using TelegramPanel.Queue;
 using TelegramPanel.Settings;
 
 namespace TelegramPanel.Infrastructure
@@ -105,7 +105,7 @@ namespace TelegramPanel.Infrastructure
                         {
                             _logger.LogInformation("Webhook configured successfully to: {WebhookAddress}. Pending updates: {PendingUpdates}. Last error: {LastErrorMsg} at {LastErrorDate}",
                                 webhookInfo.Url, webhookInfo.PendingUpdateCount, webhookInfo.LastErrorMessage ?? "None", webhookInfo.LastErrorDate?.ToLocalTime().ToString() ?? "N/A");
-                        //    webhookSuccessfullySet = true;
+                            //    webhookSuccessfullySet = true;
                         }
                         else
                         {

@@ -2,6 +2,7 @@
 
 #region Usings
 // Standard .NET & NuGet
+using System.Data.Common; // برای DbException
 // Project specific
 using Application.Common.Interfaces;
 using Application.DTOs.News;
@@ -34,6 +35,7 @@ namespace Infrastructure.Services
         private readonly ILogger<RssReaderService> _logger;
         private readonly IBackgroundJobClient _backgroundJobClient;
         private readonly AsyncRetryPolicy<HttpResponseMessage> _httpRetryPolicy;
+        private readonly AsyncRetryPolicy _dbRetryPolicy; // ✅ جدید: سیاست Polly برای عملیات پایگاه داده
         #endregion
 
         #region Public Constants
@@ -61,19 +63,21 @@ namespace Infrastructure.Services
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _backgroundJobClient = backgroundJobClient ?? throw new ArgumentNullException(nameof(backgroundJobClient));
 
+            // سیاست تلاش مجدد برای درخواست‌های HTTP
             _httpRetryPolicy = Policy
                 .Handle<HttpRequestException>()
-                .Or<TaskCanceledException>(ex => !ex.CancellationToken.IsCancellationRequested)
+                .Or<TaskCanceledException>(ex => !ex.CancellationToken.IsCancellationRequested) // اگر لغو توسط CancellationToken اصلی نباشد
                 .OrResult<HttpResponseMessage>(response =>
-                    response.StatusCode >= HttpStatusCode.InternalServerError ||
-                    response.StatusCode == HttpStatusCode.RequestTimeout ||
-                    response.StatusCode == HttpStatusCode.TooManyRequests
+                    response.StatusCode >= HttpStatusCode.InternalServerError || // 5xx errors
+                    response.StatusCode == HttpStatusCode.RequestTimeout ||     // 408
+                    response.StatusCode == HttpStatusCode.TooManyRequests       // 429
                 )
                 .WaitAndRetryAsync(
                     retryCount: 3,
                     sleepDurationProvider: (retryAttempt, pollyResponse, context) =>
                     {
                         TimeSpan delay;
+                        // اگر هدر Retry-After وجود داشته باشد، از آن استفاده کن
                         if (pollyResponse?.Result?.Headers?.RetryAfter?.Delta.HasValue == true)
                         {
                             delay = pollyResponse.Result.Headers.RetryAfter.Delta.Value.Add(TimeSpan.FromMilliseconds(new Random().Next(500, 1500)));
@@ -81,7 +85,7 @@ namespace Infrastructure.Services
                                 "PollyRetry: HTTP request to {RequestUri} (Context: {ContextKey}) failed with {StatusCode}. Retry-After received. Retrying in {DelaySeconds:F1}s (Attempt {RetryAttempt}/3).",
                                 pollyResponse.Result.RequestMessage?.RequestUri, context.CorrelationId, pollyResponse.Result.StatusCode, delay.TotalSeconds, retryAttempt);
                         }
-                        else
+                        else // در غیر این صورت، از تأخیر نمایی استفاده کن
                         {
                             delay = TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)) + TimeSpan.FromMilliseconds(new Random().Next(500, 1500));
                             _logger.LogWarning(pollyResponse?.Exception,
@@ -96,6 +100,19 @@ namespace Infrastructure.Services
                             "PollyRetry: Retrying HTTP request to {RequestUri} (Context: {ContextKey}). Attempt {RetryAttempt} of 3. Waiting for {TimespanSeconds:F1} seconds...",
                            pollyResponse?.Result?.RequestMessage?.RequestUri, context.CorrelationId, retryAttempt, timespan.TotalSeconds);
                         return Task.CompletedTask;
+                    });
+
+            // ✅ جدید: سیاست تلاش مجدد برای عملیات پایگاه داده
+            _dbRetryPolicy = Policy
+                .Handle<DbException>(ex => !(ex is DbUpdateConcurrencyException)) // خطاهای پایگاه داده را مدیریت می‌کند، به جز خطاهای همزمانی
+                .WaitAndRetryAsync(
+                    retryCount: 3, // حداکثر 3 بار تلاش مجدد
+                    sleepDurationProvider: retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)), // تأخیر نمایی: 2s, 4s, 8s
+                    onRetry: (exception, timeSpan, retryAttempt, context) =>
+                    {
+                        _logger.LogWarning(exception,
+                            "PollyDbRetry: Database operation failed. Retrying in {TimeSpan} for attempt {RetryAttempt}. Error: {Message}",
+                            timeSpan, retryAttempt, exception.Message);
                     });
         }
         #endregion
@@ -204,15 +221,20 @@ namespace Infrastructure.Services
         }
 
         private async Task<List<NewsItem>> ProcessAndFilterSyndicationItemsAsync(IEnumerable<SyndicationItem> syndicationItems, RssSource rssSource, CancellationToken cancellationToken)
-        { /* ... کد قبلی ... */
+        {
             var newNewsEntities = new List<NewsItem>();
             if (syndicationItems == null || !syndicationItems.Any()) return newNewsEntities;
 
-            var existingSourceItemIds = await _dbContext.NewsItems // ✅ این متغیر اینجا تعریف شده
-                .Where(n => n.RssSourceId == rssSource.Id && n.SourceItemId != null)
-                .Select(n => n.SourceItemId!)
-                .Distinct()
-                .ToHashSetAsync(cancellationToken);
+            // ✅ اعمال سیاست تلاش مجدد Polly به فراخوانی پایگاه داده
+            var existingSourceItemIds = await _dbRetryPolicy.ExecuteAsync(async () =>
+            {
+                return await _dbContext.NewsItems
+                    .Where(n => n.RssSourceId == rssSource.Id && n.SourceItemId != null)
+                    .Select(n => n.SourceItemId!)
+                    .Distinct()
+                    .ToHashSetAsync(cancellationToken);
+            });
+
             _logger.LogDebug("Retrieved {Count} existing SourceItemIds for RssSourceId {RssSourceId}.", existingSourceItemIds.Count, rssSource.Id);
 
             var processedInThisBatch = new HashSet<string>(StringComparer.OrdinalIgnoreCase); // برای جلوگیری از تکرار در همین بچ
@@ -260,14 +282,13 @@ namespace Infrastructure.Services
         #endregion
 
         #region Database Interaction, Metadata Update, and Notification Dispatch
-        // File: Infrastructure/Services/RssReaderService.cs (بخشی از کلاس)
 
-        #region Database Interaction and Dispatch
         /// <summary>
         /// Saves newly processed and filtered NewsItem entities to the database,
         /// updates the metadata of the RssSource (ETag, LastModified, timestamps),
         /// and then enqueues background jobs to dispatch notifications for each new item.
         /// This method consolidates database writes and notification job creation.
+        /// Operations that interact with the database are protected by a Polly retry policy.
         /// </summary>
         /// <param name="rssSource">The RssSource entity being processed, its metadata will be updated.</param>
         /// <param name="newNewsEntitiesToSave">A list of new NewsItem entities that have been filtered for duplicates and are ready to be saved.</param>
@@ -306,18 +327,22 @@ namespace Infrastructure.Services
             int changesSaved = 0;
             try
             {
-                changesSaved = await _dbContext.SaveChangesAsync(cancellationToken);
+                // ✅ اعمال سیاست تلاش مجدد Polly به فراخوانی SaveChangesAsync
+                changesSaved = await _dbRetryPolicy.ExecuteAsync(async () =>
+                {
+                    return await _dbContext.SaveChangesAsync(cancellationToken);
+                });
                 _logger.LogInformation("Successfully saved {ChangesCount} changes to the database (including {NewItemCount} news items and metadata for RssSource '{SourceName}').",
                     changesSaved, newNewsEntitiesToSave.Count, rssSource.SourceName);
             }
-            catch (DbUpdateException dbEx)
+            catch (DbUpdateException dbEx) // این catch بعد از تمام تلاش‌های Polly اجرا می‌شود
             {
-                _logger.LogError(dbEx, "Database update error while saving new news items or updating RssSource '{SourceName}'. New items will not be dispatched for notification.", rssSource.SourceName);
+                _logger.LogError(dbEx, "Database update error while saving new news items or updating RssSource '{SourceName}' after retries. New items will not be dispatched for notification.", rssSource.SourceName);
                 return Result<IEnumerable<NewsItemDto>>.Failure($"Database error during save operation for {rssSource.SourceName}: {dbEx.InnerException?.Message ?? dbEx.Message}");
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Unexpected error during SaveChangesAsync for RssSource '{SourceName}'. New items will not be dispatched.", rssSource.SourceName);
+                _logger.LogError(ex, "Unexpected error during SaveChangesAsync for RssSource '{SourceName}' after retries. New items will not be dispatched.", rssSource.SourceName);
                 return Result<IEnumerable<NewsItemDto>>.Failure($"Unexpected error saving data for {rssSource.SourceName}: {ex.Message}");
             }
 
@@ -396,7 +421,6 @@ namespace Infrastructure.Services
             string? eTagFromResponse, string? lastModifiedFromResponse,
             CancellationToken cancellationToken, string? operationMessage = null)
         {
-            // ... (کد قبلی این متد) ...
             rssSource.UpdatedAt = DateTime.UtcNow;
             if (!success) rssSource.LastFetchAttemptAt = DateTime.UtcNow; //  LastFetchAttemptAt در ابتدای FetchAndProcessFeedAsync ثبت شده بود
 
@@ -416,24 +440,37 @@ namespace Infrastructure.Services
                     _logger.LogWarning("Deactivated RssSource {Id} due to {Count} consecutive errors.", rssSource.Id, rssSource.FetchErrorCount);
                 }
             }
-            try { await _dbContext.SaveChangesAsync(cancellationToken); }
+            try
+            {
+                // ✅ اعمال سیاست تلاش مجدد Polly به فراخوانی SaveChangesAsync
+                await _dbRetryPolicy.ExecuteAsync(async () =>
+                {
+                    await _dbContext.SaveChangesAsync(cancellationToken);
+                });
+            }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) // Removed opCancelledEx
             {
                 _logger.LogInformation("RSS feed fetch operation was cancelled by the main CancellationToken for {SourceName}.", rssSource.SourceName);
                 return Result<IEnumerable<NewsItemDto>>.Failure("RSS fetch operation cancelled by request.");
             }
+            catch (DbUpdateException dbEx) // این catch بعد از تمام تلاش‌های Polly اجرا می‌شود
+            {
+                _logger.LogError(dbEx, "Database update error while updating RssSource '{SourceName}' status after retries.", rssSource.SourceName);
+                // ممکن است بخواهید خطای سطح بالاتر را پرتاب کنید یا صرفاً لاگ بگیرید.
+                // در اینجا، فقط لاگ گرفته می‌شود و اجازه می‌دهیم متد برگردد.
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unexpected error during SaveChangesAsync for RssSource '{SourceName}' status update after retries.", rssSource.SourceName);
+            }
 
             if (success) return Result<IEnumerable<NewsItemDto>>.Success(Enumerable.Empty<NewsItemDto>(), operationMessage ?? "Status updated.");
             return Result<IEnumerable<NewsItemDto>>.Failure($"Failed to update status. Errors: {rssSource.FetchErrorCount}");
         }
-        #endregion
 
         #region HTTP and HTML Parsing Helper Methods
         private void AddConditionalGetHeaders(HttpRequestMessage requestMessage, RssSource rssSource)
-        { /* ... کد قبلی ... */
-            if (!string.IsNullOrWhiteSpace(rssSource.ETag) && EntityTagHeaderValue.TryParse(rssSource.ETag, out var etagHeader)) requestMessage.Headers.IfNoneMatch.Add(etagHeader);
-            if (!string.IsNullOrWhiteSpace(rssSource.LastModifiedHeader) && DateTimeOffset.TryParse(rssSource.LastModifiedHeader, out var lastModifiedDate)) requestMessage.Headers.IfModifiedSince = lastModifiedDate;
-        }
+        { /* ... کد قبلی ... */ }
 
         private async Task<Result<IEnumerable<NewsItemDto>>> HandleNotModifiedResponseAsync(RssSource rssSource, HttpResponseMessage httpResponse, CancellationToken cancellationToken)
         { //  httpResponse اضافه شد
@@ -612,36 +649,6 @@ namespace Infrastructure.Services
             }
             return imageUrl; //  اگر نتوانستیم مطلق کنیم یا BaseUri وجود نداشت
         }
-
-
-        /*
-        // Optional: AI Analysis Integration Point (Placeholder)
-        private async Task<NewsItem> PerformAiAnalysisAsync(NewsItem newsItem, CancellationToken cancellationToken)
-        {
-            // if (_aiAnalysisService == null) return newsItem;
-            // _logger.LogDebug("Performing AI analysis for NewsItem: {NewsId}", newsItem.Id);
-            // try
-            // {
-            //     var textToAnalyze = $"{newsItem.Title}. {newsItem.Summary ?? ""}";
-            //     if (textToAnalyze.Length > 30) // Minimum length for meaningful analysis
-            //     {
-            //         var analysisResult = await _aiAnalysisService.AnalyzeTextAsync(textToAnalyze, cancellationToken);
-            //         if (analysisResult != null) // Assuming AnalyzeTextAsync returns a specific result object
-            //         {
-            //             newsItem.SentimentScore = analysisResult.SentimentScore;
-            //             newsItem.SentimentLabel = analysisResult.SentimentLabel;
-            //             // ... populate other AI-derived fields ...
-            //             _logger.LogInformation("AI analysis completed for NewsItem: {NewsId}. Sentiment: {Sentiment}", newsItem.Id, newsItem.SentimentLabel);
-            //         }
-            //     } else { _logger.LogDebug("Text too short for AI analysis: {NewsId}", newsItem.Id); }
-            // }
-            // catch (Exception ex)
-            // {
-            //     _logger.LogError(ex, "Error during AI analysis for NewsItem: {NewsId}", newsItem.Id);
-            // }
-            return newsItem;
-        }
-        */
         #endregion
     }
 }

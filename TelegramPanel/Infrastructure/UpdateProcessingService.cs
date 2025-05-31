@@ -1,9 +1,16 @@
 ﻿using Microsoft.Extensions.Logging;
 using Telegram.Bot.Types;
-using Telegram.Bot.Types.Enums; // Required for Task
+using Telegram.Bot.Types.Enums; // Required for UpdateType
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Application.Pipeline; // برای TelegramPipelineDelegate
-using TelegramPanel.Infrastructure.Services;
+using TelegramPanel.Infrastructure.Services; // فرض شده ITelegramMessageSender در اینجا پیاده‌سازی شده
+using Polly; // ✅ اضافه شده برای Polly
+using Polly.Retry; // ✅ اضافه شده برای سیاست‌های Retry
+using System;
+using System.Collections.Generic; // برای IReadOnlyList
+using System.Linq; // برای Reverse(), FirstOrDefault(), Any()
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace TelegramPanel.Infrastructure // یا Application اگر در آن لایه است
 {
@@ -11,18 +18,26 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
     /// سرویس اصلی برای پردازش آپدیت‌های دریافتی تلگرام.
     /// این سرویس یک پایپ‌لاین از Middleware ها را اجرا کرده و سپس آپدیت را به
     /// ماشین وضعیت (<see cref="ITelegramStateMachine"/>) یا یک Command Handler مناسب (<see cref="ITelegramCommandHandler"/>) مسیریابی می‌کند.
+    /// از Polly برای افزایش پایداری در برابر خطاهای گذرا در تعاملات با سرویس‌های داخلی و خارجی استفاده می‌کند.
     /// </summary>
     public class UpdateProcessingService : ITelegramUpdateProcessor
     {
         #region Fields
 
         private readonly ILogger<UpdateProcessingService> _logger;
-        private readonly IServiceProvider _serviceProvider;
+        private readonly IServiceProvider _serviceProvider; // برای Resolve کردن سرویس‌ها در Scope های داخلی
         private readonly IReadOnlyList<ITelegramMiddleware> _middlewares;
         private readonly IEnumerable<ITelegramCommandHandler> _commandHandlers;
+        private readonly IEnumerable<ITelegramCallbackQueryHandler> _callbackQueryHandlers;
         private readonly ITelegramStateMachine _stateMachine;
         private readonly ITelegramMessageSender _messageSender;
-        private readonly IEnumerable<ITelegramCallbackQueryHandler> _callbackQueryHandlers;
+
+        private readonly AsyncRetryPolicy _internalServiceRetryPolicy; // ✅ جدید: سیاست Polly برای سرویس‌های داخلی/DB
+        private readonly AsyncRetryPolicy _externalApiRetryPolicy;    // ✅ جدید: سیاست Polly برای فراخوانی‌های API خارجی
+
+        #endregion
+
+        #region Constructor
 
         public UpdateProcessingService(
             ILogger<UpdateProcessingService> logger,
@@ -35,11 +50,42 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
+            // Middleware ها را Reverse کرده و به عنوان ReadOnlyList ذخیره می‌کند تا پایپ‌لاین به درستی ساخته شود.
             _middlewares = middlewares?.Reverse().ToList().AsReadOnly() ?? throw new ArgumentNullException(nameof(middlewares));
             _commandHandlers = commandHandlers ?? throw new ArgumentNullException(nameof(commandHandlers));
             _callbackQueryHandlers = callbackQueryHandlers ?? throw new ArgumentNullException(nameof(callbackQueryHandlers));
             _stateMachine = stateMachine ?? throw new ArgumentNullException(nameof(stateMachine));
             _messageSender = messageSender ?? throw new ArgumentNullException(nameof(messageSender));
+
+            // ✅ تعریف _internalServiceRetryPolicy برای عملیات‌های داخلی (مانند دسترسی به DB از طریق StateMachine)
+            _internalServiceRetryPolicy = Policy
+                .Handle<Exception>(ex => !(ex is OperationCanceledException || ex is TaskCanceledException))
+                .WaitAndRetryAsync(
+                    retryCount: 3,
+                    sleepDurationProvider: retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)), // تأخیر نمایی: 2s, 4s, 8s
+                    onRetry: (exception, timeSpan, retryAttempt, context) =>
+                    {
+                        var updateId = context.TryGetValue("UpdateId", out var id) ? (int?)id : null;
+                        var userId = context.TryGetValue("TelegramUserId", out var uid) ? (long?)uid : null;
+                        _logger.LogWarning(exception,
+                            "PollyRetry (InternalService): Operation failed for UpdateId {UpdateId}, UserId {UserId}. Retrying in {TimeSpan} for attempt {RetryAttempt}. Error: {Message}",
+                            updateId, userId, timeSpan, retryAttempt, exception.Message);
+                    });
+
+            // ✅ تعریف _externalApiRetryPolicy برای فراخوانی‌های API خارجی (مانند ارسال پیام تلگرام)
+            _externalApiRetryPolicy = Policy
+                .Handle<Exception>(ex => !(ex is OperationCanceledException || ex is TaskCanceledException))
+                .WaitAndRetryAsync(
+                    retryCount: 3,
+                    sleepDurationProvider: retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)), // تأخیر نمایی: 2s, 4s, 8s
+                    onRetry: (exception, timeSpan, retryAttempt, context) =>
+                    {
+                        var updateId = context.TryGetValue("UpdateId", out var id) ? (int?)id : null;
+                        var chatId = context.TryGetValue("ChatId", out var cid) ? (long?)cid : null;
+                        _logger.LogWarning(exception,
+                            "PollyRetry (ExternalAPI): API call failed for UpdateId {UpdateId}, ChatId {ChatId}. Retrying in {TimeSpan} for attempt {RetryAttempt}. Error: {Message}",
+                            updateId, chatId, timeSpan, retryAttempt, exception.Message);
+                    });
         }
         #endregion
 
@@ -65,16 +111,10 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
             };
 
             // ساخت پایپ‌لاین Middleware ها با استفاده از Aggregate.
-            // پایپ‌لاین از انتها به ابتدا (از `finalHandlerAction` به سمت بیرون) ساخته می‌شود.
-            // `_middlewares` قبلاً Reverse شده است، بنابراین اولین middleware در این لیست،
-            // اولین middleware ای خواهد بود که آپدیت را پردازش می‌کند.
-            // currentMiddleware: Middleware فعلی که در حال اضافه شدن به پایپ‌لاین است.
-            // nextMiddlewareInChain: Delegate مربوط به Middleware بعدی در زنجیره (یا finalHandlerAction اگر این آخرین Middleware باشد).
-            // نتیجه Aggregate یک delegate واحد است که کل پایپ‌لاین را نمایندگی می‌کند.
             var pipeline = _middlewares.Aggregate(
-                finalHandlerAction, // نقطه شروع Aggregation (داخلی‌ترین عمل)
-                (nextMiddlewareInChain, currentMiddleware) => // nextMiddlewareInChain نتیجه قبلی Aggregate است (یعنی middleware بعدی یا handler نهایی)
-                    async (upd, ct) => await currentMiddleware.InvokeAsync(upd, nextMiddlewareInChain, ct) // currentMiddleware، middleware بعدی را فراخوانی می‌کند
+                finalHandlerAction,
+                (nextMiddlewareInChain, currentMiddleware) =>
+                    async (upd, ct) => await currentMiddleware.InvokeAsync(upd, nextMiddlewareInChain, ct)
             );
 
             try
@@ -99,16 +139,10 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
 
         /// <summary>
         /// آپدیت را به ماشین وضعیت (اگر کاربر در وضعیتی باشد) یا به یک Command Handler مناسب مسیریابی می‌کند.
+        /// این متد از سیاست تلاش مجدد برای تعامل با <see cref="ITelegramStateMachine"/> استفاده می‌کند.
         /// </summary>
         /// <param name="update">آپدیت پردازش شده توسط پایپ‌لاین Middleware.</param>
         /// <param name="cancellationToken">توکن برای لغو عملیات.</param>
-        // In UpdateProcessingService.cs
-
-        /// <summary>
-        /// Routes the update to the state machine (if the user is in a state) or to an appropriate handler.
-        /// </summary>
-        /// <param name="update">The update processed by the middleware pipeline.</param>
-        /// <param name="cancellationToken">Token for cancellation.</param>
         private async Task RouteToHandlerOrStateMachineAsync(Update update, CancellationToken cancellationToken)
         {
             var userId = update.Message?.From?.Id ?? update.CallbackQuery?.From?.Id;
@@ -118,15 +152,26 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
                 return;
             }
 
+            // اطلاعات برای Context مربوط به Polly.
+            var pollyContext = new Polly.Context($"RouteToHandler_{update.Id}", new Dictionary<string, object>
+            {
+                { "UpdateId", update.Id },
+                { "TelegramUserId", userId.Value }
+            });
+
             // Priority 1: Check and process with the State Machine
             ITelegramState? currentState = null;
             try
             {
-                currentState = await _stateMachine.GetCurrentStateAsync(userId.Value, cancellationToken);
+                // ✅ اعمال سیاست تلاش مجدد بر روی GetCurrentStateAsync
+                currentState = await _internalServiceRetryPolicy.ExecuteAsync(async (context, ct) =>
+                {
+                    return await _stateMachine.GetCurrentStateAsync(userId.Value, ct);
+                }, pollyContext, cancellationToken);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error retrieving current state for UserID {UserId} while processing Update ID: {UpdateId}.", userId.Value, update.Id);
+                _logger.LogError(ex, "Error retrieving current state for UserID {UserId} while processing Update ID: {UpdateId} after retries.", userId.Value, update.Id);
                 await HandleProcessingErrorAsync(update, ex, cancellationToken); // Notify user of the error
                 return; // Cannot proceed reliably if state retrieval fails.
             }
@@ -137,16 +182,30 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
                     userId.Value, currentState.Name, update.Id);
                 try
                 {
-                    // Process the update using the user's current state logic.
-                    await _stateMachine.ProcessUpdateInCurrentStateAsync(userId.Value, update, cancellationToken);
+                    // ✅ اعمال سیاست تلاش مجدد بر روی ProcessUpdateInCurrentStateAsync
+                    await _internalServiceRetryPolicy.ExecuteAsync(async (context, ct) =>
+                    {
+                        await _stateMachine.ProcessUpdateInCurrentStateAsync(userId.Value, update, ct);
+                    }, pollyContext, cancellationToken);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Error processing UpdateID {UpdateId} in state '{StateName}' for UserID {UserId}.",
+                    _logger.LogError(ex, "Error processing UpdateID {UpdateId} in state '{StateName}' for UserID {UserId} after retries.",
                         update.Id, currentState.Name, userId.Value);
                     await HandleProcessingErrorAsync(update, ex, cancellationToken); // Notify user of the error
                                                                                      // Clear the user's state on error to prevent getting stuck in a faulty state.
-                    await _stateMachine.ClearStateAsync(userId.Value, cancellationToken);
+                    try
+                    {
+                        // ✅ اعمال سیاست تلاش مجدد بر روی ClearStateAsync
+                        await _internalServiceRetryPolicy.ExecuteAsync(async (context, ct) =>
+                        {
+                            await _stateMachine.ClearStateAsync(userId.Value, ct);
+                        }, pollyContext, CancellationToken.None); // CancellationToken.None برای اطمینان از پاکسازی وضعیت
+                    }
+                    catch (Exception clearEx)
+                    {
+                        _logger.LogError(clearEx, "Critical: Failed to clear state for UserID {UserId} after processing error in state '{StateName}'.", userId.Value, currentState.Name);
+                    }
                     _logger.LogInformation("State cleared for UserID {UserId} due to processing error in state '{StateName}'.", userId.Value, currentState.Name);
                 }
                 return; // If the state machine was active, it's considered to have handled (or attempted to handle) the update.
@@ -163,14 +222,13 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
                 try
                 {
                     // Find the first command handler that can process this message update.
-                    // Order of handlers in _commandHandlers (from DI) can matter if multiple could handle it.
                     commandHandler = _commandHandlers.FirstOrDefault(h => h.CanHandle(update));
                 }
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "Error occurred while trying to find a suitable ITelegramCommandHandler for UpdateID {UpdateId}.", update.Id);
                     await HandleProcessingErrorAsync(update, ex, cancellationToken);
-                    return; // Cannot proceed without a handler if one was expected or resolution failed.
+                    return;
                 }
 
                 if (commandHandler != null)
@@ -178,6 +236,8 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
                     _logger.LogInformation("Routing UpdateID {UpdateId} (Type: Message) to ITelegramCommandHandler: {HandlerName}", update.Id, commandHandler.GetType().Name);
                     try
                     {
+                        // اینجا فرض بر این است که HandleAsync خود Handler، Polly داخلی برای تعاملات خود دارد
+                        // یا خطاهای آن به لایه بالاتر (ProcessUpdateAsync در UpdateQueueConsumerService) پرتاب شده و آنجا مدیریت می‌شود.
                         await commandHandler.HandleAsync(update, cancellationToken);
                         handledByTypeSpecificHandler = true;
                     }
@@ -193,11 +253,10 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
                 ITelegramCallbackQueryHandler? callbackHandler = null;
                 try
                 {
-                    // Find the first callback query handler that can process this callback update.
                     _logger.LogDebug("Searching for ITelegramCallbackQueryHandler for CBQ Data: '{CBQData}'. Available handlers: {HandlerCount}",
-                        update.CallbackQuery.Data, _callbackQueryHandlers.Count()); // Log available handlers
+                        update.CallbackQuery.Data, _callbackQueryHandlers.Count());
 
-                    foreach (var h_instance in _callbackQueryHandlers) // Add logging for each check
+                    foreach (var h_instance in _callbackQueryHandlers)
                     {
                         bool canItHandle = h_instance.CanHandle(update);
                         _logger.LogTrace("Checking ITelegramCallbackQueryHandler: {HandlerType}. CanHandle for '{CBQData}'? -> {CanHandleResult}",
@@ -208,7 +267,6 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
                             break;
                         }
                     }
-                    // Original line: callbackHandler = _callbackQueryHandlers.FirstOrDefault(h => h.CanHandle(update));
                 }
                 catch (Exception ex)
                 {
@@ -223,6 +281,7 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
                         update.Id, update.CallbackQuery.Data, callbackHandler.GetType().Name);
                     try
                     {
+                        // اینجا نیز فرض بر این است که HandleAsync خود Handler، Polly داخلی برای تعاملات خود دارد.
                         await callbackHandler.HandleAsync(update, cancellationToken);
                         handledByTypeSpecificHandler = true;
                     }
@@ -250,6 +309,7 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
         /// <summary>
         /// آپدیت‌هایی را که توسط هیچ Command Handler یا وضعیت فعالی مدیریت نشده‌اند، مدیریت می‌کند.
         /// معمولاً با ارسال یک پیام پیش‌فرض به کاربر همراه است.
+        /// این متد از سیاست تلاش مجدد <see cref="_externalApiRetryPolicy"/> برای ارسال پیام استفاده می‌کند.
         /// </summary>
         /// <param name="update">آپدیت نامشخص یا بدون تطابق.</param>
         /// <param name="cancellationToken">توکن برای لغو عملیات.</param>
@@ -266,10 +326,27 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
             var chatId = update.Message?.Chat?.Id ?? update.CallbackQuery?.Message?.Chat?.Id;
             if (chatId.HasValue)
             {
-                // ارسال یک پیام پیش‌فرض به کاربر برای اطلاع از عدم درک درخواست.
-                await _messageSender.SendTextMessageAsync(chatId.Value,
-                    "Sorry, I didn't understand that. Please type /help to see available commands or check the menu.",
-                    cancellationToken: cancellationToken);
+                // اطلاعات برای Context مربوط به Polly
+                var pollyContext = new Polly.Context($"UnknownUpdateMessage_{update.Id}", new Dictionary<string, object>
+                {
+                    { "UpdateId", update.Id },
+                    { "ChatId", chatId.Value }
+                });
+
+                try
+                {
+                    // ✅ اعمال سیاست تلاش مجدد بر روی SendTextMessageAsync
+                    await _externalApiRetryPolicy.ExecuteAsync(async (context, ct) =>
+                    {
+                        await _messageSender.SendTextMessageAsync(chatId.Value,
+                            "Sorry, I didn't understand that. Please type /help to see available commands or check the menu.",
+                            cancellationToken: ct); // از ct برای Polly استفاده می‌شود
+                    }, pollyContext, cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to send 'unknown command' message to user {ChatId} for update ID: {UpdateId} after retries.", chatId.Value, update.Id);
+                }
             }
             else
             {
@@ -279,8 +356,9 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
 
         /// <summary>
         /// خطاهای پیش‌بینی نشده در حین پردازش آپدیت را مدیریت می‌کند و یک پیام عمومی خطا به کاربر ارسال می‌کند.
+        /// این متد از سیاست تلاش مجدد <see cref="_externalApiRetryPolicy"/> برای ارسال پیام استفاده می‌کند.
         /// </summary>
-        /// <param name="update">آپدیتی که در حین پردازش آن خطا رخ داده است.</param>
+        /// <param name="update">آپدیت که در حین پردازش آن خطا رخ داده است.</param>
         /// <param name="exception">خطای رخ داده.</param>
         /// <param name="cancellationToken">توکن برای لغو عملیات ارسال پیام (معمولاً CancellationToken.None استفاده می‌شود تا پیام خطا حتما ارسال شود).</param>
         private async Task HandleProcessingErrorAsync(Update update, Exception exception, CancellationToken cancellationToken)
@@ -289,19 +367,29 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
             var chatId = update.Message?.Chat?.Id ?? update.CallbackQuery?.Message?.Chat?.Id;
             if (chatId.HasValue)
             {
+                // اطلاعات برای Context مربوط به Polly
+                var pollyContext = new Polly.Context($"ProcessingErrorMessage_{update.Id}", new Dictionary<string, object>
+                {
+                    { "UpdateId", update.Id },
+                    { "ChatId", chatId.Value }
+                });
+
                 try
                 {
-                    // ارسال پیام خطای عمومی به کاربر.
+                    // ✅ اعمال سیاست تلاش مجدد بر روی SendTextMessageAsync
                     // از CancellationToken.None استفاده می‌شود تا اطمینان حاصل شود که این پیام خطا حتی اگر درخواست اصلی (و CancellationToken آن)
-                    // لغو شده باشد، همچنان شانس ارسال داشته باشد. این مهم است زیرا کاربر باید از وقوع مشکل مطلع شود.
-                    await _messageSender.SendTextMessageAsync(chatId.Value,
-                        "🤖 Oops! Something went wrong while processing your request. Our team has been notified. Please try again in a moment.",
-                        cancellationToken: CancellationToken.None);
+                    // لغو شده باشد، همچنان شانس ارسال داشته باشد.
+                    await _externalApiRetryPolicy.ExecuteAsync(async (context, ct) =>
+                    {
+                        await _messageSender.SendTextMessageAsync(chatId.Value,
+                            "🤖 Oops! Something went wrong while processing your request. Our team has been notified. Please try again in a moment.",
+                            cancellationToken: CancellationToken.None); // در اینجا از CancellationToken.None برای ارسال پیام اضطراری استفاده می‌شود
+                    }, pollyContext, CancellationToken.None); // ارسال CancellationToken.None به Polly
                 }
                 catch (Exception sendEx)
                 {
                     // اگر حتی ارسال پیام خطا نیز با مشکل مواجه شود، این یک خطای بحرانی‌تر است.
-                    _logger.LogError(sendEx, "Critical: Failed to send error notification message to user {ChatId} for update ID: {UpdateId} after a processing error.", chatId.Value, update.Id);
+                    _logger.LogError(sendEx, "Critical: Failed to send error notification message to user {ChatId} for update ID: {UpdateId} after a processing error and retries.", chatId.Value, update.Id);
                 }
             }
             else

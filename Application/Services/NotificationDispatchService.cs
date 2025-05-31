@@ -347,30 +347,3 @@ namespace Application.Services
     }
 }
 
-//  در IUserRepository (Application/Common/Interfaces/IUserRepository.cs) باید متدی شبیه به این اضافه شود:
-/*
-public interface IUserRepository
-{
-    // ... سایر متدها ...
-    Task<IEnumerable<User>> GetUsersWithNotificationSettingAsync(
-        Expression<Func<User, bool>> notificationPredicate, //  مثلاً u => u.EnableRssNewsNotifications
-        CancellationToken cancellationToken = default);
-
-    //  یا یک متد اختصاصی‌تر:
-    Task<IEnumerable<User>> GetUsersForRssNewsNotificationAsync(Guid? relevantCategoryId, bool? isVipContent, CancellationToken cancellationToken);
-}
-*/
-
-//  در پیاده‌سازی UserRepository (Infrastructure/Persistence/Repositories/UserRepository.cs):
-/*
-public async Task<IEnumerable<User>> GetUsersWithNotificationSettingAsync(
-    Expression<Func<User, bool>> notificationPredicate,
-    CancellationToken cancellationToken = default)
-{
-    return await _context.Users
-        .Where(u => u.IsActive) //  فقط کاربران فعال (اگر فیلد IsActive دارید)
-        .Where(notificationPredicate)
-        .ToListAsync(cancellationToken);
-}
-*/
-

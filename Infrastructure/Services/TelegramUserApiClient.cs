@@ -6,6 +6,8 @@ using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Npgsql.Replication.PgOutput.Messages;
+using Polly;
+using Polly.Retry;
 using System;
 using System.Collections.Concurrent;
 using System.Threading;
@@ -30,6 +32,21 @@ namespace Infrastructure.Services
             .SetAbsoluteExpiration(TimeSpan.FromHours(1));
         private readonly TimeSpan _cacheCleanupInterval = TimeSpan.FromMinutes(10);
 
+        // NEW: Polly ResiliencePipeline and retry delays
+        // This pipeline will automatically retry transient errors in API calls.
+        private readonly ResiliencePipeline _resiliencePipeline;
+        // Define an array of TimeSpan for exponential backoff retry delays.
+        // These delays are chosen to be relatively short for "real-time" feel,
+        // while still giving the server time to recover.
+        private readonly TimeSpan[] _retryDelays = new TimeSpan[]
+        {
+            TimeSpan.FromMilliseconds(200), // First retry: Wait 200ms
+            TimeSpan.FromMilliseconds(500), // Second retry: Wait 500ms
+            TimeSpan.FromSeconds(1),        // Third retry: Wait 1 second
+            TimeSpan.FromSeconds(2),        // Fourth retry: Wait 2 seconds
+            TimeSpan.FromSeconds(4),        // Fifth retry: Wait 4 seconds
+            TimeSpan.FromSeconds(8)         // Sixth (final) retry: Wait 8 seconds
+        };
         #endregion
 
         #region Private Fields
@@ -41,7 +58,6 @@ namespace Infrastructure.Services
         #region Public Properties & Events
         public WTelegram.Client NativeClient => _client!;
         public event Action<Update> OnCustomUpdateReceived = delegate { }; // TL.Update
-
         #endregion
 
         #region Constructor
@@ -67,7 +83,6 @@ namespace Infrastructure.Services
                     _logger.Log(msLevel, "[WTelegram] {Message}", message);
             };
 
-            // Create new client instance
             _client = new WTelegram.Client(ConfigProvider);
             _client.OnUpdates += async updates =>
             {
@@ -83,12 +98,93 @@ namespace Infrastructure.Services
             };
 
             _cacheCleanupTimer = new System.Threading.Timer(
-                      CacheCleanup, // Callback method to execute
-                      null,         // State object to pass to the callback (not used here)
-                      (int)_cacheCleanupInterval.TotalMilliseconds, // Time to wait before the first call (in milliseconds)
-                      (int)_cacheCleanupInterval.TotalMilliseconds  // Time interval between subsequent calls (in milliseconds)
+                      CacheCleanup,
+                      null,
+                      (int)_cacheCleanupInterval.TotalMilliseconds,
+                      (int)_cacheCleanupInterval.TotalMilliseconds
                   );
             _logger.LogInformation("Started cache cleanup timer with interval {IntervalMinutes} minutes.", _cacheCleanupInterval.TotalMinutes);
+
+            // NEW: Initialize the Polly ResiliencePipeline
+            _resiliencePipeline = new ResiliencePipelineBuilder()
+                            .AddRetry(new RetryStrategyOptions
+                            {
+                                // Define which exceptions should trigger a retry.
+                                ShouldHandle = new PredicateBuilder()
+                                    // 1. Handle common network connectivity issues.
+                                    .Handle<HttpRequestException>()
+                                    // 2. Handle specific WTelegram.Client RPC exceptions that indicate a temporary issue.
+                                    .Handle<RpcException>(rpcEx =>
+                                    {
+                                        // a) Server-side errors (often 5xx range indicate temporary server problems)
+                                        if (rpcEx.Code >= 500 && rpcEx.Code < 600)
+                                        {
+                                            // Logging here is simplified as `args.Context.OperationKey` is not directly
+                                            // available in PredicateBuilder's inner lambda.
+                                            _logger.LogWarning("Polly: Retrying RPC error {RpcCode} ({RpcMessage}) as it's a server-side error.",
+                                                rpcEx.Code, rpcEx.Message);
+                                            return true;
+                                        }
+
+                                        // b) Rate limiting or flood wait errors: Telegram explicitly tells you to wait.
+                                        if (rpcEx.Message.Contains("TOO_MANY_REQUESTS", StringComparison.OrdinalIgnoreCase) ||
+                                            rpcEx.Message.Contains("FLOOD_WAIT_", StringComparison.OrdinalIgnoreCase))
+                                        {
+                                            // Extract the wait duration if present, and decide if it's too long for a retry.
+                                            if (rpcEx.Message.StartsWith("FLOOD_WAIT_") &&
+                                                int.TryParse(rpcEx.Message.Substring("FLOOD_WAIT_".Length), out int seconds))
+                                            {
+                                                if (seconds > _retryDelays[_retryDelays.Length - 1].TotalSeconds * 2)
+                                                {
+                                                    _logger.LogWarning("Polly: Encountered a FLOOD_WAIT of {Seconds}s, which greatly exceeds max configured retry delay. Aborting retries for this specific error.",
+                                                        seconds);
+                                                    return false; // Do not retry this specific, excessively long flood wait.
+                                                }
+                                                _logger.LogWarning("Polly: Retrying FLOOD_WAIT of {Seconds}s.", seconds);
+                                                return true; // Retry short to medium flood waits.
+                                            }
+                                            _logger.LogWarning("Polly: Retrying TOO_MANY_REQUESTS or unknown FLOOD_WAIT type.");
+                                            return true; // General TOO_MANY_REQUESTS or unparseable FLOOD_WAIT
+                                        }
+                                        // c) Other specific transient errors can be added here if identified during testing.
+                                        return false; // By default, don't retry other RpcExceptions (e.g., PERMISSION_DENIED, USER_NOT_FOUND, invalid peer)
+                                    }),
+                                // Configure delays between retries. This ensures we don't bombard the server.
+                                DelayGenerator = args =>
+                                {
+                                    var retryAttempt = args.AttemptNumber; // 0-indexed attempt number (0, 1, 2, ...)
+                                                                           // Ensure we don't go out of bounds of our _retryDelays array.
+                                    if (retryAttempt < _retryDelays.Length)
+                                    {
+                                        var delay = _retryDelays[retryAttempt];
+                                        // Correctly access OperationKey from `args.Context`.
+                                        _logger.LogWarning("Polly Retry: Attempt {AttemptNumber} for operation '{OperationKey}'. Delaying for {Delay}ms due to {ExceptionType}.",
+                                            retryAttempt + 1, args.Context.OperationKey, delay.TotalMilliseconds, args.Outcome.Exception?.GetType().Name ?? "N/A");
+
+                                        // FIX for CS0121 ambiguity for the non-null case:
+                                        // Use ValueTask.FromResult<T>(value) for an already completed ValueTask from a value.
+                                        return ValueTask.FromResult<TimeSpan?>(delay);
+                                    }
+                                    // Correctly access OperationKey from `args.Context`.
+                                    _logger.LogWarning("Polly Retry: Attempt {AttemptNumber} for operation '{OperationKey}'. Max retries ({MaxRetries}) reached. No further retries will be attempted.",
+                                        retryAttempt + 1, args.Context.OperationKey, _retryDelays.Length);
+
+                                    // FIX for CS0121 ambiguity for the null case:
+                                    // Use ValueTask.FromResult<T>(null) to unambiguously create a completed ValueTask with a null result.
+                                    return ValueTask.FromResult<TimeSpan?>(null); // Signal to Polly that no more retries should be attempted.
+                                },
+                                MaxRetryAttempts = _retryDelays.Length, // This sets the maximum number of *retries* (after the initial attempt).
+                                                                        // If _retryDelays has 6 entries, this means 6 retries + 1 initial attempt = 7 total attempts.
+                                OnRetry = args =>
+                                {
+                                    // Correctly access OperationKey from `args.Context`.
+                                    _logger.LogWarning(args.Outcome.Exception,
+                                        "Polly OnRetry: Operation '{OperationKey}' failed on attempt {AttemptNumber} with exception {ExceptionType}. Next retry will be after delay.",
+                                        args.Context.OperationKey, args.AttemptNumber + 1, args.Outcome.Exception?.GetType().Name ?? "Unknown");
+                                    return default; // Return default(ValueTask) for synchronous callbacks.
+                                },
+                            })
+                            .Build();
         }
         #endregion
 
@@ -524,7 +620,6 @@ namespace Infrastructure.Services
             await _connectionLock.WaitAsync(cancellationToken);
             try
             {
-                // Force new connection by disposing existing client if needed
                 if (_client != null)
                 {
                     _logger.LogInformation("Disposing existing client to force new connection...");
@@ -533,35 +628,46 @@ namespace Infrastructure.Services
                     _client = null;
                 }
 
-                // Create new client instance
                 _client = new WTelegram.Client(ConfigProvider);
                 _client.OnUpdates += async updates =>
                 {
+                    _logger.LogCritical("[USER_API_ON_UPDATES_TRIGGERED] Raw updates object of type: {UpdateType} from WTelegram.Client", updates.GetType().FullName);
                     if (updates is UpdatesBase updatesBase)
                     {
                         await HandleUpdatesBaseAsync(updatesBase);
+                    }
+                    else
+                    {
+                        _logger.LogWarning("[USER_API_ON_UPDATES_TRIGGERED] Received 'updates' that is NOT UpdatesBase. Type: {UpdateType}", updates.GetType().FullName);
                     }
                 };
 
                 _logger.LogInformation("Connecting User API (Session: {SessionPath})...", _settings.SessionPath);
                 try
                 {
-                    User loggedInUser = await _client.LoginUserIfNeeded();
+                    // Fix for CS1739: Remove named parameters `context:` and `cancellationToken:`.
+                    User loggedInUser = await _resiliencePipeline.ExecuteAsync(async (context, token) =>
+                        await _client!.LoginUserIfNeeded(), // _client is guaranteed non-null here as it's created above.
+                        new Context(nameof(ConnectAndLoginAsync)), // Passed as positional argument.
+                        cancellationToken); // Passed as positional argument.
+
                     _logger.LogInformation("User API Logged in: {User}", loggedInUser?.ToString());
 
-                    // Pre-fetch and cache dialogs
-                    var dialogs = await _client.Messages_GetAllDialogs();
+                    // Fix for CS1739: Remove named parameters `context:` and `cancellationToken:`.
+                    var dialogs = await _resiliencePipeline.ExecuteAsync(async (context, token) =>
+                        await _client!.Messages_GetAllDialogs(), // _client is guaranteed non-null.
+                        new Context(nameof(_client.Messages_GetAllDialogs)), // Operation key for logging.
+                        cancellationToken); // Pass cancellation token from method parameter.
+
                     dialogs.CollectUsersChats(_userCache, _chatCache);
 
-                    // Update expiry caches
+                    // ... (existing cache update logic)
                     int usersTransferred = 0;
-                    if (_userCache != null && _userCache.Any()) // Check if _userCache is not null and has items
+                    if (_userCache != null && _userCache.Any())
                     {
                         _logger.LogDebug("Refreshing user cache. Found {UserCacheCount} users in simple cache.", _userCache.Count);
-                        foreach (var userEntry in _userCache) // Changed 'user' to 'userEntry' for clarity if 'user' is a type name
+                        foreach (var userEntry in _userCache)
                         {
-                            // Assuming userEntry.Key is the user identifier (e.g., long userId)
-                            // Assuming userEntry.Value is the user object
                             _userCacheWithExpiry[userEntry.Key] = (userEntry.Value, DateTime.UtcNow.Add(_cacheExpiration));
                             usersTransferred++;
                             _logger.LogTrace("Transferred user {UserId} to expiry cache. New expiry: {ExpiryTime}",
@@ -575,13 +681,11 @@ namespace Infrastructure.Services
                     }
 
                     int chatsTransferred = 0;
-                    if (_chatCache != null && _chatCache.Any()) // Check if _chatCache is not null and has items
+                    if (_chatCache != null && _chatCache.Any())
                     {
                         _logger.LogDebug("Refreshing chat cache. Found {ChatCacheCount} chats in simple cache.", _chatCache.Count);
-                        foreach (var chatEntry in _chatCache) // Changed 'chat' to 'chatEntry' for clarity
+                        foreach (var chatEntry in _chatCache)
                         {
-                            // Assuming chatEntry.Key is the chat identifier (e.g., long chatId)
-                            // Assuming chatEntry.Value is the chat object
                             _chatCacheWithExpiry[chatEntry.Key] = (chatEntry.Value, DateTime.UtcNow.Add(_cacheExpiration));
                             chatsTransferred++;
                             _logger.LogTrace("Transferred chat {ChatId} to expiry cache. New expiry: {ExpiryTime}",
@@ -597,7 +701,7 @@ namespace Infrastructure.Services
                 catch (RpcException e) when (e.Code == 401 && (e.Message.Contains("SESSION_PASSWORD_NEEDED") || e.Message.Contains("account_password_input_needed")))
                 {
                     _logger.LogWarning("User API: 2FA needed. Password requested via ConfigProvider.");
-                    User loggedInUser = await _client.LoginUserIfNeeded();
+                    User loggedInUser = await _client!.LoginUserIfNeeded();
                     _logger.LogInformation("User API Logged in with 2FA: {User}", loggedInUser?.ToString());
                 }
                 catch (RpcException e) when (e.Message.StartsWith("PHONE_MIGRATE_"))
@@ -606,18 +710,17 @@ namespace Infrastructure.Services
                     {
                         _logger.LogWarning("User API: Phone number needs to be migrated to DC{DCNumber}. Reconnecting...", dcNumber);
 
-                        if (_client != null) // Check if _client exists before trying to use it or dispose
+                        if (_client != null)
                         {
                             _client.OnUpdates -= HandleUpdatesBaseAsync;
                             _client.Dispose();
                             _client = null;
                         }
 
-                        // Create new client with the correct DC
                         _logger.LogInformation("Creating new WTelegram.Client instance for DC{DCNumber}.", dcNumber);
-                        _client = new WTelegram.Client(ConfigProvider); // dcToUse parameter is handled by WTelegram.Client internally
+                        _client = new WTelegram.Client(ConfigProvider);
 
-                        _client.OnUpdates += async updates => // Re-attach event handler
+                        _client.OnUpdates += async updates =>
                         {
                             _logger.LogCritical("[USER_API_ON_UPDATES_TRIGGERED_DC_MIGRATE] Raw updates object of type: {UpdateType} from WTelegram.Client (after DC Migrate)", updates.GetType().FullName);
                             if (updates is UpdatesBase updatesBase)
@@ -631,17 +734,44 @@ namespace Infrastructure.Services
                         };
 
                         _logger.LogInformation("Re-attempting login after DC migration to DC{DCNumber}...", dcNumber);
-                        User loggedInUser = await _client.LoginUserIfNeeded(); // Try logging in again with the new client
+                        User loggedInUser = await _client.LoginUserIfNeeded();
                         _logger.LogInformation("User API Logged in on DC{DCNumber}: {User}", dcNumber, loggedInUser?.ToString());
-                        // You should also re-fetch dialogs here if migration happens
-                        var dialogs = await _client.Messages_GetAllDialogs();
+
+                        // Fix for CS1739: Remove named parameters `context:` and `cancellationToken:`.
+                        var dialogs = await _resiliencePipeline.ExecuteAsync(async (context, token) =>
+                            await _client!.Messages_GetAllDialogs(),
+                            new Context(nameof(_client.Messages_GetAllDialogs) + "_PostMigrate"),
+                            cancellationToken);
                         dialogs.CollectUsersChats(_userCache, _chatCache);
-                        // And update expiry caches
+
+                        int usersTransferredAfterMigrate = 0;
+                        if (_userCache != null && _userCache.Any())
+                        {
+                            _logger.LogDebug("Refreshing user cache post-migration. Found {UserCacheCount} users in simple cache.", _userCache.Count);
+                            foreach (var userEntry in _userCache)
+                            {
+                                _userCacheWithExpiry[userEntry.Key] = (userEntry.Value, DateTime.UtcNow.Add(_cacheExpiration));
+                                usersTransferredAfterMigrate++;
+                            }
+                            _logger.LogInformation("Successfully transferred {UsersTransferredCount} users to expiry cache post-migration.", usersTransferredAfterMigrate);
+                        }
+
+                        int chatsTransferredAfterMigrate = 0;
+                        if (_chatCache != null && _chatCache.Any())
+                        {
+                            _logger.LogDebug("Refreshing chat cache post-migration. Found {ChatCacheCount} chats in simple cache.", _chatCache.Count);
+                            foreach (var chatEntry in _chatCache)
+                            {
+                                _chatCacheWithExpiry[chatEntry.Key] = (chatEntry.Value, DateTime.UtcNow.Add(_cacheExpiration));
+                                chatsTransferredAfterMigrate++;
+                            }
+                            _logger.LogInformation("Successfully transferred {ChatsTransferredCount} chats to expiry cache post-migration.", chatsTransferredAfterMigrate);
+                        }
                     }
                     else
                     {
                         _logger.LogError("User API: Failed to parse DC number from migration error: {ErrorMessage}", e.Message);
-                        throw; // Rethrow if parsing DC fails
+                        throw;
                     }
                 }
                 catch (Exception ex)
@@ -658,11 +788,11 @@ namespace Infrastructure.Services
                 }
                 catch (ObjectDisposedException)
                 {
-                    // If the semaphore is disposed, create a new one
                     _connectionLock = new SemaphoreSlim(1, 1);
                 }
             }
         }
+
 
 
         // Assuming _logger is an ILogger instance available in the class
@@ -672,13 +802,11 @@ namespace Infrastructure.Services
 
         public async Task<Messages_MessagesBase?> GetMessagesAsync(InputPeer peer, params int[] messageIds)
         {
-            // Throw instead of return null for critical uninitialized client
             if (_client == null)
             {
                 _logger.LogError("GetMessagesAsync: Telegram client (_client) is not initialized. Cannot get messages.");
                 throw new InvalidOperationException("Telegram API client is not initialized.");
             }
-            // Throw instead of return null for critical invalid input parameters
             if (peer == null) throw new ArgumentNullException(nameof(peer), "InputPeer cannot be null for getting messages.");
             if (messageIds == null || !messageIds.Any())
                 throw new ArgumentException("Message IDs list cannot be null or empty for getting messages.", nameof(messageIds));
@@ -689,7 +817,7 @@ namespace Infrastructure.Services
                 : string.Join(", ", messageIds);
 
             long peerIdForLog = GetPeerIdForLog(peer);
-            string peerTypeForLog = peer.GetType().Name; // peer is guaranteed not null by checks above
+            string peerTypeForLog = peer.GetType().Name;
 
             _logger.LogDebug("GetMessagesAsync: Attempting to get messages for Peer (Type: {PeerType}, LoggedID: {PeerId}), Message IDs: [{MessageIdsArray}]",
                 peerTypeForLog,
@@ -698,7 +826,6 @@ namespace Infrastructure.Services
 
             try
             {
-                // Cache key construction
                 string cacheKeySuffix = peer is InputPeerUser p_u ? $"u{p_u.user_id}" :
                                         peer is InputPeerChat p_c ? $"c{p_c.chat_id}" :
                                         peer is InputPeerChannel p_ch ? $"ch{p_ch.channel_id}" :
@@ -710,8 +837,6 @@ namespace Infrastructure.Services
 
                 if (_messageCache.TryGetValue(cacheKey, out Messages_MessagesBase? cachedMessages))
                 {
-                    // FIXED CS0136: Using null-conditional operator and direct cast/access to avoid redeclaring variables
-                    // 'mm', 'mms', 'mcm' in inner if/else if blocks.
                     int cachedMessageCount = (cachedMessages as Messages_Messages)?.messages?.Length ??
                                              (cachedMessages as Messages_MessagesSlice)?.messages?.Length ??
                                              (cachedMessages as Messages_ChannelMessages)?.messages?.Length ?? 0;
@@ -729,9 +854,12 @@ namespace Infrastructure.Services
                 var msgIdObjects = messageIds.Select(id => (InputMessage)new InputMessageID { id = id }).ToArray();
                 _logger.LogDebug("GetMessagesAsync: Calling _client.Messages_GetMessages with {InputMessageCount} InputMessageID objects.", msgIdObjects.Length);
 
-                Messages_MessagesBase? messages = await _client.Messages_GetMessages(msgIdObjects);
+                // Fix for CS1739: Remove named parameters `context:` and `cancellationToken:`.
+                Messages_MessagesBase? messages = await _resiliencePipeline.ExecuteAsync(async (context, token) =>
+                    await _client!.Messages_GetMessages(msgIdObjects), // Using '!' as _client is checked for null at method start.
+                    new Context(nameof(GetMessagesAsync)), // Unique operation key for logging.
+                    CancellationToken.None); // Assuming no direct cancellation needed from external for this; otherwise use `cancellationToken`.
 
-                // If Telegram API call returns null, it's an unexpected failure, so throw.
                 if (messages == null)
                 {
                     string errorMessage = $"GetMessagesAsync: _client.Messages_GetMessages returned null for Peer (Type: {peerTypeForLog}, LoggedID: {peerIdForLog}), Message IDs: [{messageIdsString}].";
@@ -739,7 +867,6 @@ namespace Infrastructure.Services
                     throw new InvalidOperationException(errorMessage + " Telegram API call unexpectedly returned null.");
                 }
 
-                // FIXED CS0136: Using null-conditional operator and direct cast/access here too.
                 int fetchedMessageCount = (messages as Messages_Messages)?.messages?.Length ??
                                           (messages as Messages_MessagesSlice)?.messages?.Length ??
                                           (messages as Messages_ChannelMessages)?.messages?.Length ?? 0;
@@ -750,39 +877,40 @@ namespace Infrastructure.Services
 
                 return messages;
             }
-            catch (RpcException rpcEx) // WTelegramClient's specific API error type
+            catch (RpcException rpcEx)
             {
-                _logger.LogError(rpcEx, "GetMessagesAsync: RpcException occurred while fetching messages for Peer (Type: {PeerType}, LoggedID: {PeerId}), Message IDs: [{MessageIdsArray}]. Error: {ErrorTypeString}, Code: {ErrorCode}",
+                _logger.LogError(rpcEx, "GetMessagesAsync: RpcException occurred after Polly retries exhausted (or error was not retryable) for Peer (Type: {PeerType}, LoggedID: {PeerId}), Message IDs: [{MessageIdsArray}]. Error: {ErrorTypeString}, Code: {ErrorCode}",
                     peerTypeForLog, peerIdForLog, messageIdsString, rpcEx.Message, rpcEx.Code);
-                throw; // RE-THROW to trigger Hangfire retry
+                throw;
             }
-            catch (Exception ex) // General exceptions
+            catch (Exception ex)
             {
-                _logger.LogError(ex, "GetMessagesAsync: Unhandled generic exception occurred while fetching messages for Peer (Type: {PeerType}, LoggedID: {PeerId}), Message IDs: [{MessageIdsArray}]",
+                _logger.LogError(ex, "GetMessagesAsync: Unhandled generic exception occurred after Polly retries exhausted (or error was not retryable) for Peer (Type: {PeerType}, LoggedID: {PeerId}), Message IDs: [{MessageIdsArray}]",
                     peerTypeForLog, peerIdForLog, messageIdsString);
-                throw; // RE-THROW to trigger Hangfire retry
+                throw;
             }
         }
 
+
+
         public async Task<UpdatesBase?> SendMessageAsync(
-                InputPeer peer,
-                string message, // This is the 'message' parameter of YOUR method
-                long? replyToMsgId = null,
-                ReplyMarkup? replyMarkup = null,
-                IEnumerable<MessageEntity>? entities = null,
-                bool noWebpage = false,
-                bool background = false,
-                bool clearDraft = false,
-                DateTime? schedule_date = null,
-                bool sendAsBot = false, // Parameter from ITelegramUserApiClient
-                InputMedia? media = null,
-                int[]? parsedMentions = null) // Parameter from ITelegramUserApiClient
+                    InputPeer peer,
+                    string message,
+                    long? replyToMsgId = null,
+                    ReplyMarkup? replyMarkup = null,
+                    IEnumerable<MessageEntity>? entities = null,
+                    bool noWebpage = false,
+                    bool background = false,
+                    bool clearDraft = false,
+                    DateTime? schedule_date = null,
+                    bool sendAsBot = false,
+                    InputMedia? media = null,
+                    int[]? parsedMentions = null)
         {
-            // MODIFIED: Throw instead of return null for critical uninitialized client
             if (_client == null)
             {
                 _logger.LogError("SendMessageAsync: Telegram client (_client) is not initialized. Cannot send message.");
-                throw new InvalidOperationException("Telegram API client is not initialized."); // Force fail and maybe a higher-level app crash if startup failed.
+                throw new InvalidOperationException("Telegram API client is not initialized.");
             }
 
             long peerIdForLog = GetPeerIdForLog(peer);
@@ -806,7 +934,6 @@ namespace Infrastructure.Services
                 replyToMsgId.HasValue ? replyToMsgId.Value.ToString() : "N/A",
                 noWebpage, background, clearDraft, schedule_date.HasValue ? schedule_date.Value.ToString() : "N/A", sendAsBot);
 
-            // MODIFIED: Throw instead of return null for critical invalid input. This would be a logic error by caller.
             if (peer == null)
             {
                 _logger.LogWarning("SendMessageAsync: InputPeer is null. Cannot send message. Message (partial): '{MessageContent}'", truncatedMessage);
@@ -815,7 +942,6 @@ namespace Infrastructure.Services
 
             try
             {
-                // Temporary replacement as instructed - REMAINING AS-IS
                 if (message != null && message.Contains("https://wa.me/message/W6HXT7VWR3U2C1"))
                 {
                     message = message.Replace("https://wa.me/message/W6HXT7VWR3U2C1", "@capxi");
@@ -835,22 +961,29 @@ namespace Infrastructure.Services
                 {
                     _logger.LogDebug("SendMessageAsync: Calling _client.Messages_SendMessageAsync (text-only) for Peer (Type: {PeerType}, LoggedID: {PeerId}).",
                         peerTypeForLog, peerIdForLog);
-                    updatesBase = await _client.Messages_SendMessage(
-                        peer: peer, message: message, random_id: random_id, reply_to: inputReplyTo,
-                        reply_markup: replyMarkup, no_webpage: noWebpage, background: background,
-                        clear_draft: clearDraft, schedule_date: schedule_date);
+                    // Fix for CS1739: Remove named parameters `context:` and `cancellationToken:`.
+                    updatesBase = await _resiliencePipeline.ExecuteAsync(async (context, token) =>
+                        await _client!.Messages_SendMessage(
+                            peer: peer, message: message, random_id: random_id, reply_to: inputReplyTo,
+                            reply_markup: replyMarkup, no_webpage: noWebpage, background: background,
+                            clear_draft: clearDraft, schedule_date: schedule_date),
+                        new Context(nameof(SendMessageAsync) + "_Text"),
+                        CancellationToken.None); // Or `cancellationToken` from method param
                 }
                 else
                 {
                     _logger.LogDebug("SendMessageAsync: Calling _client.Messages_SendMediaAsync for Peer (Type: {PeerType}, LoggedID: {PeerId}).",
                         peerTypeForLog, peerIdForLog);
-                    updatesBase = await _client.Messages_SendMedia(
-                        peer: peer, media: media, random_id: random_id, message: message,
-                        reply_to: inputReplyTo, reply_markup: replyMarkup, background: background,
-                        clear_draft: clearDraft, schedule_date: schedule_date);
+                    // Fix for CS1739: Remove named parameters `context:` and `cancellationToken:`.
+                    updatesBase = await _resiliencePipeline.ExecuteAsync(async (context, token) =>
+                        await _client!.Messages_SendMedia(
+                            peer: peer, media: media, random_id: random_id, message: message,
+                            reply_to: inputReplyTo, reply_markup: replyMarkup, background: background,
+                            clear_draft: clearDraft, schedule_date: schedule_date),
+                        new Context(nameof(SendMessageAsync) + "_Media"),
+                        CancellationToken.None); // Or `cancellationToken` from method param
                 }
 
-                // MODIFIED: If WTelegramClient API call returns null, it's an unexpected failure, so throw.
                 if (updatesBase == null)
                 {
                     string errorMessage = $"SendMessageAsync: WTelegramClient API call returned null for Peer (Type: {peerTypeForLog}, LoggedID: {peerIdForLog}). Message (partial): '{truncatedMessage}'.";
@@ -865,17 +998,17 @@ namespace Infrastructure.Services
                     peerTypeForLog, peerIdForLog);
                 return updatesBase;
             }
-            catch (RpcException rpcEx) // WTelegramClient's specific API error type
+            catch (RpcException rpcEx)
             {
-                _logger.LogError(rpcEx, "SendMessageAsync: Telegram API (RPC) exception for Peer (Type: {PeerType}, LoggedID: {PeerId}). Error: {ErrorTypeString}, Code: {ErrorCode}. Message (partial): '{MessageContent}'",
+                _logger.LogError(rpcEx, "SendMessageAsync: Telegram API (RPC) exception occurred after Polly retries exhausted (or error was not retryable) for Peer (Type: {PeerType}, LoggedID: {PeerId}). Error: {ErrorTypeString}, Code: {ErrorCode}. Message (partial): '{MessageContent}'",
                     peerTypeForLog, peerIdForLog, rpcEx.Message, rpcEx.Code, truncatedMessage);
-                throw; // RE-THROW to trigger Hangfire retry
+                throw;
             }
-            catch (Exception ex) // General exceptions (e.g., network, unexpected internal errors)
+            catch (Exception ex)
             {
-                _logger.LogError(ex, "SendMessageAsync: Unhandled generic exception for Peer (Type: {PeerType}, LoggedID: {PeerId}). Message (partial): '{MessageContent}'",
+                _logger.LogError(ex, "SendMessageAsync: Unhandled generic exception occurred after Polly retries exhausted (or error was not retryable) for Peer (Type: {PeerType}, LoggedID: {PeerId}). Message (partial): '{MessageContent}'",
                     peerTypeForLog, peerIdForLog, truncatedMessage);
-                throw; // RE-THROW to trigger Hangfire retry
+                throw;
             }
             finally
             {
@@ -883,30 +1016,28 @@ namespace Infrastructure.Services
             }
         }
 
+
         // EDITED METHOD: SendMediaGroupAsync - Changed call to _client.SendMediaAlbum and removed manual random_id assignment
         public async Task SendMediaGroupAsync(TL.InputPeer peer, TL.InputSingleMedia[] media, string albumCaption = null, TL.MessageEntity[]? albumEntities = null, long? replyToMsgId = null,
-                                                            bool background = false, DateTime? schedule_date = null,
-                                                            bool sendAsBot = false, int[]? parsedMentions = null)
+                                                             bool background = false, DateTime? schedule_date = null,
+                                                             bool sendAsBot = false, int[]? parsedMentions = null)
         {
-            // MODIFIED: Throw instead of return for critical uninitialized client
             if (_client == null)
             {
                 _logger.LogError("SendMediaGroupAsync: Telegram client (_client) is not initialized. Cannot send media group.");
                 throw new InvalidOperationException("Telegram API client is not initialized.");
             }
-            // MODIFIED: Throw instead of return for critical invalid input parameters
-            if (peer == null) // Media can be empty initially but if no Peer, cannot proceed.
+            if (peer == null)
             {
                 _logger.LogWarning("SendMediaGroupAsync: InputPeer is null. Cannot send media group. Media Items Info: {MediaItemsInfo}", media?.Length.ToString() ?? "null");
                 throw new ArgumentNullException(nameof(peer), "InputPeer cannot be null for sending media group.");
             }
-            if (media == null || !media.Any()) // Cannot send empty media group.
+            if (media == null || !media.Any())
             {
                 _logger.LogWarning("SendMediaGroupAsync: Media list is null or empty. Aborting send. Peer: {PeerType}, ID: {PeerId}", peer?.GetType().Name, GetPeerIdForLog(peer));
                 throw new ArgumentException("Media list cannot be null or empty for sending media group.", nameof(media));
             }
 
-            // Use the explicit albumCaption parameter for logging, fallback to first media's message if null/empty
             string effectiveAlbumCaptionForLog = string.IsNullOrWhiteSpace(albumCaption)
                 ? (media.FirstOrDefault()?.message is string firstMediaMessage && !string.IsNullOrEmpty(firstMediaMessage)
                     ? TruncateString(firstMediaMessage, 50)
@@ -934,10 +1065,8 @@ namespace Infrastructure.Services
                     lockKey, peerTypeForLog, peerIdForLog);
 
                 int replyToMsgIdInt = replyToMsgId.HasValue ? (int)replyToMsgId.Value : 0;
-                TL.InputPeer? sendAsPeerForApi = null; // 'sendAsBot' parameter is typically for anonymous channel admin posting, not direct user client sending.
-                                                       // The 'SendAlbumAsync' helper doesn't expose a 'send_as' parameter directly.
+                TL.InputPeer? sendAsPeerForApi = null;
 
-                // Temporary replacement as instructed for message content within media items
                 foreach (var m in media)
                 {
                     if (m.message != null && m.message.Contains("https://wa.me/message/W6HXT7VWR3U2C1"))
@@ -946,45 +1075,35 @@ namespace Infrastructure.Services
                     }
                 }
 
-                // Convert InputSingleMedia[] to ICollection<InputMedia>
-                // IMPORTANT NOTE: WTelegramClient's SendAlbumAsync helper (which this method calls internally)
-                // only uses the `media` property of InputSingleMedia when constructing the RPC's `multi_media` array.
-                // It does NOT transfer the `message` or `entities` properties of individual InputSingleMedia objects
-                // to make them per-item captions. It expects a single `caption` and `entities` parameter for the *entire album*.
-                // If you need individual captions for each media item within an album,
-                // you would need to manually construct and send the `messages.sendMultiMedia` RPC request
-                // using `_client.SendRequestAsync`, and populate the `multi_media` list with InputSingleMedia
-                // objects that correctly define their `message` and `entities` properties.
-                // The current implementation provides only one overall album caption (from `albumCaption` and `albumEntities` parameters).
                 ICollection<TL.InputMedia> inputMedias = media.Select(ism => ism.media).ToList();
 
-                // Call WTelegramClient.SendAlbumAsync with correct parameters.
-                // The 'background' parameter is not available on this specific SendAlbumAsync overload.
-                // The 'send_as' parameter for the RPC is not directly exposed on SendAlbumAsync helper,
-                // so we pass null for `sendAsPeerForApi`.
-                await _client.SendAlbumAsync(
-                    peer: peer,
-                    medias: inputMedias, // Pass the converted collection of InputMedia
-                    caption: albumCaption, // Explicitly pass the album caption
-                    reply_to_msg_id: replyToMsgIdInt, // Pass the int ID
-                    entities: albumEntities, // Pass the album-level entities
-                    schedule_date: schedule_date ?? default(DateTime) // schedule_date requires non-nullable DateTime
-                );
+                // Fix for CS1739: Remove named parameters `context:` and `cancellationToken:`.
+                await _resiliencePipeline.ExecuteAsync(async (context, token) =>
+                    await _client!.SendAlbumAsync(
+                        peer: peer,
+                        medias: inputMedias,
+                        caption: albumCaption,
+                        reply_to_msg_id: replyToMsgIdInt,
+                        entities: albumEntities,
+                        schedule_date: schedule_date ?? default(DateTime)
+                    ),
+                    new Context(nameof(SendMediaGroupAsync)),
+                    CancellationToken.None); // Or `cancellationToken` from method param
 
                 _logger.LogInformation("SendMediaGroupAsync: Successfully sent media group to Peer (Type: {PeerType}, LoggedID: {PeerId}).",
                     peerTypeForLog, peerIdForLog);
             }
-            catch (TL.RpcException rpcEx) // WTelegramClient's specific API error type
+            catch (TL.RpcException rpcEx)
             {
-                _logger.LogError(rpcEx, "SendMediaGroupAsync: Telegram API (RPC) exception for Peer (Type: {PeerType}, LoggedID: {PeerId}). Error: {ErrorTypeString}, Code: {ErrorCode}.",
+                _logger.LogError(rpcEx, "SendMediaGroupAsync: Telegram API (RPC) exception occurred after Polly retries exhausted (or error was not retryable) for Peer (Type: {PeerType}, LoggedID: {PeerId}). Error: {ErrorTypeString}, Code: {ErrorCode}.",
                     peerTypeForLog, peerIdForLog, rpcEx.Message, rpcEx.Code);
-                throw; // RE-THROW to trigger Hangfire retry
+                throw;
             }
-            catch (Exception ex) // General exceptions (e.g., network, unexpected internal errors)
+            catch (Exception ex)
             {
-                _logger.LogError(ex, "SendMediaGroupAsync: Unhandled generic exception for Peer (Type: {PeerType}, LoggedID: {PeerId}).",
+                _logger.LogError(ex, "SendMediaGroupAsync: Unhandled generic exception occurred after Polly retries exhausted (or error was not retryable) for Peer (Type: {PeerType}, LoggedID: {PeerId}).",
                     peerTypeForLog, peerIdForLog);
-                throw; // RE-THROW to trigger Hangfire retry
+                throw;
             }
             finally
             {
@@ -992,36 +1111,34 @@ namespace Infrastructure.Services
             }
         }
 
+
         // Assuming _logger is an ILogger instance available in the class
         // Assuming _client is an instance of WTelegram.Client
 
         public async Task<UpdatesBase?> ForwardMessagesAsync(
-             InputPeer toPeer,
-             int[] messageIds,
-             InputPeer fromPeer,
-             bool dropAuthor = false,
-             bool noForwards = false,
-             int? topMsgId = null,
-             DateTime? scheduleDate = null,
-             bool sendAsBot = false)
+          InputPeer toPeer,
+          int[] messageIds,
+          InputPeer fromPeer,
+          bool dropAuthor = false,
+          bool noForwards = false,
+          int? topMsgId = null,
+          DateTime? scheduleDate = null,
+          bool sendAsBot = false)
         {
-            // MODIFIED: Throw instead of return null for critical uninitialized client
             if (_client == null)
             {
                 _logger.LogError("ForwardMessagesAsync: Telegram client (_client) is not initialized. Cannot forward messages.");
                 throw new InvalidOperationException("Telegram API client is not initialized.");
             }
-            // MODIFIED: Throw instead of return null for critical invalid input parameters
             if (toPeer == null) throw new ArgumentNullException(nameof(toPeer), "ToPeer cannot be null for forwarding messages.");
             if (fromPeer == null) throw new ArgumentNullException(nameof(fromPeer), "FromPeer cannot be null for forwarding messages.");
             if (messageIds == null || !messageIds.Any())
                 throw new ArgumentException("Message IDs list cannot be null or empty for forwarding messages.", nameof(messageIds));
 
 
-            // Extract peer types and IDs for logging
-            string toPeerType = toPeer.GetType().Name; // No longer needs '?' as toPeer is validated non-null
+            string toPeerType = toPeer.GetType().Name;
             long toPeerId = GetPeerIdForLog(toPeer);
-            string fromPeerType = fromPeer.GetType().Name; // No longer needs '?' as fromPeer is validated non-null
+            string fromPeerType = fromPeer.GetType().Name;
             long fromPeerId = GetPeerIdForLog(fromPeer);
 
             _logger.LogDebug(
@@ -1031,34 +1148,30 @@ namespace Infrastructure.Services
                 dropAuthor, noForwards
             );
 
-            // Generate random IDs for forwarding (Hangfire may retry and send same random IDs)
             var randomIdArray = messageIds.Select(_ => WTelegram.Helpers.RandomLong()).ToArray();
 
-            // Acquire forward lock (prevents concurrent writes/conflicts from same source/target pair)
             string lockKey = $"forward_peer_{fromPeerType}_{fromPeerId}_to_{toPeerType}_{toPeerId}";
             using var forwardLock = await AsyncLock.LockAsync(lockKey);
 
             try
             {
-                // sendAsBot parameter is typically used for sending as a channel's anonymous admin.
-                // For `Messages_ForwardMessages`, WTelegram.Client does not expose a `send_as` parameter directly on the API call.
-                // This is usually handled by the `to_peer` being a channel, and the client's internal session permissions.
-                // If `sendAsBot` implies anonymous admin, it's not a direct flag here.
-                // Leaving sendAsPeer null as it was, as the direct API method doesn't take it for forwarding.
                 InputPeer? sendAsPeer = null;
 
-                UpdatesBase? result = await _client.Messages_ForwardMessages(
-                    to_peer: toPeer,
-                    from_peer: fromPeer,
-                    id: messageIds,
-                    random_id: randomIdArray,
-                    drop_author: dropAuthor,
-                    noforwards: noForwards,
-                    top_msg_id: topMsgId,
-                    schedule_date: scheduleDate
-                );
+                // Fix for CS1739: Remove named parameters `context:` and `cancellationToken:`.
+                UpdatesBase? result = await _resiliencePipeline.ExecuteAsync(async (context, token) =>
+                    await _client!.Messages_ForwardMessages(
+                        to_peer: toPeer,
+                        from_peer: fromPeer,
+                        id: messageIds,
+                        random_id: randomIdArray,
+                        drop_author: dropAuthor,
+                        noforwards: noForwards,
+                        top_msg_id: topMsgId,
+                        schedule_date: scheduleDate
+                    ),
+                    new Context(nameof(ForwardMessagesAsync)),
+                    CancellationToken.None); // Or `cancellationToken` from method param
 
-                // MODIFIED: If WTelegramClient API call returns null, it's an unexpected failure, so throw.
                 if (result == null)
                 {
                     string errorMessage = $"ForwardMessagesAsync: WTelegramClient API call returned null for forwarding. From Peer (Type: {fromPeerType}, ID: {fromPeerId}) To Peer (Type: {toPeerType}, ID: {toPeerId}). Message IDs: [{string.Join(", ", messageIds)}].";
@@ -1066,7 +1179,6 @@ namespace Infrastructure.Services
                     throw new InvalidOperationException(errorMessage + " Telegram API call unexpectedly returned null.");
                 }
 
-                // Log result of forwarding (information level, removed details if log level high)
                 _logger.LogInformation(
                     "ForwardMessagesAsync: Successfully forwarded messages. Response type: {ResponseType}. " +
                     "From Peer (Type: {FromPeerType}, ID: {FromPeerId}) " +
@@ -1077,19 +1189,19 @@ namespace Infrastructure.Services
 
                 return result;
             }
-            catch (RpcException rpcEx) // WTelegramClient's specific API error type
+            catch (RpcException rpcEx)
             {
                 _logger.LogError(rpcEx,
-                    "ForwardMessagesAsync: Telegram API (RPC) exception. Error: {ErrorTypeString}, Code: {ErrorCode}. From Peer (Type: {FromPeerType}, ID: {FromPeerId}) To Peer (Type: {ToPeerType}, ID: {ToPeerId}). Message IDs: [{MessageIdsArray}]",
+                    "ForwardMessagesAsync: Telegram API (RPC) exception occurred after Polly retries exhausted (or error was not retryable). Error: {ErrorTypeString}, Code: {ErrorCode}. From Peer (Type: {FromPeerType}, ID: {FromPeerId}) To Peer (Type: {ToPeerType}, ID: {ToPeerId}). Message IDs: [{MessageIdsArray}]",
                     rpcEx.Message, rpcEx.Code, fromPeerType, fromPeerId, toPeerType, toPeerId, string.Join(", ", messageIds));
-                throw; // RE-THROW to trigger Hangfire retry
+                throw;
             }
-            catch (Exception ex) // General exceptions (e.g., network, unexpected internal errors)
+            catch (Exception ex)
             {
                 _logger.LogError(ex,
-                    "ForwardMessagesAsync: Unhandled generic exception. From Peer (Type: {FromPeerType}, ID: {FromPeerId}) To Peer (Type: {ToPeerType}, ID: {ToPeerId}). Message IDs: [{MessageIdsArray}]",
+                    "ForwardMessagesAsync: Unhandled generic exception occurred after Polly retries exhausted (or error was not retryable). From Peer (Type: {FromPeerType}, ID: {FromPeerId}) To Peer (Type: {ToPeerType}, ID: {ToPeerId}). Message IDs: [{MessageIdsArray}]",
                     fromPeerType, fromPeerId, toPeerType, toPeerId, string.Join(", ", messageIds));
-                throw; // RE-THROW to trigger Hangfire retry
+                throw;
             }
             finally
             {
@@ -1103,8 +1215,6 @@ namespace Infrastructure.Services
             if (peer is InputPeerUser ipu) return ipu.user_id;
             if (peer is InputPeerChat ipc) return ipc.chat_id;
             if (peer is InputPeerChannel ipch) return ipch.channel_id;
-            // InputPeerSelf doesn't have an explicit ID field in the same way,
-            // it implies the current user. For logging, 0 or a specific marker can be used.
             if (peer is InputPeerSelf) return -1; // Or some other indicator for "self"
             return 0; // Default for unknown or null
         }
@@ -1112,7 +1222,6 @@ namespace Infrastructure.Services
 
         public async Task<User?> GetSelfAsync()
         {
-            // Add client null check here as well for consistency and safety
             if (_client == null)
             {
                 _logger.LogError("GetSelfAsync: Telegram client (_client) is not initialized.");
@@ -1120,13 +1229,25 @@ namespace Infrastructure.Services
             }
             try
             {
-                return await _client.LoginUserIfNeeded();
+                // Fix for CS1739: Remove named parameters `context:` and `cancellationToken:`.
+                return await _resiliencePipeline.ExecuteAsync(async (context, token) =>
+                    await _client!.LoginUserIfNeeded(),
+                    new Context(nameof(GetSelfAsync)),
+                    CancellationToken.None); // Or `cancellationToken` from method param
+            }
+            catch (RpcException rpcEx)
+            {
+                _logger.LogError(rpcEx, "GetSelfAsync failed after Polly retries exhausted (or error was not retryable). Error: {ErrorTypeString}, Code: {ErrorCode}",
+                                 rpcEx.Message, rpcEx.Code);
+                return null;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "GetSelfAsync failed."); return null;
+                _logger.LogError(ex, "GetSelfAsync failed after Polly retries exhausted (or error was not retryable).");
+                return null;
             }
         }
+
 
         public async Task<InputPeer?> ResolvePeerAsync(long positivePeerId)
         {
@@ -1144,7 +1265,6 @@ namespace Infrastructure.Services
             _logger.LogDebug("ResolvePeerAsync: Attempting to resolve PositivePeerId: {PositivePeerId}", positivePeerId);
 
             // 1. ابتدا کش سفارشی خودتان را با شناسه مثبت بررسی کنید
-            // این کش توسط Messages_GetAllDialogs و آپدیت‌ها پر می‌شود.
             if (_userCacheWithExpiry.TryGetValue(positivePeerId, out var userCacheEntry) &&
                 userCacheEntry.Expiry > DateTime.UtcNow && userCacheEntry.User != null)
             {
@@ -1162,27 +1282,26 @@ namespace Infrastructure.Services
                         positivePeerId, channelFromCache.access_hash, positivePeerId);
                     return new InputPeerChannel(positivePeerId, channelFromCache.access_hash);
                 }
-                else if (chatCacheEntry.Chat is Chat chatFromCache) // گروه کوچک
+                else if (chatCacheEntry.Chat is Chat chatFromCache)
                 {
                     _logger.LogInformation("ResolvePeerAsync: Found Chat {ChatId} in LOCAL CHAT CACHE for PositivePeerId {PositivePeerId}.",
                         positivePeerId, positivePeerId);
-                    return new InputPeerChat(positivePeerId); // چت‌های کوچک معمولا access_hash نیاز ندارند
+                    return new InputPeerChat(positivePeerId);
                 }
             }
             _logger.LogDebug("ResolvePeerAsync: PositivePeerId {PositivePeerId} not found in active local cache. Attempting API calls.", positivePeerId);
 
 
-            // 2. استراتژی اول API: Contacts_ResolveUsername (با شناسه مثبت به عنوان رشته)
-            // این متد برای یوزرنیم‌ها، شناسه عددی کاربر/ربات (به عنوان رشته) و گاهی کانال عمومی با ID عددی‌اش کار می‌کند.
-            // این بهترین راه برای Resolve کردن Peer هایی است که کاربر قبلاً با آنها تعامل نداشته است.
             string resolveString = positivePeerId.ToString();
             _logger.LogDebug("ResolvePeerAsync: Attempting API call with Contacts_ResolveUsername for string '{ResolveString}' (PositivePeerId {PositivePeerId}).", resolveString, positivePeerId);
             try
             {
-                // Contacts_ResolveUsername یک آبجکت Contacts_ResolvedPeer برمی‌گرداند
-                Contacts_ResolvedPeer resolvedUsernameResponse = await _client.Contacts_ResolveUsername(resolveString);
+                // Fix for CS1739: Remove named parameters `context:` and `cancellationToken:`.
+                Contacts_ResolvedPeer resolvedUsernameResponse = await _resiliencePipeline.ExecuteAsync(async (context, token) =>
+                    await _client!.Contacts_ResolveUsername(resolveString),
+                    new Context(nameof(ResolvePeerAsync) + "_ResolveUsername"),
+                    CancellationToken.None); // Or `cancellationToken` from method param
 
-                // آپدیت کش‌ها با اطلاعات دریافتی از این پاسخ
                 if (resolvedUsernameResponse?.users != null)
                 {
                     foreach (var uEntry in resolvedUsernameResponse.users)
@@ -1237,19 +1356,20 @@ namespace Infrastructure.Services
                 _logger.LogError(ex, "ResolvePeerAsync: Exception during Contacts_ResolveUsername for string '{ResolveString}' (PositivePeerId {PositivePeerId}).", resolveString, positivePeerId);
             }
 
-            // 3. استراتژی دوم API (Fallback): Channels_GetChannels
-            // این متد به طور خاص برای کانال‌ها و سوپرگروه‌هاست، حتی اگر خصوصی باشند و کاربر عضو باشد.
-            // این متد با شناسه "کوتاه" مثبت کانال کار می‌کند. positivePeerId باید همین شناسه باشد.
             _logger.LogDebug("ResolvePeerAsync: Attempting API call with Channels_GetChannels for PositivePeerId: {PositivePeerId} as a fallback (if it's a channel and previous methods failed).", positivePeerId);
             try
             {
-                Messages_Chats channelsResponse = await _client.Channels_GetChannels(new[] { new InputChannel(positivePeerId, 0) });
+                // Fix for CS1739: Remove named parameters `context:` and `cancellationToken:`.
+                Messages_Chats channelsResponse = await _resiliencePipeline.ExecuteAsync(async (context, token) =>
+                    await _client!.Channels_GetChannels(new[] { new InputChannel(positivePeerId, 0) }),
+                    new Context(nameof(ResolvePeerAsync) + "_GetChannels"),
+                    CancellationToken.None); // Or `cancellationToken` from method param
+
                 if (channelsResponse?.chats != null)
                 {
-                    foreach (var cEntry in channelsResponse.chats) // آپدیت کش چت خودمان
+                    foreach (var cEntry in channelsResponse.chats)
                         _chatCacheWithExpiry[cEntry.Key] = (cEntry.Value, DateTime.UtcNow.Add(_cacheExpiration));
                 }
-                // اگر Messages_Chats شامل users هم می‌بود (که نیست)، اینجا آپدیت می‌کردیم
 
                 if (channelsResponse?.chats != null && channelsResponse.chats.TryGetValue(positivePeerId, out var chatFromApi) && chatFromApi is Channel telegramChannel)
                 {
@@ -1276,14 +1396,12 @@ namespace Infrastructure.Services
         public async ValueTask DisposeAsync()
         {
             _logger.LogInformation("Disposing TelegramUserApiClient...");
-            // NEW/MODIFIED BLOCK START: Dispose the cache cleanup timer
             if (_cacheCleanupTimer != null)
             {
-                await _cacheCleanupTimer.DisposeAsync(); // Asynchronously dispose the timer
-                _cacheCleanupTimer = null; // Set to null after disposal to indicate it's no longer valid
+                await _cacheCleanupTimer.DisposeAsync();
+                _cacheCleanupTimer = null;
                 _logger.LogInformation("Cache cleanup timer disposed.");
             }
-            // NEW/MODIFIED BLOCK END
 
             if (_client != null)
             {

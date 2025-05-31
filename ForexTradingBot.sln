@@ -21,6 +21,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TelegramPanel", "TelegramPa
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{7805DCA2-D4E1-4D76-947F-EC3D79882467}"
 	ProjectSection(SolutionItems) = preProject
+		ReadMe.md = ReadMe.md
 		Update-EfDatabase.ps1 = Update-EfDatabase.ps1
 	EndProjectSection
 EndProject

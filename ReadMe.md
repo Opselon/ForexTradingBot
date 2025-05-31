@@ -1,5 +1,3 @@
----
-
 # ForexSignalBot: AI-Driven Telegram Forex Signals 📈🤖
 
 ![Project Banner: ForexSignalBot - AI-Driven Telegram Forex Signals, with a stylized chart and robot icon.](https://via.placeholder.com/1200x250/000000/FFFFFF?text=ForexSignalBot+-+AI-Driven+Telegram+Forex+Signals)

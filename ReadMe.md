@@ -1,8 +1,3 @@
-بسیار عالی! درخواست شما کاملاً واضح است: یک README کاملاً مملو از ایموجی‌های مرتبط، در عین حال که ساختار حرفه‌ای، جزئیات فنی و اطلاعات دقیق حفظ شود. هر جا که ایموجی مناسب و معناداری بتواند اضافه شود، آن را قرار خواهم داد تا یک تجربه بصری و جذاب ایجاد کند.
-
-این فایل README جدید، با نهایت ایموجی‌های ممکن، آماده استفاده مستقیم در مخزن GitHub شماست:
-
----
 # ForexSignalBot: AI-Driven Telegram Forex Signals 📈🤖✨🚀
 
 [![License](https://img.shields.io/github/license/Opselon/ForexTradingBot?style=for-the-badge&color=blue)](https://github.com/Opselon/ForexTradingBot/blob/main/LICENSE "Project License Badge: Indicates the MIT License, allowing open use and modification of the codebase. Click to view license details and usage terms.")

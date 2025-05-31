@@ -1,21 +1,54 @@
 # ForexSignalBot: AI-Driven Telegram Forex Signals 📈🤖✨
 
-![Project Banner: ForexSignalBot - AI-Driven Telegram Forex Signals, featuring a futuristic robot icon, a dynamic financial chart, and subtle market data visualizations in the background. The title is prominent, emphasizing AI capabilities.](https://via.placeholder.com/1200x300/1A202C/E2E8F0?text=ForexSignalBot+%E2%80%A2+AI-Powered+Trading+Signals)
+<!-- Project Banner: Visually striking banner to immediately convey the project's essence. -->
+![Project Banner: ForexSignalBot - AI-Driven Telegram Forex Signals. Features a stylized trading chart with an upward trend, a sleek robotic head representing AI, and subtle, abstract digital patterns indicating data processing. The title is prominently displayed with a futuristic font.](https://via.placeholder.com/1200x320/0F2027/98FB98?text=ForexSignalBot+%E2%80%A2+AI-Powered+Precision+Trading)
 
-[![Build Status](https://github.com/Opselon/ForexTradingBot/actions/workflows/build.yml/badge.svg?style=for-the-badge)](https://github.com/Opselon/ForexTradingBot/actions/workflows/build.yml "GitHub Actions Workflow Status: Displays the current build status (e.g., passing or failing) for the main branch.")
-[![License](https://img.shields.io/github/license/Opselon/ForexTradingBot?style=for-the-badge)](https://github.com/Opselon/ForexTradingBot/blob/main/LICENSE "Project License Badge: Indicates the MIT License, allowing open use and modification.")
-[![GitHub Stars](https://img.shields.io/github/stars/Opselon/ForexTradingBot?style=social&label=Stars)](https://github.com/Opselon/ForexTradingBot/stargazers "GitHub Stars Count: Shows how many users have starred this repository, reflecting popularity and interest.")
-[![GitHub Forks](https://img.shields.io/github/forks/Opselon/ForexTradingBot?style=social&label=Forks)](https://github.com/Opselon/ForexTradingBot/network/members "GitHub Forks Count: Displays the number of times this repository has been forked, indicating collaborative potential.")
-[![GitHub Issues](https://img.shields.io/github/issues/Opselon/ForexTradingBot?style=for-the-badge)](https://github.com/Opselon/ForexTradingBot/issues "GitHub Open Issues Count: Shows the number of currently open issues, indicating active development and problem-solving.")
-[![Top Language](https://img.shields.io/github/languages/top/Opselon/ForexTradingBot?style=for-the-badge)](https://github.com/Opselon/ForexTradingBot "Top Programming Language: Clearly displays C# as the primary language used in the project.")
-[![Last Commit](https://img.shields.io/github/last-commit/Opselon/ForexTradingBot?style=for-the-badge)](https://github.com/Opselon/ForexTradingBot/commits/main "Date of Last Commit: Shows how recently the codebase was updated, indicating project activity.")
-[![Code Size](https://img.shields.io/github/languages/code-size/Opselon/ForexTradingBot?style=for-the-badge)](https://github.com/Opselon/ForexTradingBot "Total Code Size: Indicates the total lines of code, providing a rough estimate of project scale.")
+<!-- Badges Section: Modern, informative, and visually appealing badges. -->
+[![Build Status](https://github.com/Opselon/ForexTradingBot/actions/workflows/build.yml/badge.svg?style=for-the-badge&logo=githubactions&logoColor=white)](https://github.com/Opselon/ForexTradingBot/actions/workflows/build.yml "GitHub Actions Workflow Status: Displays the current build status (e.g., passing or failing) for the main branch.")
+[![License](https://img.shields.io/github/license/Opselon/ForexTradingBot?style=for-the-badge&color=blue)](https://github.com/Opselon/ForexTradingBot/blob/main/LICENSE "Project License Badge: Indicates the MIT License, allowing open use and modification of the codebase.")
+[![GitHub Stars](https://img.shields.io/github/stars/Opselon/ForexTradingBot?style=for-the-badge&logo=github)](https://github.com/Opselon/ForexTradingBot/stargazers "GitHub Stars Count: Shows how many users have starred this repository, reflecting popularity and interest in the project.")
+[![GitHub Forks](https://img.shields.io/github/forks/Opselon/ForexTradingBot?style=for-the-badge&logo=github)](https://github.com/Opselon/ForexTradingBot/network/members "GitHub Forks Count: Displays the number of times this repository has been forked, indicating collaborative potential and community engagement.")
+[![GitHub Issues](https://img.shields.io/github/issues/Opselon/ForexTradingBot?style=for-the-badge&logo=github)](https://github.com/Opselon/ForexTradingBot/issues "GitHub Open Issues Count: Shows the number of currently open issues, indicating active development, bug tracking, and problem-solving.")
+[![Top Language](https://img.shields.io/github/languages/top/Opselon/ForexTradingBot?style=for-the-badge&color=informational)](https://github.com/Opselon/ForexTradingBot "Top Programming Language: Clearly displays C# as the primary language used in the project, often indicating the core technology stack.")
+[![Last Commit](https://img.shields.io/github/last-commit/Opselon/ForexTradingBot?style=for-the-badge&color=success)](https://github.com/Opselon/ForexTradingBot/commits/main "Date of Last Commit: Shows how recently the codebase was updated, providing an indication of project activity and ongoing maintenance.")
+[![Code Size](https://img.shields.io/github/languages/code-size/Opselon/ForexTradingBot?style=for-the-badge&color=important)](https://github.com/Opselon/ForexTradingBot "Total Code Size: Indicates the total lines of code in the repository, offering a rough estimate of the project's scale and complexity.")
+[![Contributors](https://img.shields.io/github/contributors/Opselon/ForexTradingBot?style=for-the-badge)](https://github.com/Opselon/ForexTradingBot/graphs/contributors "Number of Contributors: Shows the total number of individuals who have contributed code to this project, highlighting community involvement.")
+
+---
+
+## 📖 Table of Contents
+
+*   [🚀 Project Overview: Precision Trading with ForexSignalBot](#-project-overview-precision-trading-with-forexsignalbot)
+    *   [Background & Necessity: Navigating the Volatile Markets](#background--necessity-navigating-the-volatile-markets)
+    *   [Core Objectives: Empowering Strategic Trading](#core-objectives-empowering-strategic-trading)
+*   [🌟 Key Highlights](#-key-highlights)
+*   [🏛️ Architecture & Core Technologies: Engineered for Excellence](#️-architecture--core-technologies-engineered-for-excellence)
+    *   [Visualizing the Clean Architecture](#visualizing-the-clean-architecture)
+    *   [Project Layers: A Blueprint for Scalability](#project-layers-a-blueprint-for-scalability)
+    *   [Core Technologies: Powering Performance & Reliability](#core-technologies-powering-performance--reliability)
+*   [✨ Key Features: Unlocking Market Intelligence](#-key-features-unlocking-market-intelligence)
+    *   [Flexible Membership & Subscription System: Tailored Access](#flexible-membership--subscription-system-tailored-access)
+    [Advanced News Aggregation & Intelligent Analysis: Stay Ahead](#-advanced-news-aggregation--intelligent-analysis-stay-ahead)
+    *   [Multi-Currency Signal Support: Diverse Market Coverage](#-multi-currency-signal-support-diverse-market-coverage)
+    *   [Intelligent Analysis & Sentiment (Future/Ongoing): AI-Powered Edge](#-intelligent-analysis--sentiment-futureongoing-ai-powered-edge)
+    *   [Robust & Responsive Telegram Bot: Seamless User Experience](#-robust--responsive-telegram-bot-seamless-user-experience)
+    *   [Security & Data Integrity: Trustworthy Operations](#-security--data-integrity-trustworthy-operations)
+*   [📊 Performance Insights: Data at a Glance](#-performance-insights-data-at-a-glance)
+    *   [Signal Accuracy Over Time](#signal-accuracy-over-time)
+    *   [User Growth & Engagement](#user-growth--engagement)
+    *   [Latency of Signal Delivery](#latency-of-signal-delivery)
+*   [🎨 UI/UX Concepts (Telegram Bot): Intuitive & Engaging](#-uiux-concepts-telegram-bot-intuitive--engaging)
+    *   [Telegram Bot User Interface Previews](#telegram-bot-user-interface-previews)
+*   [🛠️ Getting Started (For Developers): Ignite Your Bot](#️-getting-started-for-developers-ignite-your-bot)
+*   [🗺️ Roadmap & Future Plans: The Path to 2025 and Beyond](#-roadmap--future-plans-the-path-to-2025-and-beyond)
+*   [🤝 Contributing: Join Our Journey](#-contributing-join-our-journey)
+*   [📄 License](#-license)
 
 ---
 
 ## 🚀 Project Overview: Precision Trading with ForexSignalBot
 
-**ForexSignalBot** is a sophisticated, AI-enhanced Telegram-based system meticulously engineered to deliver hyper-accurate, real-time, and highly reliable trading signals for global financial markets, with a strategic focus on the dynamic Forex market. Built on cutting-edge **.NET 9** architecture and adhering to the highest standards of software engineering best practices, this project provides a robust, resilient, and intuitive platform for traders, analysts, and financial market enthusiasts to make exceptionally informed trading decisions.
+**ForexSignalBot** is a sophisticated, **AI-enhanced Telegram-based system** meticulously engineered to deliver **hyper-accurate, real-time, and highly reliable trading signals** for global financial markets, with a strategic focus on the dynamic Forex market. Built on cutting-edge **.NET 9** architecture and adhering to the highest standards of software engineering best practices, this project provides a robust, resilient, and intuitive platform for traders, analysts, and financial market enthusiasts to make exceptionally informed trading decisions.
 
 ### Background & Necessity: Navigating the Volatile Markets
 
@@ -33,16 +66,29 @@ Our mission with ForexSignalBot is to redefine accessibility and accuracy in fin
 
 ---
 
+## 🌟 Key Highlights
+
+*   **AI-Powered Signal Generation:** Leveraging advanced algorithms for market analysis.
+*   **Real-time News Aggregation:** 100+ high-quality RSS feeds categorized for relevance.
+*   **Seamless Telegram Integration:** Intuitive UI/UX with rich messaging and interactive elements.
+*   **Robust & Scalable Architecture:** Built on .NET 9, Clean Architecture, and Docker.
+*   **Resilience & Security:** Featuring Polly for fault tolerance and robust data handling.
+*   **Future-Proof Roadmap:** Continuous evolution with AI/ML enhancements and web panels.
+
+---
+
 ## 🏛️ Architecture & Core Technologies: Engineered for Excellence
 
 ForexSignalBot is architected on the principles of **Clean Architecture**, fostering a highly logical, technology-agnostic, and layered design. This structure guarantees exceptional testability, maintainability, and extensibility by strictly separating concerns and ensuring domain logic remains independent of external frameworks or databases.
 
 ### Visualizing the Clean Architecture
 
-![Detailed diagram illustrating the layered Clean Architecture of ForexSignalBot, showing the concentric circles of Domain, Application, and Infrastructure. The outer layers (WebAPI, TelegramPanel, BackgroundTasks) interact with the inner layers, emphasizing the dependency rule. Arrows indicate data flow and dependencies between layers.](https://via.placeholder.com/900x500/2E2E2E/FFFFFF?text=Clean+Architecture+Diagram+ForexSignalBot)
-*A conceptual diagram showcasing the modular and scalable Clean Architecture adopted by ForexSignalBot, highlighting the separation of concerns and clear dependencies.*
+![Detailed diagram illustrating the layered Clean Architecture of ForexSignalBot. It shows concentric circles: the innermost 'Domain' (core business logic), followed by 'Application' (use cases), and then 'Infrastructure' (external concerns like databases, APIs). Outer layers like 'WebAPI', 'TelegramPanel', and 'BackgroundTasks' interact with 'Infrastructure'. Arrows depict dependencies pointing inwards, signifying that inner layers are independent of outer layers. The diagram emphasizes modularity, testability, and maintainability.](https://via.placeholder.com/900x500/2E2E2E/FFFFFF?text=ForexSignalBot+Clean+Architecture+Overview)
+*A comprehensive diagram showcasing the modular and scalable Clean Architecture adopted by ForexSignalBot, highlighting the strict separation of concerns and clear dependencies.*
 
 ### Project Layers: A Blueprint for Scalability
+
+Each layer serves a distinct purpose, enhancing maintainability and development velocity:
 
 *   **Domain:** 🎯 The foundational layer, encapsulating core business logic, entities (e.g., `Users`, `Signals`, `Transactions`, `Settings`), and value objects. This layer is entirely independent and technology-agnostic.
 *   **Application:** ⚙️ Orchestrates the execution of application-specific business rules and use cases. It acts as the interface to the Domain layer, containing application services responsible for signal management, user services, and analytics.
@@ -54,11 +100,11 @@ ForexSignalBot is architected on the principles of **Clean Architecture**, foste
 
 ### Core Technologies: Powering Performance & Reliability
 
-![Technology Stack Diagram: Icons representing .NET 9, Docker, PostgreSQL, EF Core, Telegram.Bot API, Hangfire, Polly, HTML Agility Pack, AutoMapper, and Microsoft.Extensions.Logging are arranged around a central "ForexSignalBot" icon, illustrating the primary tools and frameworks used.](https://via.placeholder.com/800x450/333333/E0E0E0?text=Core+Technology+Stack)
-*Visual representation of the robust technology stack powering ForexSignalBot.*
+![Technology Stack Diagram: A visual arrangement of key technologies used in ForexSignalBot. Prominent icons for .NET 9, Docker, PostgreSQL, Entity Framework Core, Telegram.Bot API, Hangfire, Polly, HTML Agility Pack, AutoMapper, and Microsoft.Extensions.Logging are displayed, connected conceptually to indicate a cohesive and powerful development environment.](https://via.placeholder.com/800x450/333333/E0E0E0?text=ForexSignalBot+Core+Technology+Stack)
+*Visual representation of the robust, modern technology stack powering ForexSignalBot, designed for performance, scalability, and resilience.*
 
 *   **.NET 9:** The absolute latest version of Microsoft's high-performance, cross-platform developer platform, providing unparalleled speed and versatility.
-*   **Docker 🐳:** For robust containerization, ensuring consistent, isolated, and scalable deployment environments, enabling seamless CI/CD pipelines.
+*   **Docker 🐳:** For robust containerization, ensuring consistent, isolated, and scalable deployment environments, enabling seamless CI/CD pipelines. This is our `dotnet ducker` approach!
 *   **PostgreSQL 🐘:** A highly advanced, open-source relational database system renowned for its robustness, reliability, and powerful data management capabilities.
 *   **Entity Framework Core (EF Core):** Microsoft's modern, high-performance Object-Relational Mapper (ORM) for .NET, simplifying complex database interactions and schema management.
 *   **Telegram.Bot API:** The official, comprehensive .NET library for seamless and efficient interaction with the Telegram Bot API, handling all bot communications.
@@ -82,14 +128,14 @@ ForexSignalBot is engineered with an extensive suite of features designed to cat
 
 ### 📰 Advanced News Aggregation & Intelligent Analysis: Stay Ahead
 
-*   **100+ High-Quality RSS Feeds:** Meticulously fetches news from an extensive, curated list of highly reliable and stable global financial news sources, including:
-    *   `Google News`, `Investing.com`, `Reuters`, `Bloomberg`, `CNBC`, `FXStreet`, `DailyFX`
-    *   `CoinTelegraph`, `CoinDesk`, `Wall Street Journal`, `TechCrunch`, `MarketWatch`, `Kitco`, `Seeking Alpha`
-    *   `ZeroHedge`, `Al Jazeera`, `Associated Press`, `Council on Foreign Relations`, `Foreign Affairs`
+*   **100+ High-Quality RSS Feeds:** Meticulously fetches news from an extensive, curated list of highly reliable and stable global financial news sources.
 *   **Categorized Feeds:** News feeds are intelligently categorized (e.g., `Forex Essentials`, `USD/EUR/JPY/GBP/AUD/CAD/CHF Forex`, `Global Stocks`, `Commodities`, `Crypto`, `Macroeconomics`, `Geopolitics`, `General Business`, `Tech & FinTech`) for a highly personalized user experience.
 *   **Smart Deduplication:** Employs advanced algorithms to prevent duplicate news items from being sent, even if sources rephrase or re-publish content.
 *   **New User Defaults:** New users automatically receive essential, high-priority news feeds (`IsActive=1`) by default, providing immediate value without initial information overload. Other feeds (`IsActive=0`) are available for manual activation based on user interest.
 *   **User Preferences:** Users retain granular control to customize their news categories, ensuring they receive only the content most relevant to their trading strategies and interests.
+
+![News Feed Categorization Diagram: A pie chart illustrating the distribution of various news categories available through ForexSignalBot's RSS aggregation. Segments represent categories like Forex Essentials, Global Stocks, Crypto, Macroeconomics, and Tech & FinTech, showing the breadth of content coverage.](https://via.placeholder.com/700x400/2E2E2E/FFFFFF?text=News+Feed+Categorization+Distribution)
+*Illustrative breakdown of news categories, empowering users to tailor their information stream.*
 
 ### 📈 Multi-Currency Signal Support: Diverse Market Coverage
 
@@ -116,22 +162,22 @@ ForexSignalBot is engineered with an extensive suite of features designed to cat
 
 ## 📊 Performance Insights: Data at a Glance
 
-Witness the impact of ForexSignalBot's intelligent algorithms through key performance indicators. *(Note: These charts are illustrative placeholders. Actual project would link to dynamic dashboards or historical data visualizations.)*
+Witness the impact of ForexSignalBot's intelligent algorithms through key performance indicators. *(Note: These charts are illustrative placeholders. Actual project would link to dynamic dashboards or historical data visualizations if available.)*
 
 ### Signal Accuracy Over Time
 
-![Line chart displaying the historical signal accuracy rate of ForexSignalBot. The X-axis represents months, and the Y-axis shows the percentage accuracy, consistently remaining above 85% with an upward trend, indicating strong predictive performance over the past year.](https://via.placeholder.com/800x400/2E2E2E/FFFFFF?text=Signal+Accuracy+Trend+Chart)
-*Illustrative chart demonstrating the consistent high accuracy of signals generated by ForexSignalBot, reflecting its reliable analytical capabilities.*
+![Line chart displaying the historical signal accuracy rate of ForexSignalBot over a 12-month period. The X-axis represents months (e.g., Jan-Dec), and the Y-axis shows the percentage accuracy (0-100%). The line consistently stays above 85% and shows a gradual upward trend, indicating strong predictive performance and continuous improvement.](https://via.placeholder.com/800x400/2E2E2E/FFFFFF?text=Signal+Accuracy+Trend+Chart)
+*Illustrative chart demonstrating the consistent high accuracy of signals generated by ForexSignalBot, reflecting its reliable analytical capabilities over time.*
 
 ### User Growth & Engagement
 
-![Bar chart illustrating the monthly growth of active users for the ForexSignalBot. Each bar represents a month, showing a steady upward trend in user acquisition, reflecting increasing adoption and engagement with the bot.](https://via.placeholder.com/800x400/2E2E2E/FFFFFF?text=User+Growth+Chart)
-*Illustrative chart showcasing the positive trajectory of user base expansion, a testament to the bot's value.*
+![Bar chart illustrating the monthly growth of active users for the ForexSignalBot. Each bar represents a month (e.g., Jan, Feb, Mar), showing a steady upward trend in user acquisition and retention, reflecting increasing adoption and engagement with the bot. The Y-axis represents the number of active users.](https://via.placeholder.com/800x400/2E2E2E/FFFFFF?text=User+Growth+Chart)
+*Illustrative chart showcasing the positive trajectory of user base expansion, a testament to the bot's value and user satisfaction.*
 
 ### Latency of Signal Delivery
 
-![Gauge chart or speed dial showing the average latency for signal delivery from generation to Telegram notification, indicating that most signals are delivered within 1-3 seconds, highlighting the bot's real-time responsiveness.](https://via.placeholder.com/800x400/2E2E2E/FFFFFF?text=Signal+Delivery+Latency+Chart)
-*Illustrative chart depicting the low latency of signal delivery, ensuring traders receive information as quickly as possible.*
+![Gauge chart or speedometer-like visualization showing the average latency for signal delivery. The needle points to a very low time value, typically under 3 seconds, indicating that most signals are delivered extremely rapidly from their generation to the user's Telegram notification. This highlights the bot's real-time responsiveness.](https://via.placeholder.com/800x400/2E2E2E/FFFFFF?text=Signal+Delivery+Latency+Chart)
+*Illustrative chart depicting the exceptionally low latency of signal delivery, ensuring traders receive critical information as quickly as possible.*
 
 ---
 
@@ -139,13 +185,13 @@ Witness the impact of ForexSignalBot's intelligent algorithms through key perfor
 
 As the Telegram bot serves as the primary user interface, our UI/UX strategy centers on intuitive interactions, clear communication, and effortless customization.
 
-### Telegram Bot User Interface Preview
+### Telegram Bot User Interface Previews
 
-![Mockup screenshot of the ForexSignalBot Telegram interface, showing a typical "Buy EUR/USD" signal notification. The message features bold text for asset, clear entry, stop-loss, and take-profit levels, a timestamp, and an inline keyboard button "View Chart 📈" for interactive options.](https://via.placeholder.com/600x450/2E2E2E/FFFFFF?text=Telegram+Bot+Signal+UI+Mockup)
+![Mockup screenshot of the ForexSignalBot Telegram interface, displaying a typical "Buy EUR/USD" signal notification. The message is formatted with bold text for the asset, clear entry, stop-loss (SL), and take-profit (TP) levels. It includes a timestamp and an inline keyboard button labeled "View Chart 📈" for interactive options, ensuring critical information is easily digestible.](https://via.placeholder.com/600x450/2E2E2E/FFFFFF?text=Telegram+Bot+Signal+UI+Mockup)
 *A visual representation of how ForexSignalBot presents signals and interacts with users within the Telegram environment, emphasizing clarity and actionability.*
 
-![Mockup screenshot of the ForexSignalBot Telegram interface, showing a "Settings" menu with inline keyboard options like "News Categories 📰", "Subscription Info ⭐", "My Wallet 💰", and "Help & Support ❓", demonstrating easy navigation for user preferences.](https://via.placeholder.com/600x450/2E2E2E/FFFFFF?text=Telegram+Bot+Settings+UI+Mockup)
-*Another visual representation, illustrating the user-friendly settings menu and customization options within the Telegram bot.*
+![Mockup screenshot of the ForexSignalBot Telegram interface, showing a "Settings" menu accessed via inline keyboard. Options are clearly labeled with emojis, such as "News Categories 📰", "Subscription Info ⭐", "My Wallet 💰", and "Help & Support ❓". This demonstrates easy navigation for user preferences and account management.](https://via.placeholder.com/600x450/2E2E2E/FFFFFF?text=Telegram+Bot+Settings+UI+Mockup)
+*Another visual representation, illustrating the user-friendly settings menu and customization options within the Telegram bot, designed for effortless navigation.*
 
 *   **Main Menu & Commands:** Users interact through a natural, command-based interface (e.g., `/start`, `/help`, `/settings`).
     *   **Icon Suggestion:** 🏠 for `/start` (home), ❓ for `/help`, ⚙️ for `/settings`.
@@ -166,7 +212,7 @@ As the Telegram bot serves as the primary user interface, our UI/UX strategy cen
 
 ## 🛠️ Getting Started (For Developers): Ignite Your Bot
 
-To set up the **ForexSignalBot** project locally and contribute:
+Ready to dive into the codebase? Follow these steps to set up the **ForexSignalBot** project locally and contribute to its evolution:
 
 1.  **Clone the repository:**
     ```bash
@@ -180,7 +226,8 @@ To set up the **ForexSignalBot** project locally and contribute:
     *   Apply Entity Framework Core migrations to create the database schema:
         ```bash
         dotnet ef database update --project Infrastructure --startup-project WebAPI
-        ```    *   **Populate RSS Feeds & Categories:** Run the provided `Populate_RssSources_Categories.sql` script (located in the project root, or execute it directly from your SQL client) against your database. This crucial step will set up the initial categories and a comprehensive list of RSS feeds.
+        ```
+    *   **Populate RSS Feeds & Categories:** Run the provided `Populate_RssSources_Categories.sql` script (located in the project root, or execute it directly from your SQL client) against your database. This crucial step will set up the initial categories and a comprehensive list of RSS feeds.
 
 3.  **Telegram Bot Token:**
     *   Obtain a unique bot token from BotFather on Telegram.
@@ -197,8 +244,8 @@ To set up the **ForexSignalBot** project locally and contribute:
 
 6.  **Docker Integration (Recommended for Production & Consistency - `dotnet ducker`):**
 
-    ![Detailed Docker Deployment Diagram: Illustrates the architecture where PostgreSQL, WebAPI, and TelegramPanel services run in separate, interconnected Docker containers. Arrows indicate data flow between containers and external access points, highlighting the robust, scalable, and isolated deployment environment orchestrated by Docker Compose.](https://via.placeholder.com/700x400/2E2E2E/FFFFFF?text=Docker+Deployment+Overview)
-    *A high-level view of the containerized deployment architecture, emphasizing the power of `dotnet ducker` for consistent environments.*
+    ![Detailed Docker Deployment Diagram: Illustrates the architecture where PostgreSQL, WebAPI, and TelegramPanel services run in separate, interconnected Docker containers. Arrows indicate data flow between containers and external access points, highlighting the robust, scalable, and isolated deployment environment orchestrated by Docker Compose. Docker Compose is at the top, orchestrating the 'WebAPI Container', 'TelegramPanel Container', and 'PostgreSQL Container', showing data flow between them.](https://via.placeholder.com/700x400/2E2E2E/FFFFFF?text=Docker+Deployment+Overview)
+    *A high-level view of the containerized deployment architecture, emphasizing the power of `dotnet ducker` for consistent, isolated, and scalable environments.*
 
     *   Ensure Docker Desktop is installed and running on your machine.
     *   Build and run all services using Docker Compose for a containerized environment:
@@ -232,7 +279,7 @@ We enthusiastically welcome contributions from the global developer community! I
 3.  **Commit your changes** following [conventional commit guidelines](https://www.conventionalcommits.org/en/v1.0.0/) (e.g., `feat: add new signal type`, `fix: resolve issue with RSS parsing`).
 4.  **Push your branch** and **open a Pull Request**.
 
-Please review our `CONTRIBUTING.md` file (to be created soon!) for more detailed guidelines and coding standards.
+Please review our `CONTRIBUTING.md` file (to be created soon, stay tuned!) for more detailed guidelines and coding standards.
 
 ---
 

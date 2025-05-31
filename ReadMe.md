@@ -1,179 +1,196 @@
-﻿بسیار عالی! کاملاً متوجه شدم. متن README شما را با دقت بسیار بالا، قالب‌بندی Markdown استاندارد کرده و تمامی placeholderها و متن‌های اضافی را حذف کردم. همچنین، لینک‌های GitHub را با استفاده از نام کاربری `Opselon` شما به‌روزرسانی کرده‌ام.
+﻿# ForexSignalBot: AI-Driven Telegram Forex Signals 📈
 
-این فایل آماده است تا مستقیماً در مخزن GitHub شما قرار گیرد:
-
----
-
-# 📈 ForexSignalBot
-
-[![Build Status](https://img.shields.io/badge/Build-Passing-brightgreen)](https://github.com/Opselon/ForexTradingBot/actions)
-[![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/Opselon/ForexTradingBot/blob/main/LICENSE)
+[![Build Status](https://github.com/Opselon/ForexTradingBot/actions/workflows/build.yml/badge.svg)](https://github.com/Opselon/ForexTradingBot/actions/workflows/build.yml)
+[![License](https://img.shields.io/github/license/Opselon/ForexTradingBot)](https://github.com/Opselon/ForexTradingBot/blob/main/LICENSE)
 [![GitHub Stars](https://img.shields.io/github/stars/Opselon/ForexTradingBot?style=social)](https://github.com/Opselon/ForexTradingBot/stargazers)
 [![GitHub Forks](https://img.shields.io/github/forks/Opselon/ForexTradingBot?style=social)](https://github.com/Opselon/ForexTradingBot/network/members)
 [![GitHub Issues](https://img.shields.io/github/issues/Opselon/ForexTradingBot)](https://github.com/Opselon/ForexTradingBot/issues)
 
----
+## 🚀 Project Overview: Precision Trading with ForexSignalBot
 
-## 🚀 Project Overview (ForexSignalBot)
+**ForexSignalBot** is a sophisticated, AI-enhanced Telegram-based system meticulously engineered to deliver hyper-accurate, real-time, and highly reliable trading signals for global financial markets, with a strategic focus on the dynamic Forex market. Built on cutting-edge **.NET 9** architecture and adhering to the highest standards of software engineering best practices, this project provides a robust, resilient, and intuitive platform for traders, analysts, and financial market enthusiasts to make exceptionally informed trading decisions.
 
-"ForexSignalBot" is a comprehensive and professional Telegram-based system meticulously designed to deliver accurate, up-to-date, and reliable signals for global financial markets, with a primary focus on the Forex market. Developed using modern architecture and best programming practices, this project provides a robust platform for traders, analysts, and financial market enthusiasts to make more informed trading decisions.
+### Background & Necessity: Navigating the Volatile Markets
 
-### Background and Necessity
+The Forex market, as the world's largest and most liquid financial market, generates an overwhelming volume of financial data and news daily. This sheer scale makes comprehensive analysis and timely tracking an insurmountable challenge for both novice and seasoned traders. There's a critical demand for intelligent tools that can distill this complexity into actionable, trustworthy signals and comprehensive analytical insights, delivered in the simplest possible format. **ForexSignalBot** precisely addresses this imperative, offering premium signal services, deep economic analyses, and direct access to credible news sources—all seamlessly integrated within a user-friendly Telegram bot.
 
-The Forex market, as the world's largest financial market, generates a vast volume of financial and news data daily, making it exceedingly challenging for ordinary users to analyze and track. Both professional traders and beginners often require tools to receive timely and trustworthy signals, along with comprehensive analytical information, in the simplest possible format. "ForexSignalBot" is specifically crafted to address this need by offering signal services, economic analyses, and access to credible news directly through a Telegram bot.
+### Core Objectives: Empowering Strategic Trading
 
-### Core Objectives
+Our mission with ForexSignalBot is to redefine accessibility and accuracy in financial trading:
 
-*   **High-Accuracy Signals:** Provide buy/sell signals with high precision, based on real-time market analysis.
-*   **Easy & Fast Access to Information:** Ensure quick and effortless access to economic news, political developments, and global events relevant to financial markets.
-*   **User-Friendly & Extensible Platform:** Create a platform that is intuitive and adaptable for traders with varying levels of knowledge and experience.
-*   **Advanced AI & Data Analysis:** Leverage cutting-edge technologies in Artificial Intelligence and data analytics to continuously improve signal quality.
-*   **Security & Stability:** Maintain user data security and guarantee service stability using robust software engineering standards and 24/7 operations.
-
----
-
-## 🏛️ Architecture and Technologies
-
-The project is built upon a **Clean Architecture** design, ensuring logical and technology-agnostic layering. This structure facilitates easy development, high testability, and better code maintainability. It separates concerns into distinct layers, ensuring that domain logic remains independent of external frameworks or databases.
-
-### Project Layers
-
-*   **Domain:** 🎯 Contains the core business logic, entities (such as Users, Signals, Transactions, Settings), and value objects. This layer is independent of any other technology or framework.
-*   **Application:** ⚙️ Implements the application-specific business rules and use cases. It orchestrates domain entities, acts as an interface to the domain layer, and contains application services (e.g., Signal management, User services, Analytics).
-*   **Infrastructure:** 📦 Provides implementations for external concerns defined in the Application layer. This includes database access (using EF Core and PostgreSQL), integration with external APIs (like Telegram Bot API), reliable RSS feed fetching, and background job processing.
-*   **WebAPI:** 🌐 Acts as the entry point for HTTP requests. It contains controllers for managing users, signals, subscriptions, and other API-driven interactions.
-*   **TelegramPanel:** 🤖 Dedicated services for the Telegram bot, including receiving and processing user commands via Webhooks/Polling, managing user sessions, and sending messages. It bridges user interactions with the Application layer.
-*   **BackgroundTasks:** ⏳ Handles periodic or long-running processes such as RSS feed aggregation, signal analysis, data updates, and notification dispatch, often powered by distributed task queues like Hangfire.
-*   **Shared:** 🤝 A common library containing utility classes, extension methods, and reusable components utilized across the entire solution.
-
-### Core Technologies
-
-*   **.NET 9:** The latest version of Microsoft's versatile developer platform, enabling high-performance and cross-platform applications.
-*   **Docker:** 🐳 For containerization, ensuring consistent deployment environments and easy scalability.
-*   **PostgreSQL:** 🐘 A powerful, open-source relational database system used for robust data storage.
-*   **Entity Framework Core:** A modern object-relational mapper (ORM) for .NET, simplifying database interactions.
-*   **Telegram.Bot API:** The official .NET library for interacting with the Telegram Bot API, handling all bot communications.
-*   **Hangfire:** ⏱️ For seamless integration of background jobs, recurring tasks, and distributed processing, ensuring asynchronous operations.
-*   **Polly:** 🛡️ A .NET resilience and transient-fault-handling library, implementing retry, circuit breaker, timeout, and fallback policies for robust API and database interactions.
-*   **HTML Agility Pack:** For parsing and manipulating HTML content from RSS feeds.
-*   **AutoMapper:** For simplified object-to-object mapping between different layers (e.g., entities to DTOs).
-*   **Microsoft.Extensions.Logging:** For structured and efficient logging throughout the application.
-*   **Potentially AI/ML Frameworks:** (e.g., ML.NET, TensorFlow.NET) for advanced sentiment analysis and predictive modeling in signals (Future Vision).
+*   **📈 High-Precision Signals:** Deliver highly accurate buy/sell signals underpinned by real-time, sophisticated market analysis and data-driven insights.
+*   **⚡ Instant & Effortless Information:** Ensure lightning-fast and effortless access to critical economic news, geopolitical developments, and global events directly impacting financial markets.
+*   **🌐 User-Centric & Extensible Platform:** Cultivate an intuitive, adaptable, and highly customizable platform tailored for traders across all experience levels.
+*   **🧠 Advanced AI & Data Analytics:** Continuously enhance signal quality and market predictive capabilities through state-of-the-art Artificial Intelligence and advanced data analytics.
+*   **🔒 Security & Unwavering Stability:** Guarantee paramount user data security and ensure unparalleled service stability through robust software engineering principles and continuous 24/7 operational resilience.
 
 ---
 
-## ✨ Key Features
+## 🏛️ Architecture & Core Technologies: Engineered for Excellence
 
-ForexSignalBot is designed with a rich set of features to cater to the diverse needs of financial traders:
+ForexSignalBot is architected on the principles of **Clean Architecture**, fostering a highly logical, technology-agnostic, and layered design. This structure guarantees exceptional testability, maintainability, and extensibility by strictly separating concerns and ensuring domain logic remains independent of external frameworks or databases.
 
-*   **Flexible Membership & Subscription System:**
-    *   Offers various membership tiers (Free and Premium) with differentiated access to features.
-    *   Integrated token wallet for managing user credits and transactions.
-*   **Advanced News Aggregation & Analysis:**
-    *   **100+ High-Quality RSS Feeds:** 📰 Fetches news from an extensive list of highly reliable and stable sources including: Google News, Investing.com, Reuters, Bloomberg, CNBC, FXStreet, DailyFX, CoinTelegraph, CoinDesk, Wall Street Journal, TechCrunch, MarketWatch, Kitco, Seeking Alpha, ZeroHedge, Al Jazeera, Associated Press, Council on Foreign Relations, and Foreign Affairs.
-    *   **Categorized Feeds:** News feeds are meticulously categorized (e.g., Forex Essentials, USD/EUR/JPY/GBP/AUD/CAD/CHF Forex, Global Stocks, Commodities, Crypto, Macroeconomics, Geopolitics, General Business, Tech & FinTech) for tailored user experience.
-    *   **Smart Deduplication:** Advanced logic ensures no duplicate news items are sent, even across various sources or if a source changes slightly.
-    *   **New User Defaults:** New users automatically receive essential, high-priority news feeds (`IsActive=1`) by default, preventing initial spam while providing immediate value. Other feeds are `IsActive=0` for users to activate manually.
-    *   **User Preferences:** Users can customize their news categories, receiving only the content most relevant to their interests.
-*   **Multi-Currency Signal Support:** 📈 Provides analytical signals for major Forex currencies (USD, EUR, JPY, GBP, AUD, CAD, CHF, NZD) and other key global assets.
-*   **Intelligent Analysis & Sentiment (Future/Ongoing):**
-    *   Utilizes sentiment analysis algorithms to analyze news and data, aiming to enhance signal quality and market insights.
-    *   Plans for more advanced AI integration for predictive modeling.
-*   **Robust Telegram Bot:**
-    *   **Webhook/Polling Flexibility:** Fast and responsive message reception via Webhooks, with graceful fallback to Polling for high availability.
-    *   **Queued Message Processing:** Messages are processed in a queue, ensuring smooth, non-blocking user experience and preventing system overload.
-    *   **Rich UI Elements:** Supports inline keyboards, MarkdownV2 formatting, and media for interactive and informative messages.
-*   **Security & Data Integrity:**
-    *   Focus on secure token management for user access levels.
-    *   Implementation of robust exception handling and Polly policies for transient fault tolerance, guaranteeing 24/7 uptime and data consistency.
-*   **Scalability & Monitoring:** Designed for production deployment with Docker and integrated logging for continuous monitoring.
+### Project Layers: A Blueprint for Scalability
+
+*   **Domain:** 🎯 The foundational layer, encapsulating core business logic, entities (e.g., `Users`, `Signals`, `Transactions`, `Settings`), and value objects. This layer is entirely independent and technology-agnostic.
+*   **Application:** ⚙️ Orchestrates the execution of application-specific business rules and use cases. It acts as the interface to the Domain layer, containing application services responsible for signal management, user services, and analytics.
+*   **Infrastructure:** 📦 Provides concrete implementations for external concerns defined in the Application layer. This includes persistent data storage (via EF Core and PostgreSQL), integration with external APIs (like Telegram Bot API), reliable RSS feed fetching, and robust background job processing.
+*   **WebAPI:** 🌐 The primary entry point for HTTP requests, hosting controllers for managing users, subscriptions, signals, and other RESTful API interactions.
+*   **TelegramPanel:** 🤖 Dedicated services for handling all Telegram bot interactions, including processing user commands via Webhooks/Polling, managing user sessions, and sending rich messages. It seamlessly bridges user interactions with the Application layer.
+*   **BackgroundTasks:** ⏳ Manages periodic or long-running operations such as RSS feed aggregation, complex signal analysis, data synchronization, and notification dispatch, powered by distributed task queues.
+*   **Shared:** 🤝 A cross-cutting library containing reusable utility classes, extension methods, and common components utilized across the entire solution.
+
+### Core Technologies: Powering Performance & Reliability
+
+*   **.NET 9:** The absolute latest version of Microsoft's high-performance, cross-platform developer platform, providing unparalleled speed and versatility.
+*   **Docker 🐳:** For robust containerization, ensuring consistent, isolated, and scalable deployment environments, enabling seamless CI/CD pipelines.
+*   **PostgreSQL 🐘:** A highly advanced, open-source relational database system renowned for its robustness, reliability, and powerful data management capabilities.
+*   **Entity Framework Core (EF Core):** Microsoft's modern, high-performance Object-Relational Mapper (ORM) for .NET, simplifying complex database interactions and schema management.
+*   **Telegram.Bot API:** The official, comprehensive .NET library for seamless and efficient interaction with the Telegram Bot API, handling all bot communications.
+*   **Hangfire ⏱️:** A powerful, open-source library for transparent and easy background job processing, recurring tasks, and distributed processing, ensuring asynchronous operations and system responsiveness.
+*   **Polly 🛡️:** A robust .NET resilience and transient-fault-handling library. It implements fluent policies such as Retry, Circuit Breaker, Timeout, Bulkhead, and Fallback, ensuring the application remains resilient against transient failures in API calls and database interactions.
+*   **HTML Agility Pack:** A robust and flexible HTML parser used for extracting and manipulating content from complex RSS feeds and web pages.
+*   **AutoMapper:** A convention-based object-to-object mapper, significantly simplifying data transfer between different layers (e.g., entities to DTOs) and reducing boilerplate code.
+*   **Microsoft.Extensions.Logging:** For structured, high-performance logging, enabling comprehensive observability and diagnostics across the application.
+*   **ML.NET / TensorFlow.NET:** (Future Vision) Integration of cutting-edge AI/ML frameworks for advanced sentiment analysis, sophisticated predictive modeling, and continuous signal quality enhancement.
 
 ---
 
-## 🎨 UI/UX Concepts (Telegram Bot)
+## ✨ Key Features: Unlocking Market Intelligence
 
-Since the primary user interface is the Telegram bot itself, the UI/UX focuses on intuitive interactions, clear messaging, and easy customization.
+ForexSignalBot is engineered with an extensive suite of features designed to cater to the nuanced needs of modern financial traders:
 
-*   **Main Menu & Commands:** Users interact through a command-based interface (e.g., `/start`, `/help`, `/settings`).
-    *   **Icon Suggestion:** A simple list icon or a house icon for `/start`, a question mark for `/help`, gear icon for `/settings`.
+### Flexible Membership & Subscription System: Tailored Access
+
+*   Offers diverse membership tiers (Free and Premium) with tiered access to advanced features and premium content.
+*   Integrates a secure token-based wallet system for managing user credits and facilitating transparent transactions.
+
+### 📰 Advanced News Aggregation & Intelligent Analysis: Stay Ahead
+
+*   **100+ High-Quality RSS Feeds:** Meticulously fetches news from an extensive, curated list of highly reliable and stable global financial news sources, including:
+    *   `Google News`, `Investing.com`, `Reuters`, `Bloomberg`, `CNBC`, `FXStreet`, `DailyFX`
+    *   `CoinTelegraph`, `CoinDesk`, `Wall Street Journal`, `TechCrunch`, `MarketWatch`, `Kitco`, `Seeking Alpha`
+    *   `ZeroHedge`, `Al Jazeera`, `Associated Press`, `Council on Foreign Relations`, `Foreign Affairs`
+*   **Categorized Feeds:** News feeds are intelligently categorized (e.g., `Forex Essentials`, `USD/EUR/JPY/GBP/AUD/CAD/CHF Forex`, `Global Stocks`, `Commodities`, `Crypto`, `Macroeconomics`, `Geopolitics`, `General Business`, `Tech & FinTech`) for a highly personalized user experience.
+*   **Smart Deduplication:** Employs advanced algorithms to prevent duplicate news items from being sent, even if sources rephrase or re-publish content.
+*   **New User Defaults:** New users automatically receive essential, high-priority news feeds (`IsActive=1`) by default, providing immediate value without initial information overload. Other feeds (`IsActive=0`) are available for manual activation based on user interest.
+*   **User Preferences:** Users retain granular control to customize their news categories, ensuring they receive only the content most relevant to their trading strategies and interests.
+
+### 📈 Multi-Currency Signal Support: Diverse Market Coverage
+
+*   Provides analytical signals for all major Forex currency pairs (`USD`, `EUR`, `JPY`, `GBP`, `AUD`, `CAD`, `CHF`, `NZD`) and other key global assets, offering a comprehensive trading perspective.
+
+### 🧠 Intelligent Analysis & Sentiment (Future/Ongoing): AI-Powered Edge
+
+*   Actively integrates and refines sentiment analysis algorithms to analyze news and data, aiming to significantly enhance signal quality, identify emerging trends, and provide deeper market insights.
+*   Strategic plans for more advanced AI/ML integration for sophisticated predictive modeling, pattern recognition, and adaptive signaling.
+
+### 🤖 Robust & Responsive Telegram Bot: Seamless User Experience
+
+*   **Webhook/Polling Flexibility:** Achieves fast and responsive message reception via Webhooks, with graceful fallback to Polling for maximum reliability and high availability.
+*   **Queued Message Processing:** All incoming and outgoing messages are processed asynchronously in a robust queue, ensuring a smooth, non-blocking user experience and preventing system overload, even under high traffic.
+*   **Rich UI Elements:** Fully supports Telegram's rich UI capabilities, including inline keyboards, `MarkdownV2` formatting for visually appealing messages, and media attachments for interactive and informative content delivery.
+
+### 🔒 Security & Data Integrity: Trustworthy Operations
+
+*   Prioritizes secure token management for robust user authentication and authorization across different access levels.
+*   Implements comprehensive exception handling and leverages Polly policies for advanced transient fault tolerance, guaranteeing 24/7 uptime and unparalleled data consistency.
+*   Designed for seamless production deployment with **Docker** and integrates structured logging for continuous monitoring, alerting, and performance optimization.
+
+---
+
+## 🎨 UI/UX Concepts (Telegram Bot): Intuitive & Engaging
+
+As the Telegram bot serves as the primary user interface, our UI/UX strategy centers on intuitive interactions, clear communication, and effortless customization.
+
+*   **Main Menu & Commands:** Users interact through a natural, command-based interface (e.g., `/start`, `/help`, `/settings`).
+    *   **Icon Suggestion:** 🏠 for `/start` (home), ❓ for `/help`, ⚙️ for `/settings`.
 *   **News Feeds:**
-    *   **Message Format:** News items are sent in a clean, readable MarkdownV2 format, with bold titles, italicized sources, truncated summaries, and a "Read Full Article" inline button.
-    *   **Icon Suggestion:** 📰 (News/Newspaper emoji) at the start of news messages.
-    *   **"Read More" Button:** A clear, blue button with a chain link emoji.
+    *   **Message Format:** News items are presented in a clean, highly readable `MarkdownV2` format, featuring bold titles, italicized sources, intelligently truncated summaries, and a prominent "Read Full Article" inline button.
+    *   **Icon Suggestion:** 📰 (Newspaper emoji) at the beginning of each news message.
+    *   **"Read More" Button:** A clear, blue button with a 🔗 (chain link emoji) for direct access.
 *   **Signal Notifications:**
-    *   **Message Format:** Signals are presented with clear buy/sell indicators, asset symbols, entry/SL/TP prices, and status updates.
+    *   **Message Format:** Signals are conveyed with clear buy/sell indicators, asset symbols, precise entry/SL/TP prices, and real-time status updates.
     *   **Icon Suggestion:** 📈 (Chart Increasing emoji) for Buy, 📉 (Chart Decreasing emoji) for Sell, 🔔 for new signals.
 *   **Settings & Preferences:**
-    *   Users navigate settings via inline keyboards (e.g., `⚙️ Preferences -> News Categories -> Forex -> USD [✅/❌]`).
+    *   Users navigate settings via intuitive inline keyboards (e.g., `⚙️ Preferences -> News Categories -> Forex -> USD [✅/❌]`).
     *   **Icon Suggestion:** ✅ for active, ❌ for inactive, ▶️ for navigation buttons.
-*   **Error Handling:** User-friendly error messages are sent when unhandled issues occur, with a clear indication that the team has been notified.
-    *   **Icon Suggestion:** 🤖 (Robot emoji) or ⚠️ (Warning emoji) for error messages.
+*   **Error Handling:** User-friendly and informative error messages are sent when unhandled issues occur, clearly indicating that the development team has been notified and is addressing the issue.
+    *   **Icon Suggestion:** ⚠️ (Warning emoji) or 🤖 (Robot emoji) for error messages.
 
 ---
 
-## 🛠️ Getting Started (For Developers)
+## 🛠️ Getting Started (For Developers): Ignite Your Bot
 
-To set up the ForexSignalBot project locally:
+To set up the **ForexSignalBot** project locally and contribute:
 
 1.  **Clone the repository:**
     ```bash
     git clone https://github.com/Opselon/ForexTradingBot.git
     cd ForexTradingBot
     ```
-2.  **Database Setup:**
-    *   Ensure PostgreSQL is installed and running.
-    *   Update the `DefaultConnection` string in `appsettings.json` (or `appsettings.Development.json`) to point to your PostgreSQL instance.
-    *   Apply Entity Framework Core migrations:
+
+2.  **Database Setup (PostgreSQL):**
+    *   Ensure PostgreSQL is installed and running on your system.
+    *   Update the `DefaultConnection` string in `appsettings.json` (or `appsettings.Development.json` for local development) to correctly point to your PostgreSQL instance.
+    *   Apply Entity Framework Core migrations to create the database schema:
         ```bash
         dotnet ef database update --project Infrastructure --startup-project WebAPI
         ```
-    *   **Populate RSS Feeds & Categories:** Run the provided `Populate_RssSources_Categories.sql` script (from the project root, or in your SQL client) against your database. This will set up the initial categories and RSS feeds.
+    *   **Populate RSS Feeds & Categories:** Run the provided `Populate_RssSources_Categories.sql` script (located in the project root, or execute it directly from your SQL client) against your database. This crucial step will set up the initial categories and a comprehensive list of RSS feeds.
+
 3.  **Telegram Bot Token:**
-    *   Obtain a bot token from BotFather on Telegram.
+    *   Obtain a unique bot token from BotFather on Telegram.
     *   Configure your bot token in `appsettings.json` under `TelegramPanelSettings:BotToken`.
-4.  **Hangfire Dashboard (Optional):**
-    *   Configure your Hangfire dashboard path and security as needed in `appsettings.json`.
-5.  **Build and Run:**
+
+4.  **Hangfire Dashboard (Optional but Recommended):**
+    *   Configure your Hangfire dashboard path and security settings as needed within `appsettings.json` for monitoring background jobs.
+
+5.  **Build and Run (.NET):**
     ```bash
     dotnet build
-    dotnet run --project WebAPI # Or run from Visual Studio
+    dotnet run --project WebAPI # Or run directly from Visual Studio/VS Code
     ```
-6.  **Docker (Optional):**
-    *   If you plan to use Docker, ensure Docker Desktop is running.
-    *   Build and run Docker containers:
+
+6.  **Docker Integration (Recommended for Production & Consistency - `dotnet ducker`):**
+    *   Ensure Docker Desktop is installed and running on your machine.
+    *   Build and run all services using Docker Compose for a containerized environment:
         ```bash
         docker-compose build
         docker-compose up
         ```
+    *   This will orchestrate your PostgreSQL database, WebAPI, and TelegramPanel services within isolated Docker containers.
 
 ---
 
-## 🗺️ Roadmap and Future Plans
+## 🗺️ Roadmap & Future Plans: The Path to 2025 and Beyond
 
-The ForexSignalBot project is continuously evolving. Our future plans include:
+The **ForexSignalBot** project is on an accelerated trajectory of continuous innovation. Our ambitious future plans include:
 
-*   **Advanced AI/ML Integration:** Implement more sophisticated AI models for deeper data analysis, predictive signaling, and personalized market insights.
-*   **Admin & User Web Panel:** Develop a comprehensive web-based management panel for both administrators and users to manage subscriptions, preferences, and view advanced analytics.
-*   **Expanded Signal Categories:** Introduce new signal categories and asset classes based on user feedback and market demand.
-*   **Enhanced Personalization:** Provide more granular customization options for notification types, frequency, and content.
-*   **Integration with Trading Platforms:** Explore possibilities for direct integration with popular trading platforms (e.g., MetaTrader 4/5) for automated signal execution (with user consent).
-*   **Community Features:** Foster a community around the bot, potentially including shared insights and discussions.
+*   **🧠 Advanced AI/ML Integration:** Implement even more sophisticated AI models for deeper, predictive data analysis, hyper-personalized market insights, and adaptive signaling algorithms.
+*   **🌐 Admin & User Web Panel:** Develop a comprehensive, intuitive web-based management panel for both administrators (for system oversight, user management, content curation) and users (for subscription management, preference customization, and advanced analytics visualization).
+*   **➕ Expanded Signal Categories & Asset Classes:** Introduce new signal categories and broader asset classes (e.g., indices, bonds) based on user feedback and evolving market demands.
+*   **🎯 Enhanced Personalization:** Provide even more granular customization options for notification types, frequency, content filters, and preferred market alerts.
+*   **🔗 Integration with Trading Platforms:** Explore possibilities for secure, direct integration with popular trading platforms (e.g., MetaTrader 4/5, cTrader) for automated signal execution (always with explicit user consent and robust risk management).
+*   **🤝 Community Features:** Foster a vibrant community around the bot, potentially including shared insights, discussion forums, and collaborative learning features.
 
 ---
 
-## 🤝 Contributing
+## 🤝 Contributing: Join Our Journey
 
-We welcome contributions from the community! If you're interested in contributing to ForexSignalBot, please:
+We enthusiastically welcome contributions from the global developer community! If you're interested in contributing to **ForexSignalBot**, please follow these guidelines:
 
-1.  Fork the repository.
-2.  Create a new branch for your feature or bug fix.
-3.  Commit your changes following conventional commit guidelines.
-4.  Push your branch and open a pull request.
+1.  **Fork** the repository.
+2.  **Create a new branch** for your feature or bug fix: `git checkout -b feature/your-feature-name` or `bugfix/your-bug-fix`.
+3.  **Commit your changes** following conventional commit guidelines (e.g., `feat: add new signal type`, `fix: resolve issue with RSS parsing`).
+4.  **Push your branch** and **open a Pull Request**.
 
-Please review our [CONTRIBUTING.md](https://github.com/Opselon/ForexTradingBot/blob/main/CONTRIBUTING.md) for more details.
+Please review our `CONTRIBUTING.md` file (to be created) for more detailed guidelines and coding standards.
 
 ---
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](https://github.com/Opselon/ForexTradingBot/blob/main/LICENSE) file for details.
+This project is proudly licensed under the **MIT License** - see the [LICENSE](https://github.com/Opselon/ForexTradingBot/blob/main/LICENSE) file for comprehensive details.
+
+---

@@ -5,7 +5,6 @@
 ---
 # ForexSignalBot: AI-Driven Telegram Forex Signals 📈🤖✨🚀
 
-[![Build Status](https://github.com/Opselon/ForexTradingBot/actions/workflows/build.yml/badge.svg?style=for-the-badge&logo=githubactions&logoColor=white)](https://github.com/Opselon/ForexTradingBot/actions/workflows/build.yml "GitHub Actions Workflow Status: Displays the current build status (e.g., passing or failing) for the main branch, indicating code health and continuous integration success.")
 [![License](https://img.shields.io/github/license/Opselon/ForexTradingBot?style=for-the-badge&color=blue)](https://github.com/Opselon/ForexTradingBot/blob/main/LICENSE "Project License Badge: Indicates the MIT License, allowing open use and modification of the codebase. Click to view license details and usage terms.")
 [![GitHub Stars](https://img.shields.io/github/stars/Opselon/ForexTradingBot?style=for-the-badge&logo=github)](https://github.com/Opselon/ForexTradingBot/stargazers "GitHub Stars Count: Shows how many users have starred this repository, reflecting popularity and interest in the project. Click to see stargazers.")
 [![GitHub Forks](https://img.shields.io/github/forks/Opselon/ForexTradingBot?style=for-the-badge&logo=github)](https://github.com/Opselon/ForexTradingBot/network/members "GitHub Forks Count: Displays the number of times this repository has been forked, indicating collaborative potential and community engagement. Click to view forks of the repository.")

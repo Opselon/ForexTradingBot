@@ -24,6 +24,8 @@ using Shared.Helpers;
 using Shared.Settings;                    // برای CryptoPaySettings (از پروژه Shared)
 using TelegramPanel.Extensions;
 using TelegramPanel.Infrastructure;
+using Hangfire.SqlServer;
+using TL;
 #endregion
 
 // ------------------- پیکربندی اولیه لاگر Serilog (Bootstrap Logger) -------------------
@@ -226,11 +228,20 @@ try
         .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
         .UseSimpleAssemblyNameTypeSerializer()
         .UseRecommendedSerializerSettings()
-        .UseSqlServerStorage(builder.Configuration.GetConnectionString("DefaultConnection")));
+        .UseSqlServerStorage(builder.Configuration.GetConnectionString("DefaultConnection"), new SqlServerStorageOptions // ✅ CHANGED: Added SqlServerStorageOptions
+        {
+            CommandBatchMaxTimeout = TimeSpan.FromMinutes(5),
+            SlidingInvisibilityTimeout = TimeSpan.FromMinutes(5),
+            QueuePollInterval = TimeSpan.FromSeconds(15), // How often to check for new jobs (adjust as needed)
+            UseRecommendedIsolationLevel = true,
+            DisableGlobalLocks = true, // Set to true if using Azure SQL Database or similar cloud environments
+            SchemaName = "HangFire" // Optional: Specify a custom schema name if you don't want the default "HangFire"
+        }));
+
     builder.Services.AddHangfireServer();
     Log.Information("Hangfire services (with SQL Server for production) added.");
     builder.Services.Configure<List<Infrastructure.Settings.ForwardingRule>>( // <<< Fully qualified
-      builder.Configuration.GetSection("ForwardingRules"));
+    builder.Configuration.GetSection("ForwardingRules"));
     builder.Services.AddScoped<IActualTelegramMessageActions, ActualTelegramMessageActions>();
     builder.Services.AddScoped<ITelegramMessageSender, HangfireRelayTelegramMessageSender>();
     builder.Services.AddScoped<IForwardingJobActions, ForwardingJobActions>();
@@ -292,13 +303,13 @@ try
     var hangfireDashboardOptions = new DashboardOptions
     {
         DashboardTitle = "Forex Trading Bot - Background Jobs Monitor",
-        IgnoreAntiforgeryToken = true, //  معمولاً برای داشبوردهای داخلی لازم است
-        //  ⚠️ برای محیط توسعه، اجازه دسترسی بدون احراز هویت به داشبورد داده شده است.
-        //  برای محیط Production، باید حتماً از یک فیلتر احراز هویت امن استفاده کنید.
-        Authorization = Array.Empty<IDashboardAuthorizationFilter>() //  ⚠️ فقط برای توسعه و تست محلی! ⚠️
+        IgnoreAntiforgeryToken = true,
+        // ✅ CHANGED: Applying a basic authorization filter for development.
+        // For production, you MUST implement proper authentication/authorization here.
+        Authorization = new[] { new LocalRequestsOnlyAuthorizationFilter() }
     };
-    app.UseHangfireDashboard("/hangfire", hangfireDashboardOptions); //  داشبورد در مسیر /hangfire در دسترس خواهد بود
-    programLogger.LogInformation("Hangfire Dashboard configured at /hangfire (For development, open to all. Secure for production!).");
+    app.UseHangfireDashboard("/hangfire", hangfireDashboardOptions);
+    programLogger.LogInformation("Hangfire Dashboard configured at /hangfire (For development, open to local requests. Secure for production!).");
 
     // ------------------- ۸. زمان‌بندی Job های تکرارشونده Hangfire -------------------
     //  این Job ها پس از شروع کامل برنامه، توسط سرور Hangfire به طور خودکار اجرا خواهند شد.

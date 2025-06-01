@@ -1,5 +1,6 @@
 // File: Application\Features\Forwarding\Services\MessageProcessingService.cs
 
+#region Usings
 using Application.Common.Interfaces;
 using Application.Features.Forwarding.Interfaces;
 using Domain.Features.Forwarding.Entities;
@@ -9,15 +10,12 @@ using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
-using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using TL;
-// MODIFICATION START: Add Polly namespace for resilience policies
-using Polly;
+using Polly; // For Policy, RetryPolicy, Context class
 using Polly.Retry;
-// MODIFICATION END
+#endregion
 
 namespace Application.Features.Forwarding.Services
 {
@@ -26,9 +24,7 @@ namespace Application.Features.Forwarding.Services
         private readonly ILogger<MessageProcessingService> _logger;
         private readonly ITelegramUserApiClient _userApiClient;
         private readonly IBackgroundJobClient _backgroundJobClient;
-        // MODIFICATION START: Declare Polly retry policy as generic RetryPolicy<string>
         private readonly RetryPolicy<string> _enqueueRetryPolicy;
-        // MODIFICATION END
 
         public MessageProcessingService(
             ILogger<MessageProcessingService> logger,
@@ -39,13 +35,11 @@ namespace Application.Features.Forwarding.Services
             _userApiClient = userApiClient ?? throw new ArgumentNullException(nameof(userApiClient));
             _backgroundJobClient = backgroundJobClient ?? throw new ArgumentNullException(nameof(backgroundJobClient));
 
-            // MODIFICATION START: Initialize the Polly retry policy as generic Policy<string>
-            _enqueueRetryPolicy = Policy<string> // Specify the return type is string
+            _enqueueRetryPolicy = Policy<string>
                 .Handle<Exception>(ex =>
                 {
-                    // Filter exceptions that are transient for enqueueing.
-                    _logger.LogWarning(ex, "Polly: Transient error occurred while enqueueing Hangfire job. Retrying...");
-                    return true;
+                    _logger.LogWarning(ex, "Polly[Enqueue]: Error occurred while enqueueing Hangfire job. Retrying...");
+                    return true; // Retries on any exception during enqueue attempt
                 })
                 .WaitAndRetry(new[]
                 {
@@ -54,11 +48,15 @@ namespace Application.Features.Forwarding.Services
                     TimeSpan.FromMilliseconds(400),
                     TimeSpan.FromMilliseconds(800),
                     TimeSpan.FromSeconds(1)
-                }, (exception, timeSpan, retryCount, context) =>
+                },
+                (delegateResult, timeSpan, retryAttempt, context) => // Correct signature for onRetry callback in Polly v8+
                 {
-            
+                    string errorMessage = delegateResult.Exception?.Message ?? "No exception message provided.";
+
+                    _logger.LogWarning(delegateResult.Exception, // Pass the actual exception to the logger for rich details
+                        "PollyRetry[Enqueue]: Enqueue operation failed (Context: '{ContextKey}', Attempt: {RetryAttempt}). Retrying in {TimeSpan}. Error: {ErrorMessage}",
+                        context.OperationKey ?? "N/A", retryAttempt, timeSpan, errorMessage);
                 });
-            // MODIFICATION END
         }
 
         /// <summary>
@@ -73,7 +71,6 @@ namespace Application.Features.Forwarding.Services
         /// which is decorated with `[AutomaticRetry]` for high reliability.
         /// The enqueueing itself is now protected by a Polly retry policy.
         /// </remarks>
-
         public async Task EnqueueAndRelayMessageAsync(
            long sourceChannelIdForMatching,
            long originalMessageId,
@@ -89,6 +86,7 @@ namespace Application.Features.Forwarding.Services
             {
                 _logger.LogWarning("MESSAGE_PROCESSING_SERVICE: Rule '{RuleName}' has no target channels defined for message {OriginalMessageId}. Skipping job enqueueing.",
                     rule.RuleName, originalMessageId);
+                await Task.CompletedTask; // Resolves CS1998 warning for early exit.
                 return;
             }
 
@@ -97,25 +95,36 @@ namespace Application.Features.Forwarding.Services
 
             foreach (var targetChannelId in rule.TargetChannelIds)
             {
+                cancellationToken.ThrowIfCancellationRequested(); // Check for cancellation for each target channel
+
                 string jobDescription = $"Msg:{originalMessageId}|Rule:{rule.RuleName}|Target:{targetChannelId}";
                 _logger.LogDebug("MESSAGE_PROCESSING_SERVICE: Attempting to enqueue job for {JobDescription}.", jobDescription);
 
-                // MODIFICATION START: Wrap the enqueue operation with the Polly retry policy
-                PolicyResult<string> enqueueResult = _enqueueRetryPolicy.ExecuteAndCapture(() => // Now correctly generic PolicyResult<string>
-                {
-                    return _backgroundJobClient.Enqueue<IForwardingJobActions>(processor =>
-                        processor.ProcessAndRelayMessageAsync(
-                            (int)originalMessageId,
-                            rawSourcePeerIdForApi,
-                            targetChannelId,
-                            rule,
-                            messageContent,
-                            messageEntities,
-                            senderPeerForFilter,
-                            mediaGroupItems,
-                            CancellationToken.None
-                        ));
-                });
+                PolicyResult<string> enqueueResult = _enqueueRetryPolicy.ExecuteAndCapture(
+                    // The lambda now accepts a 'Context' parameter from Polly's ExecuteAndCapture
+                    (pollyContext) =>
+                    {
+                        // Removed the problematic reference to Polly.Context.NoOp.RetryAttempt.
+                        // Inside this 'ExecuteAndCapture' delegate, we are performing the actual 'Enqueue' operation,
+                        // which is part of *one attempt* within the retry policy.
+                        // The actual retry attempt number is logged in the `onRetry` callback of the policy itself.
+                        _logger.LogTrace("Executing Hangfire Enqueue for {OperationKey}.", pollyContext.OperationKey);
+
+                        return _backgroundJobClient.Enqueue<IForwardingJobActions>(processor =>
+                            processor.ProcessAndRelayMessageAsync(
+                                (int)originalMessageId,
+                                rawSourcePeerIdForApi,
+                                targetChannelId,
+                                rule,
+                                messageContent,
+                                messageEntities,
+                                senderPeerForFilter,
+                                mediaGroupItems,
+                                CancellationToken.None
+                            ));
+                    },
+                    new Context(jobDescription) // Pass the custom context for this execution
+                );
 
                 if (enqueueResult.Outcome == OutcomeType.Successful)
                 {
@@ -123,10 +132,14 @@ namespace Application.Features.Forwarding.Services
                 }
                 else
                 {
-                    _logger.LogCritical(enqueueResult.FinalException, "MESSAGE_PROCESSING_SERVICE_ENQUEUE_FAILED_FINAL: Failed to enqueue job for {JobDescription} after all retries. This job WILL NOT BE PROCESSED.", jobDescription);
+                    string failureReason = enqueueResult.FinalException?.Message ?? enqueueResult.Outcome.ToString();
+                    _logger.LogCritical(enqueueResult.FinalException,
+                        "MESSAGE_PROCESSING_SERVICE_ENQUEUE_FAILED_FINAL: Failed to enqueue job for {JobDescription} after all retries. This job WILL NOT BE PROCESSED. Reason: {FailureReason}",
+                        jobDescription, failureReason);
                 }
-                // MODIFICATION END
             }
+
+            await Task.CompletedTask;
         }
     }
 }

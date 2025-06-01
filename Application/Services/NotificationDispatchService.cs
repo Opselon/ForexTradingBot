@@ -1,20 +1,16 @@
 ﻿// File: Application/Services/NotificationDispatchService.cs
-// File: Application/Services/NotificationDispatchService.cs
 
 #region Usings
-// Standard .NET & NuGet
-// Project specific: Application Layer
 using Application.Common.Interfaces;
 using Application.DTOs.Notifications;
-using Application.Interfaces; // For INotificationDispatchService and INotificationSendingService
-// Project specific: Domain Layer
-using Domain.Entities;      // For NewsItem, User
-using Microsoft.Extensions.Logging; // For ILogger and BeginScope
-using Shared.Extensions;    // For .Truncate()
+using Application.Interfaces;
+using Domain.Entities;
+using Microsoft.Extensions.Logging;
+using Shared.Extensions;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text; // Required for StringBuilder
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 #endregion
@@ -28,7 +24,6 @@ namespace Application.Services
         private readonly INotificationJobScheduler _jobScheduler;
         private readonly ILogger<NotificationDispatchService> _logger;
         private readonly INewsItemRepository _newsItemRepository;
-        // private readonly IUserSignalPreferenceRepository _userPrefsRepository; // Potentially used for deeper category filtering if GetUsersForNewsNotificationAsync isn't exhaustive
         #endregion
 
         #region Constructor
@@ -37,13 +32,11 @@ namespace Application.Services
             IUserRepository userRepository,
             INotificationJobScheduler jobScheduler,
             ILogger<NotificationDispatchService> logger)
-        // IUserSignalPreferenceRepository userPrefsRepository)
         {
             _newsItemRepository = newsItemRepository ?? throw new ArgumentNullException(nameof(newsItemRepository));
             _userRepository = userRepository ?? throw new ArgumentNullException(nameof(userRepository));
             _jobScheduler = jobScheduler ?? throw new ArgumentNullException(nameof(jobScheduler));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            // _userPrefsRepository = userPrefsRepository ?? throw new ArgumentNullException(nameof(userPrefsRepository));
         }
         #endregion
 
@@ -51,58 +44,28 @@ namespace Application.Services
 
         /// <summary>
         /// Asynchronously dispatches notifications for a specified news item to eligible users.
-        /// Retrieves the news item, identifies target users based on their notification preferences and VIP status,
-        /// constructs a notification payload, and enqueues it for background processing via a job scheduler.
-        /// Includes comprehensive logging, error handling, and cancellation support.
         /// </summary>
         /// <param name="newsItemId">The unique identifier of the news item to dispatch notifications for.</param>
         /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
-        /// <remarks>
-        /// Performance Considerations:
-        /// - Relies on an optimized `_userRepository.GetUsersForNewsNotificationAsync` to fetch users efficiently.
-        /// - Iterates users serially; for extremely large user bases (>10k-100k simultaneously),
-        ///   consider parallelizing the payload creation and enqueuing, balancing throughput with complexity and resource use.
-        /// - `_jobScheduler.Enqueue` is assumed to be a non-blocking or fast operation (e.g., writing to a message queue).
-        ///
-        /// Security Considerations:
-        /// - Message text is constructed here. If dynamic content from `NewsItem` might contain Markdown special characters,
-        ///   it should be properly escaped using a robust `EscapeMarkdownV2` utility to prevent formatting issues or injection if `UseMarkdown` is true.
-        /// - `CallbackDataOrUrl` for buttons should be validated or generated securely if it contains user-specific or sensitive parts,
-        ///   though in this case it's a direct link from NewsItem.
-        ///
-        /// Robustness:
-        /// - Handles null `NewsItem` and invalid `User.TelegramId`.
-        /// - Uses `CancellationToken` to gracefully stop dispatch if requested.
-        /// - Individual job enqueue failures are logged but do not stop the dispatch for other users.
-        /// </remarks>
         public async Task DispatchNewsNotificationAsync(Guid newsItemId, CancellationToken cancellationToken = default)
         {
-            #region Retrieve and Validate NewsItem
-            // Performance: Single async call to fetch news item.
             NewsItem? newsItem = await _newsItemRepository.GetByIdAsync(newsItemId, cancellationToken);
             if (newsItem == null)
             {
-                // Robustness: Handles case where news item is not found or was deleted.
                 _logger.LogWarning("News item with ID {NewsItemId} not found. Cannot dispatch notifications.", newsItemId);
                 return;
             }
-            #endregion
 
-            // Readability: Using structured logging scope for all logs related to this news item dispatch.
             using (_logger.BeginScope(new Dictionary<string, object?>
             {
                 ["NewsItemId"] = newsItem.Id,
-                ["NewsTitleScope"] = newsItem.Title?.Truncate(50) ?? "No Title", // Handle null title
+                ["NewsTitleScope"] = newsItem.Title?.Truncate(50) ?? "No Title",
                 ["NewsItemIsVip"] = newsItem.IsVipOnly,
                 ["NewsItemCategoryId"] = newsItem.AssociatedSignalCategoryId
             }))
             {
                 _logger.LogInformation("Initiating notification dispatch for news item.");
 
-                #region Fetch Target Users
-                // Performance: This is a critical data retrieval step.
-                // Assumes `GetUsersForNewsNotificationAsync` is optimized to perform efficient filtering
-                // at the database level based on `newsItem.AssociatedSignalCategoryId` and `newsItem.IsVipOnly`.
                 IEnumerable<User> targetUsers;
                 try
                 {
@@ -114,25 +77,16 @@ namespace Application.Services
                 }
                 catch (Exception ex)
                 {
-                    // Robustness: Catching potential errors during user retrieval.
                     _logger.LogError(ex, "Failed to retrieve target users for news dispatch.");
-                    return; // Exit if users cannot be reliably fetched.
+                    return;
                 }
 
-                // Ensure targetUsers is not null to prevent NullReferenceException in .Any() or .Count().
-                // `GetUsersForNewsNotificationAsync` should ideally return an empty collection, not null.
                 if (targetUsers == null)
                 {
                     _logger.LogError("User repository returned null for targetUsers, which is unexpected. Assuming no users.");
                     targetUsers = Enumerable.Empty<User>();
                 }
 
-                // ToList() to avoid multiple enumerations if Count() and iteration are both needed.
-                // And to get a concrete count for logging.
-                // Performance: If targetUsers can be extremely large and memory is a concern,
-                // avoid ToList() and use other means or accept potential multiple enumerations
-                // if the source is an IQueryable that re-queries.
-                // For most cases with IEnumerable from a repository (already in memory or efficiently streamed), this is fine.
                 var targetUserList = targetUsers.ToList();
 
                 if (!targetUserList.Any())
@@ -141,33 +95,22 @@ namespace Application.Services
                     return;
                 }
                 _logger.LogInformation("Identified {UserCount} target users for news item.", targetUserList.Count);
-                #endregion
 
-                #region Prepare and Enqueue Notification Jobs
                 int dispatchedCount = 0;
                 int skippedInvalidTelegramIdCount = 0;
 
-                // Design Choice: Message construction is done once per news item, not per user,
-                // if the core message is the same. User-specific parts would be added later or by NotificationSendingService.
-                // Here, the message is constructed within the loop if user-specific content (e.g. name) was needed,
-                // or just once if generic. The current structure implies a generic message per news item.
-                // Let's assume we want to build the core message once for efficiency if no user-specific parts from 'user' object are in the main text.
+                string messageText = BuildMessageText(newsItem);
+                string? imageUrl = newsItem.ImageUrl;
+                var buttons = BuildNotificationButtons(newsItem);
 
-                string messageText = BuildMessageText(newsItem); // Helper method to construct the message
-                string? imageUrl = newsItem.ImageUrl;            // Optional image URL
-                var buttons = BuildNotificationButtons(newsItem); // Helper method for buttons
-
-                // Iterating through the identified target users.
                 foreach (var user in targetUserList)
                 {
-                    // Robustness: Check for cancellation at each iteration.
                     if (cancellationToken.IsCancellationRequested)
                     {
                         _logger.LogInformation("Notification dispatch process cancelled by request. {DispatchedCount} jobs enqueued.", dispatchedCount);
-                        break; // Exit the loop.
+                        break;
                     }
 
-                    // Robustness: Validate Telegram ID format.
                     if (string.IsNullOrWhiteSpace(user.TelegramId) || !long.TryParse(user.TelegramId, out long telegramUserId))
                     {
                         _logger.LogWarning("User {UserId} (System Username: {SystemUsername}) has an invalid or missing TelegramId ('{UserTelegramId}'). Skipping notification.",
@@ -179,22 +122,18 @@ namespace Application.Services
                     var payload = new NotificationJobPayload
                     {
                         TargetTelegramUserId = telegramUserId,
-                        MessageText = messageText, // Using pre-built message
-                        UseMarkdown = true,        // Assuming Markdown. Escape source text appropriately.
+                        MessageText = messageText,
+                        UseMarkdown = true, // Keep true, tells Telegram API to parse Markdown.
                         ImageUrl = imageUrl,
                         NewsItemId = newsItem.Id,
                         NewsItemSignalCategoryId = newsItem.AssociatedSignalCategoryId,
-                        NewsItemSignalCategoryName = newsItem.AssociatedSignalCategory?.Name ?? string.Empty, // Handle null category name
-                        Buttons = buttons, // Using pre-built buttons
+                        NewsItemSignalCategoryName = newsItem.AssociatedSignalCategory?.Name ?? string.Empty,
+                        Buttons = buttons,
                         CustomData = new Dictionary<string, string> { { "NewsItemId", newsItem.Id.ToString() } }
-                        // Consider adding UserId, Username to CustomData if NotificationSendingService needs them for advanced logic.
                     };
 
                     try
                     {
-                        // Performance: `Enqueue` should ideally be a fast, non-blocking operation.
-                        // For Hangfire, this usually involves serializing the payload and writing to storage.
-                        // CancellationToken.None is appropriate as the job's lifecycle is independent of this dispatch.
                         string jobId = _jobScheduler.Enqueue<INotificationSendingService>(
                             sendingService => sendingService.SendNotificationAsync(payload, CancellationToken.None)
                         );
@@ -205,16 +144,14 @@ namespace Application.Services
                     }
                     catch (Exception ex)
                     {
-                        // Robustness: Log failure to enqueue for a specific user but continue with others.
                         _logger.LogError(ex, "Failed to enqueue notification job for User (SystemID: {SystemUserId}, TG_ID: {TelegramUserId}). Payload: {@NotificationPayload}",
-                                         user.Id, telegramUserId, payload); // Log payload on error for diagnosis. Be cautious of sensitive data in payload.
+                                         user.Id, telegramUserId, payload);
                     }
-                } // End foreach user
+                }
 
                 _logger.LogInformation("Notification dispatch completed. Total jobs enqueued: {DispatchedCount}. Users skipped due to invalid TelegramId: {SkippedCount}.",
                                        dispatchedCount, skippedInvalidTelegramIdCount);
-                #endregion
-            } // End using _logger.BeginScope
+            }
         }
 
         /// <summary>
@@ -222,11 +159,6 @@ namespace Application.Services
         /// </summary>
         /// <param name="newsItem">The news item to generate text for.</param>
         /// <returns>Formatted string for the notification message.</returns>
-        /// <remarks>
-        /// Security: Ensure all interpolated strings from `newsItem` (Title, SourceName, Summary, Link)
-        /// are appropriately escaped for MarkdownV2 if `UseMarkdown` is true on the payload.
-        /// The current `EscapeMarkdownV2Lenient` method provides basic escaping. For production, a more robust solution is recommended.
-        /// </remarks>
         private string BuildMessageText(NewsItem newsItem)
         {
             if (newsItem == null)
@@ -236,27 +168,26 @@ namespace Application.Services
 
             var messageTextBuilder = new StringBuilder();
 
-            // Security & Robustness: Null checks and trimming for all text parts.
-            // Using a more lenient V2 escaper to avoid breaking valid links or overly aggressive escaping.
-            string title = EscapeMarkdownV2Lenient(newsItem.Title?.Trim() ?? "Untitled News");
-            string sourceName = EscapeMarkdownV2Lenient(newsItem.SourceName?.Trim() ?? "Unknown Source");
-            string summary = EscapeMarkdownV2Lenient(TruncateWithEllipsis(newsItem.Summary, 250)?.Trim() ?? string.Empty); // Max length 250
-            string? link = newsItem.Link?.Trim(); // URLs in Markdown links generally don't need escaping for V2 unless they contain ')' or '\'.
+            // Using the updated escaping method to handle Markdown for Telegram.
+            // Truncation limit for summary is kept at 250 as in original.
+            string title = EscapeTextForTelegramMarkup(newsItem.Title?.Trim() ?? "Untitled News");
+            string sourceName = EscapeTextForTelegramMarkup(newsItem.SourceName?.Trim() ?? "Unknown Source");
+            string summary = EscapeTextForTelegramMarkup(TruncateWithEllipsis(newsItem.Summary, 250)?.Trim() ?? string.Empty);
+            string? link = newsItem.Link?.Trim();
 
-            messageTextBuilder.AppendLine($"*{title}*"); // Title bold
-            messageTextBuilder.AppendLine($"_📰 Source: {sourceName}_"); // Source italic
+            messageTextBuilder.AppendLine($"*{title}*"); // Bold for Telegram Markdown (V1/relaxed V2)
+            messageTextBuilder.AppendLine($"_📰 Source: {sourceName}_"); // Italic for Telegram Markdown
 
             if (!string.IsNullOrWhiteSpace(summary))
             {
-                messageTextBuilder.Append($"\n{summary}"); // Summary directly, new line before.
+                messageTextBuilder.Append($"\n{summary}");
             }
 
             if (!string.IsNullOrWhiteSpace(link))
             {
-                // Ensure link is a valid URL before attempting to create a Markdown link
                 if (Uri.TryCreate(link, UriKind.Absolute, out _))
                 {
-                    // For links in MarkdownV2, parentheses within the URL part must be escaped: '(' becomes '\(', ')' becomes '\)'
+                    // For links in Telegram Markdown, parentheses within the URL must be escaped.
                     string escapedLink = link.Replace("(", "\\(").Replace(")", "\\)");
                     messageTextBuilder.Append($"\n\n[🔗 Read Full Article]({escapedLink})");
                 }
@@ -283,15 +214,11 @@ namespace Application.Services
             {
                 buttons.Add(new NotificationButton { Text = "Read More", CallbackDataOrUrl = newsItem.Link, IsUrl = true });
             }
-            // Potentially add other common buttons, e.g., "Share", or category-specific actions.
-            // User-specific buttons like "Subscribe/Unsubscribe to this category" should be handled
-            // in INotificationSendingService as it has user context and can check preferences.
             return buttons;
         }
 
         /// <summary>
         /// Truncates text to a maximum length, appending ellipsis if truncated.
-        /// Handles null or whitespace input.
         /// </summary>
         private string? TruncateWithEllipsis(string? text, int maxLength)
         {
@@ -299,42 +226,31 @@ namespace Application.Services
             return text.Length <= maxLength ? text : text.Substring(0, maxLength - 3) + "...";
         }
 
-
         /// <summary>
-        /// Escapes characters that have special meaning in Telegram MarkdownV2.
-        /// This is a simplified/lenient version. For robust escaping, consider a library or official regex.
-        /// See: https://core.telegram.org/bots/api#markdownv2-style
-        /// Characters: '_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'
+        /// Escapes characters in plain text that have special meaning in Telegram Markdown (V1/relaxed V2 compatible).
+        /// This method targets minimal necessary escaping to produce clean output without extraneous backslashes
+        /// on common punctuation like periods, hyphens, or slashes, as seen in the user's desired output format.
         /// </summary>
-        private string EscapeMarkdownV2Lenient(string? text)
+        private string EscapeTextForTelegramMarkup(string? text)
         {
             if (string.IsNullOrEmpty(text)) return string.Empty;
 
-            // More targeted replacement for V2 common pitfalls.
-            // Not exhaustive but covers many cases.
-            var sb = new StringBuilder(text.Length + 10); // Initial capacity
+            var sb = new StringBuilder(text.Length + 10);
             foreach (char c in text)
             {
                 switch (c)
                 {
-                    case '_':
-                    case '*':
-                    case '[':
-                    case ']':
-                    case '(':
-                    case ')':
-                    case '~':
-                    case '`':
-                    case '>':
-                    case '#':
-                    case '+':
-                    case '-':
-                    case '=':
-                    case '|':
-                    case '{':
-                    case '}':
-                    case '.':
-                    case '!':
+                    // Escape only critical Markdown characters that would otherwise break formatting.
+                    // Characters like '.', '-', '/', '!' etc., are typically NOT escaped in desired output.
+                    case '_': // Italic (Telegram V1 uses this)
+                    case '*': // Bold (Telegram V1/V2 accepts single '*')
+                    case '[': // Link start
+                    case ']': // Link end
+                    case '(': // Parenthesis (important if literal parentheses appear in text that might be part of URL syntax)
+                    case ')': // Parenthesis
+                    case '~': // Strikethrough (primarily MarkdownV2, but escaping doesn't hurt)
+                    case '`': // Code/Pre (primarily MarkdownV2, but escaping doesn't hurt)
+                    case '>': // Blockquote (primarily MarkdownV2, but escaping doesn't hurt)
                         sb.Append('\\');
                         break;
                 }
@@ -346,4 +262,3 @@ namespace Application.Services
         #endregion
     }
 }
-

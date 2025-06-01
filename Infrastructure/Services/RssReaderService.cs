@@ -1,15 +1,13 @@
 ﻿// File: Infrastructure/Services/RssReaderService.cs
 
 #region Usings
-// Standard .NET & NuGet
-using System.Data.Common; // برای DbException
-// Project specific
+using System.Data.Common; // For DbException
 using Application.Common.Interfaces;
 using Application.DTOs.News;
 using Application.Interfaces;
 using AutoMapper;
 using Domain.Entities;
-using Hangfire; // برای IBackgroundJobClient
+using Hangfire;
 using HtmlAgilityPack;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -22,6 +20,7 @@ using System.Net.Http.Headers;
 using System.ServiceModel.Syndication;
 using System.Text;
 using System.Xml;
+using System.Security.Cryptography; // Added for SHA256 for more robust ID hashing
 #endregion
 
 namespace Infrastructure.Services
@@ -35,7 +34,7 @@ namespace Infrastructure.Services
         private readonly ILogger<RssReaderService> _logger;
         private readonly IBackgroundJobClient _backgroundJobClient;
         private readonly AsyncRetryPolicy<HttpResponseMessage> _httpRetryPolicy;
-        private readonly AsyncRetryPolicy _dbRetryPolicy; // ✅ جدید: سیاست Polly برای عملیات پایگاه داده
+        private readonly AsyncRetryPolicy _dbRetryPolicy;
         #endregion
 
         #region Public Constants
@@ -45,8 +44,15 @@ namespace Infrastructure.Services
         #endregion
 
         #region Private Constants
+        // ADJUSTED: MaxNewsSummaryLengthDb (no change needed in summary), but critical for Link field length.
         private const int MaxNewsSummaryLengthDb = 1000;
+        // IMPORTANT: Reduced Link max length to be safer for SQL Server index byte limits (e.g., 1700 bytes max).
+        // 450 NVARCHAR chars = 900 bytes; 800 NVARCHAR chars = 1600 bytes. Aim for safe value.
+        private const int MaxNewsLinkLengthDbForIndex = 450;
         private const int MaxErrorsToDeactivateSource = 10;
+        private const int NewsTitleMaxLenDb = 490; // Aligning with usage later.
+        private const int NewsSourceItemIdMaxLenDb = 490; // Aligning with usage later.
+        private const int NewsSourceNameMaxLenDb = 140; // Aligning with usage later.
         #endregion
 
         #region Constructor
@@ -63,21 +69,19 @@ namespace Infrastructure.Services
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _backgroundJobClient = backgroundJobClient ?? throw new ArgumentNullException(nameof(backgroundJobClient));
 
-            // سیاست تلاش مجدد برای درخواست‌های HTTP
             _httpRetryPolicy = Policy
                 .Handle<HttpRequestException>()
-                .Or<TaskCanceledException>(ex => !ex.CancellationToken.IsCancellationRequested) // اگر لغو توسط CancellationToken اصلی نباشد
+                .Or<TaskCanceledException>(ex => !ex.CancellationToken.IsCancellationRequested)
                 .OrResult<HttpResponseMessage>(response =>
-                    response.StatusCode >= HttpStatusCode.InternalServerError || // 5xx errors
-                    response.StatusCode == HttpStatusCode.RequestTimeout ||     // 408
-                    response.StatusCode == HttpStatusCode.TooManyRequests       // 429
+                    response.StatusCode >= HttpStatusCode.InternalServerError ||
+                    response.StatusCode == HttpStatusCode.RequestTimeout ||
+                    response.StatusCode == HttpStatusCode.TooManyRequests
                 )
                 .WaitAndRetryAsync(
                     retryCount: 3,
                     sleepDurationProvider: (retryAttempt, pollyResponse, context) =>
                     {
                         TimeSpan delay;
-                        // اگر هدر Retry-After وجود داشته باشد، از آن استفاده کن
                         if (pollyResponse?.Result?.Headers?.RetryAfter?.Delta.HasValue == true)
                         {
                             delay = pollyResponse.Result.Headers.RetryAfter.Delta.Value.Add(TimeSpan.FromMilliseconds(new Random().Next(500, 1500)));
@@ -85,7 +89,7 @@ namespace Infrastructure.Services
                                 "PollyRetry: HTTP request to {RequestUri} (Context: {ContextKey}) failed with {StatusCode}. Retry-After received. Retrying in {DelaySeconds:F1}s (Attempt {RetryAttempt}/3).",
                                 pollyResponse.Result.RequestMessage?.RequestUri, context.CorrelationId, pollyResponse.Result.StatusCode, delay.TotalSeconds, retryAttempt);
                         }
-                        else // در غیر این صورت، از تأخیر نمایی استفاده کن
+                        else
                         {
                             delay = TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)) + TimeSpan.FromMilliseconds(new Random().Next(500, 1500));
                             _logger.LogWarning(pollyResponse?.Exception,
@@ -102,12 +106,11 @@ namespace Infrastructure.Services
                         return Task.CompletedTask;
                     });
 
-            // ✅ جدید: سیاست تلاش مجدد برای عملیات پایگاه داده
             _dbRetryPolicy = Policy
-                .Handle<DbException>(ex => !(ex is DbUpdateConcurrencyException)) // خطاهای پایگاه داده را مدیریت می‌کند، به جز خطاهای همزمانی
+                .Handle<DbException>(ex => !(ex is DbUpdateConcurrencyException))
                 .WaitAndRetryAsync(
-                    retryCount: 3, // حداکثر 3 بار تلاش مجدد
-                    sleepDurationProvider: retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)), // تأخیر نمایی: 2s, 4s, 8s
+                    retryCount: 3,
+                    sleepDurationProvider: retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
                     onRetry: (exception, timeSpan, retryAttempt, context) =>
                     {
                         _logger.LogWarning(exception,
@@ -139,11 +142,10 @@ namespace Infrastructure.Services
                 {
                     var httpClient = _httpClientFactory.CreateClient(HttpClientNamedClient);
 
-                    //  ایجاد HttpRequestMessage جدید در هر تلاش از طریق Polly
                     httpResponse = await _httpRetryPolicy.ExecuteAsync(async (pollyContext, ct) =>
                     {
                         using var requestMessage = new HttpRequestMessage(HttpMethod.Get, rssSource.Url);
-                        AddConditionalGetHeaders(requestMessage, rssSource); //  هدرها به درخواست جدید اضافه می‌شوند
+                        AddConditionalGetHeaders(requestMessage, rssSource);
                         _logger.LogDebug("Polly Execute (Context: {ContextKey}): Sending HTTP GET with conditional headers.", pollyContext.CorrelationId);
                         using var requestTimeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(DefaultHttpClientTimeoutSeconds));
                         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, requestTimeoutCts.Token, cancellationToken);
@@ -163,11 +165,9 @@ namespace Infrastructure.Services
                     List<NewsItem> newNewsEntities = await ProcessAndFilterSyndicationItemsAsync(feed.Items, rssSource, cancellationToken);
                     return await SaveProcessedItemsAndDispatchNotificationsAsync(rssSource, newNewsEntities, httpResponse, cancellationToken);
                 }
-                // ✅✅✅ اصلاح فراخوانی UpdateRssSourceFetchStatusAsync در catch block ها ✅✅✅
                 catch (HttpRequestException httpEx)
                 {
                     _logger.LogError(httpEx, "HTTP error during RSS fetch. StatusCode: {StatusCode}", httpEx.StatusCode);
-                    //  استخراج ETag و LastModified از httpResponse اگر null نیست
                     string? etag = CleanETag(httpResponse?.Headers.ETag?.Tag);
                     string? lastModified = GetLastModifiedFromHeaders(httpResponse?.Content?.Headers);
                     await UpdateRssSourceFetchStatusAsync(rssSource, false, etag, lastModified, cancellationToken, $"HTTP Error: {httpEx.StatusCode}");
@@ -176,12 +176,12 @@ namespace Infrastructure.Services
                 catch (XmlException xmlEx)
                 {
                     _logger.LogError(xmlEx, "XML parsing error for RSS feed.");
-                    string? etag = CleanETag(httpResponse?.Headers.ETag?.Tag); // httpResponse ممکن است null باشد اگر خطا قبل از دریافت پاسخ رخ دهد
+                    string? etag = CleanETag(httpResponse?.Headers.ETag?.Tag);
                     string? lastModified = GetLastModifiedFromHeaders(httpResponse?.Content?.Headers);
                     await UpdateRssSourceFetchStatusAsync(rssSource, false, etag, lastModified, cancellationToken, "XML Parsing Error");
                     return Result<IEnumerable<NewsItemDto>>.Failure($"Invalid XML format in feed: {xmlEx.Message}");
                 }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) // Removed opCancelledEx
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
                     _logger.LogInformation("RSS feed fetch operation was cancelled by the main CancellationToken for {SourceName}.", rssSource.SourceName);
                     return Result<IEnumerable<NewsItemDto>>.Failure("RSS fetch operation cancelled by request.");
@@ -209,12 +209,24 @@ namespace Infrastructure.Services
 
         #region Feed Parsing, Item Processing Logic
         private async Task<SyndicationFeed> ParseFeedContentAsync(HttpResponseMessage response, CancellationToken cancellationToken)
-        { /* ... کد قبلی ... */
+        {
             await using var feedStream = await response.Content.ReadAsStreamAsync(cancellationToken);
-            var readerSettings = new XmlReaderSettings { Async = true, DtdProcessing = DtdProcessing.Ignore, IgnoreComments = true, IgnoreProcessingInstructions = true, IgnoreWhitespace = true, MaxCharactersInDocument = 20 * 1024 * 1024 };
+            var readerSettings = new XmlReaderSettings
+            {
+                Async = true,
+                DtdProcessing = DtdProcessing.Ignore,
+                IgnoreComments = true,
+                IgnoreProcessingInstructions = true,
+                IgnoreWhitespace = true,
+                MaxCharactersInDocument = 20 * 1024 * 1024 // Increased max chars in document
+            };
             Encoding encoding = Encoding.UTF8;
             string? charset = response.Content.Headers.ContentType?.CharSet;
-            if (!string.IsNullOrWhiteSpace(charset)) { try { encoding = Encoding.GetEncoding(charset); } catch (ArgumentException) { _logger.LogWarning("Unsupported charset '{CharSet}'. Falling back to UTF-8.", charset); } }
+            if (!string.IsNullOrWhiteSpace(charset))
+            {
+                try { encoding = Encoding.GetEncoding(charset); }
+                catch (ArgumentException) { _logger.LogWarning("Unsupported charset '{CharSet}'. Falling back to UTF-8.", charset); }
+            }
             using var streamReader = new StreamReader(feedStream, encoding, true);
             using var xmlReader = XmlReader.Create(streamReader, readerSettings);
             return SyndicationFeed.Load(xmlReader);
@@ -225,7 +237,7 @@ namespace Infrastructure.Services
             var newNewsEntities = new List<NewsItem>();
             if (syndicationItems == null || !syndicationItems.Any()) return newNewsEntities;
 
-            // ✅ اعمال سیاست تلاش مجدد Polly به فراخوانی پایگاه داده
+            // Apply Polly retry to DB call
             var existingSourceItemIds = await _dbRetryPolicy.ExecuteAsync(async () =>
             {
                 return await _dbContext.NewsItems
@@ -237,47 +249,86 @@ namespace Infrastructure.Services
 
             _logger.LogDebug("Retrieved {Count} existing SourceItemIds for RssSourceId {RssSourceId}.", existingSourceItemIds.Count, rssSource.Id);
 
-            var processedInThisBatch = new HashSet<string>(StringComparer.OrdinalIgnoreCase); // برای جلوگیری از تکرار در همین بچ
+            var processedInThisBatch = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var syndicationItem in syndicationItems.OrderByDescending(i => i.PublishDate.UtcDateTime))
             {
                 if (cancellationToken.IsCancellationRequested) break;
-                string? originalLink = syndicationItem.Links.FirstOrDefault(l => l.Uri != null)?.Uri.ToString();
+
+                // Robust link extraction (handles potential non-HTML links or rel='alternate')
+                string? originalLink = syndicationItem.Links
+                    .FirstOrDefault(l => l.RelationshipType == "alternate" || string.IsNullOrEmpty(l.RelationshipType))?.Uri?.ToString()
+                    ?? syndicationItem.Links.FirstOrDefault(l => l.Uri != null)?.Uri?.ToString();
+
+
                 string title = syndicationItem.Title?.Text?.Trim() ?? "Untitled News Item";
                 string itemSourceId = DetermineSourceItemId(syndicationItem, originalLink, title, rssSource.Id);
 
-                if (string.IsNullOrWhiteSpace(itemSourceId)) { /* ... لاگ و continue ... */ continue; }
-                if (processedInThisBatch.Contains(itemSourceId)) { /* ... لاگ و continue ... */ continue; } //  جلوگیری از پردازش تکراری در همین بچ
-                if (existingSourceItemIds.Contains(itemSourceId)) { /* ... لاگ و continue ... */ continue; } // ✅ استفاده از متغیر صحیح
+                if (string.IsNullOrWhiteSpace(itemSourceId))
+                {
+                    _logger.LogWarning("Skipping syndication item with null/empty SourceItemId after determination. Title: '{Title}', Link: '{Link}'", title.Truncate(50), originalLink.Truncate(50));
+                    continue;
+                }
+                if (!processedInThisBatch.Add(itemSourceId)) // Returns false if already in hashset
+                {
+                    _logger.LogDebug("Skipping duplicate item (SourceItemId: '{SourceItemId}') in current batch.", itemSourceId.Truncate(50));
+                    continue;
+                }
+                if (existingSourceItemIds.Contains(itemSourceId))
+                {
+                    _logger.LogDebug("Skipping existing item (SourceItemId: '{SourceItemId}').", itemSourceId.Truncate(50));
+                    continue;
+                }
 
                 var newsEntity = new NewsItem
-                { /* ... مقداردهی ... */
-                    Title = title.Truncate(490),
-                    Link = (originalLink ?? itemSourceId).Truncate(2070),
+                {
+                    Title = title.Truncate(NewsTitleMaxLenDb), // Use defined constant for truncation
+                    // Crucial: Use shorter link length for indexing compatibility!
+                    Link = (originalLink ?? itemSourceId).Truncate(MaxNewsLinkLengthDbForIndex),
                     Summary = CleanHtmlAndTruncateWithHtmlAgility(syndicationItem.Summary?.Text, MaxNewsSummaryLengthDb),
                     FullContent = CleanHtmlWithHtmlAgility(syndicationItem.Content is TextSyndicationContent tc ? tc.Text : syndicationItem.Summary?.Text),
                     ImageUrl = ExtractImageUrlWithHtmlAgility(syndicationItem, syndicationItem.Summary?.Text, syndicationItem.Content?.ToString()),
                     PublishedDate = syndicationItem.PublishDate.UtcDateTime,
                     RssSourceId = rssSource.Id,
-                    SourceName = rssSource.SourceName.Truncate(140),
-                    SourceItemId = itemSourceId.Truncate(490)
+                    SourceName = rssSource.SourceName.Truncate(NewsSourceNameMaxLenDb),
+                    SourceItemId = itemSourceId.Truncate(NewsSourceItemIdMaxLenDb) // Use defined constant for truncation
                 };
                 newNewsEntities.Add(newsEntity);
-                processedInThisBatch.Add(itemSourceId); //  اضافه کردن به آیتم‌های پردازش شده در این بچ
             }
             return newNewsEntities;
         }
 
+        /// <summary>
+        /// Determines a unique ID for a syndication item, prioritizing standard ID, then link, then a generated hash.
+        /// Improved: Uses SHA256 for a more robust and collision-resistant generated ID based on title and publish date.
+        /// </summary>
         private string DetermineSourceItemId(SyndicationItem item, string? primaryLink, string title, Guid rssSourceGuid)
         {
-            if (!string.IsNullOrWhiteSpace(item.Id) && (Guid.TryParse(item.Id, out _) || item.Id.Length > 20 || item.Id.StartsWith("http", StringComparison.OrdinalIgnoreCase))) return item.Id;
-            if (!string.IsNullOrWhiteSpace(primaryLink)) return primaryLink;
+            if (!string.IsNullOrWhiteSpace(item.Id))
+            {
+                // A common case for Item.Id is GUID or a very long URI. Prioritize if it looks unique.
+                // Also, consider if Item.Id could be "tag:...", "urn:uuid:..." which are also forms of unique IDs.
+                if (item.Id.Length > 20 || Uri.IsWellFormedUriString(item.Id, UriKind.Absolute) || item.Id.Contains(":"))
+                {
+                    return item.Id.Truncate(NewsSourceItemIdMaxLenDb); // Truncate only if truly long, for consistency
+                }
+            }
+            if (!string.IsNullOrWhiteSpace(primaryLink))
+            {
+                return primaryLink.Truncate(NewsSourceItemIdMaxLenDb); // Truncate before using as ID.
+            }
             if (!string.IsNullOrWhiteSpace(title))
             {
-                // ✅ استفاده از GetHashCode() استاندارد
-                return $"GENERATED_{rssSourceGuid}_{title.GetHashCode()}_{item.PublishDate.ToUnixTimeMilliseconds()}";
+                // Fallback to SHA256 hash of a combination of source GUID, title, and precise publish date.
+                // This offers a much better chance of uniqueness than a simple GetHashCode() which can collide.
+                using (var sha256Hash = SHA256.Create())
+                {
+                    var data = Encoding.UTF8.GetBytes($"{rssSourceGuid}_{title}_{item.PublishDate.ToString("o")}"); // "o" for round-trip format
+                    var hashBytes = sha256Hash.ComputeHash(data);
+                    return BitConverter.ToString(hashBytes).Replace("-", "").ToLowerInvariant();
+                }
             }
-            return Guid.NewGuid().ToString();
+            return Guid.NewGuid().ToString(); // Last resort for unique ID.
         }
         #endregion
 
@@ -287,17 +338,8 @@ namespace Infrastructure.Services
         /// Saves newly processed and filtered NewsItem entities to the database,
         /// updates the metadata of the RssSource (ETag, LastModified, timestamps),
         /// and then enqueues background jobs to dispatch notifications for each new item.
-        /// This method consolidates database writes and notification job creation.
         /// Operations that interact with the database are protected by a Polly retry policy.
         /// </summary>
-        /// <param name="rssSource">The RssSource entity being processed, its metadata will be updated.</param>
-        /// <param name="newNewsEntitiesToSave">A list of new NewsItem entities that have been filtered for duplicates and are ready to be saved.</param>
-        /// <param name="httpResponse">The HttpResponseMessage from the successful feed fetch, used to extract ETag and Last-Modified headers.</param>
-        /// <param name="cancellationToken">A token to observe for cancellation requests.</param>
-        /// <returns>
-        /// A Result object containing an enumerable of NewsItemDto for the newly saved items if successful,
-        /// or an error message if any part of the process fails.
-        /// </returns>
         private async Task<Result<IEnumerable<NewsItemDto>>> SaveProcessedItemsAndDispatchNotificationsAsync(
             RssSource rssSource,
             List<NewsItem> newNewsEntitiesToSave,
@@ -327,7 +369,6 @@ namespace Infrastructure.Services
             int changesSaved = 0;
             try
             {
-                // ✅ اعمال سیاست تلاش مجدد Polly به فراخوانی SaveChangesAsync
                 changesSaved = await _dbRetryPolicy.ExecuteAsync(async () =>
                 {
                     return await _dbContext.SaveChangesAsync(cancellationToken);
@@ -335,7 +376,7 @@ namespace Infrastructure.Services
                 _logger.LogInformation("Successfully saved {ChangesCount} changes to the database (including {NewItemCount} news items and metadata for RssSource '{SourceName}').",
                     changesSaved, newNewsEntitiesToSave.Count, rssSource.SourceName);
             }
-            catch (DbUpdateException dbEx) // این catch بعد از تمام تلاش‌های Polly اجرا می‌شود
+            catch (DbUpdateException dbEx)
             {
                 _logger.LogError(dbEx, "Database update error while saving new news items or updating RssSource '{SourceName}' after retries. New items will not be dispatched for notification.", rssSource.SourceName);
                 return Result<IEnumerable<NewsItemDto>>.Failure($"Database error during save operation for {rssSource.SourceName}: {dbEx.InnerException?.Message ?? dbEx.Message}");
@@ -346,7 +387,7 @@ namespace Infrastructure.Services
                 return Result<IEnumerable<NewsItemDto>>.Failure($"Unexpected error saving data for {rssSource.SourceName}: {ex.Message}");
             }
 
-            if (changesSaved == 0 || !newNewsEntitiesToSave.Any()) // This condition is likely already covered by the initial check, but fine as a safeguard.
+            if (changesSaved == 0 || !newNewsEntitiesToSave.Any())
             {
                 _logger.LogInformation("No database changes were saved or no new news items to dispatch for RssSource '{SourceName}'. Skipping notification dispatch.", rssSource.SourceName);
                 return Result<IEnumerable<NewsItemDto>>.Success(
@@ -368,8 +409,7 @@ namespace Infrastructure.Services
                 }
 
                 var currentNewsItem = savedNewsItemEntity;
-                // ✅ Remove 'async' from the lambda, as there's no 'await' inside.
-                dispatchTasks.Add(Task.Run(() => // No 'async' here
+                dispatchTasks.Add(Task.Run(() =>
                 {
                     if (cancellationToken.IsCancellationRequested) return;
                     try
@@ -399,12 +439,10 @@ namespace Infrastructure.Services
             catch (OperationCanceledException)
             {
                 _logger.LogInformation("Enqueueing of some notification dispatch jobs was cancelled for '{SourceName}'.", rssSource.SourceName);
-                // Optionally re-throw or handle partially completed state if critical
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error occurred while waiting for all notification dispatch enqueue tasks to complete for RssSource '{SourceName}'. Some notifications might not have been enqueued.", rssSource.SourceName);
-                // Depending on requirements, you might want to propagate this error or handle it.
             }
 
             var resultDtos = _mapper.Map<IEnumerable<NewsItemDto>>(newNewsEntitiesToSave);
@@ -422,13 +460,13 @@ namespace Infrastructure.Services
             CancellationToken cancellationToken, string? operationMessage = null)
         {
             rssSource.UpdatedAt = DateTime.UtcNow;
-            if (!success) rssSource.LastFetchAttemptAt = DateTime.UtcNow; //  LastFetchAttemptAt در ابتدای FetchAndProcessFeedAsync ثبت شده بود
+            if (!success) rssSource.LastFetchAttemptAt = DateTime.UtcNow;
 
             if (success)
             {
                 rssSource.LastSuccessfulFetchAt = rssSource.LastFetchAttemptAt;
                 rssSource.FetchErrorCount = 0;
-                if (!string.IsNullOrWhiteSpace(eTagFromResponse)) rssSource.ETag = eTagFromResponse; //  CleanETag قبلاً انجام شده
+                if (!string.IsNullOrWhiteSpace(eTagFromResponse)) rssSource.ETag = eTagFromResponse;
                 if (!string.IsNullOrWhiteSpace(lastModifiedFromResponse)) rssSource.LastModifiedHeader = lastModifiedFromResponse;
             }
             else
@@ -442,22 +480,19 @@ namespace Infrastructure.Services
             }
             try
             {
-                // ✅ اعمال سیاست تلاش مجدد Polly به فراخوانی SaveChangesAsync
                 await _dbRetryPolicy.ExecuteAsync(async () =>
                 {
                     await _dbContext.SaveChangesAsync(cancellationToken);
                 });
             }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) // Removed opCancelledEx
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 _logger.LogInformation("RSS feed fetch operation was cancelled by the main CancellationToken for {SourceName}.", rssSource.SourceName);
                 return Result<IEnumerable<NewsItemDto>>.Failure("RSS fetch operation cancelled by request.");
             }
-            catch (DbUpdateException dbEx) // این catch بعد از تمام تلاش‌های Polly اجرا می‌شود
+            catch (DbUpdateException dbEx)
             {
                 _logger.LogError(dbEx, "Database update error while updating RssSource '{SourceName}' status after retries.", rssSource.SourceName);
-                // ممکن است بخواهید خطای سطح بالاتر را پرتاب کنید یا صرفاً لاگ بگیرید.
-                // در اینجا، فقط لاگ گرفته می‌شود و اجازه می‌دهیم متد برگردد.
             }
             catch (Exception ex)
             {
@@ -470,28 +505,32 @@ namespace Infrastructure.Services
 
         #region HTTP and HTML Parsing Helper Methods
         private void AddConditionalGetHeaders(HttpRequestMessage requestMessage, RssSource rssSource)
-        { /* ... کد قبلی ... */ }
+        {
+            if (!string.IsNullOrWhiteSpace(rssSource.ETag)) requestMessage.Headers.Add("If-None-Match", rssSource.ETag);
+            if (!string.IsNullOrWhiteSpace(rssSource.LastModifiedHeader)) requestMessage.Headers.IfModifiedSince = DateTimeOffset.Parse(rssSource.LastModifiedHeader);
+            _logger.LogTrace("Added conditional headers: ETag '{ETag}', Last-Modified '{LastModified}' for {Url}",
+                             rssSource.ETag.Truncate(30), rssSource.LastModifiedHeader, requestMessage.RequestUri);
+        }
 
         private async Task<Result<IEnumerable<NewsItemDto>>> HandleNotModifiedResponseAsync(RssSource rssSource, HttpResponseMessage httpResponse, CancellationToken cancellationToken)
-        { //  httpResponse اضافه شد
+        {
             _logger.LogInformation("Feed '{SourceName}' (HTTP 304 Not Modified). Updating metadata from 304 response.", rssSource.SourceName);
             return await UpdateRssSourceFetchStatusAsync(rssSource, true, CleanETag(httpResponse.Headers.ETag?.Tag), GetLastModifiedFromHeaders(httpResponse.Content?.Headers), cancellationToken, "Feed content not changed; metadata updated.");
         }
 
         private string? GetLastModifiedFromHeaders(HttpContentHeaders? headers)
         {
-            // Returns date in RFC1123 format, suitable for HTTP headers
             return headers?.LastModified?.ToString("R");
         }
 
         private string? CleanETag(string? etag)
         {
-            // ETags are often wrapped in double quotes, e.g., W/"<etag_value>" or "<etag_value>"
             return etag?.Trim('"');
         }
 
         /// <summary>
-        /// Cleans HTML from the provided text using HtmlAgilityPack and truncates it to the specified maxLength.
+        /// Cleans HTML from the provided text using HtmlAgilityPack and truncates it.
+        /// Handles HTML entities and falls back to simple truncation on parsing failure.
         /// </summary>
         private string? CleanHtmlAndTruncateWithHtmlAgility(string? htmlText, int maxLength)
         {
@@ -500,19 +539,19 @@ namespace Infrastructure.Services
             {
                 var doc = new HtmlDocument();
                 doc.LoadHtml(htmlText);
-                // Decode HTML entities (e.g., & to &) and then get inner text
-                string plainText = WebUtility.HtmlDecode(doc.DocumentNode.InnerText);
-                return plainText.Trim().Truncate(maxLength); //  استفاده از متد توسعه‌دهنده Truncate
+                string plainText = WebUtility.HtmlDecode(doc.DocumentNode.InnerText).Trim();
+                return plainText.Truncate(maxLength);
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to clean/truncate HTML. Original text (first 100 chars): '{HtmlStart}'", htmlText.Truncate(100));
-                return htmlText.Truncate(maxLength); // Fallback to truncating original HTML if parsing fails
+                _logger.LogWarning(ex, "Failed to clean/truncate HTML. Falling back to simple truncation. Original text (first 100 chars): '{HtmlStart}'", htmlText.Truncate(100));
+                return htmlText.Truncate(maxLength);
             }
         }
 
         /// <summary>
-        /// Cleans all HTML tags from the provided text using HtmlAgilityPack, returning only plain text.
+        /// Cleans all HTML tags from the provided text, returning only plain text.
+        /// Handles HTML entities and falls back to original text on parsing failure.
         /// </summary>
         private string? CleanHtmlWithHtmlAgility(string? htmlText)
         {
@@ -525,14 +564,14 @@ namespace Infrastructure.Services
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to clean HTML. Original text (first 100 chars): '{HtmlStart}'", htmlText.Truncate(100));
-                return htmlText; // Fallback to original text if parsing fails
+                _logger.LogWarning(ex, "Failed to clean HTML. Falling back to original text. Original text (first 100 chars): '{HtmlStart}'", htmlText.Truncate(100));
+                return htmlText;
             }
         }
 
         /// <summary>
         /// Attempts to extract a prominent image URL from a SyndicationItem using various strategies.
-        /// It checks media enclosures, OpenGraph meta tags, and then standard img tags within content.
+        /// It checks MRSS, enclosure links, OpenGraph/Twitter meta tags, and img tags.
         /// </summary>
         private string? ExtractImageUrlWithHtmlAgility(SyndicationItem item, string? summaryHtml, string? contentHtml)
         {
@@ -542,17 +581,16 @@ namespace Infrastructure.Services
                 var mediaContentElement = item.ElementExtensions
                     .Where(ext => ext.OuterName == "content" && ext.OuterNamespace == "http://search.yahoo.com/mrss/")
                     .Select(ext => ext.GetObject<System.Xml.Linq.XElement>())
-                    .FirstOrDefault(el => el?.Attribute("medium")?.Value == "image");
+                    .FirstOrDefault(el => el?.Attribute("medium")?.Value == "image" && !string.IsNullOrWhiteSpace(el?.Attribute("url")?.Value));
 
-                if (mediaContentElement != null && !string.IsNullOrWhiteSpace(mediaContentElement.Attribute("url")?.Value))
+                if (mediaContentElement != null)
                 {
                     string imageUrl = mediaContentElement.Attribute("url")!.Value;
                     _logger.LogTrace("Extracted image URL from media:content: {ImageUrl}", imageUrl);
                     return MakeUrlAbsolute(item, imageUrl);
                 }
             }
-            catch (Exception ex) { _logger.LogWarning(ex, "Error parsing media:content for image."); }
-
+            catch (Exception ex) { _logger.LogWarning(ex, "Error parsing media:content for image from {ItemTitle}.", item.Title?.Text.Truncate(50)); }
 
             // Strategy 2: Check enclosure links specifically for images
             var enclosureImageLink = item.Links.FirstOrDefault(l =>
@@ -562,10 +600,10 @@ namespace Infrastructure.Services
             if (enclosureImageLink != null)
             {
                 _logger.LogTrace("Extracted image URL from enclosure link: {ImageUrl}", enclosureImageLink.Uri.ToString());
-                return enclosureImageLink.Uri.ToString(); //  Uri.ToString() به طور خودکار URL مطلق را برمی‌گرداند
+                return enclosureImageLink.Uri.ToString();
             }
 
-            // Strategy 3: Parse HTML content (summary or full content) for OpenGraph or prominent <img> tags
+            // Strategy 3: Parse HTML content (from content, then summary) for OpenGraph or prominent <img> tags
             var htmlToParse = !string.IsNullOrWhiteSpace(contentHtml) ? contentHtml : summaryHtml;
             if (string.IsNullOrWhiteSpace(htmlToParse)) return null;
 
@@ -573,7 +611,7 @@ namespace Infrastructure.Services
             try { doc.LoadHtml(htmlToParse); }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "HtmlAgilityPack failed to load HTML for image extraction. Item: {ItemTitle}", item.Title?.Text.Truncate(50));
+                _logger.LogWarning(ex, "HtmlAgilityPack failed to load HTML for image extraction from {ItemTitle}. Original (first 100): '{HtmlStart}'", item.Title?.Text.Truncate(50), htmlToParse.Truncate(100));
                 return null;
             }
 
@@ -586,18 +624,17 @@ namespace Infrastructure.Services
                 return MakeUrlAbsolute(item, imageUrl);
             }
 
-            // Try finding the "best" <img> tag (e.g., first large one, or one with specific attributes)
-            // This can be complex. A simpler approach is the first <img>.
+            // Try finding a suitable <img> tag - prioritize by presence, then dimensions (if possible after download, not directly in this loop)
             var imgNodes = doc.DocumentNode.SelectNodes("//img[@src]");
             if (imgNodes != null)
             {
+                // A more robust image selection might involve trying to infer image size from attributes
+                // or prioritizing the first img tag found. For simplicity, just return the first valid non-base64 one.
                 foreach (var imgNode in imgNodes)
                 {
                     var src = imgNode.GetAttributeValue("src", null);
-                    if (!string.IsNullOrWhiteSpace(src) && !src.StartsWith("data:image", StringComparison.OrdinalIgnoreCase)) // Ignore inline base64 images
+                    if (!string.IsNullOrWhiteSpace(src) && !src.StartsWith("data:image", StringComparison.OrdinalIgnoreCase))
                     {
-                        //  می‌توانید منطقی برای انتخاب "بهترین" عکس اضافه کنید (بر اساس اندازه، alt text، و ...)
-                        //  فعلاً اولین عکس معتبر را برمی‌گردانیم.
                         _logger.LogTrace("Extracted image URL from <img> tag: {ImageUrl}", src);
                         return MakeUrlAbsolute(item, src);
                     }
@@ -608,26 +645,20 @@ namespace Infrastructure.Services
         }
 
         /// <summary>
-        /// Converts a potentially relative image URL to an absolute URL using the feed item's base URI.
+        /// Converts a potentially relative image URL to an absolute URL using the feed item's base URI or primary link.
         /// </summary>
         private string? MakeUrlAbsolute(SyndicationItem item, string? imageUrl)
         {
             if (string.IsNullOrWhiteSpace(imageUrl)) return null;
-            if (Uri.IsWellFormedUriString(imageUrl, UriKind.Absolute)) return imageUrl; //  از قبل مطلق است
+            if (Uri.IsWellFormedUriString(imageUrl, UriKind.Absolute)) return imageUrl;
 
-            Uri? baseUri = null;
-            //  ابتدا BaseUri خود آیتم را بررسی کنید (اگر فید آن را ارائه دهد)
-            if (item.BaseUri != null && item.BaseUri.IsAbsoluteUri)
+            Uri? baseUri = item.BaseUri?.IsAbsoluteUri == true ? item.BaseUri : null;
+            if (baseUri == null)
             {
-                baseUri = item.BaseUri;
-            }
-            //  اگر نه، BaseUri اولین لینک معتبر آیتم را امتحان کنید
-            else
-            {
-                var firstValidLink = item.Links.FirstOrDefault(l => l.Uri != null && l.Uri.IsAbsoluteUri);
-                if (firstValidLink != null)
+                var firstAbsoluteLink = item.Links.FirstOrDefault(l => l.Uri != null && l.Uri.IsAbsoluteUri);
+                if (firstAbsoluteLink != null)
                 {
-                    baseUri = firstValidLink.Uri;
+                    baseUri = firstAbsoluteLink.Uri;
                 }
             }
 
@@ -635,19 +666,19 @@ namespace Infrastructure.Services
             {
                 if (Uri.TryCreate(baseUri, imageUrl, out Uri? absoluteUri))
                 {
-                    _logger.LogTrace("Converted relative image URL '{RelativeUrl}' to absolute '{AbsoluteUrl}' using base '{BaseUrl}'.", imageUrl, absoluteUri.ToString(), baseUri.ToString());
+                    _logger.LogTrace("Converted relative image URL '{RelativeUrl}' to absolute '{AbsoluteUrl}' using base '{BaseUrl}'.", imageUrl.Truncate(50), absoluteUri.ToString().Truncate(50), baseUri.ToString().Truncate(50));
                     return absoluteUri.ToString();
                 }
                 else
                 {
-                    _logger.LogWarning("Could not make URL '{ImageUrl}' absolute using base URI '{BaseUri}'. Returning original.", imageUrl, baseUri.ToString());
+                    _logger.LogWarning("Could not make URL '{ImageUrl}' absolute using base URI '{BaseUri}'. Returning original.", imageUrl.Truncate(50), baseUri.ToString().Truncate(50));
                 }
             }
             else
             {
-                _logger.LogDebug("No suitable BaseUri found for item '{ItemTitle}' to make image URL '{ImageUrl}' absolute.", item.Title?.Text.Truncate(50), imageUrl);
+                _logger.LogDebug("No suitable BaseUri found for item '{ItemTitle}' to make image URL '{ImageUrl}' absolute. Returning original.", item.Title?.Text.Truncate(50), imageUrl.Truncate(50));
             }
-            return imageUrl; //  اگر نتوانستیم مطلق کنیم یا BaseUri وجود نداشت
+            return imageUrl;
         }
         #endregion
     }

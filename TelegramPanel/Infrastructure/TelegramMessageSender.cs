@@ -1,17 +1,13 @@
 ﻿// File: TelegramPanel/Infrastructure/TelegramMessageSender.cs
-using Application.Common.Interfaces; // برای INotificationJobScheduler (و IUserRepository, IAppDbContext)
+using Application.Common.Interfaces;
 using Microsoft.Extensions.Logging;
-using System;
+using Polly;
+using Polly.Retry;
 using Telegram.Bot;
 using Telegram.Bot.Exceptions;
-using Telegram.Bot.Types; // برای InputFile, ChatId, LinkPreviewOptions
+using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
-using Telegram.Bot.Types.ReplyMarkups; // برای IReplyMarkup, InlineKeyboardMarkup
-using Polly; // ✅ اضافه شده برای Polly
-using Polly.Retry; // ✅ اضافه شده برای سیاست‌های Retry
-using System.Collections.Generic; // برای Dictionary در Context
-using System.Threading;
-using System.Threading.Tasks;
+using Telegram.Bot.Types.ReplyMarkups;
 
 namespace TelegramPanel.Infrastructure
 {
@@ -36,41 +32,46 @@ namespace TelegramPanel.Infrastructure
     {
         private readonly ITelegramBotClient _botClient;
         private readonly ILogger<ActualTelegramMessageActions> _logger;
-        private const ParseMode DefaultParseMode = ParseMode.Markdown; // این ثابت در کد شما استفاده شده
+        private const ParseMode DefaultParseMode = ParseMode.Markdown;
         private readonly IUserRepository _userRepository;
-        private readonly IAppDbContext _context; // ✅ این فیلد در سازنده شما هست، پس باید اینجا هم باشد
-        private readonly AsyncRetryPolicy _telegramApiRetryPolicy; // ✅ جدید: سیاست Polly برای API تلگرام
+        private readonly IAppDbContext _context;
+        private readonly AsyncRetryPolicy _telegramApiRetryPolicy;
 
         public ActualTelegramMessageActions(
             ITelegramBotClient botClient,
             ILogger<ActualTelegramMessageActions> logger,
             IUserRepository userRepository,
-            IAppDbContext context) // ✅ context در سازنده شما هست.
+            IAppDbContext context)
         {
             _botClient = botClient ?? throw new ArgumentNullException(nameof(botClient));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _userRepository = userRepository ?? throw new ArgumentNullException(nameof(userRepository));
-            _context = context ?? throw new ArgumentNullException(nameof(context)); // ✅ مقداردهی context
+            _context = context ?? throw new ArgumentNullException(nameof(context));
 
-            // ✅ تعریف سیاست تلاش مجدد برای فراخوانی‌های Telegram API
             _telegramApiRetryPolicy = Policy
-                // مدیریت ApiRequestException (خطاهای خاص تلگرام) و سایر Exceptionها (به جز لغو عملیات)
-                .Handle<ApiRequestException>()
+                .Handle<ApiRequestException>(apiEx =>
+                    !(apiEx.ErrorCode == 403 && apiEx.Message.Contains("bot was blocked by the user", StringComparison.OrdinalIgnoreCase)) &&
+                    !(apiEx.ErrorCode == 400 &&
+                      (apiEx.Message.Contains("chat not found", StringComparison.OrdinalIgnoreCase) ||
+                       apiEx.Message.Contains("USER_DEACTIVATED", StringComparison.OrdinalIgnoreCase) ||
+                       apiEx.Message.Contains("user is deactivated", StringComparison.OrdinalIgnoreCase) ||
+                       apiEx.Message.Contains("PEER_ID_INVALID", StringComparison.OrdinalIgnoreCase)
+                      ))
+                )
                 .Or<Exception>(ex => !(ex is OperationCanceledException || ex is TaskCanceledException))
                 .WaitAndRetryAsync(
-                    retryCount: 3, // حداکثر 3 بار تلاش مجدد
-                    sleepDurationProvider: retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)), // تأخیر نمایی: 2s, 4s, 8s
-                                                                                                            // ✅ اصلاح: پارامتر exception مستقیماً خود Exception است.
+                    retryCount: 3,
+                    sleepDurationProvider: retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
                     onRetry: (exception, timeSpan, retryAttempt, context) =>
                     {
                         var operationName = context.OperationKey ?? "UnknownOperation";
                         var chatId = context.TryGetValue("ChatId", out var id) ? (long?)id : null;
                         var messagePreview = context.TryGetValue("MessagePreview", out var msg) ? msg?.ToString() : "N/A";
-                        var apiErrorCode = (exception as ApiRequestException)?.ErrorCode.ToString() ?? "N/A"; // ✅ صحیح است: استفاده از 'as' برای بررسی نوع
+                        var apiErrorCode = (exception as ApiRequestException)?.ErrorCode.ToString() ?? "N/A";
 
-                        _logger.LogWarning(exception, // ✅ صحیح است: 'exception' را مستقیماً به عنوان Exception برای لاگر ارسال کنید.
+                        _logger.LogWarning(exception,
                             "PollyRetry: Telegram API operation '{Operation}' failed (ChatId: {ChatId}, Code: {ApiErrorCode}). Retrying in {TimeSpan} for attempt {RetryAttempt}. Message preview: '{MessagePreview}'. Error: {Message}",
-                            operationName, chatId, apiErrorCode, timeSpan, retryAttempt, messagePreview, exception.Message); // ✅ صحیح است: 'exception.Message'
+                            operationName, chatId, apiErrorCode, timeSpan, retryAttempt, messagePreview, exception.Message);
                     });
         }
 
@@ -86,9 +87,8 @@ namespace TelegramPanel.Infrastructure
             string logText = text.Length > 100 ? text.Substring(0, 100) + "..." : text;
             _logger.LogDebug("Hangfire Job (ActualSend): Sending text message. ChatID: {ChatId}, Text (partial): '{LogText}'", chatId, logText);
 
-            string telegramIdString = chatId.ToString(); // For repository usage
+            string telegramIdString = chatId.ToString();
 
-            // ✅ آماده‌سازی Context برای Polly با استفاده از سازنده‌ای که Dictionary<string, object> می‌گیرد.
             var pollyContext = new Polly.Context($"SendText_{chatId}_{Guid.NewGuid():N}", new Dictionary<string, object>
             {
                 { "ChatId", chatId },
@@ -97,33 +97,31 @@ namespace TelegramPanel.Infrastructure
 
             try
             {
-                // ✅ اعمال سیاست تلاش مجدد Polly
                 await _telegramApiRetryPolicy.ExecuteAsync(async (context, ct) =>
                 {
                     await _botClient.SendMessage(
                         chatId: new ChatId(chatId),
                         text: text,
-                        parseMode: Telegram.Bot.Types.Enums.ParseMode.Markdown, // ✅ حفظ منطق اصلی شما
+                        parseMode: Telegram.Bot.Types.Enums.ParseMode.Markdown,
                         replyMarkup: replyMarkup,
                         disableNotification: disableNotification,
                         linkPreviewOptions: linkPreviewOptions,
-                        cancellationToken: ct); // استفاده از CancellationToken Polly
-                }, pollyContext, cancellationToken); // ارسال Context و CancellationToken به Polly
+                        cancellationToken: ct);
+                }, pollyContext, cancellationToken);
 
                 _logger.LogInformation("Hangfire Job (ActualSend): Successfully sent text message to ChatID {ChatId}.", chatId);
             }
             catch (ApiRequestException apiEx)
-                when (apiEx.ErrorCode == 400 && // Bad Request, often for invalid IDs or blocked bots
-                      (apiEx.Message.Contains("chat not found", StringComparison.OrdinalIgnoreCase) ||
-                       apiEx.Message.Contains("USER_DEACTIVATED", StringComparison.OrdinalIgnoreCase) ||
-                       apiEx.Message.Contains("user is deactivated", StringComparison.OrdinalIgnoreCase) ||
-                       apiEx.Message.Contains("PEER_ID_INVALID", StringComparison.OrdinalIgnoreCase) ||
-                       apiEx.Message.Contains("bot was blocked by the user", StringComparison.OrdinalIgnoreCase)
-                      )
+                when ((apiEx.ErrorCode == 400 &&
+                       (apiEx.Message.Contains("chat not found", StringComparison.OrdinalIgnoreCase) ||
+                        apiEx.Message.Contains("USER_DEACTIVATED", StringComparison.OrdinalIgnoreCase) ||
+                        apiEx.Message.Contains("user is deactivated", StringComparison.OrdinalIgnoreCase) ||
+                        apiEx.Message.Contains("PEER_ID_INVALID", StringComparison.OrdinalIgnoreCase)
+                       )) ||
+                      (apiEx.ErrorCode == 403 && apiEx.Message.Contains("bot was blocked by the user", StringComparison.OrdinalIgnoreCase))
                 )
             {
-                // این بلاک فقط در صورتی اجرا می‌شود که Polly تمام تلاش‌های مجدد را انجام داده و همچنان با این خطاهای خاص مواجه شده باشد.
-                _logger.LogWarning(apiEx, "Hangfire Job (ActualSend): Telegram API reported chat not found or user deactivated/blocked for ChatID {ChatId} while sending text message after retries. Text (partial): '{LogText}'. Attempting to remove user from local database.", chatId, logText);
+                _logger.LogWarning(apiEx, "Hangfire Job (ActualSend): Telegram API reported chat not found or user deactivated/blocked (Code: {ApiErrorCode}) for ChatID {ChatId} while sending text message. Text (partial): '{LogText}'. Attempting to remove user from local database.", apiEx.ErrorCode, chatId, logText);
 
                 try
                 {
@@ -140,24 +138,31 @@ namespace TelegramPanel.Infrastructure
                 }
                 catch (Exception dbEx)
                 {
-                    _logger.LogError(dbEx, "Hangfire Job (ActualSend): Failed to remove user with Telegram ID {ChatId} from database after 'chat not found' error during text message send. The original Telegram error was: {TelegramErrorMessage}", chatId, apiEx.Message);
+                    _logger.LogError(dbEx, "Hangfire Job (ActualSend): Failed to remove user with Telegram ID {ChatId} from database after Telegram API error during text message send. The original Telegram error was: {TelegramErrorMessage}", chatId, apiEx.Message);
                 }
             }
             catch (Exception ex)
             {
-                // این بلاک برای خطاهای دیگری است که Polly نتوانسته آن‌ها را حل کند (پس از تمام تلاش‌های مجدد).
                 _logger.LogError(ex, "Hangfire Job (ActualSend): Error sending text message to ChatID {ChatId} after retries. Text (partial): '{LogText}'", chatId, logText);
-                throw; // Rethrow other unexpected exceptions for Hangfire to handle (e.g., retry the job again)
+                throw;
             }
         }
 
-
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="chatId"></param>
+        /// <param name="messageId"></param>
+        /// <param name="text"></param>
+        /// <param name="parseMode"></param>
+        /// <param name="replyMarkup"></param>
+        /// <param name="cancellationToken"></param>
+        /// <returns></returns>
         public async Task EditMessageTextInTelegramAsync(long chatId, int messageId, string text, ParseMode? parseMode, InlineKeyboardMarkup? replyMarkup, CancellationToken cancellationToken)
         {
             string logText = text.Length > 100 ? text.Substring(0, 100) + "..." : text;
             _logger.LogDebug("Hangfire Job (ActualSend): Editing message. ChatID: {ChatId}, MessageID: {MessageId}, Text (partial): '{LogText}'", chatId, messageId, logText);
 
-            // ✅ آماده‌سازی Context برای Polly
             var pollyContext = new Polly.Context($"EditMessage_{chatId}_{messageId}", new Dictionary<string, object>
             {
                 { "ChatId", chatId },
@@ -167,19 +172,48 @@ namespace TelegramPanel.Infrastructure
 
             try
             {
-                // ✅ اعمال سیاست تلاش مجدد Polly
                 await _telegramApiRetryPolicy.ExecuteAsync(async (context, ct) =>
                 {
                     await _botClient.EditMessageText(
                         chatId: new ChatId(chatId),
                         messageId: messageId,
                         text: text,
-                        parseMode: ParseMode.Markdown, // ✅ حفظ منطق اصلی شما
+                        parseMode: ParseMode.Markdown,
                         replyMarkup: replyMarkup,
                         cancellationToken: ct);
                 }, pollyContext, cancellationToken);
 
                 _logger.LogInformation("Hangfire Job (ActualSend): Successfully edited message for ChatID {ChatId}, MessageID: {MessageId}", chatId, messageId);
+            }
+            catch (ApiRequestException apiEx)
+                when ((apiEx.ErrorCode == 400 &&
+                       (apiEx.Message.Contains("chat not found", StringComparison.OrdinalIgnoreCase) ||
+                        apiEx.Message.Contains("USER_DEACTIVATED", StringComparison.OrdinalIgnoreCase) ||
+                        apiEx.Message.Contains("user is deactivated", StringComparison.OrdinalIgnoreCase) ||
+                        apiEx.Message.Contains("PEER_ID_INVALID", StringComparison.OrdinalIgnoreCase)
+                       )) ||
+                      (apiEx.ErrorCode == 403 && apiEx.Message.Contains("bot was blocked by the user", StringComparison.OrdinalIgnoreCase))
+                )
+            {
+                _logger.LogWarning(apiEx, "Hangfire Job (ActualSend): Telegram API reported chat not found or user deactivated/blocked (Code: {ApiErrorCode}) for ChatID {ChatId} while editing message. MessageID: {MessageId}. Attempting to remove user from local database.", apiEx.ErrorCode, chatId, messageId);
+
+                try
+                {
+                    Domain.Entities.User? userToDelete = await _userRepository.GetByTelegramIdAsync(chatId.ToString(), cancellationToken);
+                    if (userToDelete != null)
+                    {
+                        await _userRepository.DeleteAndSaveAsync(userToDelete, cancellationToken);
+                        _logger.LogInformation("Hangfire Job (ActualSend): Successfully removed user with Telegram ID {TelegramId} (ChatID: {ChatId}) from database due to 'chat not found' or deactivated/blocked status after message edit attempt.", userToDelete.TelegramId, chatId);
+                    }
+                    else
+                    {
+                        _logger.LogWarning("Hangfire Job (ActualSend): User with Telegram ID {ChatId} was not found in the local database for removal (might have been already removed or never existed) after message edit attempt.", chatId);
+                    }
+                }
+                catch (Exception dbEx)
+                {
+                    _logger.LogError(dbEx, "Hangfire Job (ActualSend): Failed to remove user with Telegram ID {ChatId} from database after Telegram API error during message edit. The original Telegram error was: {TelegramErrorMessage}", chatId, apiEx.Message);
+                }
             }
             catch (Exception ex)
             {
@@ -194,7 +228,6 @@ namespace TelegramPanel.Infrastructure
             string logText = text?.Length > 100 ? text.Substring(0, 100) + "..." : text ?? "N/A";
             _logger.LogDebug("Hangfire Job (ActualSend): Answering CBQ. ID: {CBQId}, Text (partial): '{LogText}'", callbackQueryId, logText);
 
-            // ✅ آماده‌سازی Context برای Polly
             var pollyContext = new Polly.Context($"AnswerCBQ_{callbackQueryId}", new Dictionary<string, object>
             {
                 { "CallbackQueryId", callbackQueryId },
@@ -203,7 +236,6 @@ namespace TelegramPanel.Infrastructure
 
             try
             {
-                // ✅ اعمال سیاست تلاش مجدد Polly
                 await _telegramApiRetryPolicy.ExecuteAsync(async (context, ct) =>
                 {
                     await _botClient.AnswerCallbackQuery(
@@ -236,7 +268,6 @@ namespace TelegramPanel.Infrastructure
             string logCaption = caption?.Length > 100 ? caption.Substring(0, 100) + "..." : caption ?? "N/A";
             _logger.LogDebug("Hangfire Job (ActualSend): Sending photo. ChatID: {ChatId}, Photo: {PhotoIdOrUrl}, Caption (partial): '{LogCaption}'", chatId, photoUrlOrFileId, logCaption);
 
-            // ✅ آماده‌سازی Context برای Polly
             var pollyContext = new Polly.Context($"SendPhoto_{chatId}_{Guid.NewGuid():N}", new Dictionary<string, object>
             {
                 { "ChatId", chatId },
@@ -248,14 +279,13 @@ namespace TelegramPanel.Infrastructure
             {
                 InputFile photoInput = InputFile.FromString(photoUrlOrFileId);
 
-                // ✅ اعمال سیاست تلاش مجدد Polly
                 await _telegramApiRetryPolicy.ExecuteAsync(async (context, ct) =>
                 {
                     await _botClient.SendPhoto(
                         chatId: new ChatId(chatId),
                         photo: photoInput,
                         caption: caption,
-                        parseMode: Telegram.Bot.Types.Enums.ParseMode.Markdown, // ✅ حفظ منطق اصلی شما
+                        parseMode: Telegram.Bot.Types.Enums.ParseMode.Markdown,
                         replyMarkup: replyMarkup,
                         cancellationToken: ct);
                 }, pollyContext, cancellationToken);
@@ -263,17 +293,16 @@ namespace TelegramPanel.Infrastructure
                 _logger.LogInformation("Hangfire Job (ActualSend): Successfully sent photo to ChatID {ChatId}", chatId);
             }
             catch (ApiRequestException apiEx)
-                when (apiEx.ErrorCode == 400 &&
-                      (apiEx.Message.Contains("chat not found", StringComparison.OrdinalIgnoreCase) ||
-                       apiEx.Message.Contains("USER_DEACTIVATED", StringComparison.OrdinalIgnoreCase) ||
-                       apiEx.Message.Contains("user is deactivated", StringComparison.OrdinalIgnoreCase) ||
-                       apiEx.Message.Contains("PEER_ID_INVALID", StringComparison.OrdinalIgnoreCase) ||
-                       apiEx.Message.Contains("bot was blocked by the user", StringComparison.OrdinalIgnoreCase)
-                      )
+                when ((apiEx.ErrorCode == 400 &&
+                       (apiEx.Message.Contains("chat not found", StringComparison.OrdinalIgnoreCase) ||
+                        apiEx.Message.Contains("USER_DEACTIVATED", StringComparison.OrdinalIgnoreCase) ||
+                        apiEx.Message.Contains("user is deactivated", StringComparison.OrdinalIgnoreCase) ||
+                        apiEx.Message.Contains("PEER_ID_INVALID", StringComparison.OrdinalIgnoreCase)
+                       )) ||
+                      (apiEx.ErrorCode == 403 && apiEx.Message.Contains("bot was blocked by the user", StringComparison.OrdinalIgnoreCase))
                 )
             {
-                // این بلاک فقط در صورتی اجرا می‌شود که Polly تمام تلاش‌های مجدد را انجام داده و همچنان با این خطاهای خاص مواجه شده باشد.
-                _logger.LogWarning(apiEx, "Hangfire Job (ActualSend): Telegram API reported chat not found or user deactivated/blocked for ChatID {ChatId} while sending photo after retries. Attempting to remove user from local database.", chatId);
+                _logger.LogWarning(apiEx, "Hangfire Job (ActualSend): Telegram API reported chat not found or user deactivated/blocked (Code: {ApiErrorCode}) for ChatID {ChatId} while sending photo. Attempting to remove user from local database.", apiEx.ErrorCode, chatId);
 
                 try
                 {
@@ -295,7 +324,6 @@ namespace TelegramPanel.Infrastructure
             }
             catch (Exception ex)
             {
-                // این بلاک برای خطاهای دیگری است که Polly نتوانسته آن‌ها را حل کند (پس از تمام تلاش‌های مجدد).
                 _logger.LogError(ex, "Hangfire Job (ActualSend): Unexpected error sending photo to ChatID {ChatId} after retries.", chatId);
                 throw;
             }
@@ -360,6 +388,7 @@ namespace TelegramPanel.Infrastructure
         {
             _logger.LogDebug("Enqueueing SendTextMessageAsync for ChatID {ChatId}", chatId);
             _jobScheduler.Enqueue<IActualTelegramMessageActions>(
+                // ✅ CORRECTED LINE: Swapped the order of linkPreviewOptions and CancellationToken.None
                 sender => sender.SendTextMessageToTelegramAsync(chatId, text, parseMode, replyMarkup, false, linkPreviewOptions, CancellationToken.None)
             );
             return Task.CompletedTask;

@@ -1,185 +1,143 @@
+#region Usings
 using Application.Common.Interfaces;
 using Application.Features.Forwarding.Interfaces;
 using Domain.Features.Forwarding.Entities;
+using Domain.Features.Forwarding.ValueObjects;
 using Hangfire;
+using Hangfire.Server; // Ensure this is present for PerformContext
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
-using System.Text.Json;
+using Polly;
+using Polly.Retry;
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Text.RegularExpressions;
-using Telegram.Bot.Types;
-using Telegram.Bot.Types.Enums;
+using System.Threading;
+using System.Threading.Tasks;
 using TL;
+using Telegram.Bot.Types; // For Telegram.Bot.Types.Message
+using Telegram.Bot.Types.Enums; // For ChatType, MessageEntityType
+
+#endregion
 
 namespace TelegramPanel.Infrastructure.Services
 {
     public class MessageForwardingService
     {
         private readonly ILogger<MessageForwardingService> _logger;
-        // private readonly IForwardingJobActions _forwardingJobActions; // No longer directly injecting this
-        // private readonly List<Infrastructure.Settings.ForwardingRule> _forwardingRules; // REMOVE THIS
-        private readonly INotificationJobScheduler _jobScheduler; // Assuming this is for Hangfire's IBackgroundJobClient
-        private readonly IForwardingService _appForwardingService; // << INJECT THIS
+        private readonly INotificationJobScheduler _jobScheduler;
+        private readonly IForwardingService _appForwardingService;
+        private readonly RetryPolicy<string> _enqueueRetryPolicy;
 
         public MessageForwardingService(
             ILogger<MessageForwardingService> logger,
-            // IForwardingJobActions forwardingJobActions, // REMOVE
-            // IOptions<List<Infrastructure.Settings.ForwardingRule>> forwardingRules, // REMOVE
-            IForwardingService appForwardingService, // << ADD
+            IForwardingService appForwardingService,
             INotificationJobScheduler jobScheduler)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            // _forwardingJobActions = forwardingJobActions; // REMOVE
             _appForwardingService = appForwardingService ?? throw new ArgumentNullException(nameof(appForwardingService));
             _jobScheduler = jobScheduler ?? throw new ArgumentNullException(nameof(jobScheduler));
-            // _forwardingRules = forwardingRules?.Value ?? new List<Infrastructure.Settings.ForwardingRule>(); // REMOVE
 
-            _logger.LogInformation("MessageForwardingService initialized to use database-driven rules via IForwardingService.");
+            _logger.LogInformation("MessageForwardingService initialized for forwarding without re-download/re-upload of media.");
+
+            _enqueueRetryPolicy = Policy<string>
+                .Handle<Exception>(ex =>
+                {
+                    _logger.LogWarning(ex, "Polly[Enqueue]: Error occurred while attempting to enqueue Hangfire job. Retrying...");
+                    return true;
+                })
+                .WaitAndRetry(new[]
+                {
+                    TimeSpan.FromMilliseconds(100),
+                    TimeSpan.FromMilliseconds(200),
+                    TimeSpan.FromMilliseconds(400),
+                    TimeSpan.FromMilliseconds(800),
+                    TimeSpan.FromSeconds(1)
+                },
+                (delegateResult, timeSpan, retryAttempt, context) =>
+                {
+                    string errorMessage = delegateResult.Exception?.Message ?? "No exception message provided.";
+
+                    _logger.LogWarning(delegateResult.Exception,
+                        "PollyRetry[Enqueue]: Enqueue operation for {OperationKey} failed (Attempt: {RetryAttempt}). Retrying in {TimeSpan}. Error: {ErrorMessage}",
+                        context.OperationKey ?? "N/A", retryAttempt, timeSpan, errorMessage);
+                });
         }
 
         public async Task HandleMessageAsync(Telegram.Bot.Types.Message message, CancellationToken cancellationToken = default)
         {
             if (message == null)
             {
-                _logger.LogWarning("TelegramPanel.MessageForwardingService: Received null message. Skipping.");
+                _logger.LogWarning("MessageForwardingService: Received null message. Skipping.");
                 return;
             }
 
-            // 1. Extract content and entities from Telegram.Bot.Types.Message
-            string messageContent = message.Text ?? message.Caption ?? string.Empty;
-            Telegram.Bot.Types.MessageEntity[]? telegramBotEntities = message.Entities ?? message.CaptionEntities;
+            int originalMessageId = message.MessageId;
+            string currentMessageContent = message.Text ?? message.Caption ?? string.Empty;
+            Telegram.Bot.Types.MessageEntity[]? currentTelegramBotEntities = message.Entities ?? message.CaptionEntities;
 
             TL.MessageEntity[]? tlMessageEntities = null;
-            if (telegramBotEntities != null && telegramBotEntities.Any())
+            if (currentTelegramBotEntities != null && currentTelegramBotEntities.Any())
             {
-                var convertedEntities = new System.Collections.Generic.List<TL.MessageEntity>();
-                foreach (var entity in telegramBotEntities)
+                var convertedEntities = new List<TL.MessageEntity>();
+                foreach (var entity in currentTelegramBotEntities)
                 {
-                    var tlEntity = ConvertTelegramBotEntityToTLEntity(entity);
-                    if (tlEntity != null)
-                    {
-                        convertedEntities.Add(tlEntity);
-                    }
-                    else
-                    {
-                        _logger.LogWarning("TelegramPanel.MessageForwardingService: Failed to convert Telegram.Bot entity type {EntityType} for message {MessageId}", entity.Type, message.MessageId);
-                    }
+                    var tlEntity = ConvertTelegramBotEntityToTLEntity(entity, currentMessageContent);
+                    if (tlEntity != null) convertedEntities.Add(tlEntity);
+                    else _logger.LogWarning("MessageForwardingService: Failed to convert Telegram.Bot entity type {EntityType} for message {OriginalMessageId}", entity.Type, originalMessageId);
                 }
                 tlMessageEntities = convertedEntities.ToArray();
             }
 
-            // 2. Extract sender Peer for filtering
-            TL.Peer? tlSenderPeer = null;
-            if (message.From != null)
+            TL.Peer? tlSenderPeer = GetSenderPeer(message);
+
+            // --- Media Group Aggregation (simplified, still no download/upload) ---
+            List<InputMediaWithCaption>? jobMediaGroupItems = null; // This will now typically remain null or hold placeholders if actual media isn't handled.
+
+            // The main logic for handling media messages without re-download/re-upload is to rely on ForwardMessagesAsync.
+            // If the rule requires custom sends (e.g., NoForwards = true), media will be skipped.
+            if (message.MediaGroupId != null)
             {
-                tlSenderPeer = new TL.PeerUser { user_id = message.From.Id };
-                _logger.LogTrace("TelegramPanel.MessageForwardingService: Sender is a User: {UserId}", message.From.Id);
+                _logger.LogInformation("MessageForwardingService: Message {OriginalMessageId} is part of a media group ({MediaGroupId}). Full media group processing (aggregation, download, upload) is NOT implemented here, will attempt direct forwarding if rule allows.", originalMessageId, message.MediaGroupId);
+                // For albums, direct forwarding (ProcessSimpleForwardAsync) is the ideal path if no other edits apply.
+                // If the rule forces a custom send (e.g., NoForwards=true), media will be ignored/skipped as re-upload is disabled.
+                // A true album processing would need aggregation + download/upload + SendMediaGroupAsync.
             }
-            else if (message.SenderChat != null)
+            else if (message.Photo != null || message.Video != null || message.Document != null || message.Sticker != null || message.Animation != null || message.Voice != null || message.Audio != null)
             {
-                long senderChatId = message.SenderChat.Id;
-                if (message.SenderChat.Type == Telegram.Bot.Types.Enums.ChatType.Channel || message.SenderChat.Type == Telegram.Bot.Types.Enums.ChatType.Supergroup)
-                {
-                    long positiveChannelId = senderChatId;
-                    if (positiveChannelId.ToString().StartsWith("-100"))
-                    {
-                        positiveChannelId = Math.Abs(senderChatId) - 1000000000000L;
-                    }
-                    else
-                    {
-                        positiveChannelId = Math.Abs(senderChatId);
-                    }
-                    tlSenderPeer = new TL.PeerChannel { channel_id = positiveChannelId };
-                    _logger.LogTrace("TelegramPanel.MessageForwardingService: Sender is a Channel/Supergroup: {ChannelId} (Original Telegram.Bot ID: {OriginalId})", positiveChannelId, senderChatId);
-                }
-                else if (message.SenderChat.Type == Telegram.Bot.Types.Enums.ChatType.Group)
-                {
-                    tlSenderPeer = new TL.PeerChat { chat_id = Math.Abs(senderChatId) };
-                    _logger.LogTrace("TelegramPanel.MessageForwardingService: Sender is a Group: {ChatId} (Original Telegram.Bot ID: {OriginalId})", Math.Abs(senderChatId), senderChatId);
-                }
-                _logger.LogTrace("TelegramPanel.MessageForwardingService: Sender is a Chat Type: {ChatType} (Telegram.Bot ID: {ChatId})", message.SenderChat.Type, message.SenderChat.Id);
+                // This means it's a single media message.
+                // If the rule allows direct forwarding, media will be handled.
+                // If the rule forces custom send, media will be skipped as re-upload is disabled.
+                _logger.LogDebug("MessageForwardingService: Message {OriginalMessageId} is a single media message. Media will be forwarded directly if rule permits, otherwise skipped.", originalMessageId);
+            }
+            // --- End Media Handling Logic ---
+
+
+            long sourceIdForMatchingRules = message.Chat.Id;
+
+            // Handle various chat types for matching rules.
+            if (message.Chat.Type == ChatType.Private)
+            {
+                _logger.LogDebug("MessageForwardingService: Message from private chat {TelegramApiId}. Skipping automatic forwarding enqueue as private chats are typically not sources for rules.", message.Chat.Id);
+                return;
+            }
+            else if (message.Chat.Type == ChatType.Channel || message.Chat.Type == ChatType.Supergroup)
+            {
+                _logger.LogDebug("MessageForwardingService: Source is a Channel/Supergroup. Using ID {SourceId} for rule matching.", sourceIdForMatchingRules);
+            }
+            else if (message.Chat.Type == ChatType.Group)
+            {
+                _logger.LogWarning("MessageForwardingService: Source is a Basic Group Chat {TelegramApiId}. Ensure its ID {SourceIdForMatchingRules} matches rule DB format for matching. This might require a transformation if your DB stores IDs differently for basic groups.", message.Chat.Id, sourceIdForMatchingRules);
             }
             else
             {
-                _logger.LogTrace("TelegramPanel.MessageForwardingService: Sender information (From/SenderChat) is null for message {MessageId}. Skipping sender peer for filter.", message.MessageId);
-            }
-
-            // 3. Extract and convert Media to TL.InputMedia and then to List<InputMediaWithCaption>
-            // IMPORTANT: Direct conversion of Telegram.Bot.Types.FileId (Photo.FileId, Video.FileId, Document.FileId)
-            // to WTelegramClient's TL.InputPhoto / TL.InputDocument (which require 'id', 'access_hash', 'file_reference')
-            // is NOT possible without re-downloading the file and re-uploading it via WTelegramClient.
-            // WTelegramClient's IDs are internal and different from Telegram.Bot's FileIds.
-            // So, `tlInputMedia` as a simple conversion will likely be null or result in invalid media.
-            List<InputMediaWithCaption>? mediaGroupItems = null;
-
-            // Handling for a single media item
-            TL.InputMedia? currentPreparedMedia = null;
-            if (message.Photo != null && message.Photo.Any())
-            {
-                var largestPhoto = message.Photo.OrderByDescending(p => p.Width * p.Height).FirstOrDefault();
-                if (largestPhoto != null)
-                {
-                    _logger.LogWarning("TelegramPanel.MessageForwardingService: Attempting to create InputMediaPhoto from Telegram.Bot PhotoSize (FileId: {FileId}). Direct conversion to TL.InputMedia's 'id', 'access_hash', 'file_reference' is NOT supported. Media will likely NOT be sent correctly.", largestPhoto.FileId);
-                    // Create a dummy InputMediaPhoto. This will likely fail in WTelegramClient API unless it resolves FileId internally (which it won't).
-                    // The correct way is to download largestPhoto.FileId and then upload it with WTelegramClient.
-                    currentPreparedMedia = new TL.InputMediaPhoto { id = new InputPhoto { id = 0, access_hash = 0, file_reference = Array.Empty<byte>() } };
-                }
-            }
-            else if (message.Video != null)
-            {
-                _logger.LogWarning("TelegramPanel.MessageForwardingService: Attempting to create InputMediaDocument from Telegram.Bot Video (FileId: {FileId}). Direct conversion is NOT supported. Media will likely NOT be sent correctly.", message.Video.FileId);
-                currentPreparedMedia = new TL.InputMediaDocument { id = new InputDocument { id = 0, access_hash = 0, file_reference = Array.Empty<byte>() } };
-            }
-            else if (message.Document != null)
-            {
-                _logger.LogWarning("TelegramPanel.MessageForwardingService: Attempting to create InputMediaDocument from Telegram.Bot Document (FileId: {FileId}). Direct conversion is NOT supported. Media will likely NOT be sent correctly.", message.Document.FileId);
-                currentPreparedMedia = new TL.InputMediaDocument { id = new InputDocument { id = 0, access_hash = 0, file_reference = Array.Empty<byte>() } };
-            }
-            // IMPORTANT: If you need to handle media groups from Telegram.Bot, you'll need to check message.MediaGroupId
-            // and implement a caching mechanism (like a ConcurrentDictionary with a timer) to collect all parts of the media group
-            // before enqueuing *one* Hangfire job that passes the complete list of InputMediaWithCaption.
-            // The current code sends each media item as a separate job, which will result in individual messages.
-
-            if (currentPreparedMedia != null)
-            {
-                mediaGroupItems = new System.Collections.Generic.List<InputMediaWithCaption>
-               {
-                   new InputMediaWithCaption
-                   {
-                       Media = currentPreparedMedia,
-                       Caption = messageContent, // Use combined content for caption
-                       Entities = tlMessageEntities // Use combined entities
-                   }
-               };
-            }
-
-
-            var telegramApiSourceChatId = message.Chat.Id;
-            _logger.LogInformation(
-                "TelegramPanel.MessageForwardingService: Processing message {MessageId} from chat {SourceChannelId} (Bot API Type: {MessageType}). Content Preview: '{ContentPreview}'. Has Media: {HasMedia}. Sender Peer: {SenderPeer}",
-                message.MessageId, telegramApiSourceChatId, message.Type, TruncateString(messageContent, 50), mediaGroupItems != null && mediaGroupItems.Any(), tlSenderPeer?.ToString() ?? "N/A");
-
-            long sourceIdForMatchingRules;
-            long positiveSourceId = Math.Abs(telegramApiSourceChatId); // Get positive ID
-
-            if (telegramApiSourceChatId < 0) // Common for channels/supergroups/groups from Telegram.Bot
-            {
-                if (telegramApiSourceChatId.ToString().StartsWith("-100")) // Supergroup/Channel
-                {
-                    sourceIdForMatchingRules = telegramApiSourceChatId; // Already in the right format for DB rule matching
-                    _logger.LogDebug("TelegramPanel.MessageForwardingService: Source is a Channel/Supergroup. Using ID {SourceId} for rule matching.", sourceIdForMatchingRules);
-                }
-                else // Regular group chat (Telegram.Bot IDs are negative for groups, e.g., -12345)
-                {
-                    // Your DB rules use -100_000_000_000L - positiveId for groups.
-                    sourceIdForMatchingRules = -100_000_000_000L - positiveSourceId;
-                    _logger.LogWarning("TelegramPanel.MessageForwardingService: Source is a GroupChat. Converting ID {TelegramApiId} to {MatchingId} for rule matching. Verify storage format for group rules.", telegramApiSourceChatId, sourceIdForMatchingRules);
-                }
-            }
-            else // Probably a user, which we usually don't forward from automatically (unless configured)
-            {
-                _logger.LogDebug("TelegramPanel.MessageForwardingService: Message from user chat {TelegramApiId}. Skipping automatic forwarding enqueue.", telegramApiSourceChatId);
+                _logger.LogWarning("MessageForwardingService: Unhandled source chat type {ChatType} (Telegram.Bot ID: {ChatId}). Skipping automatic forwarding enqueue.", message.Chat.Type, message.Chat.Id);
                 return;
             }
+
+            _logger.LogInformation(
+                "MessageForwardingService: Processing message {OriginalMessageId} from chat {SourceChannelId} (Bot API Type: {MessageType}). Content Preview: '{ContentPreview}'. Has Media: {HasMedia}. Sender Peer: {SenderPeerType}",
+                originalMessageId, sourceIdForMatchingRules, message.Type, TruncateString(currentMessageContent, 50), message.Photo != null || message.Video != null || message.Document != null, tlSenderPeer?.GetType().Name ?? "N/A"); // Check message.Photo/Video/Document for media presence
 
 
             var applicableDbRules = (await _appForwardingService.GetRulesBySourceChannelAsync(sourceIdForMatchingRules, cancellationToken))
@@ -188,62 +146,135 @@ namespace TelegramPanel.Infrastructure.Services
 
             if (!applicableDbRules.Any())
             {
-                _logger.LogDebug("TelegramPanel.MessageForwardingService: No active DB forwarding rules found for source (matching ID {MatchingId}). Skipping.", sourceIdForMatchingRules);
+                _logger.LogDebug("MessageForwardingService: No active DB forwarding rules found for source (matching ID {MatchingId}). Skipping.", sourceIdForMatchingRules);
                 return;
             }
 
-            _logger.LogInformation("TelegramPanel.MessageForwardingService: Found {RuleCount} applicable DB rules for source (matching ID {MatchingId})",
+            _logger.LogInformation("MessageForwardingService: Found {RuleCount} applicable DB rules for source (matching ID {MatchingId})",
                 applicableDbRules.Count, sourceIdForMatchingRules);
 
-            foreach (var dbRule in applicableDbRules) // dbRule is Domain.Features.Forwarding.Entities.ForwardingRule
+            long rawSourcePeerIdForJob = message.From?.Id ?? Math.Abs(message.Chat.Id);
+
+
+            foreach (var dbRule in applicableDbRules)
             {
                 try
                 {
-                    _logger.LogInformation("TelegramPanel.MessageForwardingService: Processing DB rule '{RuleName}' for message {MessageId}", dbRule.RuleName, message.MessageId);
+                    cancellationToken.ThrowIfCancellationRequested(); // Check cancellation per rule
 
-                    foreach (var targetChannelId in dbRule.TargetChannelIds)
+                    if (dbRule.TargetChannelIds == null || !dbRule.TargetChannelIds.Any())
                     {
-                        _logger.LogInformation(
-                            "TelegramPanel.MessageForwardingService: Scheduling forwarding job for message {MessageId} to target {TargetChannelId} using DB rule '{RuleName}'. Content Preview: '{ContentPreview}'. Has Media: {HasMedia}",
-                            message.MessageId, targetChannelId, dbRule.RuleName, TruncateString(messageContent, 50), mediaGroupItems != null && mediaGroupItems.Any());
+                        _logger.LogWarning("MessageForwardingService: Rule '{RuleName}' has no target channels defined. Skipping this rule.", dbRule.RuleName);
+                        continue;
+                    }
 
-                        long rawSourcePeerIdForJob = positiveSourceId;
+                    // --- Determine if a direct Forward is possible OR if custom send (with media skipping) is required ---
+                    // directForwardPossible: true if NoForwards is FALSE and no other text edits would force a custom send.
+                    bool directForwardPossible = !(dbRule.EditOptions?.NoForwards ?? false) &&
+                                                 string.IsNullOrEmpty(dbRule.EditOptions?.PrependText) &&
+                                                 string.IsNullOrEmpty(dbRule.EditOptions?.AppendText) &&
+                                                 (dbRule.EditOptions?.TextReplacements == null || !dbRule.EditOptions.TextReplacements.Any()) &&
+                                                 !(dbRule.EditOptions?.RemoveLinks ?? false) &&
+                                                 !(dbRule.EditOptions?.StripFormatting ?? false) &&
+                                                 string.IsNullOrEmpty(dbRule.EditOptions?.CustomFooter) &&
+                                                 !(dbRule.EditOptions?.DropMediaCaptions ?? false); // If DropMediaCaptions is true, it forces custom send because text content is modified.
 
-                        var jobId = _jobScheduler.Enqueue<IForwardingJobActions>(job =>
-                            job.ProcessAndRelayMessageAsync(
-                                message.MessageId,       // Correctly an int
-                                rawSourcePeerIdForJob,   // Pass the positive source ID for WTelegramClient to resolve
-                                targetChannelId,         // DB rule target ID
-                                dbRule,                  // Domain Rule object
-                                messageContent,          // Pass the extracted message content
-                                tlMessageEntities,       // Pass the converted TL message entities
-                                tlSenderPeer,            // Pass the converted TL sender peer
-                                mediaGroupItems,         // CHANGED: Pass the List<InputMediaWithCaption>
-                                CancellationToken.None   // CancellationToken for Hangfire job
-                            ));
+                    // If a custom send is NOT needed, we prioritize simple forward.
+                    if (directForwardPossible)
+                    {
+                        // This is the simplest path: no edits, just forward.
+                        // This also handles media and captions seamlessly as Telegram servers do the work.
+                        _logger.LogDebug("MessageForwardingService: Rule '{RuleName}' allows direct forwarding. Enqueuing direct forward job for message {MessageId}.", dbRule.RuleName, originalMessageId);
+                        var jobId = _enqueueRetryPolicy.Execute(
+                            (pollyContext) =>
+                            {
+                                return _jobScheduler.Enqueue<IForwardingJobActions>(processor =>
+                                    processor.ProcessAndRelayMessageAsync(
+                                        originalMessageId,
+                                        rawSourcePeerIdForJob, // Source peer ID for WTelegramClient
+                                        dbRule.TargetChannelIds.FirstOrDefault(), // Target channel ID from rule
+                                        dbRule, // The rule
+                                        currentMessageContent, // Original content (will be ignored by simple forward)
+                                        tlMessageEntities, // Original entities (will be ignored by simple forward)
+                                        tlSenderPeer, // Original senderPeer (will be ignored by simple forward)
+                                        null, // No mediaGroupItems needed for simple forward
+                                        CancellationToken.None,
+                                        null! // PerformContext
+                                    ));
+                            },
+                            new Context($"EnqueueDirectForward_Msg:{originalMessageId}|Rule:{dbRule.RuleName}|Target:{dbRule.TargetChannelIds.FirstOrDefault()}")
+                        );
+                        _logger.LogInformation("MessageForwardingService: Successfully scheduled direct forwarding job {JobId} for message {MessageId}.", jobId, originalMessageId);
+                    }
+                    else
+                    {
+                        // Custom send is needed due to edits or NoForwards=true.
+                        // If NoForwards is true, media will be skipped.
+                        // If DropMediaCaptions is true, it forces a custom send. The content will be empty unless other prepends/appends add text.
 
-                        _logger.LogInformation(
-                            "TelegramPanel.MessageForwardingService: Successfully scheduled forwarding job {JobId} for message {MessageId} to channel {TargetChannelId}",
-                            jobId, message.MessageId, targetChannelId);
+                        // We must pass the original message content and entities,
+                        // and potentially `null` for mediaGroupItems IF we're not supporting re-upload.
+                        List<InputMediaWithCaption>? mediaForCustomSend = null;
+
+                        if (dbRule.EditOptions?.NoForwards == true && (message.Photo != null || message.Video != null || message.Document != null))
+                        {
+                            _logger.LogWarning("MessageForwardingService: Rule '{RuleName}' has NoForwards enabled and message {OriginalMessageId} has media. Media will be SKIPPED because re-download/re-upload is disabled.", dbRule.RuleName, originalMessageId);
+                            // mediaForCustomSend remains null, so ProcessCustomSendAsync won't attempt to send media.
+                        }
+                        else if (dbRule.EditOptions?.DropMediaCaptions == true && (message.Photo != null || message.Video != null || message.Document != null))
+                        {
+                            _logger.LogDebug("MessageForwardingService: Rule '{RuleName}' has DropMediaCaptions enabled for message {OriginalMessageId}. This forces custom send. Media will be implicitly handled by its lack of caption or direct presence.", dbRule.RuleName, originalMessageId);
+                            // Media is here, but its caption will be dropped. ProcessCustomSendAsync still needs to know media exists.
+                            // If you were to enable re-upload, you'd populate `mediaForCustomSend` here by calling `TryPrepareSingleMediaAsync`.
+                            // Without re-upload, we'll let ProcessCustomSendAsync handle the text and simply skip the media.
+                        }
+
+                        _logger.LogDebug("MessageForwardingService: Rule '{RuleName}' requires custom send. Enqueuing custom send job for message {MessageId}.", dbRule.RuleName, originalMessageId);
+
+                        var jobId = _enqueueRetryPolicy.Execute(
+                            (pollyContext) =>
+                            {
+                                return _jobScheduler.Enqueue<IForwardingJobActions>(processor =>
+                                    processor.ProcessAndRelayMessageAsync(
+                                        originalMessageId,
+                                        rawSourcePeerIdForJob,
+                                        dbRule.TargetChannelIds.FirstOrDefault(),
+                                        dbRule,
+                                        currentMessageContent, // Pass the original content and entities
+                                        tlMessageEntities,
+                                        tlSenderPeer,
+                                        mediaForCustomSend, // This will be null, explicitly indicating no media from this path.
+                                        CancellationToken.None,
+                                        null! // PerformContext
+                                    ));
+                            },
+                            new Context($"EnqueueCustomSend_Msg:{originalMessageId}|Rule:{dbRule.RuleName}|Target:{dbRule.TargetChannelIds.FirstOrDefault()}")
+                        );
+                        _logger.LogInformation("MessageForwardingService: Successfully scheduled custom send job {JobId} for message {MessageId}.", jobId, originalMessageId);
                     }
                 }
                 catch (Exception ex)
                 {
                     _logger.LogError(ex,
-                        "TelegramPanel.MessageForwardingService: Error scheduling/processing DB rule {RuleName} for message {MessageId} from source {SourceChannelId}",
-                        dbRule.RuleName, message.MessageId, telegramApiSourceChatId);
+                        "MessageForwardingService: Error scheduling job for rule {RuleName} for message {MessageId} from source {SourceChannelId}. This will cause the main job to retry.",
+                        dbRule.RuleName, originalMessageId, sourceIdForMatchingRules);
+                    throw; // Re-throw to make the parent job (ProcessMessageAsync) retry this whole rule.
                 }
             }
         }
 
-
-
         // Helper method to convert Telegram.Bot.Types.MessageEntity to TL.MessageEntity
-        // This is a crucial mapping function.
-        private TL.MessageEntity? ConvertTelegramBotEntityToTLEntity(Telegram.Bot.Types.MessageEntity tbEntity)
+        private TL.MessageEntity? ConvertTelegramBotEntityToTLEntity(Telegram.Bot.Types.MessageEntity tbEntity, string messageContent)
         {
             try
             {
+                if (tbEntity.Offset < 0 || tbEntity.Length < 0 || tbEntity.Offset + tbEntity.Length > messageContent.Length)
+                {
+                    _logger.LogWarning("MessageForwardingService: Invalid entity offset/length for type {EntityType}. Offset: {Offset}, Length: {Length}, Message Length: {MessageLength}. Entity will be skipped.",
+                        tbEntity.Type, tbEntity.Offset, tbEntity.Length, messageContent.Length);
+                    return null;
+                }
+
                 return tbEntity.Type switch
                 {
                     MessageEntityType.Bold => new TL.MessageEntityBold { Offset = tbEntity.Offset, Length = tbEntity.Length },
@@ -253,7 +284,7 @@ namespace TelegramPanel.Infrastructure.Services
                     MessageEntityType.Spoiler => new TL.MessageEntitySpoiler { Offset = tbEntity.Offset, Length = tbEntity.Length },
                     MessageEntityType.Code => new TL.MessageEntityCode { Offset = tbEntity.Offset, Length = tbEntity.Length },
                     MessageEntityType.Pre => new TL.MessageEntityPre { Offset = tbEntity.Offset, Length = tbEntity.Length, language = tbEntity.Language },
-                    MessageEntityType.TextLink => new TL.MessageEntityTextUrl { Offset = tbEntity.Offset, Length = tbEntity.Length, url = tbEntity.Url ?? "" },
+                    MessageEntityType.TextLink => new TL.MessageEntityTextUrl { Offset = tbEntity.Offset, Length = tbEntity.Length, url = tbEntity.Url?.ToString() ?? "" },
                     MessageEntityType.Url => new TL.MessageEntityUrl { Offset = tbEntity.Offset, Length = tbEntity.Length },
                     MessageEntityType.Mention => new TL.MessageEntityMention { Offset = tbEntity.Offset, Length = tbEntity.Length },
                     MessageEntityType.Hashtag => new TL.MessageEntityHashtag { Offset = tbEntity.Offset, Length = tbEntity.Length },
@@ -262,25 +293,18 @@ namespace TelegramPanel.Infrastructure.Services
                     MessageEntityType.Email => new TL.MessageEntityEmail { Offset = tbEntity.Offset, Length = tbEntity.Length },
                     MessageEntityType.PhoneNumber => new TL.MessageEntityPhone { Offset = tbEntity.Offset, Length = tbEntity.Length },
                     MessageEntityType.TextMention => new TL.MessageEntityMentionName { Offset = tbEntity.Offset, Length = tbEntity.Length, user_id = tbEntity.User?.Id ?? 0 },
-                    MessageEntityType.Blockquote => new TL.MessageEntityBlockquote { Offset = tbEntity.Offset, Length = tbEntity.Length, flags = 0 }, // Adjust flags if needed
-
-                    // Add more mappings as new types are supported or needed
-                    _ => null // Return null for unsupported types or throw an exception if strict
+                    MessageEntityType.Blockquote => new TL.MessageEntityBlockquote { Offset = tbEntity.Offset, Length = tbEntity.Length, flags = 0 },
+                    //MessageEntityType.CustomEmoji => new TL.MessageEntityCustomEmoji { Offset = tbEntity.Offset, Length = tbEntity.Length, document_id = tbEntity.CustomEmojiId ?? 0 },
+                    _ => null
                 };
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to convert Telegram.Bot MessageEntity type {EntityType} to TL.MessageEntity. Entity Offset: {Offset}, Length: {Length}",
-                    tbEntity.Type, tbEntity.Offset, tbEntity.Length);
+                _logger.LogError(ex, "Failed to convert Telegram.Bot MessageEntity type {EntityType} to TL.MessageEntity. Entity Offset: {Offset}, Length: {Length}. Content preview: '{ContentPreview}'",
+                    tbEntity.Type, tbEntity.Offset, tbEntity.Length, TruncateString(messageContent, 50));
                 return null;
             }
         }
-
-
-
-
-
-
 
         // Helper function to truncate strings for logging
         private string TruncateString(string? str, int maxLength)
@@ -289,7 +313,29 @@ namespace TelegramPanel.Infrastructure.Services
             return str.Length <= maxLength ? str : str.Substring(0, maxLength) + "...";
         }
 
-        private bool ShouldProcessMessage(Telegram.Bot.Types.Message message, ForwardingRule rule)
+        // Helper to get Peer from Telegram.Bot.Types.Message.From or .SenderChat
+        private TL.Peer? GetSenderPeer(Telegram.Bot.Types.Message message)
+        {
+            if (message.From != null)
+            {
+                return new TL.PeerUser { user_id = message.From.Id };
+            }
+            if (message.SenderChat != null)
+            {
+                if (message.SenderChat.Type == ChatType.Channel || message.SenderChat.Type == ChatType.Supergroup)
+                {
+                    return new TL.PeerChannel { channel_id = Math.Abs(message.SenderChat.Id) };
+                }
+                if (message.SenderChat.Type == ChatType.Group)
+                {
+                    return new TL.PeerChat { chat_id = Math.Abs(message.SenderChat.Id) };
+                }
+            }
+            return null;
+        }
+
+        // This is not used by ProcessAndRelayMessageAsync; it's a separate filter for scheduling.
+        private bool ShouldProcessMessageByLocalFilters(Telegram.Bot.Types.Message message, ForwardingRule rule)
         {
             if (rule.FilterOptions == null)
             {

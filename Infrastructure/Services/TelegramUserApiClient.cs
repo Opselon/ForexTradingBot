@@ -5,47 +5,48 @@ using Infrastructure.Settings;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Npgsql.Replication.PgOutput.Messages;
 using Polly;
 using Polly.Retry;
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Net.Http;
 using System.Threading;
-using TL;        // For core Telegram types
+using System.Threading.Tasks;
+using TL;
 #endregion
 
 namespace Infrastructure.Services
 {
+    /// <summary>
+    /// Implements ITelegramUserApiClient using WTelegramClient for user-level Telegram API interactions.
+    /// This "Pro Version" focuses on robust connection management, resilience, and comprehensive logging.
+    /// </summary>
     public class TelegramUserApiClient : ITelegramUserApiClient
     {
         #region Private Readonly Fields
         private readonly ILogger<TelegramUserApiClient> _logger;
         private readonly TelegramUserApiSettings _settings;
-        private readonly Dictionary<long, User> _userCache = new();
-        private readonly Dictionary<long, ChatBase> _chatCache = new();
-        private readonly TimeSpan _cacheExpiration = TimeSpan.FromMinutes(30);
         private readonly ConcurrentDictionary<long, (User User, DateTime Expiry)> _userCacheWithExpiry = new();
         private readonly ConcurrentDictionary<long, (ChatBase Chat, DateTime Expiry)> _chatCacheWithExpiry = new();
+        private readonly TimeSpan _cacheExpiration = TimeSpan.FromMinutes(30);
         private readonly MemoryCache _messageCache = new MemoryCache(new MemoryCacheOptions());
         private readonly MemoryCacheEntryOptions _cacheOptions = new MemoryCacheEntryOptions()
             .SetSlidingExpiration(TimeSpan.FromMinutes(5))
             .SetAbsoluteExpiration(TimeSpan.FromHours(1));
         private readonly TimeSpan _cacheCleanupInterval = TimeSpan.FromMinutes(10);
 
-        // NEW: Polly ResiliencePipeline and retry delays
-        // This pipeline will automatically retry transient errors in API calls.
         private readonly ResiliencePipeline _resiliencePipeline;
-        // Define an array of TimeSpan for exponential backoff retry delays.
-        // These delays are chosen to be relatively short for "real-time" feel,
-        // while still giving the server time to recover.
         private readonly TimeSpan[] _retryDelays = new TimeSpan[]
         {
-            TimeSpan.FromMilliseconds(200), // First retry: Wait 200ms
-            TimeSpan.FromMilliseconds(500), // Second retry: Wait 500ms
-            TimeSpan.FromSeconds(1),        // Third retry: Wait 1 second
-            TimeSpan.FromSeconds(2),        // Fourth retry: Wait 2 seconds
-            TimeSpan.FromSeconds(4),        // Fifth retry: Wait 4 seconds
-            TimeSpan.FromSeconds(8)         // Sixth (final) retry: Wait 8 seconds
+            TimeSpan.FromMilliseconds(200),
+            TimeSpan.FromMilliseconds(500),
+            TimeSpan.FromSeconds(1),
+            TimeSpan.FromSeconds(2),
+            TimeSpan.FromSeconds(4),
+            TimeSpan.FromSeconds(8)
         };
         #endregion
 
@@ -53,11 +54,15 @@ namespace Infrastructure.Services
         private WTelegram.Client? _client;
         private SemaphoreSlim _connectionLock = new SemaphoreSlim(1, 1);
         private System.Threading.Timer? _cacheCleanupTimer;
+        // Internal caches used by WTelegramClient's update handler to populate main caches.
+        private readonly Dictionary<long, User> _internalWtcUserCache = new();
+        private readonly Dictionary<long, ChatBase> _internalWtcChatCache = new();
+        private readonly string _sessionPath; // Explicit session file path for custom loader/saver
         #endregion
 
         #region Public Properties & Events
         public WTelegram.Client NativeClient => _client!;
-        public event Action<Update> OnCustomUpdateReceived = delegate { }; // TL.Update
+        public event Action<Update> OnCustomUpdateReceived = delegate { };
         #endregion
 
         #region Constructor
@@ -68,6 +73,18 @@ namespace Infrastructure.Services
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _settings = settingsOptions?.Value ?? throw new ArgumentNullException(nameof(settingsOptions));
 
+            // Set up the session file path for WTelegramClient's custom session management.
+            _sessionPath = Path.Combine(AppContext.BaseDirectory, _settings.SessionPath ?? "telegram_user.session");
+
+            // Ensure the directory for the session file exists.
+            string? sessionDir = Path.GetDirectoryName(_sessionPath);
+            if (!string.IsNullOrEmpty(sessionDir) && !Directory.Exists(sessionDir))
+            {
+                _logger.LogInformation("Creating session directory: {SessionDirectory}", sessionDir);
+                Directory.CreateDirectory(sessionDir);
+            }
+
+            // Configure WTelegramClient's internal logging to use Microsoft.Extensions.Logging.
             WTelegram.Helpers.Log = (level, message) =>
             {
                 var msLevel = level switch
@@ -83,7 +100,63 @@ namespace Infrastructure.Services
                     _logger.Log(msLevel, "[WTelegram] {Message}", message);
             };
 
-            _client = new WTelegram.Client(ConfigProvider);
+            // Define custom session loader delegate for WTelegramClient.
+            Func<byte[]> startSessionLoader = () =>
+            {
+                _logger.LogTrace("Custom session loader: Attempting to load session from {SessionPath}...", _sessionPath);
+                if (!File.Exists(_sessionPath))
+                {
+                    _logger.LogDebug("Custom session loader: Session file {SessionPath} does not exist. Returning null (empty session).", _sessionPath);
+                    return null; // Return null if no session file exists, WTelegramClient will create a new session.
+                }
+                try
+                {
+                    byte[] data = File.ReadAllBytes(_sessionPath);
+                    _logger.LogInformation("Custom session loader: Successfully loaded {BytesRead} bytes from {SessionPath}.", data.Length, _sessionPath);
+                    return data;
+                }
+                catch (Exception ex)
+                {
+                    // Log the cryptographic error specifically
+                    _logger.LogError(ex, "Custom session loader: Error reading or decrypting session file {SessionPath}. This usually indicates file corruption or an incorrect API hash/ID. Attempting to delete corrupt file to force relogin.", _sessionPath);
+                    try
+                    {
+                        File.Delete(_sessionPath);
+                        _logger.LogInformation("Successfully deleted corrupt session file {SessionPath}. A new login will be required.", _sessionPath);
+                    }
+                    catch (Exception deleteEx)
+                    {
+                        _logger.LogError(deleteEx, "Failed to delete corrupt session file {SessionPath}. Manual intervention might be required.", _sessionPath);
+                    }
+                    return null; // Return null to signal WTelegramClient to start a new session (triggers relogin).
+                }
+            };
+
+            // Define custom session saver delegate for WTelegramClient.
+            Action<byte[]> saveSessionAction = bytes =>
+            {
+                _logger.LogTrace("Custom session saver: Attempting to save {BytesLength} bytes to {SessionPath}...", bytes.Length, _sessionPath);
+                try
+                {
+                    // Use a temporary file and rename to ensure atomic write and data integrity.
+                    string tempPath = _sessionPath + ".tmp";
+                    File.WriteAllBytes(tempPath, bytes);
+                    File.Move(tempPath, _sessionPath, overwrite: true); // Overwrite existing session file
+                    _logger.LogInformation("Custom session saver: Successfully saved {BytesLength} bytes to {SessionPath}.", bytes.Length, _sessionPath);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Custom session saver: Error writing to session file {SessionPath}. Data might not be persisted.", _sessionPath);
+                    // In a real-world scenario, you might have a more sophisticated error recovery strategy here.
+                }
+            };
+
+            // Initialize WTelegram.Client with the custom config provider and session delegates.
+            // Constructor: Client(Func<string, string> configProvider, byte[] startSession, Action<byte[]> saveSession)
+            // The `null` for `configKey` is correct when `configProvider` is specified.
+            _client = new WTelegram.Client(ConfigProvider, startSessionLoader(), saveSessionAction);
+
+            // Subscribe to WTelegramClient's OnUpdates event to process incoming updates.
             _client.OnUpdates += async updates =>
             {
                 _logger.LogCritical("[USER_API_ON_UPDATES_TRIGGERED] Raw updates object of type: {UpdateType} from WTelegram.Client", updates.GetType().FullName);
@@ -97,6 +170,7 @@ namespace Infrastructure.Services
                 }
             };
 
+            // Start a periodic timer for cache cleanup.
             _cacheCleanupTimer = new System.Threading.Timer(
                       CacheCleanup,
                       null,
@@ -105,90 +179,74 @@ namespace Infrastructure.Services
                   );
             _logger.LogInformation("Started cache cleanup timer with interval {IntervalMinutes} minutes.", _cacheCleanupInterval.TotalMinutes);
 
-            // NEW: Initialize the Polly ResiliencePipeline
+            // Configure Polly for resilience (retry policy for network and specific RPC errors).
             _resiliencePipeline = new ResiliencePipelineBuilder()
-                            .AddRetry(new RetryStrategyOptions
+                .AddRetry(new RetryStrategyOptions
+                {
+                    ShouldHandle = new PredicateBuilder()
+                        .Handle<HttpRequestException>() // Handle general network issues
+                        .Handle<RpcException>(rpcEx =>
+                        {
+                            // Retry on server-side errors (5xx)
+                            if (rpcEx.Code >= 500 && rpcEx.Code < 600)
                             {
-                                // Define which exceptions should trigger a retry.
-                                ShouldHandle = new PredicateBuilder()
-                                    // 1. Handle common network connectivity issues.
-                                    .Handle<HttpRequestException>()
-                                    // 2. Handle specific WTelegram.Client RPC exceptions that indicate a temporary issue.
-                                    .Handle<RpcException>(rpcEx =>
-                                    {
-                                        // a) Server-side errors (often 5xx range indicate temporary server problems)
-                                        if (rpcEx.Code >= 500 && rpcEx.Code < 600)
-                                        {
-                                            // Logging here is simplified as `args.Context.OperationKey` is not directly
-                                            // available in PredicateBuilder's inner lambda.
-                                            _logger.LogWarning("Polly: Retrying RPC error {RpcCode} ({RpcMessage}) as it's a server-side error.",
-                                                rpcEx.Code, rpcEx.Message);
-                                            return true;
-                                        }
-
-                                        // b) Rate limiting or flood wait errors: Telegram explicitly tells you to wait.
-                                        if (rpcEx.Message.Contains("TOO_MANY_REQUESTS", StringComparison.OrdinalIgnoreCase) ||
-                                            rpcEx.Message.Contains("FLOOD_WAIT_", StringComparison.OrdinalIgnoreCase))
-                                        {
-                                            // Extract the wait duration if present, and decide if it's too long for a retry.
-                                            if (rpcEx.Message.StartsWith("FLOOD_WAIT_") &&
-                                                int.TryParse(rpcEx.Message.Substring("FLOOD_WAIT_".Length), out int seconds))
-                                            {
-                                                if (seconds > _retryDelays[_retryDelays.Length - 1].TotalSeconds * 2)
-                                                {
-                                                    _logger.LogWarning("Polly: Encountered a FLOOD_WAIT of {Seconds}s, which greatly exceeds max configured retry delay. Aborting retries for this specific error.",
-                                                        seconds);
-                                                    return false; // Do not retry this specific, excessively long flood wait.
-                                                }
-                                                _logger.LogWarning("Polly: Retrying FLOOD_WAIT of {Seconds}s.", seconds);
-                                                return true; // Retry short to medium flood waits.
-                                            }
-                                            _logger.LogWarning("Polly: Retrying TOO_MANY_REQUESTS or unknown FLOOD_WAIT type.");
-                                            return true; // General TOO_MANY_REQUESTS or unparseable FLOOD_WAIT
-                                        }
-                                        // c) Other specific transient errors can be added here if identified during testing.
-                                        return false; // By default, don't retry other RpcExceptions (e.g., PERMISSION_DENIED, USER_NOT_FOUND, invalid peer)
-                                    }),
-                                // Configure delays between retries. This ensures we don't bombard the server.
-                                DelayGenerator = args =>
+                                _logger.LogWarning(rpcEx, "Polly: Retrying RPC error {RpcCode} ({RpcMessage}) as it's a server-side error.", rpcEx.Code, rpcEx.Message);
+                                return true;
+                            }
+                            // Retry on rate limit errors
+                            if (rpcEx.Message.Contains("TOO_MANY_REQUESTS", StringComparison.OrdinalIgnoreCase) ||
+                                rpcEx.Message.Contains("FLOOD_WAIT_", StringComparison.OrdinalIgnoreCase))
+                            {
+                                // Parse FLOOD_WAIT_X seconds and decide if it's too long to retry
+                                if (rpcEx.Message.StartsWith("FLOOD_WAIT_") &&
+                                    int.TryParse(rpcEx.Message.Substring("FLOOD_WAIT_".Length), out int seconds))
                                 {
-                                    var retryAttempt = args.AttemptNumber; // 0-indexed attempt number (0, 1, 2, ...)
-                                                                           // Ensure we don't go out of bounds of our _retryDelays array.
-                                    if (retryAttempt < _retryDelays.Length)
+                                    // Abort if FLOOD_WAIT is excessively long, indicating a severe rate limit.
+                                    if (seconds > _retryDelays[_retryDelays.Length - 1].TotalSeconds * 2) // e.g., if max retry is 8s, abort if flood is > 16s
                                     {
-                                        var delay = _retryDelays[retryAttempt];
-                                        // Correctly access OperationKey from `args.Context`.
-                                        _logger.LogWarning("Polly Retry: Attempt {AttemptNumber} for operation '{OperationKey}'. Delaying for {Delay}ms due to {ExceptionType}.",
-                                            retryAttempt + 1, args.Context.OperationKey, delay.TotalMilliseconds, args.Outcome.Exception?.GetType().Name ?? "N/A");
-
-                                        // FIX for CS0121 ambiguity for the non-null case:
-                                        // Use ValueTask.FromResult<T>(value) for an already completed ValueTask from a value.
-                                        return ValueTask.FromResult<TimeSpan?>(delay);
+                                        _logger.LogCritical(rpcEx, "Polly: Encountered a FLOOD_WAIT of {Seconds}s, which greatly exceeds max configured retry delay. Aborting retries for this specific error to prevent resource exhaustion.", seconds);
+                                        return false; // Do not retry
                                     }
-                                    // Correctly access OperationKey from `args.Context`.
-                                    _logger.LogWarning("Polly Retry: Attempt {AttemptNumber} for operation '{OperationKey}'. Max retries ({MaxRetries}) reached. No further retries will be attempted.",
-                                        retryAttempt + 1, args.Context.OperationKey, _retryDelays.Length);
-
-                                    // FIX for CS0121 ambiguity for the null case:
-                                    // Use ValueTask.FromResult<T>(null) to unambiguously create a completed ValueTask with a null result.
-                                    return ValueTask.FromResult<TimeSpan?>(null); // Signal to Polly that no more retries should be attempted.
-                                },
-                                MaxRetryAttempts = _retryDelays.Length, // This sets the maximum number of *retries* (after the initial attempt).
-                                                                        // If _retryDelays has 6 entries, this means 6 retries + 1 initial attempt = 7 total attempts.
-                                OnRetry = args =>
-                                {
-                                    // Correctly access OperationKey from `args.Context`.
-                                    _logger.LogWarning(args.Outcome.Exception,
-                                        "Polly OnRetry: Operation '{OperationKey}' failed on attempt {AttemptNumber} with exception {ExceptionType}. Next retry will be after delay.",
-                                        args.Context.OperationKey, args.AttemptNumber + 1, args.Outcome.Exception?.GetType().Name ?? "Unknown");
-                                    return default; // Return default(ValueTask) for synchronous callbacks.
-                                },
-                            })
-                            .Build();
+                                    _logger.LogWarning(rpcEx, "Polly: Retrying FLOOD_WAIT of {Seconds}s.", seconds);
+                                    return true;
+                                }
+                                _logger.LogWarning(rpcEx, "Polly: Retrying TOO_MANY_REQUESTS or unknown FLOOD_WAIT type.");
+                                return true;
+                            }
+                            return false; // Do not retry for other RPC exceptions
+                        }),
+                    DelayGenerator = args =>
+                    {
+                        var retryAttempt = args.AttemptNumber;
+                        if (retryAttempt < _retryDelays.Length)
+                        {
+                            var delay = _retryDelays[retryAttempt];
+                            _logger.LogWarning("Polly Retry: Attempt {AttemptNumber} for operation '{OperationKey}'. Delaying for {Delay}ms due to {ExceptionType}. Outcome: {Outcome}.",
+                                retryAttempt + 1, args.Context.OperationKey ?? "N/A", delay.TotalMilliseconds, args.Outcome.Exception?.GetType().Name ?? "N/A", args.Outcome.Result?.ToString() ?? "N/A");
+                            return ValueTask.FromResult<TimeSpan?>(delay);
+                        }
+                        _logger.LogWarning("Polly Retry: Attempt {AttemptNumber} for operation '{OperationKey}'. Max retries ({MaxRetries}) reached. No further retries will be attempted.",
+                            retryAttempt + 1, args.Context.OperationKey ?? "N/A", _retryDelays.Length);
+                        return ValueTask.FromResult<TimeSpan?>(null); // No more retries
+                    },
+                    MaxRetryAttempts = _retryDelays.Length,
+                    OnRetry = args =>
+                    {
+                        _logger.LogWarning(args.Outcome.Exception,
+                            "Polly OnRetry: Operation '{OperationKey}' failed on attempt {AttemptNumber} with exception {ExceptionType}. Next retry will be after delay.",
+                            args.Context.OperationKey ?? "N/A", args.AttemptNumber + 1, args.Outcome.Exception?.GetType().Name ?? "Unknown");
+                        return default; // Return default(ValueTask) for synchronous OnRetry
+                    },
+                })
+                .Build();
         }
         #endregion
 
         #region Configuration Provider
+        /// <summary>
+        /// Provides configuration values to WTelegramClient.
+        /// Values are fetched from settings or interactively (for verification codes/passwords).
+        /// </summary>
         private string? ConfigProvider(string key)
         {
             return key switch
@@ -196,7 +254,6 @@ namespace Infrastructure.Services
                 "api_id" => _settings.ApiId.ToString(),
                 "api_hash" => _settings.ApiHash,
                 "phone_number" => _settings.PhoneNumber,
-                "session_pathname" => Path.Combine(AppContext.BaseDirectory, _settings.SessionPath ?? "telegram_user.session"),
                 "verification_code" => AskCode("Telegram asks for verification code: ", _settings.VerificationCodeSource),
                 "password" => AskCode("Telegram asks for 2FA password (if enabled): ", _settings.TwoFactorPasswordSource),
                 _ => null
@@ -204,160 +261,95 @@ namespace Infrastructure.Services
         }
 
         /// <summary>
-        /// Asks the user for input based on the provided question and source method.
-        /// Currently, only "console" source is supported.
-        /// Handles potential issues with console availability and logs interactions.
+        /// Prompts for a verification code or password, potentially via console.
+        /// This method is interactive and not suitable for headless production environments without a custom sourceMethod.
         /// </summary>
-        /// <param name="question">The question to ask the user. 
-        /// IMPORTANT: If this question might contain sensitive details itself, consider omitting it from logs or sanitizing.</param>
-        /// <param name="sourceMethod">The method/source from which the code is being requested (e.g., "console", "api_callback").
-        /// Defaults to "console" if null or whitespace.</param>
-        /// <returns>The user's input as a string, or null if input could not be obtained, was cancelled, or source is not implemented.</returns>
-        /// <remarks>
-        /// Security Considerations:
-        /// - Logging `question`: Be cautious if `question` itself could contain sensitive information passed from the caller.
-        /// - Input validation: The returned code is not validated here; the caller is responsible for validating the format/content.
-        ///
-        /// Robustness:
-        /// - Checks for console availability before attempting to read from it.
-        /// - Handles potential exceptions during console read operations.
-        ///
-        /// Extensibility:
-        /// - The `sourceMethod` parameter allows for future expansion to support other input sources,
-        ///   though only "console" is implemented.
-        /// </remarks>
         private string? AskCode(string question, string? sourceMethod)
         {
-            #region Parameter Validation and Defaulting
-            // Robustness: Ensure question is not null to prevent issues with Trim().
-            // If question can legitimately be null/empty, this check needs adjustment based on business logic.
             if (string.IsNullOrWhiteSpace(question))
             {
                 _logger.LogWarning("AskCode called with an empty or null question. SourceMethod: {SourceMethod}", sourceMethod ?? "Unknown");
-                // Decide on behavior: return null, throw ArgumentException, etc.
-                // Returning null seems consistent with other failure paths.
                 return null;
             }
 
             string effectiveSourceMethod = string.IsNullOrWhiteSpace(sourceMethod) ? "console" : sourceMethod.Trim();
-            string trimmedQuestion = question.Trim(); // Trim once for consistent use.
-            #endregion
+            string trimmedQuestion = question.Trim();
 
-            #region Logging Initial Request
-            // Security Note: `trimmedQuestion` is logged. If it can contain sensitive data,
-            // this logging should be re-evaluated (e.g., log a generic message or a sanitized version).
-            // For instance, if question is "Enter your password for account X:", logging is risky.
-            // If question is "Enter 2FA code:", logging `trimmedQuestion` is acceptable.
             _logger.LogInformation("WTC Input Request: \"{QuestionDisplay}\" (Source: {SourceMethod})",
-                                   trimmedQuestion.Length > 50 ? trimmedQuestion.Substring(0, 50) + "..." : trimmedQuestion, // Log a truncated question for brevity
+                                   trimmedQuestion.Length > 50 ? trimmedQuestion.Substring(0, 50) + "..." : trimmedQuestion,
                                    effectiveSourceMethod);
-            #endregion
 
-            // Currently, only "console" input is supported.
             if (effectiveSourceMethod.Equals("console", StringComparison.OrdinalIgnoreCase))
             {
-                #region Console Input Handling
                 try
                 {
-                    // Robustness: Check if a console is actually available for input.
-                    // `Console.IsInputRedirected` can be true if input comes from a file/pipe.
-                    // `Console.KeyAvailable` (with a try-catch for InvalidOperationException)
-                    // can indicate if an interactive console is present.
-                    // A simpler check is if WindowHeight > 0, but not foolproof for all environments.
-                    // For services, `Environment.UserInteractive` is a good indicator.
-                    if (!Environment.UserInteractive) // A common check for non-interactive environments like services.
+                    // Check if the application is running in an interactive user environment.
+                    if (!Environment.UserInteractive)
                     {
-                        _logger.LogWarning("AskCode (console): Application is not running in an interactive user environment. Cannot prompt for \"{QuestionDisplay}\".",
+                        _logger.LogWarning("AskCode (console): Application is not running in an interactive user environment. Cannot prompt for \"{QuestionDisplay}\". Returning null.",
                                            trimmedQuestion.Length > 50 ? trimmedQuestion.Substring(0, 50) + "..." : trimmedQuestion);
                         return null;
                     }
-                    // Additionally, check for actual console input capability.
-                    // This might throw InvalidOperationException if no console is attached.
+                    // Attempt to detect if console input is redirected (e.g., from a file or pipe).
                     try
                     {
-                        // A quick check to see if we can even attempt to read a key.
-                        // This doesn't consume the key. If this throws, ReadLine will likely also fail or block.
                         if (Console.IsInputRedirected)
                         {
                             _logger.LogInformation("AskCode (console): Input is redirected. Reading from redirected input for \"{QuestionDisplay}\".",
                                                    trimmedQuestion.Length > 50 ? trimmedQuestion.Substring(0, 50) + "..." : trimmedQuestion);
                         }
-                        // else: Standard interactive console expected.
                     }
                     catch (InvalidOperationException ioExConsoleCheck)
                     {
-                        _logger.LogWarning(ioExConsoleCheck, "AskCode (console): No console available or console operation failed during pre-check for \"{QuestionDisplay}\".",
+                        // This can happen if no console is attached (e.g., a service or non-interactive process).
+                        _logger.LogWarning(ioExConsoleCheck, "AskCode (console): No console available or console operation failed during pre-check for \"{QuestionDisplay}\". Returning null.",
                                            trimmedQuestion.Length > 50 ? trimmedQuestion.Substring(0, 50) + "..." : trimmedQuestion);
                         return null;
                     }
 
-
-                    // Display the question to the console.
-                    // Using Console.Out to be explicit, though Console.Write often defaults to this.
-                    Console.Out.Write(trimmedQuestion + " "); // Add a space for better user experience before they type.
-
-                    // Read the user's input.
-                    // Performance: Console.ReadLine() is blocking. This is expected for interactive input.
+                    Console.Out.Write(trimmedQuestion + " ");
                     string? userInput = Console.ReadLine();
 
-                    // Security & Logging: Do NOT log the `userInput` if it's sensitive (e.g., password, token).
-                    // Here, we assume the "code" might be like a 2FA code, which is less sensitive *after* use,
-                    // but still better not to log values. We'll log receipt and length if needed.
                     if (userInput != null)
                     {
                         _logger.LogInformation("WTC Input Received: User provided input of length {InputLength} for \"{QuestionDisplay}\" from console.",
                                                userInput.Length,
                                                trimmedQuestion.Length > 50 ? trimmedQuestion.Substring(0, 50) + "..." : trimmedQuestion);
-                        // Consider if empty input should be treated as null or an empty string.
-                        // `Console.ReadLine()` returns an empty string if user just presses Enter.
-                        // If an empty string is a valid "code", return it. Otherwise, convert to null or handle.
-                        // For this generic `AskCode`, returning the direct input (even if empty) seems reasonable.
                         return userInput;
                     }
                     else
                     {
-                        // This case (userInput is null) typically occurs if Ctrl+Z (EOF) is pressed on Windows,
-                        // or Ctrl+D on Linux/macOS, without typing anything, or if input stream ends.
-                        _logger.LogWarning("WTC Input Received: User cancelled input (EOF) or input stream ended for \"{QuestionDisplay}\" from console.",
+                        _logger.LogWarning("WTC Input Received: User cancelled input (EOF) or input stream ended for \"{QuestionDisplay}\" from console. Returning null.",
                                            trimmedQuestion.Length > 50 ? trimmedQuestion.Substring(0, 50) + "..." : trimmedQuestion);
-                        return null; // Indicate no input or cancellation.
+                        return null;
                     }
                 }
-                catch (IOException ioEx) // Handles errors like "Input/output error" if console is detached during read.
+                catch (IOException ioEx)
                 {
-                    _logger.LogError(ioEx, "WTC Input Error: An IOException occurred while trying to read from console for \"{QuestionDisplay}\".",
+                    _logger.LogError(ioEx, "WTC Input Error: An IOException occurred while trying to read from console for \"{QuestionDisplay}\". Returning null.",
                                      trimmedQuestion.Length > 50 ? trimmedQuestion.Substring(0, 50) + "..." : trimmedQuestion);
                     return null;
                 }
-                catch (OperationCanceledException ocEx) // Though Console.ReadLine itself doesn't directly accept CancellationToken.
+                catch (OperationCanceledException ocEx)
                 {
-                    // This might be relevant if the console host environment raises it for some reason, though rare for direct Console.ReadLine.
-                    _logger.LogWarning(ocEx, "WTC Input Warning: Console read operation was ostensibly cancelled for \"{QuestionDisplay}\".",
+                    _logger.LogWarning(ocEx, "WTC Input Warning: Console read operation was ostensibly cancelled for \"{QuestionDisplay}\". Returning null.",
                                        trimmedQuestion.Length > 50 ? trimmedQuestion.Substring(0, 50) + "..." : trimmedQuestion);
                     return null;
                 }
-                catch (Exception ex) // Catch-all for any other unexpected issues.
+                catch (Exception ex)
                 {
-                    _logger.LogError(ex, "WTC Input Error: An unexpected error occurred during console input for \"{QuestionDisplay}\".",
+                    _logger.LogError(ex, "WTC Input Error: An unexpected error occurred during console input for \"{QuestionDisplay}\". Returning null.",
                                      trimmedQuestion.Length > 50 ? trimmedQuestion.Substring(0, 50) + "..." : trimmedQuestion);
-                    // Do not rethrow from here unless AskCode is critical and failure should halt the caller significantly.
-                    // Typically for input prompts, returning null to indicate failure is preferred.
                     return null;
                 }
-                #endregion
             }
-            else // Source method is not "console"
+            else
             {
-                #region Non-Console Source Handling (Placeholder)
-                // This part handles source methods other than "console".
-                // Currently, it's a placeholder indicating non-implementation.
+                // Implement other source methods here (e.g., fetching from a secure vault, external API).
                 _logger.LogWarning("WTC Input Request: Source method '{SourceMethod}' is not implemented for question \"{QuestionDisplay}\". Returning null.",
                                    effectiveSourceMethod,
                                    trimmedQuestion.Length > 50 ? trimmedQuestion.Substring(0, 50) + "..." : trimmedQuestion);
-                // Future: Could involve callback mechanisms, message queues, or other IPC for different `sourceMethod` types.
-                // Example: if (sourceMethod == "gui_prompt") { /* code to show GUI dialog */ }
                 return null;
-                #endregion
             }
         }
 
@@ -370,8 +362,7 @@ namespace Infrastructure.Services
             int usersRemoved = 0;
             var now = DateTime.UtcNow;
 
-            // Clean _userCacheWithExpiry
-            // Use ToArray() to avoid "collection was modified" error if entries are removed during iteration
+            // Use ToArray() to avoid modification during enumeration.
             foreach (var entry in _userCacheWithExpiry.ToArray())
             {
                 if (entry.Value.Expiry < now)
@@ -383,11 +374,9 @@ namespace Infrastructure.Services
                     }
                 }
             }
-            _logger.LogInformation("Cache cleanup: Removed {UsersRemovedCount} expired users from _userCacheWithExpiry. Current count: {CurrentUserCacheCount}", usersRemoved, _userCacheWithExpiry.Count);
+            _logger.LogInformation("Cache cleanup: Removed {UsersRemovedCount} expired users from _userCacheWithExpiry. Current user cache count: {CurrentUserCacheCount}", usersRemoved, _userCacheWithExpiry.Count);
 
-            // Clean _chatCacheWithExpiry
             int chatsRemoved = 0;
-            // Use ToArray() for safe iteration
             foreach (var entry in _chatCacheWithExpiry.ToArray())
             {
                 if (entry.Value.Expiry < now)
@@ -399,51 +388,43 @@ namespace Infrastructure.Services
                     }
                 }
             }
-            _logger.LogInformation("Cache cleanup: Removed {ChatsRemovedCount} expired chats from _chatCacheWithExpiry. Current count: {CurrentChatCacheCount}", chatsRemoved, _chatCacheWithExpiry.Count);
+            _logger.LogInformation("Cache cleanup: Removed {ChatsRemovedCount} expired chats from _chatCacheWithExpiry. Current chat cache count: {CurrentChatCacheCount}", chatsRemoved, _chatCacheWithExpiry.Count);
         }
 
         #endregion
 
         #region WTelegramClient Update Handler
+        /// <summary>
+        /// Handles incoming updates from WTelegramClient, populates internal caches,
+        /// and dispatches updates via the OnCustomUpdateReceived event.
+        /// </summary>
         private Task HandleUpdatesBaseAsync(UpdatesBase updatesBase)
         {
-            // --- Start of Method Logging ---
             _logger.LogDebug("HandleUpdatesBaseAsync: Received UpdatesBase of type {UpdatesBaseType}. Update content (partial): {UpdatesBaseContent}",
                 updatesBase.GetType().Name,
                 TruncateString(updatesBase.ToString(), 200));
 
-            // --- User/Chat Collection Logic ---
-            int initialUserCacheCount = _userCache.Count;
-            int initialChatCacheCount = _chatCache.Count;
+            // Clear internal WTC caches and collect users/chats from the new updates.
+            _internalWtcUserCache.Clear();
+            _internalWtcChatCache.Clear();
+            updatesBase.CollectUsersChats(_internalWtcUserCache, _internalWtcChatCache);
 
-            updatesBase.CollectUsersChats(_userCache, _chatCache);
-
-            int usersAddedToCache = _userCache.Count - initialUserCacheCount;
-            int chatsAddedToCache = _chatCache.Count - initialChatCacheCount;
-
-            if (usersAddedToCache > 0 || chatsAddedToCache > 0)
-            {
-                _logger.LogDebug("HandleUpdatesBaseAsync: Collected users/chats. Users added: {UsersAddedCount}, Chats added: {ChatsAddedCount}. Total users in cache: {TotalUserCache}, Total chats in cache: {TotalChatCache}",
-                    usersAddedToCache, chatsAddedToCache, _userCache.Count, _chatCache.Count);
-            }
-            else
-            {
-                _logger.LogTrace("HandleUpdatesBaseAsync: No new users or chats collected from this UpdatesBase.");
-            }
-
-            // Update the expiry caches with recently collected users/chats (from approved Item 5)
-            foreach (var userEntry in _userCache)
+            // Transfer collected users and chats to the expiry caches.
+            foreach (var userEntry in _internalWtcUserCache)
             {
                 _userCacheWithExpiry[userEntry.Key] = (userEntry.Value, DateTime.UtcNow.Add(_cacheExpiration));
+                _logger.LogTrace("Cached user {UserId} with expiry {ExpiryTime}.", userEntry.Key, _userCacheWithExpiry[userEntry.Key].Item2);
             }
-            foreach (var chatEntry in _chatCache)
+            foreach (var chatEntry in _internalWtcChatCache)
             {
                 _chatCacheWithExpiry[chatEntry.Key] = (chatEntry.Value, DateTime.UtcNow.Add(_cacheExpiration));
+                _logger.LogTrace("Cached chat {ChatId} with expiry {ExpiryTime}.", chatEntry.Key, _chatCacheWithExpiry[chatEntry.Key].Item2);
             }
 
             List<Update> updatesToDispatch = new List<Update>();
 
-            // --- Handle Different Update Types ---
+            // Extract specific Update types from UpdatesBase containers.
+            // WTelegramClient often wraps updates in Updates or UpdatesCombined.
             if (updatesBase is Updates updatesContainer && updatesContainer.updates != null)
             {
                 _logger.LogDebug("HandleUpdatesBaseAsync: Processing 'Updates' container with {UpdateCount} inner updates.", updatesContainer.updates.Length);
@@ -454,96 +435,78 @@ namespace Infrastructure.Services
                 _logger.LogDebug("HandleUpdatesBaseAsync: Processing 'UpdatesCombined' container with {UpdateCount} inner updates.", updatesCombinedContainer.updates.Length);
                 updatesToDispatch.AddRange(updatesCombinedContainer.updates);
             }
-            // --- REWRITTEN: Message reconstruction for UpdateShortMessage ---
-            else if (updatesBase is UpdateShortMessage usm) // usm declared here, correctly scoped
+            // Special handling for UpdateShortMessage and UpdateShortChatMessage to convert them to UpdateNewMessage.
+            // This normalizes message updates for easier consumption by subscribers.
+            else if (updatesBase is UpdateShortMessage usm)
             {
-                _logger.LogDebug("HandleUpdatesBaseAsync: Processing 'UpdateShortMessage'. MsgID: {MessageId}, UserID: {UserId}, PTS: {Pts}",
-                    usm.id, usm.user_id, usm.pts);
-                Peer userPeer; // userPeer declared here, correctly scoped
-                if (_userCache.TryGetValue(usm.user_id, out var cachedUser))
+                _logger.LogDebug("HandleUpdatesBaseAsync: Processing 'UpdateShortMessage'. MsgID: {MessageId}, UserID: {UserId}, PTS: {Pts}", usm.id, usm.user_id, usm.pts);
+                Peer userPeer;
+                if (_internalWtcUserCache.TryGetValue(usm.user_id, out var cachedUser))
                 {
                     userPeer = new PeerUser { user_id = cachedUser.id };
-                    _logger.LogTrace("HandleUpdatesBaseAsync (USM): User {UserId} found in cache.", usm.user_id);
+                    _logger.LogTrace("HandleUpdatesBaseAsync (USM): User {UserId} found in WTC internal cache, using full PeerUser.", usm.user_id);
                 }
                 else
                 {
                     userPeer = new PeerUser { user_id = usm.user_id };
-                    _logger.LogWarning("HandleUpdatesBaseAsync (USM): User {UserId} from UpdateShortMessage not in cache, using minimal PeerUser.", usm.user_id);
+                    _logger.LogWarning("HandleUpdatesBaseAsync (USM): User {UserId} from UpdateShortMessage not in WTC internal cache, using minimal PeerUser (ID only).", usm.user_id);
                 }
-                _logger.LogTrace("HandleUpdatesBaseAsync (USM): Constructing Message for MsgID {MessageId}. FromID: {FromId}, PeerID: {PeerId}, Message: {MessageContent}",
-                    usm.id, usm.user_id, usm.user_id, TruncateString(usm.message, 50));
 
-                // Construct Message using fields that are DEFINITELY available on your TL.Message
-                // Properties like 'media', 'grouped_id', 'random_id' that caused errors are now handled defensively.
+                // Construct a full Message object from UpdateShortMessage for consistency.
                 var msg = new Message
                 {
                     flags = 0,
                     id = usm.id,
                     peer_id = userPeer,
-                    from_id = userPeer,
+                    from_id = userPeer, // In short messages, sender is also the peer.
                     message = usm.message,
                     date = usm.date,
                     entities = usm.entities,
-                    media = null,       // 'media' is not directly on UpdateShortMessage; set to null.
-                    reply_to = usm.reply_to, // Check if reply_to is truly available, if not, it will be null or needs default here. Assuming it is.
-                    fwd_from = usm.fwd_from, // Check if fwd_from is truly available, if not, it will be null or needs default here. Assuming it is.
-                    via_bot_id = usm.via_bot_id, // If still error, set to 0. Assuming it is present.
-                    ttl_period = usm.ttl_period, // If still error, set to 0. Assuming it is present.
-                    // grouped_id field from UpdateShortMessage is typically only available in a different, full Update.
-                    // For safety, assume default 0 or check for its existence in your TL library's UpdateShortMessage type.
-                    // Here setting to 0 assuming TL.Message.grouped_id is a non-nullable long.
+                    media = null, // Short messages typically don't carry media directly.
+                    reply_to = usm.reply_to,
+                    fwd_from = usm.fwd_from,
+                    via_bot_id = usm.via_bot_id,
+                    ttl_period = usm.ttl_period,
                     grouped_id = 0,
-                    // 'random_id' property does not belong here as it's typically for *sending* messages via RPC.
                 };
 
-                var uf = usm.flags; // uf declared here, correctly scoped
+                // Transfer flags from UpdateShortMessage to Message.
+                var uf = usm.flags;
                 if (uf.HasFlag(UpdateShortMessage.Flags.out_)) msg.flags |= Message.Flags.out_;
                 if (uf.HasFlag(UpdateShortMessage.Flags.mentioned)) msg.flags |= Message.Flags.mentioned;
                 if (uf.HasFlag(UpdateShortMessage.Flags.silent)) msg.flags |= Message.Flags.silent;
                 if (uf.HasFlag(UpdateShortMessage.Flags.media_unread)) msg.flags |= Message.Flags.media_unread;
-                // 'noforwards' flag is typically not available on UpdateShortMessage.Flags
-                // if (uf.HasFlag(UpdateShortMessage.Flags.noforwards)) msg.flags |= Message.Flags.noforwards;
 
                 updatesToDispatch.Add(new UpdateNewMessage { message = msg, pts = usm.pts, pts_count = usm.pts_count });
-                _logger.LogDebug("HandleUpdatesBaseAsync (USM): Added UpdateNewMessage for MsgID {MessageId} to dispatch list.", usm.id);
+                _logger.LogDebug("HandleUpdatesBaseAsync (USM): Converted to UpdateNewMessage for MsgID {MessageId} and added to dispatch list.", usm.id);
             }
-            // --- REWRITTEN: Message reconstruction for UpdateShortChatMessage ---
-            else if (updatesBase is UpdateShortChatMessage uscm) // uscm declared here, correctly scoped
+            else if (updatesBase is UpdateShortChatMessage uscm)
             {
-                _logger.LogDebug("HandleUpdatesBaseAsync: Processing 'UpdateShortChatMessage'. MsgID: {MessageId}, FromID: {FromId}, ChatID: {ChatId}, PTS: {Pts}",
-                    uscm.id, uscm.from_id, uscm.chat_id, uscm.pts);
-                Peer chatPeer; // chatPeer declared here, correctly scoped
-                if (_chatCache.TryGetValue(uscm.chat_id, out var cachedChat))
+                _logger.LogDebug("HandleUpdatesBaseAsync: Processing 'UpdateShortChatMessage'. MsgID: {MessageId}, FromID: {FromId}, ChatID: {ChatId}, PTS: {Pts}", uscm.id, uscm.from_id, uscm.chat_id, uscm.pts);
+                Peer chatPeer;
+                if (_internalWtcChatCache.TryGetValue(uscm.chat_id, out var cachedChat))
                 {
                     if (cachedChat is Channel channel) { chatPeer = new PeerChannel { channel_id = channel.id }; }
                     else { chatPeer = new PeerChat { chat_id = cachedChat.ID }; }
-                    _logger.LogTrace("HandleUpdatesBaseAsync (USCM): Chat {ChatId} (Type: {ChatType}) found in cache.", uscm.chat_id, cachedChat.GetType().Name);
+                    _logger.LogTrace("HandleUpdatesBaseAsync (USCM): Chat {ChatId} (Type: {ChatType}) found in WTC internal cache, using full Peer.", uscm.chat_id, cachedChat.GetType().Name);
                 }
                 else
                 {
                     chatPeer = new PeerChat { chat_id = uscm.chat_id };
-                    _logger.LogWarning("HandleUpdatesBaseAsync (USCM): Chat {ChatId} from UpdateShortChatMessage not in cache, using minimal PeerChat.", uscm.chat_id);
+                    _logger.LogWarning("HandleUpdatesBaseAsync (USCM): Chat {ChatId} from UpdateShortChatMessage not in WTC internal cache, using minimal PeerChat (ID only).", uscm.chat_id);
                 }
-                Peer? fromPeer = null; // fromPeer declared here, correctly scoped
-                if (_userCache.TryGetValue(uscm.from_id, out var cachedFromUser))
+                Peer? fromPeer = null;
+                if (_internalWtcUserCache.TryGetValue(uscm.from_id, out var cachedFromUser))
                 {
                     fromPeer = new PeerUser { user_id = cachedFromUser.id };
-                    _logger.LogTrace("HandleUpdatesBaseAsync (USCM): Sender User {UserId} found in cache.", uscm.from_id);
+                    _logger.LogTrace("HandleUpdatesBaseAsync (USCM): Sender User {UserId} found in WTC internal cache, using full PeerUser.", uscm.from_id);
                 }
                 else
                 {
                     fromPeer = new PeerUser { user_id = uscm.from_id };
-                    _logger.LogWarning("HandleUpdatesBaseAsync (USCM): Sender User {UserId} from UpdateShortChatMessage not in cache, using minimal PeerUser.", uscm.from_id);
+                    _logger.LogWarning("HandleUpdatesBaseAsync (USCM): Sender User {UserId} from UpdateShortChatMessage not in WTC internal cache, using minimal PeerUser (ID only).", uscm.from_id);
                 }
-                long targetChatIdForLog = 0;
-                if (chatPeer is PeerUser pu) targetChatIdForLog = pu.user_id;
-                else if (chatPeer is PeerChat pc) targetChatIdForLog = pc.chat_id;
-                else if (chatPeer is PeerChannel pch) targetChatIdForLog = pch.channel_id;
-                _logger.LogTrace("HandleUpdatesBaseAsync (USCM): Constructing Message for MsgID {MessageId}. FromID: {FromId}, TargetChatID: {TargetChatId}, Message: {MessageContent}",
-                   uscm.id, uscm.from_id, targetChatIdForLog, TruncateString(uscm.message, 50));
 
-                // Construct Message using fields that are DEFINITELY available on your TL.Message
-                // Properties like 'media', 'grouped_id', 'random_id' that caused errors are now handled defensively.
                 var msg = new Message
                 {
                     flags = 0,
@@ -553,46 +516,39 @@ namespace Infrastructure.Services
                     message = uscm.message,
                     date = uscm.date,
                     entities = uscm.entities,
-                    media = null,       // 'media' is not directly on UpdateShortChatMessage; set to null.
-                    reply_to = uscm.reply_to, // Check if reply_to is truly available, if not, it will be null or needs default here. Assuming it is.
-                    fwd_from = uscm.fwd_from, // Check if fwd_from is truly available, if not, it will be null or needs default here. Assuming it is.
-                    via_bot_id = uscm.via_bot_id, // If still error, set to 0. Assuming it is present.
-                    ttl_period = uscm.ttl_period, // If still error, set to 0. Assuming it is present.
-                    // grouped_id field from UpdateShortChatMessage is typically only available in a different, full Update.
-                    // For safety, assume default 0 or check for its existence in your TL library's UpdateShortChatMessage type.
-                    // Here setting to 0 assuming TL.Message.grouped_id is a non-nullable long.
+                    media = null,
+                    reply_to = uscm.reply_to,
+                    fwd_from = uscm.fwd_from,
+                    via_bot_id = uscm.via_bot_id,
+                    ttl_period = uscm.ttl_period,
                     grouped_id = 0,
-                    // 'random_id' property does not belong here.
                 };
 
-                var uf = uscm.flags; // uf declared here, correctly scoped
+                // Transfer flags from UpdateShortChatMessage to Message.
+                var uf = uscm.flags;
                 if (uf.HasFlag(UpdateShortChatMessage.Flags.out_)) msg.flags |= Message.Flags.out_;
                 if (uf.HasFlag(UpdateShortChatMessage.Flags.mentioned)) msg.flags |= Message.Flags.mentioned;
                 if (uf.HasFlag(UpdateShortChatMessage.Flags.silent)) msg.flags |= Message.Flags.silent;
                 if (uf.HasFlag(UpdateShortChatMessage.Flags.media_unread)) msg.flags |= Message.Flags.media_unread;
-                // 'noforwards' flag is typically not available on UpdateShortChatMessage.Flags
-                // if (uf.HasFlag(UpdateShortChatMessage.Flags.noforwards)) msg.flags |= Message.Flags.noforwards;
 
                 updatesToDispatch.Add(new UpdateNewMessage { message = msg, pts = uscm.pts, pts_count = uscm.pts_count });
-                _logger.LogDebug("HandleUpdatesBaseAsync (USCM): Added UpdateNewMessage for MsgID {MessageId} to dispatch list.", uscm.id);
+                _logger.LogDebug("HandleUpdatesBaseAsync (USCM): Converted to UpdateNewMessage for MsgID {MessageId} and added to dispatch list.", uscm.id);
             }
 
-            // --- Dispatch Updates ---
+            // Dispatch all collected updates to subscribers.
             if (updatesToDispatch.Any())
             {
                 _logger.LogInformation("HandleUpdatesBaseAsync: Dispatching {DispatchCount} TL.Update object(s) via OnCustomUpdateReceived.", updatesToDispatch.Count);
                 foreach (var update in updatesToDispatch)
                 {
-                    _logger.LogTrace("HandleUpdatesBaseAsync: Dispatching update of type {UpdateType}. Update content (partial): {UpdateContent}",
-                        update.GetType().Name, TruncateString(update.ToString(), 100));
+                    _logger.LogTrace("HandleUpdatesBaseAsync: Dispatching update of type {UpdateType}. Update content (partial): {UpdateContent}", update.GetType().Name, TruncateString(update.ToString(), 100));
                     try
                     {
-                        OnCustomUpdateReceived?.Invoke(update); // This remains a synchronous call
+                        OnCustomUpdateReceived?.Invoke(update);
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError(ex, "HandleUpdatesBaseAsync: Exception during OnCustomUpdateReceived invocation for update type {UpdateType}. Update content (partial): {UpdateContent}",
-                            update.GetType().Name, TruncateString(update.ToString(), 100));
+                        _logger.LogError(ex, "HandleUpdatesBaseAsync: Exception during OnCustomUpdateReceived invocation for update type {UpdateType}. Update content (partial): {UpdateContent}", update.GetType().Name, TruncateString(update.ToString(), 100));
                     }
                 }
                 _logger.LogInformation("HandleUpdatesBaseAsync: Finished dispatching {DispatchCount} TL.Update object(s).", updatesToDispatch.Count);
@@ -605,8 +561,9 @@ namespace Infrastructure.Services
             return Task.CompletedTask;
         }
 
-
-        // Helper function to truncate strings for logging to avoid overly long log messages
+        /// <summary>
+        /// Truncates a string for logging purposes.
+        /// </summary>
         private string TruncateString(string? str, int maxLength)
         {
             if (string.IsNullOrEmpty(str)) return "[null_or_empty]";
@@ -615,192 +572,163 @@ namespace Infrastructure.Services
         #endregion
 
         #region ITelegramUserApiClient Implementation
-        public async Task ConnectAndLoginAsync(CancellationToken cancellationToken = default)
+
+        /// <summary>
+        /// Connects to Telegram and logs in the user if needed.
+        /// Manages the connection lifecycle and initial data fetching.
+        /// </summary>
+        public async Task ConnectAndLoginAsync(CancellationToken cancellationToken)
         {
+            // Use a SemaphoreSlim to prevent multiple concurrent connection attempts.
             await _connectionLock.WaitAsync(cancellationToken);
             try
             {
-                if (_client != null)
+                // IMPORTANT: Do NOT dispose _client or set it to null here normally.
+                // WTelegram.Client is designed to be a long-lived object that manages its own connection state.
+                // Calling LoginUserIfNeeded() will handle reconnection, DC migration, and re-authentication automatically.
+                // The only time _client should be null is if the constructor failed or DisposeAsync was called.
+                if (_client == null)
                 {
-                    _logger.LogInformation("Disposing existing client to force new connection...");
-                    _client.OnUpdates -= HandleUpdatesBaseAsync;
-                    _client.Dispose();
-                    _client = null;
+                    _logger.LogCritical("ConnectAndLoginAsync: WTelegram.Client instance is unexpectedly null. This indicates a potential issue with initialization or prior disposal. Cannot proceed.");
+                    throw new InvalidOperationException("Telegram API client is not initialized. Ensure it's correctly set up in the constructor.");
                 }
 
-                _client = new WTelegram.Client(ConfigProvider);
-                _client.OnUpdates += async updates =>
-                {
-                    _logger.LogCritical("[USER_API_ON_UPDATES_TRIGGERED] Raw updates object of type: {UpdateType} from WTelegram.Client", updates.GetType().FullName);
-                    if (updates is UpdatesBase updatesBase)
-                    {
-                        await HandleUpdatesBaseAsync(updatesBase);
-                    }
-                    else
-                    {
-                        _logger.LogWarning("[USER_API_ON_UPDATES_TRIGGERED] Received 'updates' that is NOT UpdatesBase. Type: {UpdateType}", updates.GetType().FullName);
-                    }
-                };
-
-                _logger.LogInformation("Connecting User API (Session: {SessionPath})...", _settings.SessionPath);
+                _logger.LogInformation("Attempting to connect and login user API (Session: {SessionPath})...", _sessionPath);
                 try
                 {
-                    // Fix for CS1739: Remove named parameters `context:` and `cancellationToken:`.
+                    // LoginUserIfNeeded() handles everything: connecting, authenticating, 2FA, phone code,
+                    // and even DC migration internally.
                     User loggedInUser = await _resiliencePipeline.ExecuteAsync(async (context, token) =>
-                        await _client!.LoginUserIfNeeded(), // _client is guaranteed non-null here as it's created above.
-                        new Context(nameof(ConnectAndLoginAsync)), // Passed as positional argument.
-                        cancellationToken); // Passed as positional argument.
+                        await _client.LoginUserIfNeeded(), // Use _client directly
+                        new Context(nameof(ConnectAndLoginAsync)),
+                        cancellationToken);
 
-                    _logger.LogInformation("User API Logged in: {User}", loggedInUser?.ToString());
-
-                    // Fix for CS1739: Remove named parameters `context:` and `cancellationToken:`.
-                    var dialogs = await _resiliencePipeline.ExecuteAsync(async (context, token) =>
-                        await _client!.Messages_GetAllDialogs(), // _client is guaranteed non-null.
-                        new Context(nameof(_client.Messages_GetAllDialogs)), // Operation key for logging.
-                        cancellationToken); // Pass cancellation token from method parameter.
-
-                    dialogs.CollectUsersChats(_userCache, _chatCache);
-
-                    // ... (existing cache update logic)
-                    int usersTransferred = 0;
-                    if (_userCache != null && _userCache.Any())
+                    if (loggedInUser == null)
                     {
-                        _logger.LogDebug("Refreshing user cache. Found {UserCacheCount} users in simple cache.", _userCache.Count);
-                        foreach (var userEntry in _userCache)
+                        _logger.LogCritical("User API Login Failed: LoginUserIfNeeded returned null. Check configuration and authentication steps.");
+                        throw new InvalidOperationException("WTelegramClient failed to log in user.");
+                    }
+
+                    _logger.LogInformation("User API Logged in successfully: ID {UserId}, Full Name: {FullName}, Phone: {PhoneNumber}",
+                        loggedInUser.id, $"{loggedInUser.first_name} {loggedInUser.last_name}", loggedInUser.phone);
+
+                    // After successful login, refresh dialogs and populate caches.
+                    _logger.LogInformation("Fetching all dialogs to refresh user/chat caches...");
+                    var dialogs = await _resiliencePipeline.ExecuteAsync(async (context, token) =>
+                        await _client.Messages_GetAllDialogs(), // Use _client directly
+                        new Context(nameof(_client.Messages_GetAllDialogs)),
+                        cancellationToken);
+
+                    dialogs.CollectUsersChats(_internalWtcUserCache, _internalWtcChatCache);
+
+                    int usersTransferred = 0;
+                    if (_internalWtcUserCache.Any())
+                    {
+                        _logger.LogDebug("Populating user cache from dialogs. Found {UserCacheCount} users.", _internalWtcUserCache.Count);
+                        foreach (var userEntry in _internalWtcUserCache)
                         {
                             _userCacheWithExpiry[userEntry.Key] = (userEntry.Value, DateTime.UtcNow.Add(_cacheExpiration));
                             usersTransferred++;
-                            _logger.LogTrace("Transferred user {UserId} to expiry cache. New expiry: {ExpiryTime}",
-                                userEntry.Key, _userCacheWithExpiry[userEntry.Key].Item2);
                         }
-                        _logger.LogInformation("Successfully transferred {UsersTransferredCount} users to expiry cache.", usersTransferred);
+                        _logger.LogInformation("Successfully transferred {UsersTransferredCount} users to expiry cache from dialogs.", usersTransferred);
                     }
                     else
                     {
-                        _logger.LogInformation("User cache (_userCache) is null or empty. No users to transfer.");
+                        _logger.LogDebug("User cache (_internalWtcUserCache) is empty after dialogs fetch. No users to transfer.");
                     }
 
                     int chatsTransferred = 0;
-                    if (_chatCache != null && _chatCache.Any())
+                    if (_internalWtcChatCache.Any())
                     {
-                        _logger.LogDebug("Refreshing chat cache. Found {ChatCacheCount} chats in simple cache.", _chatCache.Count);
-                        foreach (var chatEntry in _chatCache)
+                        _logger.LogDebug("Populating chat cache from dialogs. Found {ChatCacheCount} chats.", _internalWtcChatCache.Count);
+                        foreach (var chatEntry in _internalWtcChatCache)
                         {
                             _chatCacheWithExpiry[chatEntry.Key] = (chatEntry.Value, DateTime.UtcNow.Add(_cacheExpiration));
                             chatsTransferred++;
-                            _logger.LogTrace("Transferred chat {ChatId} to expiry cache. New expiry: {ExpiryTime}",
-                                chatEntry.Key, _chatCacheWithExpiry[chatEntry.Key].Item2);
                         }
-                        _logger.LogInformation("Successfully transferred {ChatsTransferredCount} chats to expiry cache.", chatsTransferred);
+                        _logger.LogInformation("Successfully transferred {ChatsTransferredCount} chats to expiry cache from dialogs.", chatsTransferred);
                     }
                     else
                     {
-                        _logger.LogInformation("Chat cache (_chatCache) is null or empty. No chats to transfer.");
+                        _logger.LogDebug("Chat cache (_internalWtcChatCache) is empty after dialogs fetch. No chats to transfer.");
                     }
                 }
-                catch (RpcException e) when (e.Code == 401 && (e.Message.Contains("SESSION_PASSWORD_NEEDED") || e.Message.Contains("account_password_input_needed")))
+                catch (RpcException e) when (e.Code == 401 && (e.Message.Contains("SESSION_PASSWORD_NEEDED", StringComparison.OrdinalIgnoreCase) || e.Message.Contains("account_password_input_needed", StringComparison.OrdinalIgnoreCase)))
                 {
-                    _logger.LogWarning("User API: 2FA needed. Password requested via ConfigProvider.");
+                    _logger.LogWarning(e, "User API: 2FA needed for login. Password requested via ConfigProvider. Attempting re-login with 2FA.");
+                    // WTelegramClient will call ConfigProvider("password") to get the 2FA password.
                     User loggedInUser = await _client!.LoginUserIfNeeded();
                     _logger.LogInformation("User API Logged in with 2FA: {User}", loggedInUser?.ToString());
                 }
-                catch (RpcException e) when (e.Message.StartsWith("PHONE_MIGRATE_"))
+                catch (RpcException e) when (e.Message.StartsWith("PHONE_MIGRATE_", StringComparison.OrdinalIgnoreCase))
                 {
                     if (int.TryParse(e.Message.Split('_').Last(), out int dcNumber))
                     {
-                        _logger.LogWarning("User API: Phone number needs to be migrated to DC{DCNumber}. Reconnecting...", dcNumber);
+                        _logger.LogWarning(e, "User API: Phone number needs to be migrated to DC{DCNumber}. WTelegramClient will handle reconnection.", dcNumber);
+                        // WTelegramClient's LoginUserIfNeeded() handles DC migration internally.
+                        // We just need to call it again, and it will update its internal DC.
+                        User loggedInUser = await _client!.LoginUserIfNeeded();
+                        _logger.LogInformation("User API successfully migrated to DC{DCNumber} and logged in: {User}", dcNumber, loggedInUser?.ToString());
 
-                        if (_client != null)
-                        {
-                            _client.OnUpdates -= HandleUpdatesBaseAsync;
-                            _client.Dispose();
-                            _client = null;
-                        }
-
-                        _logger.LogInformation("Creating new WTelegram.Client instance for DC{DCNumber}.", dcNumber);
-                        _client = new WTelegram.Client(ConfigProvider);
-
-                        _client.OnUpdates += async updates =>
-                        {
-                            _logger.LogCritical("[USER_API_ON_UPDATES_TRIGGERED_DC_MIGRATE] Raw updates object of type: {UpdateType} from WTelegram.Client (after DC Migrate)", updates.GetType().FullName);
-                            if (updates is UpdatesBase updatesBase)
-                            {
-                                await HandleUpdatesBaseAsync(updatesBase);
-                            }
-                            else
-                            {
-                                _logger.LogWarning("[USER_API_ON_UPDATES_TRIGGERED_DC_MIGRATE] Received 'updates' that is NOT UpdatesBase. Type: {UpdateType}", updates.GetType().FullName);
-                            }
-                        };
-
-                        _logger.LogInformation("Re-attempting login after DC migration to DC{DCNumber}...", dcNumber);
-                        User loggedInUser = await _client.LoginUserIfNeeded();
-                        _logger.LogInformation("User API Logged in on DC{DCNumber}: {User}", dcNumber, loggedInUser?.ToString());
-
-                        // Fix for CS1739: Remove named parameters `context:` and `cancellationToken:`.
+                        // Re-fetch dialogs and refresh caches after migration.
+                        _logger.LogInformation("Fetching dialogs after DC migration to refresh caches...");
                         var dialogs = await _resiliencePipeline.ExecuteAsync(async (context, token) =>
                             await _client!.Messages_GetAllDialogs(),
                             new Context(nameof(_client.Messages_GetAllDialogs) + "_PostMigrate"),
                             cancellationToken);
-                        dialogs.CollectUsersChats(_userCache, _chatCache);
+                        dialogs.CollectUsersChats(_internalWtcUserCache, _internalWtcChatCache);
 
+                        // Cache refresh logic similar to initial login.
                         int usersTransferredAfterMigrate = 0;
-                        if (_userCache != null && _userCache.Any())
+                        foreach (var userEntry in _internalWtcUserCache)
                         {
-                            _logger.LogDebug("Refreshing user cache post-migration. Found {UserCacheCount} users in simple cache.", _userCache.Count);
-                            foreach (var userEntry in _userCache)
-                            {
-                                _userCacheWithExpiry[userEntry.Key] = (userEntry.Value, DateTime.UtcNow.Add(_cacheExpiration));
-                                usersTransferredAfterMigrate++;
-                            }
-                            _logger.LogInformation("Successfully transferred {UsersTransferredCount} users to expiry cache post-migration.", usersTransferredAfterMigrate);
+                            _userCacheWithExpiry[userEntry.Key] = (userEntry.Value, DateTime.UtcNow.Add(_cacheExpiration));
+                            usersTransferredAfterMigrate++;
                         }
+                        _logger.LogInformation("Successfully transferred {UsersTransferredCount} users to expiry cache post-migration.", usersTransferredAfterMigrate);
 
                         int chatsTransferredAfterMigrate = 0;
-                        if (_chatCache != null && _chatCache.Any())
+                        foreach (var chatEntry in _internalWtcChatCache)
                         {
-                            _logger.LogDebug("Refreshing chat cache post-migration. Found {ChatCacheCount} chats in simple cache.", _chatCache.Count);
-                            foreach (var chatEntry in _chatCache)
-                            {
-                                _chatCacheWithExpiry[chatEntry.Key] = (chatEntry.Value, DateTime.UtcNow.Add(_cacheExpiration));
-                                chatsTransferredAfterMigrate++;
-                            }
-                            _logger.LogInformation("Successfully transferred {ChatsTransferredCount} chats to expiry cache post-migration.", chatsTransferredAfterMigrate);
+                            _chatCacheWithExpiry[chatEntry.Key] = (chatEntry.Value, DateTime.UtcNow.Add(_cacheExpiration));
+                            chatsTransferredAfterMigrate++;
                         }
+                        _logger.LogInformation("Successfully transferred {ChatsTransferredCount} chats to expiry cache post-migration.", chatsTransferredAfterMigrate);
                     }
                     else
                     {
-                        _logger.LogError("User API: Failed to parse DC number from migration error: {ErrorMessage}", e.Message);
+                        _logger.LogError(e, "User API: Failed to parse DC number from migration error message: {ErrorMessage}. Re-throwing original exception.", e.Message);
                         throw;
                     }
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogCritical(ex, "User API: Failed to connect/login.");
-                    throw;
+                    _logger.LogCritical(ex, "User API: Critical error occurred during connect/login process. Service may be unrecoverable without manual intervention.");
+                    throw; // Re-throw to propagate the failure.
                 }
             }
             finally
             {
+                // Ensure the semaphore is always released.
                 try
                 {
                     _connectionLock.Release();
                 }
                 catch (ObjectDisposedException)
                 {
+                    // This can happen if the semaphore is disposed while waiting, which implies a shutdown scenario.
+                    _logger.LogWarning("Connection lock was disposed during release. This can occur during application shutdown.");
+                    // Re-initialize for future use if needed, but typically indicates shutdown.
                     _connectionLock = new SemaphoreSlim(1, 1);
                 }
             }
         }
 
-
-
-        // Assuming _logger is an ILogger instance available in the class
-        // Assuming _client is an instance of WTelegram.Client
-        // Assuming _messageCache is an instance of IMemoryCache or a similar caching mechanism
-        // Assuming _cacheOptions is an instance of MemoryCacheEntryOptions or similar
-
-        public async Task<Messages_MessagesBase?> GetMessagesAsync(InputPeer peer, params int[] messageIds)
+        /// <summary>
+        /// Retrieves specific messages by their IDs from a given peer.
+        /// Uses caching and resilience policies.
+        /// </summary>
+        public async Task<Messages_MessagesBase> GetMessagesAsync(InputPeer peer, int[] msgIds, CancellationToken cancellationToken)
         {
             if (_client == null)
             {
@@ -808,42 +736,43 @@ namespace Infrastructure.Services
                 throw new InvalidOperationException("Telegram API client is not initialized.");
             }
             if (peer == null) throw new ArgumentNullException(nameof(peer), "InputPeer cannot be null for getting messages.");
-            if (messageIds == null || !messageIds.Any())
-                throw new ArgumentException("Message IDs list cannot be null or empty for getting messages.", nameof(messageIds));
+            if (msgIds == null || !msgIds.Any())
+                throw new ArgumentException("Message IDs list cannot be null or empty for getting messages.", nameof(msgIds));
 
-
-            string messageIdsString = messageIds.Length > 5
-                ? $"{string.Join(", ", messageIds.Take(5))}... (Total: {messageIds.Length})"
-                : string.Join(", ", messageIds);
+            string messageIdsString = msgIds.Length > 5
+                ? $"{string.Join(", ", msgIds.Take(5))}... (Total: {msgIds.Length})"
+                : string.Join(", ", msgIds);
 
             long peerIdForLog = GetPeerIdForLog(peer);
             string peerTypeForLog = peer.GetType().Name;
 
             _logger.LogDebug("GetMessagesAsync: Attempting to get messages for Peer (Type: {PeerType}, LoggedID: {PeerId}), Message IDs: [{MessageIdsArray}]",
-                peerTypeForLog,
-                peerIdForLog,
-                messageIdsString);
+                peerTypeForLog, peerIdForLog, messageIdsString);
 
             try
             {
+                // Generate a consistent cache key for the message request.
+                // Include peer type, ID, and sorted message IDs to ensure uniqueness.
                 string cacheKeySuffix = peer is InputPeerUser p_u ? $"u{p_u.user_id}" :
                                         peer is InputPeerChat p_c ? $"c{p_c.chat_id}" :
                                         peer is InputPeerChannel p_ch ? $"ch{p_ch.channel_id}" :
                                         peer is InputPeerSelf ? "self" :
-                                        $"other{peer.GetHashCode()}";
+                                        $"other{peer.GetHashCode()}"; // Fallback for other peer types.
 
-                var cacheKey = $"msgs_peer{cacheKeySuffix}_ids{string.Join("_", messageIds.OrderBy(id => id).Select(id => id.ToString()))}";
+                var cacheKey = $"msgs_peer{cacheKeySuffix}_ids{string.Join("_", msgIds.OrderBy(id => id).Select(id => id.ToString()))}";
                 _logger.LogTrace("GetMessagesAsync: Generated cache key: {CacheKey}", cacheKey);
 
+                // Check cache first.
                 if (_messageCache.TryGetValue(cacheKey, out Messages_MessagesBase? cachedMessages))
                 {
+                    // Attempt to count messages in the cached response for logging.
                     int cachedMessageCount = (cachedMessages as Messages_Messages)?.messages?.Length ??
                                              (cachedMessages as Messages_MessagesSlice)?.messages?.Length ??
                                              (cachedMessages as Messages_ChannelMessages)?.messages?.Length ?? 0;
 
                     _logger.LogDebug("GetMessagesAsync: Cache HIT for key {CacheKey}. Returning {CachedMessageCount} cached messages for Peer (Type: {PeerType}, LoggedID: {PeerId}).",
                         cacheKey, cachedMessageCount, peerTypeForLog, peerIdForLog);
-                    return cachedMessages;
+                    return cachedMessages!;
                 }
                 else
                 {
@@ -851,61 +780,65 @@ namespace Infrastructure.Services
                         cacheKey, peerTypeForLog, peerIdForLog, messageIdsString);
                 }
 
-                var msgIdObjects = messageIds.Select(id => (InputMessage)new InputMessageID { id = id }).ToArray();
-                _logger.LogDebug("GetMessagesAsync: Calling _client.Messages_GetMessages with {InputMessageCount} InputMessageID objects.", msgIdObjects.Length);
-
-                // Fix for CS1739: Remove named parameters `context:` and `cancellationToken:`.
-                Messages_MessagesBase? messages = await _resiliencePipeline.ExecuteAsync(async (context, token) =>
-                    await _client!.Messages_GetMessages(msgIdObjects), // Using '!' as _client is checked for null at method start.
-                    new Context(nameof(GetMessagesAsync)), // Unique operation key for logging.
-                    CancellationToken.None); // Assuming no direct cancellation needed from external for this; otherwise use `cancellationToken`.
+                // Execute the API call with resilience policy.
+                Messages_MessagesBase messages = await _resiliencePipeline.ExecuteAsync(async (context, token) =>
+                {
+                    // WTelegramClient's GetMessages expects an array of InputMessage.
+                    var inputMessageIDs = msgIds.Select(id => (InputMessage)new InputMessageID { id = id }).ToArray();
+                    return await _client!.Messages_GetMessages(inputMessageIDs);
+                },
+                new Context(nameof(GetMessagesAsync)), // Operation key for Polly logging.
+                cancellationToken);
 
                 if (messages == null)
                 {
-                    string errorMessage = $"GetMessagesAsync: _client.Messages_GetMessages returned null for Peer (Type: {peerTypeForLog}, LoggedID: {peerIdForLog}), Message IDs: [{messageIdsString}].";
-                    _logger.LogError(errorMessage);
-                    throw new InvalidOperationException(errorMessage + " Telegram API call unexpectedly returned null.");
+                    _logger.LogError("GetMessagesAsync: _client.Messages_GetMessages returned null after Polly retries. This is unexpected. Peer: {PeerId}, Message IDs: {MessageIdsString}", peerIdForLog, messageIdsString);
+                    throw new InvalidOperationException("Telegram API call to Messages_GetMessages unexpectedly returned null after all retries.");
                 }
 
+                // Count messages from the API response for logging.
                 int fetchedMessageCount = (messages as Messages_Messages)?.messages?.Length ??
                                           (messages as Messages_MessagesSlice)?.messages?.Length ??
                                           (messages as Messages_ChannelMessages)?.messages?.Length ?? 0;
 
                 _logger.LogInformation("GetMessagesAsync: Successfully fetched {MessageCountFromApi} items (messages/users/chats container) from API for Peer (Type: {PeerType}, LoggedID: {PeerId}). Caching result with key {CacheKey}. Actual messages in response: {ActualMessageCount}",
                     fetchedMessageCount, peerTypeForLog, peerIdForLog, cacheKey, fetchedMessageCount);
+                // Cache the fetched messages with defined options.
                 _messageCache.Set(cacheKey, messages, _cacheOptions);
 
                 return messages;
             }
             catch (RpcException rpcEx)
             {
-                _logger.LogError(rpcEx, "GetMessagesAsync: RpcException occurred after Polly retries exhausted (or error was not retryable) for Peer (Type: {PeerType}, LoggedID: {PeerId}), Message IDs: [{MessageIdsArray}]. Error: {ErrorTypeString}, Code: {ErrorCode}",
+                _logger.LogError(rpcEx, "GetMessagesAsync: Telegram API (RPC) exception occurred after Polly retries exhausted (or error was not retryable) for Peer (Type: {PeerType}, LoggedID: {PeerId}), Message IDs: [{MessageIdsArray}]. Error: {ErrorTypeString}, Code: {ErrorCode}",
                     peerTypeForLog, peerIdForLog, messageIdsString, rpcEx.Message, rpcEx.Code);
-                throw;
+                throw; // Re-throw to propagate the exception.
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "GetMessagesAsync: Unhandled generic exception occurred after Polly retries exhausted (or error was not retryable) for Peer (Type: {PeerType}, LoggedID: {PeerId}), Message IDs: [{MessageIdsArray}]",
+                _logger.LogError(ex, "GetMessagesAsync: Unhandled generic exception occurred for Peer (Type: {PeerType}, LoggedID: {PeerId}), Message IDs: [{MessageIdsArray}]",
                     peerTypeForLog, peerIdForLog, messageIdsString);
                 throw;
             }
         }
 
-
-
-        public async Task<UpdatesBase?> SendMessageAsync(
+        /// <summary>
+        /// Sends a message (text or media) to a specified peer.
+        /// Handles various message parameters and uses resilience policies.
+        /// </summary>
+        public async Task<UpdatesBase> SendMessageAsync(
                     InputPeer peer,
                     string message,
-                    long? replyToMsgId = null,
+                    CancellationToken cancellationToken,
+                    int? replyToMsgId = null,
                     ReplyMarkup? replyMarkup = null,
                     IEnumerable<MessageEntity>? entities = null,
                     bool noWebpage = false,
                     bool background = false,
                     bool clearDraft = false,
                     DateTime? schedule_date = null,
-                    bool sendAsBot = false,
-                    InputMedia? media = null,
-                    int[]? parsedMentions = null)
+                    bool sendAsBot = false, // WTelegramClient does not have 'sendAsBot' parameter for SendMessage directly.
+                    InputMedia? media = null)
         {
             if (_client == null)
             {
@@ -920,19 +853,20 @@ namespace Infrastructure.Services
             string entitiesString = entities != null && entities.Any()
                 ? $"Count: {entities.Count()}, Types: [{string.Join(", ", entities.Select(e => e.GetType().Name))}]"
                 : "None";
+            // Create a lock key specific to the peer to prevent simultaneous sends to the same chat.
             string lockKey = $"send_peer_{peerTypeForLog}_{peerIdForLog}";
 
             _logger.LogDebug(
                 "SendMessageAsync: Attempting to send message to Peer (Type: {PeerType}, LoggedID: {PeerId}). " +
                 "Message (partial): '{MessageContent}'. Entities: {EntitiesInfo}. Media: {HasMedia}. ReplyToMsgID: {ReplyToMsgId}. " +
-                "NoWebpage: {NoWebpageFlag}. Background: {BackgroundFlag}. ClearDraft: {ClearDraftFlag}. ScheduleDate: {ScheduleDate}. SendAsBot: {SendAsBotFlag}.",
+                "NoWebpage: {NoWebpageFlag}. Background: {BackgroundFlag}. ClearDraft: {ClearDraftFlag}. ScheduleDate: {ScheduleDate}. SendAsBot (ignored): {SendAsBotFlag}.",
                 peerTypeForLog,
                 peerIdForLog,
                 truncatedMessage,
                 entitiesString,
                 hasMedia,
                 replyToMsgId.HasValue ? replyToMsgId.Value.ToString() : "N/A",
-                noWebpage, background, clearDraft, schedule_date.HasValue ? schedule_date.Value.ToString() : "N/A", sendAsBot);
+                noWebpage, background, clearDraft, schedule_date.HasValue ? schedule_date.Value.ToString("s") : "N/A", sendAsBot);
 
             if (peer == null)
             {
@@ -942,11 +876,15 @@ namespace Infrastructure.Services
 
             try
             {
-                if (message != null && message.Contains("https://wa.me/message/W6HXT7VWR3U2C1"))
+                // Example of a simple content replacement before sending.
+                if (message != null && message.Contains("https://wa.me/message/W6HXT7VWR3U2C1", StringComparison.OrdinalIgnoreCase))
                 {
-                    message = message.Replace("https://wa.me/message/W6HXT7VWR3U2C1", "@capxi");
+                    message = message.Replace("https://wa.me/message/W6HXT7VWR3U2C1", "@capxi", StringComparison.OrdinalIgnoreCase);
+                    _logger.LogDebug("SendMessageAsync: Replaced WhatsApp link with @capxi for Peer {PeerId}.", peerIdForLog);
                 }
 
+                // Acquire a lock to ensure only one message is sent to this specific peer at a time.
+                // This can help prevent issues like FLOOD_WAIT or messages arriving out of order.
                 _logger.LogTrace("SendMessageAsync: Attempting to acquire send lock with key: {LockKey}", lockKey);
                 using var sendLock = await AsyncLock.LockAsync(lockKey);
                 _logger.LogDebug("SendMessageAsync: Acquired send lock with key: {LockKey} for Peer (Type: {PeerType}, LoggedID: {PeerId})",
@@ -959,43 +897,43 @@ namespace Infrastructure.Services
 
                 if (media == null)
                 {
-                    _logger.LogDebug("SendMessageAsync: Calling _client.Messages_SendMessageAsync (text-only) for Peer (Type: {PeerType}, LoggedID: {PeerId}).",
+                    _logger.LogDebug("SendMessageAsync: Calling _client.Messages_SendMessage (text-only) for Peer (Type: {PeerType}, LoggedID: {PeerId}).",
                         peerTypeForLog, peerIdForLog);
-                    // Fix for CS1739: Remove named parameters `context:` and `cancellationToken:`.
                     updatesBase = await _resiliencePipeline.ExecuteAsync(async (context, token) =>
                         await _client!.Messages_SendMessage(
                             peer: peer, message: message, random_id: random_id, reply_to: inputReplyTo,
                             reply_markup: replyMarkup, no_webpage: noWebpage, background: background,
-                            clear_draft: clearDraft, schedule_date: schedule_date),
+                            clear_draft: clearDraft, schedule_date: schedule_date
+                            ),
                         new Context(nameof(SendMessageAsync) + "_Text"),
-                        CancellationToken.None); // Or `cancellationToken` from method param
+                        cancellationToken);
                 }
                 else
                 {
-                    _logger.LogDebug("SendMessageAsync: Calling _client.Messages_SendMediaAsync for Peer (Type: {PeerType}, LoggedID: {PeerId}).",
+                    _logger.LogDebug("SendMessageAsync: Calling _client.Messages_SendMedia for Peer (Type: {PeerType}, LoggedID: {PeerId}).",
                         peerTypeForLog, peerIdForLog);
-                    // Fix for CS1739: Remove named parameters `context:` and `cancellationToken:`.
                     updatesBase = await _resiliencePipeline.ExecuteAsync(async (context, token) =>
                         await _client!.Messages_SendMedia(
                             peer: peer, media: media, random_id: random_id, message: message,
                             reply_to: inputReplyTo, reply_markup: replyMarkup, background: background,
-                            clear_draft: clearDraft, schedule_date: schedule_date),
+                            clear_draft: clearDraft, schedule_date: schedule_date
+                            ),
                         new Context(nameof(SendMessageAsync) + "_Media"),
-                        CancellationToken.None); // Or `cancellationToken` from method param
+                        cancellationToken);
                 }
 
                 if (updatesBase == null)
                 {
-                    string errorMessage = $"SendMessageAsync: WTelegramClient API call returned null for Peer (Type: {peerTypeForLog}, LoggedID: {peerIdForLog}). Message (partial): '{truncatedMessage}'.";
-                    _logger.LogError(errorMessage);
-                    throw new InvalidOperationException(errorMessage + " Telegram API call unexpectedly returned null.");
+                    _logger.LogError("SendMessageAsync: WTelegramClient API call returned null after Polly retries. This is unexpected. Peer: {PeerId}, Message (partial): '{MessageContent}'", peerIdForLog, truncatedMessage);
+                    throw new InvalidOperationException("Telegram API call to SendMessage/SendMedia unexpectedly returned null after all retries.");
                 }
 
                 _logger.LogInformation(
                     "SendMessageAsync: Message sent successfully via API. Response Type: {ResponseType}. " +
-                    "Peer (Type: {PeerType}, LoggedID: {PeerId}).",
+                    "Peer (Type: {PeerType}, LoggedID: {PeerId}). Message (partial): '{TruncatedMessage}'",
                     updatesBase.GetType().Name,
-                    peerTypeForLog, peerIdForLog);
+                    peerTypeForLog, peerIdForLog,
+                    truncatedMessage);
                 return updatesBase;
             }
             catch (RpcException rpcEx)
@@ -1006,7 +944,7 @@ namespace Infrastructure.Services
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "SendMessageAsync: Unhandled generic exception occurred after Polly retries exhausted (or error was not retryable) for Peer (Type: {PeerType}, LoggedID: {PeerId}). Message (partial): '{MessageContent}'",
+                _logger.LogError(ex, "SendMessageAsync: Unhandled generic exception occurred for Peer (Type: {PeerType}, LoggedID: {PeerId}). Message (partial): '{MessageContent}'",
                     peerTypeForLog, peerIdForLog, truncatedMessage);
                 throw;
             }
@@ -1016,11 +954,14 @@ namespace Infrastructure.Services
             }
         }
 
-
-        // EDITED METHOD: SendMediaGroupAsync - Changed call to _client.SendMediaAlbum and removed manual random_id assignment
-        public async Task SendMediaGroupAsync(TL.InputPeer peer, TL.InputSingleMedia[] media, string albumCaption = null, TL.MessageEntity[]? albumEntities = null, long? replyToMsgId = null,
+        /// <summary>
+        /// Sends a group of media items as an album to a specified peer.
+        /// Uses resilience policies.
+        /// </summary>
+        public async Task SendMediaGroupAsync(TL.InputPeer peer, ICollection<TL.InputMedia> media, CancellationToken cancellationToken,
+                                                             string? albumCaption = null, TL.MessageEntity[]? albumEntities = null, int? replyToMsgId = null,
                                                              bool background = false, DateTime? schedule_date = null,
-                                                             bool sendAsBot = false, int[]? parsedMentions = null)
+                                                             bool sendAsBot = false) // sendAsBot parameter is not directly supported by SendAlbumAsync in WTelegramClient
         {
             if (_client == null)
             {
@@ -1029,7 +970,7 @@ namespace Infrastructure.Services
             }
             if (peer == null)
             {
-                _logger.LogWarning("SendMediaGroupAsync: InputPeer is null. Cannot send media group. Media Items Info: {MediaItemsInfo}", media?.Length.ToString() ?? "null");
+                _logger.LogWarning("SendMediaGroupAsync: InputPeer is null. Cannot send media group. Media Items Info: {MediaItemsInfo}", media?.Count.ToString() ?? "null");
                 throw new ArgumentNullException(nameof(peer), "InputPeer cannot be null for sending media group.");
             }
             if (media == null || !media.Any())
@@ -1039,59 +980,47 @@ namespace Infrastructure.Services
             }
 
             string effectiveAlbumCaptionForLog = string.IsNullOrWhiteSpace(albumCaption)
-                ? (media.FirstOrDefault()?.message is string firstMediaMessage && !string.IsNullOrEmpty(firstMediaMessage)
-                    ? TruncateString(firstMediaMessage, 50)
-                    : "")
+                ? (media.FirstOrDefault()?.GetType().Name is string firstMediaName
+                    ? $"First media type: {firstMediaName}"
+                    : "[No Caption]")
                 : TruncateString(albumCaption, 50);
-
 
             long peerIdForLog = GetPeerIdForLog(peer);
             string peerTypeForLog = peer?.GetType().Name ?? "Unknown";
-            string mediaItemsInfo = media.Length > 5 ? $"{media.Length} items (e.g., {string.Join(", ", media.Take(2).Select(m => m.media?.GetType().Name))}...)" : $"Total: {media.Length} items";
+            string mediaItemsInfo = media.Count > 5 ? $"{media.Count} items (e.g., {string.Join(", ", media.Take(2).Select(m => m.GetType().Name))}...)" : $"Total: {media.Count} items";
             string lockKey = $"send_media_group_peer_{peerTypeForLog}_{peerIdForLog}";
 
             _logger.LogDebug(
                 "SendMediaGroupAsync: Attempting to send media group to Peer (Type: {PeerType}, LoggedID: {PeerId}). " +
-                "Media Items: {MediaItemsInfo}. Album Caption: '{AlbumCaptionPreview}'. ReplyToMsgID: {ReplyToMsgId}. Background: {BackgroundFlag}. ScheduleDate: {ScheduleDate}. SendAsBot: {SendAsBotFlag}.",
+                "Media Items: {MediaItemsInfo}. Album Caption: '{AlbumCaptionPreview}'. ReplyToMsgID: {ReplyToMsgId}. Background: {BackgroundFlag}. ScheduleDate: {ScheduleDate}. SendAsBot (ignored): {SendAsBotFlag}.",
                 peerTypeForLog, peerIdForLog, mediaItemsInfo, effectiveAlbumCaptionForLog,
                 replyToMsgId.HasValue ? replyToMsgId.Value.ToString() : "N/A",
-                background, schedule_date.HasValue ? schedule_date.Value.ToString() : "N/A", sendAsBot);
+                background, schedule_date.HasValue ? schedule_date.Value.ToString("s") : "N/A", sendAsBot);
 
             try
             {
+                // Acquire a lock for sending media groups to a specific peer.
                 _logger.LogTrace("SendMediaGroupAsync: Attempting to acquire send lock with key: {LockKey}", lockKey);
                 using var sendLock = await AsyncLock.LockAsync(lockKey);
                 _logger.LogDebug("SendMediaGroupAsync: Acquired send lock with key: {LockKey} for Peer (Type: {PeerType}, LoggedID: {PeerId})",
                     lockKey, peerTypeForLog, peerIdForLog);
 
                 int replyToMsgIdInt = replyToMsgId.HasValue ? (int)replyToMsgId.Value : 0;
-                TL.InputPeer? sendAsPeerForApi = null;
 
-                foreach (var m in media)
-                {
-                    if (m.message != null && m.message.Contains("https://wa.me/message/W6HXT7VWR3U2C1"))
-                    {
-                        m.message = m.message.Replace("https://wa.me/message/W6HXT7VWR3U2C1", "@capxi");
-                    }
-                }
-
-                ICollection<TL.InputMedia> inputMedias = media.Select(ism => ism.media).ToList();
-
-                // Fix for CS1739: Remove named parameters `context:` and `cancellationToken:`.
                 await _resiliencePipeline.ExecuteAsync(async (context, token) =>
                     await _client!.SendAlbumAsync(
                         peer: peer,
-                        medias: inputMedias,
+                        medias: media, // ICollection<InputMedia>
                         caption: albumCaption,
                         reply_to_msg_id: replyToMsgIdInt,
                         entities: albumEntities,
-                        schedule_date: schedule_date ?? default(DateTime)
+                        schedule_date: schedule_date ?? default(DateTime) // Ensure schedule_date is non-nullable DateTime for SendAlbumAsync
                     ),
                     new Context(nameof(SendMediaGroupAsync)),
-                    CancellationToken.None); // Or `cancellationToken` from method param
+                    cancellationToken);
 
-                _logger.LogInformation("SendMediaGroupAsync: Successfully sent media group to Peer (Type: {PeerType}, LoggedID: {PeerId}).",
-                    peerTypeForLog, peerIdForLog);
+                _logger.LogInformation("SendMediaGroupAsync: Successfully sent media group of {MediaCount} items to Peer (Type: {PeerType}, LoggedID: {PeerId}).",
+                    media.Count, peerTypeForLog, peerIdForLog);
             }
             catch (TL.RpcException rpcEx)
             {
@@ -1101,7 +1030,7 @@ namespace Infrastructure.Services
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "SendMediaGroupAsync: Unhandled generic exception occurred after Polly retries exhausted (or error was not retryable) for Peer (Type: {PeerType}, LoggedID: {PeerId}).",
+                _logger.LogError(ex, "SendMediaGroupAsync: Unhandled generic exception occurred for Peer (Type: {PeerType}, LoggedID: {PeerId}).",
                     peerTypeForLog, peerIdForLog);
                 throw;
             }
@@ -1111,19 +1040,17 @@ namespace Infrastructure.Services
             }
         }
 
-
-        // Assuming _logger is an ILogger instance available in the class
-        // Assuming _client is an instance of WTelegram.Client
-
+        /// <summary>
+        /// Forwards messages from one peer to another.
+        /// Uses resilience policies.
+        /// </summary>
         public async Task<UpdatesBase?> ForwardMessagesAsync(
           InputPeer toPeer,
           int[] messageIds,
           InputPeer fromPeer,
+          CancellationToken cancellationToken,
           bool dropAuthor = false,
-          bool noForwards = false,
-          int? topMsgId = null,
-          DateTime? scheduleDate = null,
-          bool sendAsBot = false)
+          bool noForwards = false)
         {
             if (_client == null)
             {
@@ -1144,20 +1071,20 @@ namespace Infrastructure.Services
             _logger.LogDebug(
                 "ForwardMessagesAsync: Attempting to forward {MessageCount} message(s) from Peer (Type: {FromPeerType}, LoggedID: {FromPeerId}) to Peer (Type: {ToPeerType}, LoggedID: {ToPeerId}). Message IDs (partial): [{MessageIdsArray}]. DropAuthor: {DropAuthor}, NoForwards: {NoForwards}.",
                 messageIds.Length, fromPeerType, fromPeerId, toPeerType, toPeerId,
-                messageIds.Length > 5 ? $"{string.Join(", ", messageIds.Take(5))}..." : string.Join(", ", messageIds),
+                messageIds.Length > 5 ? $"{string.Join(", ", messageIds.Take(5))}... (Total: {messageIds.Length})" : string.Join(", ", messageIds),
                 dropAuthor, noForwards
             );
 
+            // Generate unique random IDs for each forwarded message.
             var randomIdArray = messageIds.Select(_ => WTelegram.Helpers.RandomLong()).ToArray();
 
+            // Use a lock specific to the forwarding operation to manage concurrency.
             string lockKey = $"forward_peer_{fromPeerType}_{fromPeerId}_to_{toPeerType}_{toPeerId}";
             using var forwardLock = await AsyncLock.LockAsync(lockKey);
+            _logger.LogDebug("ForwardMessagesAsync: Acquired forward lock with key: {LockKey}.", lockKey);
 
             try
             {
-                InputPeer? sendAsPeer = null;
-
-                // Fix for CS1739: Remove named parameters `context:` and `cancellationToken:`.
                 UpdatesBase? result = await _resiliencePipeline.ExecuteAsync(async (context, token) =>
                     await _client!.Messages_ForwardMessages(
                         to_peer: toPeer,
@@ -1165,24 +1092,23 @@ namespace Infrastructure.Services
                         id: messageIds,
                         random_id: randomIdArray,
                         drop_author: dropAuthor,
-                        noforwards: noForwards,
-                        top_msg_id: topMsgId,
-                        schedule_date: scheduleDate
+                        noforwards: noForwards
                     ),
                     new Context(nameof(ForwardMessagesAsync)),
-                    CancellationToken.None); // Or `cancellationToken` from method param
+                    cancellationToken);
 
                 if (result == null)
                 {
-                    string errorMessage = $"ForwardMessagesAsync: WTelegramClient API call returned null for forwarding. From Peer (Type: {fromPeerType}, ID: {fromPeerId}) To Peer (Type: {toPeerType}, ID: {toPeerId}). Message IDs: [{string.Join(", ", messageIds)}].";
-                    _logger.LogError(errorMessage);
-                    throw new InvalidOperationException(errorMessage + " Telegram API call unexpectedly returned null.");
+                    _logger.LogError("ForwardMessagesAsync: WTelegramClient API call returned null for forwarding. From Peer (Type: {FromPeerType}, ID: {FromPeerId}) To Peer (Type: {ToPeerType}, ID: {ToPeerId}). Message IDs: [{MessageIdsArray}]. This is unexpected.",
+                        fromPeerType, fromPeerId, toPeerType, toPeerId, string.Join(", ", messageIds));
+                    throw new InvalidOperationException("Telegram API call to Messages_ForwardMessages unexpectedly returned null.");
                 }
 
                 _logger.LogInformation(
-                    "ForwardMessagesAsync: Successfully forwarded messages. Response type: {ResponseType}. " +
+                    "ForwardMessagesAsync: Successfully forwarded {MessageCount} messages. Response type: {ResponseType}. " +
                     "From Peer (Type: {FromPeerType}, ID: {FromPeerId}) " +
                     "To Peer (Type: {ToPeerType}, ID: {ToPeerId}).",
+                    messageIds.Length,
                     result.GetType().Name,
                     fromPeerType, fromPeerId,
                     toPeerType, toPeerId);
@@ -1199,7 +1125,7 @@ namespace Infrastructure.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex,
-                    "ForwardMessagesAsync: Unhandled generic exception occurred after Polly retries exhausted (or error was not retryable). From Peer (Type: {FromPeerType}, ID: {FromPeerId}) To Peer (Type: {ToPeerType}, ID: {ToPeerId}). Message IDs: [{MessageIdsArray}]",
+                    "ForwardMessagesAsync: Unhandled generic exception occurred for forwarding. From Peer (Type: {FromPeerType}, ID: {FromPeerId}) To Peer (Type: {ToPeerType}, ID: {ToPeerId}). Message IDs: [{MessageIdsArray}]",
                     fromPeerType, fromPeerId, toPeerType, toPeerId, string.Join(", ", messageIds));
                 throw;
             }
@@ -1209,18 +1135,10 @@ namespace Infrastructure.Services
             }
         }
 
-        // Helper function to get a numerical ID from InputPeer for logging
-        private long GetPeerIdForLog(InputPeer? peer)
-        {
-            if (peer is InputPeerUser ipu) return ipu.user_id;
-            if (peer is InputPeerChat ipc) return ipc.chat_id;
-            if (peer is InputPeerChannel ipch) return ipch.channel_id;
-            if (peer is InputPeerSelf) return -1; // Or some other indicator for "self"
-            return 0; // Default for unknown or null
-        }
-
-
-        public async Task<User?> GetSelfAsync()
+        /// <summary>
+        /// Retrieves the current logged-in user's information.
+        /// </summary>
+        public async Task<User?> GetSelfAsync(CancellationToken cancellationToken)
         {
             if (_client == null)
             {
@@ -1229,11 +1147,11 @@ namespace Infrastructure.Services
             }
             try
             {
-                // Fix for CS1739: Remove named parameters `context:` and `cancellationToken:`.
+                _logger.LogDebug("GetSelfAsync: Attempting to retrieve self user info using LoginUserIfNeeded.");
                 return await _resiliencePipeline.ExecuteAsync(async (context, token) =>
-                    await _client!.LoginUserIfNeeded(),
+                    await _client!.LoginUserIfNeeded(), // LoginUserIfNeeded will return the logged-in user.
                     new Context(nameof(GetSelfAsync)),
-                    CancellationToken.None); // Or `cancellationToken` from method param
+                    cancellationToken);
             }
             catch (RpcException rpcEx)
             {
@@ -1243,127 +1161,139 @@ namespace Infrastructure.Services
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "GetSelfAsync failed after Polly retries exhausted (or error was not retryable).");
+                _logger.LogError(ex, "GetSelfAsync failed due to an unhandled exception.");
                 return null;
             }
         }
 
-
-        public async Task<InputPeer?> ResolvePeerAsync(long positivePeerId)
+        public async Task<InputPeer?> ResolvePeerAsync(long peerId, CancellationToken cancellationToken)
         {
             if (_client == null)
             {
-                _logger.LogError("ResolvePeerAsync: Client not initialized for PositivePeerId {PositivePeerId}.", positivePeerId);
+                _logger.LogError("ResolvePeerAsync: Client not initialized for PeerId {PeerId}. Cannot resolve.", peerId);
                 return null;
             }
-            if (positivePeerId == 0)
+            if (peerId == 0)
             {
-                _logger.LogWarning("ResolvePeerAsync: PositivePeerId is 0. Cannot resolve.");
+                _logger.LogWarning("ResolvePeerAsync: PeerId is 0. Cannot resolve a peer with ID 0. Returning null.", peerId);
                 return null;
             }
 
-            _logger.LogDebug("ResolvePeerAsync: Attempting to resolve PositivePeerId: {PositivePeerId}", positivePeerId);
+            _logger.LogDebug("ResolvePeerAsync: Attempting to resolve PeerId: {PeerId}", peerId);
 
-            // 1. ابتدا کش سفارشی خودتان را با شناسه مثبت بررسی کنید
-            if (_userCacheWithExpiry.TryGetValue(positivePeerId, out var userCacheEntry) &&
+            // 1. Check User Cache
+            if (_userCacheWithExpiry.TryGetValue(peerId, out var userCacheEntry) &&
                 userCacheEntry.Expiry > DateTime.UtcNow && userCacheEntry.User != null)
             {
-                _logger.LogInformation("ResolvePeerAsync: Found User {UserId} (AH: {AccessHash}) in LOCAL USER CACHE for PositivePeerId {PositivePeerId}.",
-                    positivePeerId, userCacheEntry.User.access_hash, positivePeerId);
-                return new InputPeerUser(positivePeerId, userCacheEntry.User.access_hash);
+                _logger.LogInformation("ResolvePeerAsync: Found User {UserId} (AccessHash: {AccessHash}) in LOCAL USER CACHE for PeerId {PeerId}.",
+                    peerId, userCacheEntry.User.access_hash, peerId);
+                return new InputPeerUser(peerId, userCacheEntry.User.access_hash);
             }
 
-            if (_chatCacheWithExpiry.TryGetValue(positivePeerId, out var chatCacheEntry) &&
+            // 2. Check Chat Cache (for Channel and Chat)
+            if (_chatCacheWithExpiry.TryGetValue(peerId, out var chatCacheEntry) &&
                 chatCacheEntry.Expiry > DateTime.UtcNow && chatCacheEntry.Chat != null)
             {
                 if (chatCacheEntry.Chat is Channel channelFromCache)
                 {
-                    _logger.LogInformation("ResolvePeerAsync: Found Channel {ChannelId} (AH: {AccessHash}) in LOCAL CHAT CACHE for PositivePeerId {PositivePeerId}.",
-                        positivePeerId, channelFromCache.access_hash, positivePeerId);
-                    return new InputPeerChannel(positivePeerId, channelFromCache.access_hash);
+                    _logger.LogInformation("ResolvePeerAsync: Found Channel {ChannelId} (AccessHash: {AccessHash}) in LOCAL CHAT CACHE for PeerId {PeerId}.",
+                        peerId, channelFromCache.access_hash, peerId);
+                    return new InputPeerChannel(peerId, channelFromCache.access_hash);
                 }
                 else if (chatCacheEntry.Chat is Chat chatFromCache)
                 {
-                    _logger.LogInformation("ResolvePeerAsync: Found Chat {ChatId} in LOCAL CHAT CACHE for PositivePeerId {PositivePeerId}.",
-                        positivePeerId, positivePeerId);
-                    return new InputPeerChat(positivePeerId);
+                    _logger.LogInformation("ResolvePeerAsync: Found Chat {ChatId} in LOCAL CHAT CACHE for PeerId {PeerId}.",
+                        peerId, peerId);
+                    return new InputPeerChat(peerId);
                 }
             }
-            _logger.LogDebug("ResolvePeerAsync: PositivePeerId {PositivePeerId} not found in active local cache. Attempting API calls.", positivePeerId);
+            _logger.LogDebug("ResolvePeerAsync: PeerId {PeerId} not found in active local cache. Attempting API calls.", peerId);
+
+            // This section is what you need to integrate with YOUR database or rule configuration.
+            // Assuming you have a way to fetch the stored access_hash for a given target peerId.
+            // THIS IS PSEUDOCODE - REPLACE WITH YOUR ACTUAL DB/RULE ACCESS LOGIC.
+            // Example: For the specific rule 'ForwardOurTesting1ToOurTesting2' and target '-1002696634930',
+            // you would query your DB for the stored access_hash for this target.
+            long? storedAccessHash = null; // Placeholder for DB lookup result
+                                           // Example: var rule = _ruleRepository.GetRuleByName("ForwardOurTesting1ToOurTesting2");
+                                           // if (rule != null) {
+                                           //     var targetChannelInfo = rule.TargetChannelDetails.FirstOrDefault(td => td.ChannelId == peerId);
+                                           //     storedAccessHash = targetChannelInfo?.AccessHash;
+                                           // }
+                                           // END OF PSEUDOCODE FOR DB LOOKUP
+
+            if (peerId < 0 && storedAccessHash.HasValue && storedAccessHash.Value != 0) // Only for negative IDs (channels/groups) and if we have a non-zero stored access hash
+            {
+                long channelIdFromPeer = PeerToChannelId(peerId);
+                _logger.LogInformation("ResolvePeerAsync: Using stored AccessHash {AccessHash} for ChannelId {ChannelId} from database/rule config.", storedAccessHash.Value, channelIdFromPeer);
+                return new InputPeerChannel(channelIdFromPeer, storedAccessHash.Value);
+            }
 
 
-            string resolveString = positivePeerId.ToString();
-            _logger.LogDebug("ResolvePeerAsync: Attempting API call with Contacts_ResolveUsername for string '{ResolveString}' (PositivePeerId {PositivePeerId}).", resolveString, positivePeerId);
+            // 3. Try Contacts_ResolveUsername (often works for public IDs or IDs that are usernames)
+            string resolveString = peerId.ToString();
+            if (peerId > 0) // Only attempt for positive IDs, as negative IDs are not usernames.
+            {
+                _logger.LogDebug("ResolvePeerAsync: Attempting API call with Contacts_ResolveUsername for string '{ResolveString}' (PeerId {PeerId}).", resolveString, peerId);
+                try
+                {
+                    Contacts_ResolvedPeer resolvedUsernameResponse = await _resiliencePipeline.ExecuteAsync(async (context, token) =>
+                        await _client!.Contacts_ResolveUsername(resolveString),
+                        new Context(nameof(ResolvePeerAsync) + "_ResolveUsername"),
+                        cancellationToken);
+
+                    if (resolvedUsernameResponse?.users != null)
+                    {
+                        foreach (var uEntry in resolvedUsernameResponse.users)
+                            _userCacheWithExpiry[uEntry.Key] = (uEntry.Value, DateTime.UtcNow.Add(_cacheExpiration));
+                    }
+                    if (resolvedUsernameResponse?.chats != null)
+                    {
+                        foreach (var cEntry in resolvedUsernameResponse.chats)
+                            _chatCacheWithExpiry[cEntry.Key] = (cEntry.Value, DateTime.UtcNow.Add(_cacheExpiration));
+                    }
+
+                    if (resolvedUsernameResponse?.peer != null)
+                    {
+                        if (resolvedUsernameResponse.peer is PeerUser pu)
+                        {
+                            User? userObj = resolvedUsernameResponse.users.GetValueOrDefault(pu.user_id);
+                            long accessHash = userObj?.access_hash ?? 0;
+                            _logger.LogInformation("ResolvePeerAsync: Resolved via Contacts_ResolveUsername to User {UserId} (AccessHash: {AccessHash}) for string '{ResolveString}'.",
+                                pu.user_id, accessHash, resolveString);
+                            return new InputPeerUser(pu.user_id, accessHash);
+                        }
+                        // No need to handle PeerChat/PeerChannel here if we explicitly handle them later or expect them to be resolved by ID.
+                        _logger.LogWarning("ResolvePeerAsync: Contacts_ResolveUsername for string '{ResolveString}' returned an unhandled peer type: {PeerType}. PeerId: {PeerId}",
+                            resolveString, resolvedUsernameResponse.peer.GetType().Name, peerId);
+                    }
+                    else
+                    {
+                        _logger.LogWarning("ResolvePeerAsync: Contacts_ResolveUsername for string '{ResolveString}' (PeerId {PeerId}) returned null or null peer. This might indicate the username is not found or not public.",
+                           resolveString, peerId);
+                    }
+                }
+                catch (RpcException rpcEx) when (rpcEx.Code == 400 && (rpcEx.Message.Contains("USERNAME_INVALID", StringComparison.OrdinalIgnoreCase) || rpcEx.Message.Contains("USERNAME_NOT_OCCUPIED", StringComparison.OrdinalIgnoreCase) || rpcEx.Message.Contains("PEER_ID_INVALID", StringComparison.OrdinalIgnoreCase)))
+                {
+                    _logger.LogWarning("ResolvePeerAsync: Contacts_ResolveUsername for string '{ResolveString}' (PeerId {PeerId}) failed with RPC Error: {RpcError}. This ID string is likely not a known username or public peer ID that can be resolved this way.",
+                        resolveString, peerId, rpcEx.Message);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "ResolvePeerAsync: Exception during Contacts_ResolveUsername for string '{ResolveString}' (PeerId {PeerId}).", resolveString, peerId);
+                }
+            }
+
+
+            // 4. Try Channels_GetChannels (for channel IDs, especially if negative with -100 prefix)
+            // This attempt uses access_hash = 0, relying on the client's membership/public access.
+            _logger.LogDebug("ResolvePeerAsync: Attempting API call with Channels_GetChannels for PeerId: {PeerId} (AccessHash: 0) as a fallback.", peerId);
             try
             {
-                // Fix for CS1739: Remove named parameters `context:` and `cancellationToken:`.
-                Contacts_ResolvedPeer resolvedUsernameResponse = await _resiliencePipeline.ExecuteAsync(async (context, token) =>
-                    await _client!.Contacts_ResolveUsername(resolveString),
-                    new Context(nameof(ResolvePeerAsync) + "_ResolveUsername"),
-                    CancellationToken.None); // Or `cancellationToken` from method param
-
-                if (resolvedUsernameResponse?.users != null)
-                {
-                    foreach (var uEntry in resolvedUsernameResponse.users)
-                        _userCacheWithExpiry[uEntry.Key] = (uEntry.Value, DateTime.UtcNow.Add(_cacheExpiration));
-                }
-                if (resolvedUsernameResponse?.chats != null)
-                {
-                    foreach (var cEntry in resolvedUsernameResponse.chats)
-                        _chatCacheWithExpiry[cEntry.Key] = (cEntry.Value, DateTime.UtcNow.Add(_cacheExpiration));
-                }
-
-                if (resolvedUsernameResponse?.peer != null)
-                {
-                    if (resolvedUsernameResponse.peer is PeerUser pu)
-                    {
-                        User? userObj = resolvedUsernameResponse.users.GetValueOrDefault(pu.user_id);
-                        long accessHash = userObj?.access_hash ?? 0;
-                        _logger.LogInformation("ResolvePeerAsync: Resolved via Contacts_ResolveUsername to User {UserId} (AH: {AccessHash}) for string '{ResolveString}'.",
-                            pu.user_id, accessHash, resolveString);
-                        return new InputPeerUser(pu.user_id, accessHash);
-                    }
-                    else if (resolvedUsernameResponse.peer is PeerChat pc)
-                    {
-                        _logger.LogInformation("ResolvePeerAsync: Resolved via Contacts_ResolveUsername to Chat {ChatId} for string '{ResolveString}'.",
-                            pc.chat_id, resolveString);
-                        return new InputPeerChat(pc.chat_id);
-                    }
-                    else if (resolvedUsernameResponse.peer is PeerChannel pchan)
-                    {
-                        Channel? channelObj = resolvedUsernameResponse.chats.GetValueOrDefault(pchan.channel_id) as Channel;
-                        long accessHash = channelObj?.access_hash ?? 0;
-                        _logger.LogInformation("ResolvePeerAsync: Resolved via Contacts_ResolveUsername to Channel {ChannelId} (AH: {AccessHash}) for string '{ResolveString}'.",
-                            pchan.channel_id, accessHash, resolveString);
-                        return new InputPeerChannel(pchan.channel_id, accessHash);
-                    }
-                    _logger.LogWarning("ResolvePeerAsync: Contacts_ResolveUsername for string '{ResolveString}' returned an unhandled peer type: {PeerType}. PositivePeerId: {PositivePeerId}",
-                        resolveString, resolvedUsernameResponse.peer.GetType().Name, positivePeerId);
-                }
-                else
-                {
-                    _logger.LogWarning("ResolvePeerAsync: Contacts_ResolveUsername for string '{ResolveString}' (PositivePeerId {PositivePeerId}) returned null or null peer.",
-                       resolveString, positivePeerId);
-                }
-            }
-            catch (RpcException rpcEx) when (rpcEx.Code == 400 && (rpcEx.Message.Contains("USERNAME_INVALID") || rpcEx.Message.Contains("USERNAME_NOT_OCCUPIED") || rpcEx.Message.Contains("PEER_ID_INVALID")))
-            {
-                _logger.LogWarning("ResolvePeerAsync: Contacts_ResolveUsername for string '{ResolveString}' (PositivePeerId {PositivePeerId}) failed with RPC Error: {RpcError}. This ID string is likely not a known username or public peer ID that can be resolved this way.",
-                    resolveString, positivePeerId, rpcEx.Message);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "ResolvePeerAsync: Exception during Contacts_ResolveUsername for string '{ResolveString}' (PositivePeerId {PositivePeerId}).", resolveString, positivePeerId);
-            }
-
-            _logger.LogDebug("ResolvePeerAsync: Attempting API call with Channels_GetChannels for PositivePeerId: {PositivePeerId} as a fallback (if it's a channel and previous methods failed).", positivePeerId);
-            try
-            {
-                // Fix for CS1739: Remove named parameters `context:` and `cancellationToken:`.
                 Messages_Chats channelsResponse = await _resiliencePipeline.ExecuteAsync(async (context, token) =>
-                    await _client!.Channels_GetChannels(new[] { new InputChannel(positivePeerId, 0) }),
+                    await _client!.Channels_GetChannels(new[] { new InputChannel(PeerToChannelId(peerId), 0) }),
                     new Context(nameof(ResolvePeerAsync) + "_GetChannels"),
-                    CancellationToken.None); // Or `cancellationToken` from method param
+                    cancellationToken);
 
                 if (channelsResponse?.chats != null)
                 {
@@ -1371,31 +1301,131 @@ namespace Infrastructure.Services
                         _chatCacheWithExpiry[cEntry.Key] = (cEntry.Value, DateTime.UtcNow.Add(_cacheExpiration));
                 }
 
-                if (channelsResponse?.chats != null && channelsResponse.chats.TryGetValue(positivePeerId, out var chatFromApi) && chatFromApi is Channel telegramChannel)
+                if (channelsResponse?.chats != null && channelsResponse.chats.TryGetValue(PeerToChannelId(peerId), out var chatFromApi) && chatFromApi is Channel telegramChannel)
                 {
-                    _logger.LogInformation("ResolvePeerAsync: Successfully resolved Channel {PositivePeerId} (API ID: {ApiChannelId}, AH: {AccessHash}) via Channels_GetChannels (fallback).",
-                                       positivePeerId, telegramChannel.id, telegramChannel.access_hash);
+                    _logger.LogInformation("ResolvePeerAsync: Successfully resolved Channel {PeerId} (API ID: {ApiChannelId}, AccessHash: {AccessHash}) via Channels_GetChannels (fallback).",
+                                       peerId, telegramChannel.id, telegramChannel.access_hash);
                     return new InputPeerChannel(telegramChannel.id, telegramChannel.access_hash);
                 }
-                _logger.LogWarning("ResolvePeerAsync: Fallback Channels_GetChannels for PositivePeerId {PositivePeerId} did not find it in the response or it wasn't a Channel. Chats in response: {ChatCount}",
-                                   positivePeerId, channelsResponse?.chats?.Count ?? 0);
+                _logger.LogWarning("ResolvePeerAsync: Fallback Channels_GetChannels for PeerId {PeerId} did not find it in the response or it wasn't a Channel. Chats in response: {ChatCount}",
+                                   peerId, channelsResponse?.chats?.Count ?? 0);
             }
-            catch (RpcException rpcEx) when (rpcEx.Message.Contains("CHANNEL_INVALID") || rpcEx.Message.Contains("PEER_ID_INVALID"))
+            catch (RpcException rpcEx) when (rpcEx.Message.Contains("CHANNEL_INVALID", StringComparison.OrdinalIgnoreCase) || rpcEx.Message.Contains("PEER_ID_INVALID", StringComparison.OrdinalIgnoreCase))
             {
-                _logger.LogWarning("ResolvePeerAsync: Fallback Channels_GetChannels for PositivePeerId {PositivePeerId} failed with RPC Error: {RpcError}. This ID might not be a channel, is inaccessible, or access_hash problem.", positivePeerId, rpcEx.Message);
+                _logger.LogWarning("ResolvePeerAsync: Fallback Channels_GetChannels for PeerId {PeerId} failed with RPC Error: {RpcError}. This ID might not be a channel, is inaccessible, or access_hash problem.", peerId, rpcEx.Message);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "ResolvePeerAsync: Exception during fallback Channels_GetChannels for PositivePeerId {PositivePeerId}.", positivePeerId);
+                _logger.LogError(ex, "ResolvePeerAsync: Exception during fallback Channels_GetChannels for PeerId {PeerId}.", peerId);
             }
 
-            _logger.LogError("ResolvePeerAsync: FAILED to resolve PositivePeerId {PositivePeerId} using all implemented strategies.", positivePeerId);
+            // 5. Try Messages_GetChats (for basic group chat IDs that are negative, without -100 prefix)
+            if (peerId < 0 && !peerId.ToString().StartsWith("-100")) // Basic group chat IDs are negative, but not -100xxxxxx
+            {
+                _logger.LogDebug("ResolvePeerAsync: Attempting Messages_GetChats for negative PeerId (non-channel group): {PeerId}.", peerId);
+                try
+                {
+                    Messages_Chats chatsResponse = await _resiliencePipeline.ExecuteAsync(async (context, token) =>
+                        await _client!.Messages_GetChats(new long[] { peerId }), // Pass raw long ID
+                        new Context(nameof(ResolvePeerAsync) + "_GetChats"),
+                        cancellationToken);
+
+                    if (chatsResponse?.chats != null)
+                    {
+                        foreach (var cEntry in chatsResponse.chats)
+                            _chatCacheWithExpiry[cEntry.Key] = (cEntry.Value, DateTime.UtcNow.Add(_cacheExpiration));
+                    }
+
+                    if (chatsResponse?.chats != null && chatsResponse.chats.TryGetValue(peerId, out var chatFromApi) && chatFromApi is Chat telegramChat)
+                    {
+                        _logger.LogInformation("ResolvePeerAsync: Successfully resolved Chat {PeerId} via Messages_GetChats (fallback).", peerId);
+                        return new InputPeerChat(telegramChat.id);
+                    }
+                    _logger.LogWarning("ResolvePeerAsync: Fallback Messages_GetChats for PeerId {PeerId} did not find it in the response or it wasn't a Chat. Chats in response: {ChatCount}",
+                                       peerId, chatsResponse?.chats?.Count ?? 0);
+                }
+                catch (RpcException rpcEx) when (rpcEx.Message.Contains("CHAT_INVALID", StringComparison.OrdinalIgnoreCase) || rpcEx.Message.Contains("PEER_ID_INVALID", StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogWarning("ResolvePeerAsync: Fallback Messages_GetChats for PeerId {PeerId} failed with RPC Error: {RpcError}. This ID might not be a chat, is inaccessible, or an invalid peer.", peerId, rpcEx.Message);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "ResolvePeerAsync: Exception during fallback Messages_GetChats for PeerId {PeerId}.", peerId);
+                }
+            }
+
+
+            // 6. Try Users_GetUsers (for positive user IDs that Contacts_ResolveUsername failed for, requiring direct lookup)
+            if (peerId > 0)
+            {
+                _logger.LogDebug("ResolvePeerAsync: Attempting Users_GetUsers for positive PeerId (user): {PeerId}.", peerId);
+                try
+                {
+                    UserBase[] usersResponse = await _resiliencePipeline.ExecuteAsync(async (context, token) =>
+                        await _client!.Users_GetUsers(new[] { new InputUser(peerId, 0) }), // Assuming access_hash 0 for initial lookup
+                        new Context(nameof(ResolvePeerAsync) + "_GetUsers"),
+                        cancellationToken);
+
+                    if (usersResponse != null && usersResponse.Any())
+                    {
+                        foreach (var userBase in usersResponse)
+                        {
+                            if (userBase is User user)
+                            {
+                                _userCacheWithExpiry[user.id] = (user, DateTime.UtcNow.Add(_cacheExpiration));
+                            }
+                        }
+                    }
+
+                    User? userFromApi = usersResponse?.OfType<User>().FirstOrDefault(u => u.id == peerId);
+
+                    if (userFromApi != null)
+                    {
+                        _logger.LogInformation("ResolvePeerAsync: Successfully resolved User {PeerId} (API ID: {ApiUserId}, AccessHash: {AccessHash}) via Users_GetUsers (fallback).",
+                                           peerId, userFromApi.id, userFromApi.access_hash);
+                        return new InputPeerUser(userFromApi.id, userFromApi.access_hash);
+                    }
+                    _logger.LogWarning("ResolvePeerAsync: Fallback Users_GetUsers for PeerId {PeerId} did not find the user in the response (might be UserEmpty or not found).", peerId);
+                }
+                catch (RpcException rpcEx) when (rpcEx.Message.Contains("USER_NOT_FOUND", StringComparison.OrdinalIgnoreCase) || rpcEx.Message.Contains("PEER_ID_INVALID", StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogWarning("ResolvePeerAsync: Fallback Users_GetUsers for PeerId {PeerId} failed with RPC Error: {RpcError}. User might not exist or be accessible.", peerId, rpcEx.Message);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "ResolvePeerAsync: Exception during fallback Users_GetUsers for PeerId {PeerId}.", peerId);
+                }
+            }
+
+            // 7. Last Resort: Directly construct InputPeerChannel/InputPeerUser if all API attempts failed.
+            // This is a "best effort" that might succeed if the client is already a member,
+            // or if the API accepts an InputPeer without a specific access_hash in some contexts (e.g., if message is forwarded FROM this peer).
+            // This explicitly captures the "Directly constructed InputPeerChannel" logic from your log.
+            if (peerId < 0) // Assume it's a channel or basic group (negative ID)
+            {
+                long channelOrChatId = PeerToChannelId(peerId);
+                _logger.LogWarning("ResolvePeerAsync: All other API strategies failed for negative PeerId {PeerId}. Attempting direct InputPeerChannel construction with access_hash 0 as a last resort. This may succeed if the client is already a member or if context allows.", peerId);
+                return new InputPeerChannel(channelOrChatId, 0); // Access hash 0 is commonly used when unknown or for public entities.
+            }
+            else if (peerId > 0) // Assume it's a user (positive ID)
+            {
+                _logger.LogWarning("ResolvePeerAsync: All other API strategies failed for positive PeerId {PeerId}. Attempting direct InputPeerUser construction with access_hash 0 as a last resort. This may succeed if the client has direct knowledge of the user.", peerId);
+                return new InputPeerUser(peerId, 0); // Access hash 0 is commonly used when unknown.
+            }
+
+            _logger.LogError("ResolvePeerAsync: FAILED to resolve PeerId {PeerId} using all implemented strategies and direct construction. Returning null.", peerId);
             return null;
         }
 
+        /// <summary>
+        /// Disposes the TelegramUserApiClient and its resources.
+        /// It's important to call this when the service is shutting down.
+        /// </summary>
         public async ValueTask DisposeAsync()
         {
-            _logger.LogInformation("Disposing TelegramUserApiClient...");
+            _logger.LogInformation("Disposing TelegramUserApiClient and its resources...");
+
+            // Stop and dispose the cache cleanup timer.
             if (_cacheCleanupTimer != null)
             {
                 await _cacheCleanupTimer.DisposeAsync();
@@ -1403,44 +1433,104 @@ namespace Infrastructure.Services
                 _logger.LogInformation("Cache cleanup timer disposed.");
             }
 
+            // Dispose the WTelegramClient instance.
+            // This is crucial for releasing network connections and saving the session properly.
             if (_client != null)
             {
-                _client.OnUpdates -= HandleUpdatesBaseAsync;
-                _client.Dispose();
-                _client = null;
+                _client.OnUpdates -= HandleUpdatesBaseAsync; // Unsubscribe from updates.
+                _client.Dispose(); // Dispose the client.
+                _client = null; // Nullify the client to indicate it's no longer usable.
+                _logger.LogInformation("WTelegram.Client instance disposed.");
             }
+
+            // Dispose the connection semaphore.
             try
             {
                 _connectionLock.Dispose();
+                _logger.LogInformation("Connection semaphore disposed.");
             }
             catch (ObjectDisposedException)
             {
-                // Ignore if already disposed
+                // Log if already disposed, which is harmless but indicates a double-dispose attempt or race condition.
+                _logger.LogWarning("Connection lock was already disposed.");
             }
+
+            _messageCache.Dispose(); // Dispose the MemoryCache.
+            _logger.LogInformation("MemoryCache disposed.");
+
+            _logger.LogInformation("TelegramUserApiClient disposal complete.");
             await Task.CompletedTask;
         }
 
         #endregion
 
         #region Helper class for async locking
-
+        /// <summary>
+        /// Provides an asynchronous locking mechanism using SemaphoreSlim.
+        /// Allows for per-key locks to control concurrency for specific operations/resources.
+        /// </summary>
         private class AsyncLock
         {
             private static readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new();
 
+            /// <summary>
+            /// Acquires a lock for a given key. The returned IDisposable should be used in a `using` statement
+            /// to ensure the lock is released.
+            /// </summary>
             public static async Task<IDisposable> LockAsync(string key)
             {
+                // Get or add a SemaphoreSlim for the specific key.
                 var semaphore = _locks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
-                await semaphore.WaitAsync();
+                await semaphore.WaitAsync(); // Wait to acquire the lock.
+                // Return a disposable object that releases the semaphore when disposed.
                 return new DisposableAction(() => semaphore.Release());
             }
 
+            /// <summary>
+            /// Private helper class to encapsulate the lock release action within an IDisposable.
+            /// </summary>
             private class DisposableAction : IDisposable
             {
                 private readonly Action _action;
                 public DisposableAction(Action action) => _action = action;
                 public void Dispose() => _action();
             }
+        }
+        #endregion
+
+        #region Helper Methods
+        /// <summary>
+        /// Extracts a relevant ID from an InputPeer object for logging purposes.
+        /// </summary>
+        private long GetPeerIdForLog(InputPeer? peer)
+        {
+            if (peer is InputPeerUser ipu) return ipu.user_id;
+            if (peer is InputPeerChat ipc) return ipc.chat_id;
+            if (peer is InputPeerChannel ipch) return ipch.channel_id;
+            if (peer is InputPeerSelf) return -1; // Special ID for self.
+            return 0; // Default or unknown.
+        }
+
+        /// <summary>
+        /// Helper to convert a peerId (which can be negative for chats/channels) to a channel_id
+        /// which is always positive and used in InputChannel.
+        /// For channels (supergroups), the ID is usually stored as -100xxxxxx.
+        /// WTelegramClient's InputChannel constructor often expects the absolute value of this ID.
+        /// </summary>
+        /// <param name="peerId">The original peer ID (e.g., -100xxxxxxxxxx for a channel, positive for user/chat)</param>
+        /// <returns>The positive channel ID.</returns>
+        private long PeerToChannelId(long peerId)
+        {
+            // Telegram channel IDs (supergroups) are internally represented as negative numbers starting with -100.
+            // When constructing InputChannel or similar objects in WTelegramClient, you often need the positive version.
+            // For example, if peerId is -1001234567890, the channel ID for InputChannel would be 1234567890.
+            if (peerId < 0 && peerId.ToString().StartsWith("-100"))
+            {
+                return Math.Abs(peerId);
+            }
+            // For other negative IDs (e.g., basic groups, which are just negative chat_id), Math.Abs is also correct.
+            // For positive IDs (users), Math.Abs changes nothing.
+            return Math.Abs(peerId);
         }
         #endregion
     }

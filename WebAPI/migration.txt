@@ -44,3 +44,7 @@ Get-Service | Where-Object { $_.Name -like "*SQL*" -or $_.DisplayName -like "*SQ
         Write-Host "[OK] $($_.Name) is already running."
     }
 }
+
+
+PS C:\Users\Capsizer> Set-Location "C:\Users\Capsizer\source\repos\ForexTradingBot"
+PS C:\Users\Capsizer\source\repos\ForexTradingBot> .\GenerateProjectTree.ps1

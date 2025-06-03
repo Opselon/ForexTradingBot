@@ -1,20 +1,23 @@
-// File: Application\Features\Forwarding\Services\MessageProcessingService.cs
-
 #region Usings
 using Application.Common.Interfaces;
 using Application.Features.Forwarding.Interfaces;
 using Domain.Features.Forwarding.Entities;
 using Domain.Features.Forwarding.ValueObjects;
 using Hangfire;
+using Hangfire.Server; // Ensure this is present for PerformContext
 using Microsoft.Extensions.Logging;
+using Polly;
+using Polly.Retry;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Net.Http;
+using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using TL;
-using Polly; // For Policy, RetryPolicy, Context class
-using Polly.Retry;
 #endregion
 
 namespace Application.Features.Forwarding.Services
@@ -35,11 +38,14 @@ namespace Application.Features.Forwarding.Services
             _userApiClient = userApiClient ?? throw new ArgumentNullException(nameof(userApiClient));
             _backgroundJobClient = backgroundJobClient ?? throw new ArgumentNullException(nameof(backgroundJobClient));
 
+            _logger.LogInformation("MessageProcessingService initialized. Configured with Polly for Hangfire job enqueueing resilience.");
+
+            // Polly policy to handle transient errors when enqueuing jobs into Hangfire.
             _enqueueRetryPolicy = Policy<string>
                 .Handle<Exception>(ex =>
                 {
-                    _logger.LogWarning(ex, "Polly[Enqueue]: Error occurred while enqueueing Hangfire job. Retrying...");
-                    return true; // Retries on any exception during enqueue attempt
+                    _logger.LogWarning(ex, "Polly[Enqueue]: Error occurred while attempting to enqueue Hangfire job. Retrying...");
+                    return true; // Always retry on any exception during enqueue
                 })
                 .WaitAndRetry(new[]
                 {
@@ -49,12 +55,12 @@ namespace Application.Features.Forwarding.Services
                     TimeSpan.FromMilliseconds(800),
                     TimeSpan.FromSeconds(1)
                 },
-                (delegateResult, timeSpan, retryAttempt, context) => // Correct signature for onRetry callback in Polly v8+
+                (delegateResult, timeSpan, retryAttempt, context) =>
                 {
                     string errorMessage = delegateResult.Exception?.Message ?? "No exception message provided.";
 
-                    _logger.LogWarning(delegateResult.Exception, // Pass the actual exception to the logger for rich details
-                        "PollyRetry[Enqueue]: Enqueue operation failed (Context: '{ContextKey}', Attempt: {RetryAttempt}). Retrying in {TimeSpan}. Error: {ErrorMessage}",
+                    _logger.LogWarning(delegateResult.Exception,
+                        "PollyRetry[Enqueue]: Enqueue operation for {OperationKey} failed (Attempt: {RetryAttempt}). Retrying in {TimeSpan}. Error: {ErrorMessage}",
                         context.OperationKey ?? "N/A", retryAttempt, timeSpan, errorMessage);
                 });
         }
@@ -69,7 +75,8 @@ namespace Application.Features.Forwarding.Services
         /// the jobs with Hangfire. The actual message processing, including applying edit options
         /// and handling media groups, is delegated to `IForwardingJobActions.ProcessAndRelayMessageAsync`,
         /// which is decorated with `[AutomaticRetry]` for high reliability.
-        /// The enqueueing itself is now protected by a Polly retry policy.
+        /// The enqueueing itself is now protected by a Polly retry policy, ensuring the enqueue operation is anti-hang.
+        /// The overall real-time characteristic (low-latency delivery) is dependent on Hangfire worker availability.
         /// </remarks>
         public async Task EnqueueAndRelayMessageAsync(
            long sourceChannelIdForMatching,
@@ -86,7 +93,6 @@ namespace Application.Features.Forwarding.Services
             {
                 _logger.LogWarning("MESSAGE_PROCESSING_SERVICE: Rule '{RuleName}' has no target channels defined for message {OriginalMessageId}. Skipping job enqueueing.",
                     rule.RuleName, originalMessageId);
-                await Task.CompletedTask; // Resolves CS1998 warning for early exit.
                 return;
             }
 
@@ -95,21 +101,16 @@ namespace Application.Features.Forwarding.Services
 
             foreach (var targetChannelId in rule.TargetChannelIds)
             {
-                cancellationToken.ThrowIfCancellationRequested(); // Check for cancellation for each target channel
+                cancellationToken.ThrowIfCancellationRequested();
 
                 string jobDescription = $"Msg:{originalMessageId}|Rule:{rule.RuleName}|Target:{targetChannelId}";
                 _logger.LogDebug("MESSAGE_PROCESSING_SERVICE: Attempting to enqueue job for {JobDescription}.", jobDescription);
 
                 PolicyResult<string> enqueueResult = _enqueueRetryPolicy.ExecuteAndCapture(
-                    // The lambda now accepts a 'Context' parameter from Polly's ExecuteAndCapture
                     (pollyContext) =>
                     {
-                        // Removed the problematic reference to Polly.Context.NoOp.RetryAttempt.
-                        // Inside this 'ExecuteAndCapture' delegate, we are performing the actual 'Enqueue' operation,
-                        // which is part of *one attempt* within the retry policy.
-                        // The actual retry attempt number is logged in the `onRetry` callback of the policy itself.
-                        _logger.LogTrace("Executing Hangfire Enqueue for {OperationKey}.", pollyContext.OperationKey);
-
+                        // Enqueue the job. Hangfire will inject `PerformContext` and `CancellationToken` (for the job's lifecycle)
+                        // into the `ProcessAndRelayMessageAsync` method when it runs.
                         return _backgroundJobClient.Enqueue<IForwardingJobActions>(processor =>
                             processor.ProcessAndRelayMessageAsync(
                                 (int)originalMessageId,
@@ -120,10 +121,13 @@ namespace Application.Features.Forwarding.Services
                                 messageEntities,
                                 senderPeerForFilter,
                                 mediaGroupItems,
-                                CancellationToken.None
+                                CancellationToken.None, // Pass CancellationToken.None for the job's own token (it will get its own from Hangfire)
+                                null! // Pass null for PerformContext here; Hangfire will inject the actual context when the job executes.
+                                      // Using null! with nullable reference types enabled means "I know this is null but it will be handled".
+                                      // This assumes Hangfire's DI will provide the non-null PerformContext.
                             ));
                     },
-                    new Context(jobDescription) // Pass the custom context for this execution
+                    new Context(jobDescription)
                 );
 
                 if (enqueueResult.Outcome == OutcomeType.Successful)

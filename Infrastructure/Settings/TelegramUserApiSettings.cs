@@ -8,5 +8,6 @@ namespace Infrastructure.Settings
         public string SessionPath { get; set; } = "telegram_user.session";
         public string VerificationCodeSource { get; set; } = "Console";
         public string TwoFactorPasswordSource { get; set; } = "Console";
+
     }
 }

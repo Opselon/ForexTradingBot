@@ -294,7 +294,7 @@ namespace TelegramPanel.Infrastructure.Services
                     MessageEntityType.PhoneNumber => new TL.MessageEntityPhone { Offset = tbEntity.Offset, Length = tbEntity.Length },
                     MessageEntityType.TextMention => new TL.MessageEntityMentionName { Offset = tbEntity.Offset, Length = tbEntity.Length, user_id = tbEntity.User?.Id ?? 0 },
                     MessageEntityType.Blockquote => new TL.MessageEntityBlockquote { Offset = tbEntity.Offset, Length = tbEntity.Length, flags = 0 },
-                    //MessageEntityType.CustomEmoji => new TL.MessageEntityCustomEmoji { Offset = tbEntity.Offset, Length = tbEntity.Length, document_id = tbEntity.CustomEmojiId ?? 0 },
+                  //  MessageEntityType.CustomEmoji => new TL.MessageEntityCustomEmoji { Offset = tbEntity.Offset, Length = tbEntity.Length, document_id = tbEntity.CustomEmojiId ?? 0 },
                     _ => null
                 };
             }
@@ -332,97 +332,6 @@ namespace TelegramPanel.Infrastructure.Services
                 }
             }
             return null;
-        }
-
-        // This is not used by ProcessAndRelayMessageAsync; it's a separate filter for scheduling.
-        private bool ShouldProcessMessageByLocalFilters(Telegram.Bot.Types.Message message, ForwardingRule rule)
-        {
-            if (rule.FilterOptions == null)
-            {
-                return true;
-            }
-
-            var filterOptions = rule.FilterOptions;
-
-            // Check message type
-            if (filterOptions.AllowedMessageTypes != null && filterOptions.AllowedMessageTypes.Any())
-            {
-                var messageType = message.Type.ToString();
-                if (!filterOptions.AllowedMessageTypes.Contains(messageType))
-                {
-                    _logger.LogDebug("Message type {MessageType} not in allowed types for rule {RuleName}",
-                        messageType, rule.RuleName);
-                    return false;
-                }
-            }
-
-            // Check message text content
-            if (!string.IsNullOrEmpty(filterOptions.ContainsText))
-            {
-                var messageText = message.Text ?? message.Caption ?? string.Empty;
-                if (filterOptions.ContainsTextIsRegex)
-                {
-                    try
-                    {
-                        var regex = new Regex(filterOptions.ContainsText,
-                            (RegexOptions)filterOptions.ContainsTextRegexOptions);
-                        if (!regex.IsMatch(messageText))
-                        {
-                            _logger.LogDebug("Message text does not match regex pattern for rule {RuleName}",
-                                rule.RuleName);
-                            return false;
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Error processing regex pattern for rule {RuleName}", rule.RuleName);
-                        return false;
-                    }
-                }
-                else if (!messageText.Contains(filterOptions.ContainsText, StringComparison.OrdinalIgnoreCase))
-                {
-                    _logger.LogDebug("Message text does not contain required text for rule {RuleName}",
-                        rule.RuleName);
-                    return false;
-                }
-            }
-
-            // Check message length
-            var textLength = (message.Text ?? message.Caption ?? string.Empty).Length;
-            if (filterOptions.MinMessageLength.HasValue && textLength < filterOptions.MinMessageLength.Value)
-            {
-                _logger.LogDebug("Message length {Length} is less than minimum {MinLength} for rule {RuleName}",
-                    textLength, filterOptions.MinMessageLength.Value, rule.RuleName);
-                return false;
-            }
-            if (filterOptions.MaxMessageLength.HasValue && textLength > filterOptions.MaxMessageLength.Value)
-            {
-                _logger.LogDebug("Message length {Length} is greater than maximum {MaxLength} for rule {RuleName}",
-                    textLength, filterOptions.MaxMessageLength.Value, rule.RuleName);
-                return false;
-            }
-
-            // Check sender restrictions
-            if (message.From != null)
-            {
-                if (filterOptions.AllowedSenderUserIds != null && filterOptions.AllowedSenderUserIds.Any() &&
-                    !filterOptions.AllowedSenderUserIds.Contains(message.From.Id))
-                {
-                    _logger.LogDebug("Sender {SenderId} not in allowed senders for rule {RuleName}",
-                        message.From.Id, rule.RuleName);
-                    return false;
-                }
-
-                if (filterOptions.BlockedSenderUserIds != null && filterOptions.BlockedSenderUserIds.Any() &&
-                    filterOptions.BlockedSenderUserIds.Contains(message.From.Id))
-                {
-                    _logger.LogDebug("Sender {SenderId} is blocked for rule {RuleName}",
-                        message.From.Id, rule.RuleName);
-                    return false;
-                }
-            }
-
-            return true;
         }
     }
 }

@@ -9,7 +9,7 @@ using Microsoft.Extensions.Logging; // For logging
 using Polly; // For resilience policies
 using Polly.Retry; // For retry policies
 using System.Data.Common; // For DbException (base class for database exceptions)
-using System.Linq.Expressions; // <--- ADDED THIS BACK: Needed for Expression<> type in FindAsync signature
+using System.Linq.Expressions; // <--- CORRECTED: Needed for Expression<> type in FindAsync signature
 // Project specific
 using Application.Common.Interfaces; // For INewsItemRepository
 using Domain.Entities;               // For NewsItem, RssSource, SignalCategory
@@ -28,6 +28,7 @@ namespace Infrastructure.Persistence.Repositories
         private readonly string _connectionString;
         private readonly ILogger<NewsItemRepository> _logger;
         private readonly AsyncRetryPolicy _retryPolicy; // Polly policy for DB operations
+        private const int CommandTimeoutSeconds = 120; // <--- ADDED: Increased command timeout for potentially long queries
 
         // --- Internal DTOs for Dapper Mapping ---
         private class NewsItemDbDto
@@ -56,7 +57,7 @@ namespace Infrastructure.Persistence.Repositories
             public Guid RssSource_Id { get; set; } // Matches Id of RssSource
             public string? RssSource_Url { get; set; }
             public string? RssSource_SourceName { get; set; } // Aliased name for RssSource.SourceName
-            public bool RssSource_IsActive { get; set; } // Example: if you need more RssSource fields
+            public bool RssSource_IsActive { get; set; }
             public DateTime RssSource_CreatedAt { get; set; }
             public DateTime? RssSource_UpdatedAt { get; set; }
             public string? RssSource_LastModifiedHeader { get; set; }
@@ -301,8 +302,9 @@ namespace Infrastructure.Persistence.Repositories
                     var fullWhereClause = whereClauses.Any() ? " WHERE " + string.Join(" AND ", whereClauses) : "";
 
                     // Total Count Query
+                    // Pass CommandTimeout explicitly for potentially long-running count queries
                     var countSql = $"SELECT COUNT(n.Id) FROM NewsItems n {fullWhereClause};";
-                    var totalCount = await connection.ExecuteScalarAsync<int>(countSql, parameters);
+                    var totalCount = await connection.ExecuteScalarAsync<int>(new CommandDefinition(countSql, parameters, commandTimeout: CommandTimeoutSeconds));
 
                     if (totalCount == 0)
                     {
@@ -332,7 +334,7 @@ namespace Infrastructure.Persistence.Repositories
                     var newsItemsMap = new Dictionary<Guid, NewsItem>();
 
                     var items = await connection.QueryAsync<NewsItemDbDto, RssSourceMapDto, SignalCategoryMapDto, NewsItem>(
-                        sql,
+                        new CommandDefinition(sql, parameters, commandTimeout: CommandTimeoutSeconds), // <--- ADDED: Pass CommandTimeout
                         (newsItemDto, rssSourceDto, signalCategoryDto) =>
                         {
                             if (!newsItemsMap.TryGetValue(newsItemDto.Id, out var newsItem))
@@ -348,7 +350,6 @@ namespace Infrastructure.Persistence.Repositories
 
                             return newsItem; // Dapper still needs a return value from the delegate
                         },
-                        param: parameters,
                         splitOn: "RssSource_Id,AssociatedSignalCategory_Id" // These mark where the next DTO starts in the flattened row
                     );
 
@@ -388,16 +389,13 @@ namespace Infrastructure.Persistence.Repositories
                         WHERE n.Id = @Id;";
 
                     var newsItem = await connection.QueryAsync<NewsItemDbDto, RssSourceMapDto, SignalCategoryMapDto, NewsItem>(
-                        sql,
+                        new CommandDefinition(sql, new { Id = id }, commandTimeout: CommandTimeoutSeconds), // <--- ADDED: Pass CommandTimeout
                         (newsItemDto, rssSourceDto, signalCategoryDto) =>
                         {
                             var item = newsItemDto.ToDomainEntity();
                             // NewsItemDbDto's ToDomainEntity should already handle the RssSource and SignalCategory mapping from aliased properties
-                            // The rssSourceDto and signalCategoryDto are passed as separate objects by Dapper but aren't strictly needed for the NewsItem's own hydration
-                            // if NewsItemDbDto's ToDomainEntity is designed to map them from its own aliased properties.
                             return item;
                         },
-                        param: new { Id = id },
                         splitOn: "RssSource_Id,AssociatedSignalCategory_Id"
                     );
 
@@ -435,13 +433,12 @@ namespace Infrastructure.Persistence.Repositories
                         WHERE n.RssSourceId = @RssSourceId AND n.SourceItemId = @SourceItemId;";
 
                     var newsItem = await connection.QueryAsync<NewsItemDbDto, RssSourceMapDto, SignalCategoryMapDto, NewsItem>(
-                        sql,
+                        new CommandDefinition(sql, new { RssSourceId = rssSourceId, SourceItemId = sourceItemId }, commandTimeout: CommandTimeoutSeconds), // <--- ADDED: Pass CommandTimeout
                         (newsItemDto, rssSourceDto, signalCategoryDto) =>
                         {
                             var item = newsItemDto.ToDomainEntity();
                             return item;
                         },
-                        param: new { RssSourceId = rssSourceId, SourceItemId = sourceItemId },
                         splitOn: "RssSource_Id,AssociatedSignalCategory_Id"
                     );
 
@@ -467,7 +464,7 @@ namespace Infrastructure.Persistence.Repositories
                     await connection.OpenAsync(cancellationToken);
 
                     var sql = "SELECT COUNT(*) FROM NewsItems WHERE RssSourceId = @RssSourceId AND SourceItemId = @SourceItemId;";
-                    var count = await connection.ExecuteScalarAsync<int>(sql, new { RssSourceId = rssSourceId, SourceItemId = sourceItemId });
+                    var count = await connection.ExecuteScalarAsync<int>(new CommandDefinition(sql, new { RssSourceId = rssSourceId, SourceItemId = sourceItemId }, commandTimeout: CommandTimeoutSeconds)); // <--- ADDED: Pass CommandTimeout
                     return count > 0;
                 });
             }
@@ -527,13 +524,12 @@ namespace Infrastructure.Persistence.Repositories
                     parameters.Add("Count", count);
 
                     var newsItems = await connection.QueryAsync<NewsItemDbDto, RssSourceMapDto, SignalCategoryMapDto, NewsItem>(
-                        sql,
+                        new CommandDefinition(sql, parameters, commandTimeout: CommandTimeoutSeconds), // <--- ADDED: Pass CommandTimeout
                         (newsItemDto, rssSourceDto, signalCategoryDto) =>
                         {
                             var item = newsItemDto.ToDomainEntity();
                             return item;
                         },
-                        param: parameters,
                         splitOn: "RssSource_Id,AssociatedSignalCategory_Id"
                     );
 
@@ -548,6 +544,7 @@ namespace Infrastructure.Persistence.Repositories
         }
 
         // Method to satisfy the interface, but explicitly not supported by Dapper's core.
+        // <--- CORRECTED: This method must exist to implement the interface.
         public Task<IEnumerable<NewsItem>> FindAsync(
             Expression<Func<NewsItem, bool>> predicate,
             bool includeRssSource = false,
@@ -570,7 +567,7 @@ namespace Infrastructure.Persistence.Repositories
                     await connection.OpenAsync(cancellationToken);
 
                     var sql = "SELECT SourceItemId FROM NewsItems WHERE RssSourceId = @RssSourceId AND SourceItemId IS NOT NULL;";
-                    var ids = (await connection.QueryAsync<string>(sql, new { RssSourceId = rssSourceId })).ToList();
+                    var ids = (await connection.QueryAsync<string>(new CommandDefinition(sql, new { RssSourceId = rssSourceId }, commandTimeout: CommandTimeoutSeconds))).ToList(); // <--- ADDED: Pass CommandTimeout
                     return new HashSet<string>(ids, StringComparer.OrdinalIgnoreCase);
                 });
             }
@@ -605,7 +602,7 @@ namespace Infrastructure.Persistence.Repositories
                             @RssSourceId, @IsVipOnly, @AssociatedSignalCategoryId
                         );";
 
-                    await connection.ExecuteAsync(sql, new
+                    await connection.ExecuteAsync(new CommandDefinition(sql, new
                     {
                         newsItem.Id,
                         newsItem.Title,
@@ -625,7 +622,7 @@ namespace Infrastructure.Persistence.Repositories
                         newsItem.RssSourceId,
                         newsItem.IsVipOnly,
                         newsItem.AssociatedSignalCategoryId
-                    });
+                    }, commandTimeout: CommandTimeoutSeconds)); // <--- ADDED: Pass CommandTimeout
                 });
                 _logger.LogInformation("Successfully added NewsItem: {NewsItemId}", newsItem.Id);
             }
@@ -664,7 +661,7 @@ namespace Infrastructure.Persistence.Repositories
 
                     // Dapper can execute a single SQL statement multiple times for an IEnumerable of parameters
                     // This is efficient for bulk inserts.
-                    await connection.ExecuteAsync(sql, newsItems.Select(ni => new
+                    await connection.ExecuteAsync(new CommandDefinition(sql, newsItems.Select(ni => new
                     {
                         ni.Id,
                         ni.Title,
@@ -684,7 +681,7 @@ namespace Infrastructure.Persistence.Repositories
                         ni.RssSourceId,
                         ni.IsVipOnly,
                         ni.AssociatedSignalCategoryId
-                    }));
+                    }), commandTimeout: CommandTimeoutSeconds)); // <--- ADDED: Pass CommandTimeout
                 });
                 _logger.LogInformation("Successfully added {Count} news items.", newsItems.Count());
             }
@@ -726,7 +723,7 @@ namespace Infrastructure.Persistence.Repositories
                             AssociatedSignalCategoryId = @AssociatedSignalCategoryId
                         WHERE Id = @Id;";
 
-                    var rowsAffected = await connection.ExecuteAsync(sql, new
+                    var rowsAffected = await connection.ExecuteAsync(new CommandDefinition(sql, new
                     {
                         newsItem.Title,
                         newsItem.Link,
@@ -745,7 +742,7 @@ namespace Infrastructure.Persistence.Repositories
                         newsItem.IsVipOnly,
                         newsItem.AssociatedSignalCategoryId,
                         newsItem.Id // WHERE clause parameter
-                    });
+                    }, commandTimeout: CommandTimeoutSeconds)); // <--- ADDED: Pass CommandTimeout
 
                     if (rowsAffected == 0)
                     {
@@ -787,7 +784,7 @@ namespace Infrastructure.Persistence.Repositories
                     // Note: If NewsItem has other entities that cascade delete, deleting the NewsItem will handle it.
                     // For performance, a simple DELETE is often best if cascades are set in DB.
                     var sql = "DELETE FROM NewsItems WHERE Id = @Id;";
-                    var rowsAffected = await connection.ExecuteAsync(sql, new { Id = id });
+                    var rowsAffected = await connection.ExecuteAsync(new CommandDefinition(sql, new { Id = id }, commandTimeout: CommandTimeoutSeconds)); // <--- ADDED: Pass CommandTimeout
 
                     if (rowsAffected == 0)
                     {

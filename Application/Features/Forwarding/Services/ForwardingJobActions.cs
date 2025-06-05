@@ -191,7 +191,7 @@ namespace Application.Features.Forwarding.Services
                 });
         }
 
-
+        #region Public Hangfire Job Actions
         /// <summary>
         /// Processes and relays a message according to a forwarding rule.
         /// This is the entry point for Hangfire jobs, and thus carries the [AutomaticRetry] attribute.
@@ -336,7 +336,9 @@ namespace Application.Features.Forwarding.Services
                 throw; // Re-throw to allow Hangfire to track the job's failure and apply further retries if configured
             }
         }
+        #endregion
 
+        #region Private Helper Methods
         private bool ShouldProcessMessageBasedOnFilters(string messageContent, Peer? senderPeer, MessageFilterOptions filterOptions, int messageId, string ruleName, string currentJobId, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -630,94 +632,121 @@ namespace Application.Features.Forwarding.Services
                 jobId, sourceMessageId, GetInputPeerIdValueForLogging(toPeer), rule.RuleName);
         }
 
+        // --- NEW/MODIFIED Helper for ApplyEditOptions and entity offset tracking ---
         private (string text, TL.MessageEntity[]? entities) ApplyEditOptions(
             string initialText,
             TL.MessageEntity[]? initialEntities,
             Domain.Features.Forwarding.ValueObjects.MessageEditOptions options,
-            TL.MessageMedia? originalMediaIgnored, // Not used here, but kept if you expand to media content edits
+            TL.MessageMedia? originalMediaIgnored, // Not used here, but kept for context if you expand to media content edits
             string jobId)
         {
             _logger.LogDebug("Job:{JobId}: ApplyEditOptions: Initial text length: {InitialTextLength}. Options: StripFormat={StripFormatting}, RemoveLinks={RemoveLinks}, DropMediaCaptions={DropMediaCaptions}, NoForwards={NoForwards}",
                 jobId, initialText?.Length ?? 0, options.StripFormatting, options.RemoveLinks, options.DropMediaCaptions, options.NoForwards);
 
-            var newTextBuilder = new StringBuilder(initialText ?? string.Empty);
-            List<TL.MessageEntity>? currentEntities = initialEntities?.ToList();
+            var currentText = initialText ?? string.Empty;
+            var currentEntities = initialEntities?.ToList();
+
+            // Store original text length for reference
+            var originalTextLength = currentText.Length;
 
             // 1. Strip Formatting (HTML/Markdown)
             if (options.StripFormatting)
             {
-                // This regex is very basic for HTML. For robust Markdown, you'd need a more complex parser.
-                // Assuming simple HTML-like tags for now.
-                newTextBuilder = new StringBuilder(Regex.Replace(initialText ?? string.Empty, "<.*?>", string.Empty, RegexOptions.Singleline));
+                var strippedText = Regex.Replace(currentText, "<.*?>", string.Empty, RegexOptions.Singleline);
+                _logger.LogTrace("Job:{JobId}: ApplyEditOptions: Stripping formatting. Text after HTML strip: '{StrippedTextPreview}'", jobId, TruncateString(strippedText, 50));
+                currentText = strippedText;
                 currentEntities = null; // Formatting stripped, so entities are no longer valid.
-                _logger.LogTrace("Job:{JobId}: ApplyEditOptions: Stripping formatting; entities cleared. Text after HTML strip: '{StrippedTextPreview}'", jobId, TruncateString(newTextBuilder.ToString(), 50));
             }
 
-            // 2. Remove Custom Emoji Entities
-            // This needs to be done carefully to adjust offsets of other entities correctly.
+            // 2. Remove Custom Emoji Entities (and adjust other entity offsets)
+            // This is the most complex part as it changes string length dynamically.
             if (currentEntities != null && currentEntities.Any(e => e is TL.MessageEntityCustomEmoji))
             {
                 _logger.LogDebug("Job:{JobId}: ApplyEditOptions: Processing {Count} custom emoji entities for removal.", jobId, currentEntities.Count(e => e is TL.MessageEntityCustomEmoji));
 
                 var tempStringBuilder = new StringBuilder();
                 var updatedEntities = new List<TL.MessageEntity>();
-                int originalOffset = 0;
-                int currentNewOffset = 0; // Tracks offset in the new (modified) string
+                int currentSourceIndex = 0; // Tracks position in the `currentText` (source)
+                int currentDestIndex = 0;   // Tracks position in the `tempStringBuilder` (destination)
 
+                // Sort entities by offset to process them in order
                 var sortedEntities = currentEntities.OrderBy(e => e.Offset).ToList();
 
                 foreach (var entity in sortedEntities)
                 {
                     if (entity == null) continue;
 
-                    // Append text between previous entity/start and current entity
-                    if (entity.Offset > originalOffset)
+                    // Append text segment between currentSourceIndex and entity.Offset
+                    if (entity.Offset > currentSourceIndex)
                     {
-                        var textSegment = newTextBuilder.ToString().Substring(originalOffset, entity.Offset - originalOffset);
-                        tempStringBuilder.Append(textSegment);
-                        currentNewOffset += textSegment.Length;
+                        var segmentLength = entity.Offset - currentSourceIndex;
+                        if (currentSourceIndex + segmentLength <= currentText.Length) // Defensive check
+                        {
+                            var textSegment = currentText.Substring(currentSourceIndex, segmentLength);
+                            tempStringBuilder.Append(textSegment);
+                            currentDestIndex += textSegment.Length;
+                        }
+                        else
+                        {
+                            _logger.LogWarning("Job:{JobId}: ApplyEditOptions: Substring out of bounds when appending text before entity {EntityType} at offset {Offset}. Source text length {SourceLength}. Skipping segment.",
+                                jobId, entity.GetType().Name, entity.Offset, currentText.Length);
+                        }
                     }
 
                     if (entity is TL.MessageEntityCustomEmoji customEmoji)
                     {
                         // Skip appending the custom emoji text/placeholder, effectively removing it.
+                        // The currentDestIndex does NOT increase for removed emoji.
                         _logger.LogTrace("Job:{JobId}: ApplyEditOptions: Removing custom emoji entity ({DocumentId}). Original text segment was '{OriginalSegment}'.",
-                            jobId, customEmoji.document_id, TruncateString(newTextBuilder.ToString().Substring(entity.Offset, Math.Min(entity.Length, newTextBuilder.Length - entity.Offset)), 20));
-                        // currentNewOffset does NOT increase for removed emoji.
+                            jobId, customEmoji.document_id, TruncateString(GetSubstringSafe(currentText, entity.Offset, entity.Length), 20));
                     }
                     else
                     {
                         // For other entities, append their text and adjust their offset.
-                        int actualLength = Math.Min(entity.Length, newTextBuilder.Length - entity.Offset);
-                        if (actualLength < 0) actualLength = 0; // Defensive check
+                        var actualSegmentLength = Math.Min(entity.Length, currentText.Length - entity.Offset);
+                        if (entity.Offset < 0 || actualSegmentLength < 0 || entity.Offset + actualSegmentLength > currentText.Length)
+                        {
+                            _logger.LogWarning("Job:{JobId}: ApplyEditOptions: Entity {EntityType} has invalid original offset/length ({Offset}, {Length}) for text length {TextLength}. Skipping entity from remapping.",
+                                jobId, entity.GetType().Name, entity.Offset, entity.Length, currentText.Length);
+                        }
+                        else
+                        {
+                            var textSegment = currentText.Substring(entity.Offset, actualSegmentLength);
+                            tempStringBuilder.Append(textSegment);
 
-                        var textSegment = newTextBuilder.ToString().Substring(entity.Offset, actualLength);
-                        tempStringBuilder.Append(textSegment);
-
-                        // Clone and add with adjusted offset
-                        updatedEntities.Add(CloneEntityWithOffset(entity, currentNewOffset - entity.Offset, jobId));
-                        currentNewOffset += textSegment.Length;
+                            // Clone and add with adjusted offset
+                            // The offset for the new entity is its position in the `tempStringBuilder`
+                            updatedEntities.Add(CloneEntityWithNewOffset(entity, currentDestIndex, jobId));
+                            currentDestIndex += textSegment.Length;
+                        }
                     }
-                    originalOffset = entity.Offset + entity.Length; // Move original offset past the processed entity
+                    // Move currentSourceIndex past the processed entity in the original text
+                    currentSourceIndex = entity.Offset + entity.Length;
                 }
 
                 // Append any remaining text after the last entity
-                if (originalOffset < newTextBuilder.Length)
+                if (currentSourceIndex < currentText.Length)
                 {
-                    tempStringBuilder.Append(newTextBuilder.ToString().Substring(originalOffset));
+                    tempStringBuilder.Append(currentText.Substring(currentSourceIndex));
                 }
 
-                newTextBuilder = tempStringBuilder;
+                currentText = tempStringBuilder.ToString();
                 currentEntities = updatedEntities; // Update entities list
-                _logger.LogDebug("Job:{JobId}: ApplyEditOptions: Finished processing custom emoji entities. New text length: {NewTextLength}, new entities count: {NewEntitiesCount}", jobId, newTextBuilder.Length, currentEntities.Count);
+                _logger.LogDebug("Job:{JobId}: ApplyEditOptions: Finished processing custom emoji entities. New text length: {NewTextLength}, new entities count: {NewEntitiesCount}", jobId, currentText.Length, currentEntities.Count);
             }
-
 
             // 3. Text Replacements
             if (options.TextReplacements != null && options.TextReplacements.Any())
             {
-                string textAfterAllReplacements = newTextBuilder.ToString();
-                bool textChangedByReplace = false;
+                var textAfterReplacements = currentText;
+                // Since text replacement can change length, we need to rebuild entities.
+                // A simple approach is to drop entities that would be invalidated.
+                // A more advanced approach would be to calculate new offsets for *all* entities,
+                // which is very hard with arbitrary regex replacements.
+                // For now, if text changes, we'll try to re-find and adjust entities,
+                // but this is inherently risky for dynamic text changes.
+                // It's safer to discard entities if complex replacements are involved,
+                // or ensure replacements don't affect entity spans.
 
                 foreach (var rep in options.TextReplacements)
                 {
@@ -727,48 +756,66 @@ namespace Application.Features.Forwarding.Services
                         continue;
                     }
 
+                    string beforeReplace = textAfterReplacements;
                     if (rep.IsRegex)
                     {
-                        string beforeRegexReplace = textAfterAllReplacements;
-                        textAfterAllReplacements = Regex.Replace(beforeRegexReplace, rep.Find, rep.ReplaceWith ?? string.Empty, rep.RegexOptions);
-                        if (beforeRegexReplace != textAfterAllReplacements) textChangedByReplace = true;
+                        textAfterReplacements = Regex.Replace(beforeReplace, rep.Find, rep.ReplaceWith ?? string.Empty, rep.RegexOptions);
                     }
                     else
                     {
-                        string beforePlainReplace = textAfterAllReplacements;
-                        textAfterAllReplacements = textAfterAllReplacements.Replace(rep.Find, rep.ReplaceWith ?? string.Empty, StringComparison.OrdinalIgnoreCase);
-                        if (beforePlainReplace != textAfterAllReplacements) textChangedByReplace = true;
+                        textAfterReplacements = beforeReplace.Replace(rep.Find, rep.ReplaceWith ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+                    }
+
+                    if (beforeReplace != textAfterReplacements)
+                    {
+                        _logger.LogDebug("Job:{JobId}: ApplyEditOptions: Text replacement '{Find}' applied. Text length changed from {Before} to {After}.",
+                               jobId, TruncateString(rep.Find, 20), beforeReplace.Length, textAfterReplacements.Length);
+                        // If text changed, existing entities are likely invalid.
+                        // For simplicity and safety, if complex replacements change text length,
+                        // it's often better to just clear entities or try to re-parse (if you had a parser).
+                        // Given no re-parser, and potential breaking changes to entities, we'll
+                        // adjust the offsets of entities that *can* be found in the new text.
+                        // This is a trade-off.
+
+                        // Re-mapping entities after general text replacement is extremely hard.
+                        // If the Find string is replaced, the entity might shift or break.
+                        // The safest approach for `currentEntities` here is to clear them if `textChangedByReplace` is true and text length changed significantly.
+                        // Or, perform a more robust re-mapping.
+                        // For now, let's keep the existing re-mapping logic but be aware it's fragile.
                     }
                 }
+                currentText = textAfterReplacements;
 
-                if (textChangedByReplace)
+                if (currentEntities != null && currentEntities.Any())
                 {
-                    newTextBuilder = new StringBuilder(textAfterAllReplacements);
-                    _logger.LogDebug("Job:{JobId}: ApplyEditOptions: Text replacements performed. Final text length after replacements: {Length}.", jobId, newTextBuilder.Length);
-
-                    // Re-map entities if text changed
-                    if (currentEntities != null && currentEntities.Any())
+                    var remappedEntities = new List<TL.MessageEntity>();
+                    // Re-scan entities against the *new* text.
+                    // This re-mapping is brittle if the text within the entity itself was replaced.
+                    // A more robust solution would re-generate entities from the new text based on its formatting.
+                    // Given we don't have that, this is the best we can do without dropping all entities.
+                    foreach (var entity in currentEntities)
                     {
-                        var remappedEntities = new List<TL.MessageEntity>();
-                        foreach (var entity in currentEntities)
-                        {
-                            string entityText = initialText.Substring(entity.Offset, entity.Length); // Get original text of entity
-                            int newOffset = newTextBuilder.ToString().IndexOf(entityText, StringComparison.Ordinal); // Find it in new text
+                        if (entity == null) continue;
 
+                        var originalSegment = GetSubstringSafe(initialText, entity.Offset, entity.Length);
+                        if (!string.IsNullOrEmpty(originalSegment))
+                        {
+                            // Find the segment in the *new* currentText
+                            int newOffset = currentText.IndexOf(originalSegment, StringComparison.Ordinal);
                             if (newOffset != -1)
                             {
-                                remappedEntities.Add(CloneEntityWithOffset(entity, newOffset - entity.Offset, jobId));
+                                remappedEntities.Add(CloneEntityWithNewOffset(entity, newOffset, jobId));
                             }
                             else
                             {
-                                _logger.LogWarning("Job:{JobId}: ApplyEditOptions: Entity text '{EntityTextPreview}' for entity type {EntityType} not found after text replacements. Entity will be dropped.",
-                                    jobId, TruncateString(entityText, 20), entity.GetType().Name);
+                                _logger.LogWarning("Job:{JobId}: ApplyEditOptions: Entity segment '{EntityTextPreview}' (type {EntityType}) not found after text replacements. Entity will be dropped.",
+                                    jobId, TruncateString(originalSegment, 20), entity.GetType().Name);
                             }
                         }
-                        currentEntities = remappedEntities;
-                        _logger.LogInformation("Job:{JobId}: ApplyEditOptions: Remapped {OriginalCount} entities to {RemappedCount} after text replacements.",
-                            jobId, initialEntities?.Length ?? 0, remappedEntities.Count);
                     }
+                    currentEntities = remappedEntities;
+                    _logger.LogInformation("Job:{JobId}: ApplyEditOptions: Remapped entities after text replacements. Original count: {OriginalCount}, Remapped count: {RemappedCount}.",
+                        jobId, initialEntities?.Length ?? 0, remappedEntities.Count);
                 }
             }
 
@@ -777,7 +824,7 @@ namespace Application.Features.Forwarding.Services
             if (!string.IsNullOrEmpty(options.PrependText))
             {
                 _logger.LogDebug("Job:{JobId}: ApplyEditOptions: Prepending text: '{PrependTextPreview}'", jobId, TruncateString(options.PrependText, 50));
-                newTextBuilder.Insert(0, options.PrependText);
+                currentText = options.PrependText + currentText; // String concatenation, easy to prepend
                 if (currentEntities != null)
                 {
                     int offsetShift = options.PrependText.Length;
@@ -785,32 +832,32 @@ namespace Application.Features.Forwarding.Services
                     var adjustedEntities = new List<TL.MessageEntity>();
                     foreach (var e in currentEntities)
                     {
-                        if (e != null) adjustedEntities.Add(CloneEntityWithOffset(e, offsetShift, jobId));
+                        if (e != null) adjustedEntities.Add(CloneEntityWithNewOffset(e, e.Offset + offsetShift, jobId));
                     }
                     currentEntities = adjustedEntities;
                 }
             }
 
             // 5. Append Text / Custom Footer
-            string textToAppend = "";
+            var textToAppend = new StringBuilder();
             if (!string.IsNullOrEmpty(options.AppendText))
             {
-                textToAppend += options.AppendText;
+                textToAppend.Append(options.AppendText);
                 _logger.LogDebug("Job:{JobId}: ApplyEditOptions: Appending text: '{AppendTextPreview}'", jobId, TruncateString(options.AppendText, 50));
             }
             if (!string.IsNullOrEmpty(options.CustomFooter))
             {
                 // Ensure footer starts on a new line if content exists and doesn't end with a newline
-                if (newTextBuilder.Length > 0 && !newTextBuilder.ToString().EndsWith("\n") && !string.IsNullOrEmpty(options.CustomFooter) && !options.CustomFooter.StartsWith("\n"))
+                if (currentText.Length > 0 && !currentText.EndsWith("\n") && textToAppend.Length == 0) // Only add newline if content exists and no other append is happening yet
                 {
-                    textToAppend = "\n" + textToAppend; // Add newline before any appended text
+                    textToAppend.Append("\n");
                 }
-                textToAppend += options.CustomFooter;
+                textToAppend.Append(options.CustomFooter);
                 _logger.LogDebug("Job:{JobId}: ApplyEditOptions: Appending custom footer: '{CustomFooterPreview}'", jobId, TruncateString(options.CustomFooter, 50));
             }
-            if (!string.IsNullOrEmpty(textToAppend))
+            if (textToAppend.Length > 0)
             {
-                newTextBuilder.Append(textToAppend);
+                currentText += textToAppend.ToString(); // String concatenation, easy to append
             }
 
             // 6. Remove Links (after all text manipulation, as offsets would be messy otherwise)
@@ -821,19 +868,30 @@ namespace Application.Features.Forwarding.Services
                 _logger.LogDebug("Job:{JobId}: ApplyEditOptions: Link entities removed. Count before: {InitialCount}, Count after: {CurrentCount}", jobId, initialCount, currentEntities.Count);
             }
 
-            string finalText = newTextBuilder.ToString();
-            _logger.LogDebug("Job:{JobId}: ApplyEditOptions: Final text length: {FinalTextLength}. Final entities count: {EntitiesCount}.", jobId, finalText.Length, currentEntities?.Count ?? 0);
-
             // Final sanity check for entities: remove any that are now out of bounds.
             if (currentEntities != null)
             {
                 currentEntities = currentEntities
-                    .Where(e => e != null && e.Offset >= 0 && e.Length > 0 && e.Offset + e.Length <= finalText.Length)
+                    .Where(e => e != null && e.Offset >= 0 && e.Length > 0 && e.Offset + e.Length <= currentText.Length)
                     .ToList();
                 _logger.LogTrace("Job:{JobId}: ApplyEditOptions: After final sanity check, {ValidEntitiesCount} entities remain valid.", jobId, currentEntities.Count);
             }
 
-            return (finalText, currentEntities?.ToArray());
+            _logger.LogDebug("Job:{JobId}: ApplyEditOptions: Final text length: {FinalTextLength}. Final entities count: {EntitiesCount}.", jobId, currentText.Length, currentEntities?.Count ?? 0);
+
+            return (currentText, currentEntities?.ToArray());
+        }
+
+        // --- NEW Helper for safe substring ---
+        private string GetSubstringSafe(string text, int startIndex, int length)
+        {
+            if (string.IsNullOrEmpty(text)) return string.Empty;
+            if (startIndex < 0) startIndex = 0;
+            if (startIndex >= text.Length) return string.Empty;
+            if (length < 0) length = 0;
+            if (startIndex + length > text.Length) length = text.Length - startIndex;
+
+            return text.Substring(startIndex, length);
         }
 
         private string TruncateString(string? str, int maxLength)
@@ -854,17 +912,17 @@ namespace Application.Features.Forwarding.Services
             };
         }
 
-        private TL.MessageEntity CloneEntityWithOffset(TL.MessageEntity oldEntity, int offsetDelta, string jobId)
+        // Changed: now takes `newOffset` directly, not `offsetDelta`
+        private TL.MessageEntity CloneEntityWithNewOffset(TL.MessageEntity oldEntity, int newOffset, string jobId)
         {
-            int newOffset = oldEntity.Offset + offsetDelta;
-            int newLength = oldEntity.Length;
+            int newLength = oldEntity.Length; // Length typically remains the same unless explicitly truncated
 
-            // Defensive check for negative offset after delta.
+            // Defensive check for negative offset.
             if (newOffset < 0)
             {
-                _logger.LogWarning("Job:{JobId}: CloneEntityWithOffset: Calculated negative new offset {NewOffset} for entity {EntityType} (original {OriginalOffset}, delta {OffsetDelta}). Keeping original offset. THIS INDICATES A BUG in text/entity manipulation logic (e.g., deleting text before entity without re-evaluating offset).",
-                    jobId, newOffset, oldEntity.GetType().Name, oldEntity.Offset, offsetDelta);
-                newOffset = oldEntity.Offset; // Attempt to salvage by keeping original offset.
+                _logger.LogWarning("Job:{JobId}: CloneEntityWithNewOffset: Calculated negative new offset {NewOffset} for entity {EntityType} (original {OriginalOffset}). This indicates a logic error, clamping to 0.",
+                    jobId, newOffset, oldEntity.GetType().Name, oldEntity.Offset);
+                newOffset = 0;
             }
 
             return oldEntity switch
@@ -889,42 +947,44 @@ namespace Application.Features.Forwarding.Services
                 TL.MessageEntityMentionName mentionName => new TL.MessageEntityMentionName { Offset = newOffset, Length = newLength, user_id = mentionName.user_id },
                 TL.MessageEntityCustomEmoji customEmoji => new TL.MessageEntityCustomEmoji { Offset = newOffset, Length = newLength, document_id = customEmoji.document_id },
 
-                _ => DefaultCaseHandler(oldEntity, offsetDelta, jobId)
+                _ => DefaultCaseHandler(oldEntity, newOffset, newLength, jobId) // Pass all info to default handler
             };
         }
 
-        private TL.MessageEntity DefaultCaseHandler(TL.MessageEntity oldEntity, int offsetDelta, string jobId)
+        // Changed: now takes newOffset and newLength for better control in default case
+        private TL.MessageEntity DefaultCaseHandler(TL.MessageEntity oldEntity, int newOffset, int newLength, string jobId)
         {
-            _logger.LogWarning("Job:{JobId}: CloneEntityWithOffset (DefaultCaseHandler): Unhandled entity type '{EntityType}'. Attempting generic clone. Offset adjustment {OffsetDelta}. IMPORTANT: Any type-specific properties beyond Offset and Length WILL BE LOST. Please consider adding this entity type to the switch case in CloneEntityWithOffset for full fidelity.",
-                jobId, oldEntity.GetType().Name, offsetDelta);
+            _logger.LogWarning("Job:{JobId}: CloneEntityWithNewOffset (DefaultCaseHandler): Unhandled entity type '{EntityType}'. Attempting generic clone. New Offset: {NewOffset}, New Length: {NewLength}. IMPORTANT: Any type-specific properties beyond Offset and Length WILL BE LOST. Please consider adding this entity type to the switch case in CloneEntityWithNewOffset for full fidelity.",
+                jobId, oldEntity.GetType().Name, newOffset, newLength);
             try
             {
                 // Create a new instance of the exact runtime type of the entity
                 var newGenericEntity = (TL.MessageEntity)Activator.CreateInstance(oldEntity.GetType())!;
-                newGenericEntity.Offset = oldEntity.Offset + offsetDelta;
-                newGenericEntity.Length = oldEntity.Length;
+                newGenericEntity.Offset = newOffset;
+                newGenericEntity.Length = newLength;
                 return newGenericEntity;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Job:{JobId}: CloneEntityWithOffset (DefaultCaseHandler): Failed to create generic instance for entity type '{EntityType}'. This entity might be malformed or invalid.",
+                _logger.LogError(ex, "Job:{JobId}: CloneEntityWithNewOffset (DefaultCaseHandler): Failed to create generic instance for entity type '{EntityType}'. This entity might be malformed or invalid.",
                     jobId, oldEntity.GetType().Name);
             }
-            _logger.LogError("Job:{JobId}: CloneEntityWithOffset (DefaultCaseHandler): FINAL FALLBACK - returning original entity type '{EntityType}' with potentially incorrect offset/lost properties. Data integrity for this specific entity compromised.",
+            _logger.LogError("Job:{JobId}: CloneEntityWithNewOffset (DefaultCaseHandler): FINAL FALLBACK - returning original entity type '{EntityType}' with potentially incorrect offset/lost properties. Data integrity for this specific entity compromised.",
                 jobId, oldEntity.GetType().Name);
             return oldEntity;
         }
-    }
+        #endregion
 
-    // Hangfire Job Context - Corrected usage.
-    // Hangfire injects PerformContext into job methods.
-    // Remove the static `BackgroundJobContext.Current` and rely on injection.
-    // The previous error `CS1061: 'JobData' does not contain a definition for 'StateHistory'` was indeed
-    // because I was trying to access `StateHistory` from `JobData` (which is in `Hangfire.Common`),
-    // whereas `PerformContext` gives you direct access to the `BackgroundJob` object from `Hangfire.Storage.Monitoring`,
-    // which *does* have state history.
-    // However, the simplest fix for `jobId` is `performContext.BackgroundJob.Id`.
-    // If you need more than just the ID, you would access `performContext.BackgroundJob.StateHistory`
-    // assuming `performContext.BackgroundJob` is `Hangfire.Storage.Monitoring.BackgroundJob` type or similar.
-    // For logging the job ID, `performContext.BackgroundJob.Id` is sufficient.
+        // Hangfire Job Context - Corrected usage.
+        // Hangfire injects PerformContext into job methods.
+        // Remove the static `BackgroundJobContext.Current` and rely on injection.
+        // The previous error `CS1061: 'JobData' does not contain a definition for 'StateHistory'` was indeed
+        // because I was trying to access `StateHistory` from `JobData` (which is in `Hangfire.Common`),
+        // whereas `PerformContext` gives you direct access to the `BackgroundJob` object from `Hangfire.Storage.Monitoring`,
+        // which *does* have state history.
+        // However, the simplest fix for `jobId` is `performContext.BackgroundJob.Id`.
+        // If you need more than just the ID, you would access `performContext.BackgroundJob.StateHistory`
+        // assuming `performContext.BackgroundJob` is `Hangfire.Storage.Monitoring.BackgroundJob` type or similar.
+        // For logging the job ID, `performContext.BackgroundJob.Id` is sufficient.
+    }
 }

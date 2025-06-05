@@ -2,25 +2,28 @@
 
 #region Usings
 using System.Data.Common; // For DbException
-using Application.Common.Interfaces;
-using Application.DTOs.News;
-using Application.Interfaces;
-using AutoMapper;
-using Domain.Entities;
-using Hangfire;
-using HtmlAgilityPack;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Logging;
-using Polly;
-using Polly.Retry;
-using Shared.Extensions;
-using Shared.Results;
-using System.Net;
-using System.Net.Http.Headers;
-using System.ServiceModel.Syndication;
-using System.Text;
-using System.Xml;
+using Application.Common.Interfaces; // For INotificationDispatchService
+using Application.DTOs.News; // For NewsItemDto
+using Application.Interfaces; // For IRssReaderService
+using AutoMapper; // For mapping DTOs
+using Domain.Entities; // For NewsItem, RssSource, SignalCategory entities
+using Hangfire; // For IBackgroundJobClient
+using HtmlAgilityPack; // For HTML parsing
+using Microsoft.Extensions.Logging; // For logging
+using Polly; // For resilience policies
+using Polly.Retry; // For retry policies
+using Shared.Extensions; // For Truncate extension method
+using Shared.Results; // For Result<T> pattern
+using Shared.Exceptions; // For custom RepositoryException
+using System.Net; // For HttpStatusCode
+using System.Net.Http.Headers; // For HTTP headers
+using System.ServiceModel.Syndication; // For SyndicationFeed
+using System.Text; // For Encoding
+using System.Xml; // For XmlReader
 using System.Security.Cryptography; // Added for SHA256 for more robust ID hashing
+using Microsoft.Extensions.Configuration; // To get connection string
+using Microsoft.Data.SqlClient; // For SqlConnection (for SQL Server)
+using Dapper; // For Dapper operations
 #endregion
 
 namespace Infrastructure.Services
@@ -29,12 +32,12 @@ namespace Infrastructure.Services
     {
         #region Private Readonly Fields
         private readonly IHttpClientFactory _httpClientFactory;
-        private readonly IAppDbContext _dbContext;
         private readonly IMapper _mapper;
         private readonly ILogger<RssReaderService> _logger;
         private readonly IBackgroundJobClient _backgroundJobClient;
+        private readonly string _connectionString; // Database connection string for Dapper
         private readonly AsyncRetryPolicy<HttpResponseMessage> _httpRetryPolicy;
-        private readonly AsyncRetryPolicy _dbRetryPolicy;
+        private readonly AsyncRetryPolicy _dbRetryPolicy; // Now for Dapper operations
         #endregion
 
         #region Public Constants
@@ -44,31 +47,30 @@ namespace Infrastructure.Services
         #endregion
 
         #region Private Constants
-        // ADJUSTED: MaxNewsSummaryLengthDb (no change needed in summary), but critical for Link field length.
         private const int MaxNewsSummaryLengthDb = 1000;
-        // IMPORTANT: Reduced Link max length to be safer for SQL Server index byte limits (e.g., 1700 bytes max).
-        // 450 NVARCHAR chars = 900 bytes; 800 NVARCHAR chars = 1600 bytes. Aim for safe value.
         private const int MaxNewsLinkLengthDbForIndex = 450;
         private const int MaxErrorsToDeactivateSource = 10;
-        private const int NewsTitleMaxLenDb = 490; // Aligning with usage later.
-        private const int NewsSourceItemIdMaxLenDb = 490; // Aligning with usage later.
-        private const int NewsSourceNameMaxLenDb = 140; // Aligning with usage later.
+        private const int NewsTitleMaxLenDb = 490;
+        private const int NewsSourceItemIdMaxLenDb = 490;
+        private const int NewsSourceNameMaxLenDb = 140;
         #endregion
 
-        #region Constructor
+        #region Constructor (MODIFIED DB RETRY POLICY LOGGING)
         public RssReaderService(
             IHttpClientFactory httpClientFactory,
-            IAppDbContext dbContext,
+            IConfiguration configuration,
             IMapper mapper,
             ILogger<RssReaderService> logger,
             IBackgroundJobClient backgroundJobClient)
         {
             _httpClientFactory = httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
-            _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
+            _connectionString = configuration.GetConnectionString("DefaultConnection")
+                                ?? throw new ArgumentNullException("DefaultConnection", "DefaultConnection string not found in configuration.");
             _mapper = mapper ?? throw new ArgumentNullException(nameof(mapper));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _backgroundJobClient = backgroundJobClient ?? throw new ArgumentNullException(nameof(backgroundJobClient));
 
+            // HTTP Retry Policy (unchanged from previous valid version)
             _httpRetryPolicy = Policy
                 .Handle<HttpRequestException>()
                 .Or<TaskCanceledException>(ex => !ex.CancellationToken.IsCancellationRequested)
@@ -106,21 +108,47 @@ namespace Infrastructure.Services
                         return Task.CompletedTask;
                     });
 
+            // Database Retry Policy (now for Dapper, excluding unique constraint violations)
             _dbRetryPolicy = Policy
-                .Handle<DbException>(ex => !(ex is DbUpdateConcurrencyException))
-                .WaitAndRetryAsync(
-                    retryCount: 3,
-                    sleepDurationProvider: retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
-                    onRetry: (exception, timeSpan, retryAttempt, context) =>
+            .Handle<DbException>(ex =>
+            {
+                // Log SQL Server specific errors if possible
+                if (ex is SqlException sqlEx)
+                {
+                    _logger.LogWarning(sqlEx, "PollyDbRetry: SqlException encountered. Error Number: {ErrorNumber}, Class: {ErrorClass}, State: {ErrorState}, ClientConnectionId: {ClientConnectionId}",
+                        sqlEx.Number, sqlEx.Class, sqlEx.State, sqlEx.ClientConnectionId);
+                    // Do not retry on unique constraint violations or primary key violations
+                    if (sqlEx.Number == 2627 || sqlEx.Number == 2601) // Unique constraint violation, Primary Key violation
                     {
-                        _logger.LogWarning(exception,
-                            "PollyDbRetry: Database operation failed. Retrying in {TimeSpan} for attempt {RetryAttempt}. Error: {Message}",
-                            timeSpan, retryAttempt, exception.Message);
-                    });
+                        _logger.LogWarning("PollyDbRetry: Not retrying database operation due to non-transient unique/PK constraint violation. Error: {Message}", sqlEx.Message);
+                        return false; // Do not retry
+                    }
+                }
+                _logger.LogWarning(ex, "PollyDbRetry: Transient database error encountered. Retrying. Error: {Message}", ex.Message);
+                return true; // Retry on other DbExceptions
+            })
+            .WaitAndRetryAsync(
+                retryCount: 3,
+                sleepDurationProvider: retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
+                onRetry: (exception, timeSpan, retryAttempt, context) => // This is 'onRetry' not 'onRetryAsync'
+                {
+                    // Specific retry logging is now handled within the Handle<DbException> predicate above.
+                    _logger.LogInformation(
+                        "PollyDbRetry: Retrying database operation. Attempt {RetryAttempt} of 3. Waiting for {TimespanSeconds:F1} seconds...",
+                        retryAttempt, timeSpan.TotalSeconds);
+                    // REMOVED: return Task.CompletedTask; <-- This line caused the CS8030 error.
+                    // 'onRetry' is an Action<Exception, TimeSpan, int, Context>, it does not return a Task.
+                });
         }
         #endregion
 
-        #region IRssReaderService Implementation
+        // Helper to create a new SqlConnection for Dapper
+        private SqlConnection CreateConnection()
+        {
+            return new SqlConnection(_connectionString);
+        }
+
+        #region IRssReaderService Implementation (FetchAndProcessFeedAsync - Minor Update)
         public async Task<Result<IEnumerable<NewsItemDto>>> FetchAndProcessFeedAsync(RssSource rssSource, CancellationToken cancellationToken = default)
         {
             if (rssSource == null) throw new ArgumentNullException(nameof(rssSource));
@@ -135,7 +163,7 @@ namespace Infrastructure.Services
             }))
             {
                 _logger.LogInformation("Initiating fetch and process cycle for RSS feed.");
-                rssSource.LastFetchAttemptAt = DateTime.UtcNow;
+                rssSource.LastFetchAttemptAt = DateTime.UtcNow; // Update attempt time before HTTP call
 
                 HttpResponseMessage? httpResponse = null;
                 try
@@ -145,7 +173,7 @@ namespace Infrastructure.Services
                     httpResponse = await _httpRetryPolicy.ExecuteAsync(async (pollyContext, ct) =>
                     {
                         using var requestMessage = new HttpRequestMessage(HttpMethod.Get, rssSource.Url);
-                        AddConditionalGetHeaders(requestMessage, rssSource);
+                        AddConditionalGetHeaders(requestMessage, rssSource); // Now robust
                         _logger.LogDebug("Polly Execute (Context: {ContextKey}): Sending HTTP GET with conditional headers.", pollyContext.CorrelationId);
                         using var requestTimeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(DefaultHttpClientTimeoutSeconds));
                         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, requestTimeoutCts.Token, cancellationToken);
@@ -158,7 +186,7 @@ namespace Infrastructure.Services
                         _logger.LogInformation("Feed content has not changed (HTTP 304 Not Modified).");
                         return await HandleNotModifiedResponseAsync(rssSource, httpResponse, cancellationToken);
                     }
-                    httpResponse.EnsureSuccessStatusCode();
+                    httpResponse.EnsureSuccessStatusCode(); // Throws HttpRequestException for non-success codes (4xx, 5xx)
                     _logger.LogInformation("Successfully received HTTP {StatusCode} response.", httpResponse.StatusCode);
 
                     SyndicationFeed feed = await ParseFeedContentAsync(httpResponse, cancellationToken);
@@ -170,16 +198,16 @@ namespace Infrastructure.Services
                     _logger.LogError(httpEx, "HTTP error during RSS fetch. StatusCode: {StatusCode}", httpEx.StatusCode);
                     string? etag = CleanETag(httpResponse?.Headers.ETag?.Tag);
                     string? lastModified = GetLastModifiedFromHeaders(httpResponse?.Content?.Headers);
-                    await UpdateRssSourceFetchStatusAsync(rssSource, false, etag, lastModified, cancellationToken, $"HTTP Error: {httpEx.StatusCode}");
-                    return Result<IEnumerable<NewsItemDto>>.Failure($"HTTP error processing feed: {httpEx.Message} (Status: {httpResponse?.StatusCode.ToString() ?? httpEx.StatusCode?.ToString() ?? "N/A"})");
+                    // UpdateRssSourceFetchStatusAsync now handles DB updates via Dapper.
+                    // Return the result from the status update.
+                    return await UpdateRssSourceFetchStatusAsync(rssSource, false, etag, lastModified, cancellationToken, $"HTTP Error: {httpEx.StatusCode}");
                 }
                 catch (XmlException xmlEx)
                 {
                     _logger.LogError(xmlEx, "XML parsing error for RSS feed.");
                     string? etag = CleanETag(httpResponse?.Headers.ETag?.Tag);
                     string? lastModified = GetLastModifiedFromHeaders(httpResponse?.Content?.Headers);
-                    await UpdateRssSourceFetchStatusAsync(rssSource, false, etag, lastModified, cancellationToken, "XML Parsing Error");
-                    return Result<IEnumerable<NewsItemDto>>.Failure($"Invalid XML format in feed: {xmlEx.Message}");
+                    return await UpdateRssSourceFetchStatusAsync(rssSource, false, etag, lastModified, cancellationToken, "XML Parsing Error");
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
@@ -191,23 +219,21 @@ namespace Infrastructure.Services
                     _logger.LogError(taskEx, "RSS feed fetch operation timed out or was cancelled internally (TaskCanceledException).");
                     string? etag = CleanETag(httpResponse?.Headers.ETag?.Tag);
                     string? lastModified = GetLastModifiedFromHeaders(httpResponse?.Content?.Headers);
-                    await UpdateRssSourceFetchStatusAsync(rssSource, false, etag, lastModified, cancellationToken, "Operation Timeout");
-                    return Result<IEnumerable<NewsItemDto>>.Failure("Operation timed out or was cancelled by an internal mechanism.");
+                    return await UpdateRssSourceFetchStatusAsync(rssSource, false, etag, lastModified, cancellationToken, "Operation Timeout");
                 }
                 catch (Exception ex)
                 {
                     _logger.LogCritical(ex, "Unexpected critical error during RSS feed processing pipeline.");
                     string? etag = CleanETag(httpResponse?.Headers.ETag?.Tag);
                     string? lastModified = GetLastModifiedFromHeaders(httpResponse?.Content?.Headers);
-                    await UpdateRssSourceFetchStatusAsync(rssSource, false, etag, lastModified, cancellationToken, "Unexpected Critical Error");
-                    return Result<IEnumerable<NewsItemDto>>.Failure($"An unexpected critical error occurred: {ex.Message}");
+                    return await UpdateRssSourceFetchStatusAsync(rssSource, false, etag, lastModified, cancellationToken, "Unexpected Critical Error");
                 }
                 finally { httpResponse?.Dispose(); }
             }
         }
         #endregion
 
-        #region Feed Parsing, Item Processing Logic
+        #region Feed Parsing, Item Processing Logic (MODIFIED FOR DAPPER)
         private async Task<SyndicationFeed> ParseFeedContentAsync(HttpResponseMessage response, CancellationToken cancellationToken)
         {
             await using var feedStream = await response.Content.ReadAsStreamAsync(cancellationToken);
@@ -218,7 +244,7 @@ namespace Infrastructure.Services
                 IgnoreComments = true,
                 IgnoreProcessingInstructions = true,
                 IgnoreWhitespace = true,
-                MaxCharactersInDocument = 20 * 1024 * 1024 // Increased max chars in document
+                MaxCharactersInDocument = 20 * 1024 * 1024
             };
             Encoding encoding = Encoding.UTF8;
             string? charset = response.Content.Headers.ContentType?.CharSet;
@@ -237,15 +263,16 @@ namespace Infrastructure.Services
             var newNewsEntities = new List<NewsItem>();
             if (syndicationItems == null || !syndicationItems.Any()) return newNewsEntities;
 
-            // Apply Polly retry to DB call
+            // --- REPLACED EF CORE DB CALL WITH DAPPER ---
             var existingSourceItemIds = await _dbRetryPolicy.ExecuteAsync(async () =>
             {
-                return await _dbContext.NewsItems
-                    .Where(n => n.RssSourceId == rssSource.Id && n.SourceItemId != null)
-                    .Select(n => n.SourceItemId!)
-                    .Distinct()
-                    .ToHashSetAsync(cancellationToken);
+                using var connection = CreateConnection();
+                await connection.OpenAsync(cancellationToken);
+                var sql = "SELECT SourceItemId FROM NewsItems WHERE RssSourceId = @RssSourceId AND SourceItemId IS NOT NULL;";
+                var ids = await connection.QueryAsync<string>(sql, new { RssSourceId = rssSource.Id });
+                return ids.ToHashSet(StringComparer.OrdinalIgnoreCase);
             });
+            // --- END REPLACEMENT ---
 
             _logger.LogDebug("Retrieved {Count} existing SourceItemIds for RssSourceId {RssSourceId}.", existingSourceItemIds.Count, rssSource.Id);
 
@@ -269,7 +296,7 @@ namespace Infrastructure.Services
                     _logger.LogWarning("Skipping syndication item with null/empty SourceItemId after determination. Title: '{Title}', Link: '{Link}'", title.Truncate(50), originalLink.Truncate(50));
                     continue;
                 }
-                if (!processedInThisBatch.Add(itemSourceId)) // Returns false if already in hashset
+                if (!processedInThisBatch.Add(itemSourceId))
                 {
                     _logger.LogDebug("Skipping duplicate item (SourceItemId: '{SourceItemId}') in current batch.", itemSourceId.Truncate(50));
                     continue;
@@ -282,8 +309,9 @@ namespace Infrastructure.Services
 
                 var newsEntity = new NewsItem
                 {
-                    Title = title.Truncate(NewsTitleMaxLenDb), // Use defined constant for truncation
-                    // Crucial: Use shorter link length for indexing compatibility!
+                    Id = Guid.NewGuid(), // Ensure new GUID for Dapper insert
+                    CreatedAt = DateTime.UtcNow, // Ensure CreatedAt for Dapper insert
+                    Title = title.Truncate(NewsTitleMaxLenDb),
                     Link = (originalLink ?? itemSourceId).Truncate(MaxNewsLinkLengthDbForIndex),
                     Summary = CleanHtmlAndTruncateWithHtmlAgility(syndicationItem.Summary?.Text, MaxNewsSummaryLengthDb),
                     FullContent = CleanHtmlWithHtmlAgility(syndicationItem.Content is TextSyndicationContent tc ? tc.Text : syndicationItem.Summary?.Text),
@@ -291,48 +319,41 @@ namespace Infrastructure.Services
                     PublishedDate = syndicationItem.PublishDate.UtcDateTime,
                     RssSourceId = rssSource.Id,
                     SourceName = rssSource.SourceName.Truncate(NewsSourceNameMaxLenDb),
-                    SourceItemId = itemSourceId.Truncate(NewsSourceItemIdMaxLenDb) // Use defined constant for truncation
+                    SourceItemId = itemSourceId.Truncate(NewsSourceItemIdMaxLenDb)
+                    // Other NewsItem properties will use their default values or be set by subsequent analysis
                 };
                 newNewsEntities.Add(newsEntity);
             }
             return newNewsEntities;
         }
 
-        /// <summary>
-        /// Determines a unique ID for a syndication item, prioritizing standard ID, then link, then a generated hash.
-        /// Improved: Uses SHA256 for a more robust and collision-resistant generated ID based on title and publish date.
-        /// </summary>
         private string DetermineSourceItemId(SyndicationItem item, string? primaryLink, string title, Guid rssSourceGuid)
         {
             if (!string.IsNullOrWhiteSpace(item.Id))
             {
-                // A common case for Item.Id is GUID or a very long URI. Prioritize if it looks unique.
-                // Also, consider if Item.Id could be "tag:...", "urn:uuid:..." which are also forms of unique IDs.
                 if (item.Id.Length > 20 || Uri.IsWellFormedUriString(item.Id, UriKind.Absolute) || item.Id.Contains(":"))
                 {
-                    return item.Id.Truncate(NewsSourceItemIdMaxLenDb); // Truncate only if truly long, for consistency
+                    return item.Id.Truncate(NewsSourceItemIdMaxLenDb);
                 }
             }
             if (!string.IsNullOrWhiteSpace(primaryLink))
             {
-                return primaryLink.Truncate(NewsSourceItemIdMaxLenDb); // Truncate before using as ID.
+                return primaryLink.Truncate(NewsSourceItemIdMaxLenDb);
             }
             if (!string.IsNullOrWhiteSpace(title))
             {
-                // Fallback to SHA256 hash of a combination of source GUID, title, and precise publish date.
-                // This offers a much better chance of uniqueness than a simple GetHashCode() which can collide.
                 using (var sha256Hash = SHA256.Create())
                 {
-                    var data = Encoding.UTF8.GetBytes($"{rssSourceGuid}_{title}_{item.PublishDate.ToString("o")}"); // "o" for round-trip format
+                    var data = Encoding.UTF8.GetBytes($"{rssSourceGuid}_{title}_{item.PublishDate.ToString("o")}");
                     var hashBytes = sha256Hash.ComputeHash(data);
                     return BitConverter.ToString(hashBytes).Replace("-", "").ToLowerInvariant();
                 }
             }
-            return Guid.NewGuid().ToString(); // Last resort for unique ID.
+            return Guid.NewGuid().ToString();
         }
         #endregion
 
-        #region Database Interaction, Metadata Update, and Notification Dispatch
+        #region Database Interaction, Metadata Update, and Notification Dispatch (MODIFIED FOR DAPPER)
 
         /// <summary>
         /// Saves newly processed and filtered NewsItem entities to the database,
@@ -349,51 +370,106 @@ namespace Infrastructure.Services
             _logger.LogInformation("Attempting to save {NewItemCount} new news items and dispatch notifications for RssSource: {SourceName}",
                 newNewsEntitiesToSave.Count, rssSource.SourceName);
 
+            string? etagFromResponse = CleanETag(httpResponse?.Headers.ETag?.Tag);
+            string? lastModifiedFromResponse = GetLastModifiedFromHeaders(httpResponse?.Content?.Headers);
+
             if (newNewsEntitiesToSave == null || !newNewsEntitiesToSave.Any())
             {
                 _logger.LogInformation("No new unique news items to save for '{SourceName}'. Updating RssSource metadata only.", rssSource.SourceName);
-                string? etagFromResponse = CleanETag(httpResponse?.Headers.ETag?.Tag);
-                string? lastModifiedFromResponse = GetLastModifiedFromHeaders(httpResponse?.Content?.Headers);
+                // Directly call the status update helper, which now uses Dapper.
                 return await UpdateRssSourceFetchStatusAsync(rssSource, true, etagFromResponse, lastModifiedFromResponse, cancellationToken, "No new news items were found to save; RssSource metadata updated if changed.");
             }
 
-            await _dbContext.NewsItems.AddRangeAsync(newNewsEntitiesToSave, cancellationToken);
-            _logger.LogDebug("Added {Count} new NewsItem entities to DbContext for RssSource '{SourceName}'.", newNewsEntitiesToSave.Count, rssSource.SourceName);
-
-            rssSource.LastSuccessfulFetchAt = rssSource.LastFetchAttemptAt;
-            rssSource.FetchErrorCount = 0;
-            rssSource.UpdatedAt = DateTime.UtcNow;
-            rssSource.ETag = CleanETag(httpResponse.Headers.ETag?.Tag);
-            rssSource.LastModifiedHeader = GetLastModifiedFromHeaders(httpResponse.Content?.Headers);
-
-            int changesSaved = 0;
             try
             {
-                changesSaved = await _dbRetryPolicy.ExecuteAsync(async () =>
+                await _dbRetryPolicy.ExecuteAsync(async () =>
                 {
-                    return await _dbContext.SaveChangesAsync(cancellationToken);
+                    using var connection = CreateConnection();
+                    await connection.OpenAsync(cancellationToken);
+
+                    using var transaction = connection.BeginTransaction();
+                    try
+                    {
+                        // 1. Insert new NewsItems (batch insert)
+                        var insertNewsItemSql = @"
+                            INSERT INTO NewsItems (
+                                Id, Title, Link, Summary, FullContent, ImageUrl, PublishedDate, CreatedAt, LastProcessedAt,
+                                SourceName, SourceItemId, SentimentScore, SentimentLabel, DetectedLanguage, AffectedAssets,
+                                RssSourceId, IsVipOnly, AssociatedSignalCategoryId
+                            ) VALUES (
+                                @Id, @Title, @Link, @Summary, @FullContent, @ImageUrl, @PublishedDate, @CreatedAt, @LastProcessedAt,
+                                @SourceName, @SourceItemId, @SentimentScore, @SentimentLabel, @DetectedLanguage, @AffectedAssets,
+                                @RssSourceId, @IsVipOnly, @AssociatedSignalCategoryId
+                            );";
+
+                        // Dapper can take IEnumerable for parameters to perform a batch insert
+                        await connection.ExecuteAsync(insertNewsItemSql, newNewsEntitiesToSave.Select(ni => new
+                        {
+                            ni.Id,
+                            ni.Title,
+                            ni.Link,
+                            ni.Summary,
+                            ni.FullContent,
+                            ni.ImageUrl,
+                            ni.PublishedDate,
+                            ni.CreatedAt,
+                            ni.LastProcessedAt,
+                            ni.SourceName,
+                            ni.SourceItemId,
+                            ni.SentimentScore,
+                            ni.SentimentLabel,
+                            ni.DetectedLanguage,
+                            ni.AffectedAssets,
+                            ni.RssSourceId,
+                            ni.IsVipOnly,
+                            ni.AssociatedSignalCategoryId
+                        }), transaction: transaction);
+
+                        // 2. Update RssSource metadata
+                        var updateRssSourceSql = @"
+                            UPDATE RssSources SET
+                                LastSuccessfulFetchAt = @LastSuccessfulFetchAt,
+                                FetchErrorCount = @FetchErrorCount,
+                                UpdatedAt = @UpdatedAt,
+                                ETag = @ETag,
+                                LastModifiedHeader = @LastModifiedHeader,
+                                IsActive = @IsActive,
+                                LastFetchAttemptAt = @LastFetchAttemptAt -- Ensure this is also updated
+                            WHERE Id = @Id;";
+
+                        await connection.ExecuteAsync(updateRssSourceSql, new
+                        {
+                            rssSource.LastSuccessfulFetchAt,
+                            rssSource.FetchErrorCount,
+                            rssSource.UpdatedAt,
+                            ETag = etagFromResponse, // Use the one from the response directly
+                            LastModifiedHeader = lastModifiedFromResponse, // Use the one from the response directly
+                            rssSource.IsActive,
+                            rssSource.LastFetchAttemptAt, // Pass the already updated value
+                            rssSource.Id
+                        }, transaction: transaction);
+
+                        transaction.Commit();
+                        _logger.LogInformation("Successfully saved {NewItemCount} news items and updated RssSource '{SourceName}' metadata.",
+                            newNewsEntitiesToSave.Count, rssSource.SourceName);
+                    }
+                    catch (Exception ex)
+                    {
+                        transaction.Rollback();
+                        // Wrap the exception in a custom RepositoryException
+                        throw new RepositoryException($"Dapper transaction failed during save: {ex.Message}", ex);
+                    }
                 });
-                _logger.LogInformation("Successfully saved {ChangesCount} changes to the database (including {NewItemCount} news items and metadata for RssSource '{SourceName}').",
-                    changesSaved, newNewsEntitiesToSave.Count, rssSource.SourceName);
             }
-            catch (DbUpdateException dbEx)
+            catch (RepositoryException dbEx) // Catch the wrapped DB errors
             {
-                _logger.LogError(dbEx, "Database update error while saving new news items or updating RssSource '{SourceName}' after retries. New items will not be dispatched for notification.", rssSource.SourceName);
+                _logger.LogError(dbEx, "Database error while saving new news items or updating RssSource '{SourceName}' after retries. New items will not be dispatched for notification.", rssSource.SourceName);
                 return Result<IEnumerable<NewsItemDto>>.Failure($"Database error during save operation for {rssSource.SourceName}: {dbEx.InnerException?.Message ?? dbEx.Message}");
             }
-            catch (Exception ex)
+            catch (Exception ex) // Catch any other unexpected errors
             {
-                _logger.LogError(ex, "Unexpected error during SaveChangesAsync for RssSource '{SourceName}' after retries. New items will not be dispatched.", rssSource.SourceName);
+                _logger.LogError(ex, "Unexpected error during Dapper save operation for RssSource '{SourceName}'. New items will not be dispatched.", rssSource.SourceName);
                 return Result<IEnumerable<NewsItemDto>>.Failure($"Unexpected error saving data for {rssSource.SourceName}: {ex.Message}");
-            }
-
-            if (changesSaved == 0 || !newNewsEntitiesToSave.Any())
-            {
-                _logger.LogInformation("No database changes were saved or no new news items to dispatch for RssSource '{SourceName}'. Skipping notification dispatch.", rssSource.SourceName);
-                return Result<IEnumerable<NewsItemDto>>.Success(
-                    Enumerable.Empty<NewsItemDto>(),
-                    $"No new news items were saved from {rssSource.SourceName}, but RssSource metadata might have been updated."
-                );
             }
 
             _logger.LogInformation("Starting to enqueue notification dispatch jobs for {NewItemCount} newly saved news items from '{SourceName}'.",
@@ -409,6 +485,9 @@ namespace Infrastructure.Services
                 }
 
                 var currentNewsItem = savedNewsItemEntity;
+                // Using Task.Run to offload the Hangfire enqueue call from the main thread pool
+                // This is generally okay for very short, non-blocking calls or to ensure task execution continues
+                // even if the outer loop is cancelled. Hangfire.Enqueue itself is usually very fast.
                 dispatchTasks.Add(Task.Run(() =>
                 {
                     if (cancellationToken.IsCancellationRequested) return;
@@ -454,60 +533,49 @@ namespace Infrastructure.Services
 
         #endregion
 
-        private async Task<Result<IEnumerable<NewsItemDto>>> UpdateRssSourceFetchStatusAsync(
-            RssSource rssSource, bool success,
-            string? eTagFromResponse, string? lastModifiedFromResponse,
-            CancellationToken cancellationToken, string? operationMessage = null)
-        {
-            rssSource.UpdatedAt = DateTime.UtcNow;
-            if (!success) rssSource.LastFetchAttemptAt = DateTime.UtcNow;
-
-            if (success)
-            {
-                rssSource.LastSuccessfulFetchAt = rssSource.LastFetchAttemptAt;
-                rssSource.FetchErrorCount = 0;
-                if (!string.IsNullOrWhiteSpace(eTagFromResponse)) rssSource.ETag = eTagFromResponse;
-                if (!string.IsNullOrWhiteSpace(lastModifiedFromResponse)) rssSource.LastModifiedHeader = lastModifiedFromResponse;
-            }
-            else
-            {
-                rssSource.FetchErrorCount++;
-                if (rssSource.FetchErrorCount >= MaxErrorsToDeactivateSource && rssSource.IsActive)
-                {
-                    rssSource.IsActive = false;
-                    _logger.LogWarning("Deactivated RssSource {Id} due to {Count} consecutive errors.", rssSource.Id, rssSource.FetchErrorCount);
-                }
-            }
-            try
-            {
-                await _dbRetryPolicy.ExecuteAsync(async () =>
-                {
-                    await _dbContext.SaveChangesAsync(cancellationToken);
-                });
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                _logger.LogInformation("RSS feed fetch operation was cancelled by the main CancellationToken for {SourceName}.", rssSource.SourceName);
-                return Result<IEnumerable<NewsItemDto>>.Failure("RSS fetch operation cancelled by request.");
-            }
-            catch (DbUpdateException dbEx)
-            {
-                _logger.LogError(dbEx, "Database update error while updating RssSource '{SourceName}' status after retries.", rssSource.SourceName);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Unexpected error during SaveChangesAsync for RssSource '{SourceName}' status update after retries.", rssSource.SourceName);
-            }
-
-            if (success) return Result<IEnumerable<NewsItemDto>>.Success(Enumerable.Empty<NewsItemDto>(), operationMessage ?? "Status updated.");
-            return Result<IEnumerable<NewsItemDto>>.Failure($"Failed to update status. Errors: {rssSource.FetchErrorCount}");
-        }
-
-        #region HTTP and HTML Parsing Helper Methods
+        #region HTTP and HTML Parsing Helper Methods (MODIFIED FOR ROBUSTNESS)
         private void AddConditionalGetHeaders(HttpRequestMessage requestMessage, RssSource rssSource)
         {
-            if (!string.IsNullOrWhiteSpace(rssSource.ETag)) requestMessage.Headers.Add("If-None-Match", rssSource.ETag);
-            if (!string.IsNullOrWhiteSpace(rssSource.LastModifiedHeader)) requestMessage.Headers.IfModifiedSince = DateTimeOffset.Parse(rssSource.LastModifiedHeader);
+            // --- FIX FOR FORMATEXCEPTION: ETag and Last-Modified Parsing ---
+            // ETag: HttpRequestHeaders.Add expects a correctly formatted ETag.
+            // My CleanETag method now handles "W/" prefix and ensures quotes.
+            if (!string.IsNullOrWhiteSpace(rssSource.ETag))
+            {
+                string formattedETag = rssSource.ETag;
+                // If it doesn't start with W/" and doesn't start with ", add quotes
+                if (!formattedETag.StartsWith("W/\"", StringComparison.OrdinalIgnoreCase) && !formattedETag.StartsWith("\"", StringComparison.Ordinal))
+                {
+                    formattedETag = $"\"{formattedETag}\"";
+                }
+                try
+                {
+                    requestMessage.Headers.Add("If-None-Match", formattedETag);
+                }
+                catch (FormatException ex)
+                {
+                    _logger.LogWarning(ex, "Failed to add If-None-Match header with ETag '{ETag}'. Format invalid. Attempting with validation bypass.", rssSource.ETag);
+                    // FALLBACK: If standard Add fails, try AddWithoutValidation
+                    if (!requestMessage.Headers.TryAddWithoutValidation("If-None-Match", formattedETag))
+                    {
+                        _logger.LogWarning("Failed to add If-None-Match header with ETag '{ETag}' even with validation bypass. Skipping header.", rssSource.ETag);
+                    }
+                }
+            }
+
+            // Last-Modified: Use TryParseExact for robust parsing
+            if (!string.IsNullOrWhiteSpace(rssSource.LastModifiedHeader))
+            {
+                // Common HTTP date formats (RFC1123, ISO 8601 variations)
+                string[] formats = new[] { "R", "r", "ddd, dd MMM yyyy HH:mm:ss 'GMT'", "O", "o", "yyyy-MM-ddTHH:mm:ssZ" };
+                if (DateTimeOffset.TryParseExact(rssSource.LastModifiedHeader, formats, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeUniversal, out DateTimeOffset lastModifiedOffset))
+                {
+                    requestMessage.Headers.IfModifiedSince = lastModifiedOffset;
+                }
+                else
+                {
+                    _logger.LogWarning("Failed to parse Last-Modified header '{LastModifiedHeader}'. Format invalid. Skipping header.", rssSource.LastModifiedHeader);
+                }
+            }
             _logger.LogTrace("Added conditional headers: ETag '{ETag}', Last-Modified '{LastModified}' for {Url}",
                              rssSource.ETag.Truncate(30), rssSource.LastModifiedHeader, requestMessage.RequestUri);
         }
@@ -520,14 +588,97 @@ namespace Infrastructure.Services
 
         private string? GetLastModifiedFromHeaders(HttpContentHeaders? headers)
         {
+            // Use 'R' for RFC1123 pattern for robust parsing later
             return headers?.LastModified?.ToString("R");
         }
 
         private string? CleanETag(string? etag)
         {
-            return etag?.Trim('"');
+            // Store ETag without outer quotes but expect them to be re-added when sending.
+            // If the ETag is a weak ETag (W/"..."), keep the W/ prefix.
+            if (string.IsNullOrWhiteSpace(etag)) return null;
+            if (etag.StartsWith("W/\"", StringComparison.OrdinalIgnoreCase)) return etag; // Keep W/ prefix
+            return etag.Trim('"'); // Remove only outer quotes for strong ETags
         }
 
+        /// <summary>
+        /// Updates RssSource status in the database using Dapper.
+        /// This is a crucial helper for FetchAndProcessFeedAsync and HandleNotModifiedResponseAsync.
+        /// </summary>
+        private async Task<Result<IEnumerable<NewsItemDto>>> UpdateRssSourceFetchStatusAsync(
+            RssSource rssSource, bool success,
+            string? eTagFromResponse, string? lastModifiedFromResponse,
+            CancellationToken cancellationToken, string? operationMessage = null)
+        {
+            // Update RssSource entity properties before saving
+            rssSource.UpdatedAt = DateTime.UtcNow;
+            if (!success) rssSource.LastFetchAttemptAt = DateTime.UtcNow; // Only update attempt if not successful initially
+
+            if (success)
+            {
+                rssSource.LastSuccessfulFetchAt = rssSource.LastFetchAttemptAt; // Successful fetch sets LastSuccessfulFetchAt to LastFetchAttemptAt
+                rssSource.FetchErrorCount = 0;
+                // Only update ETag/LastModified if they were actually provided in the response
+                if (!string.IsNullOrWhiteSpace(eTagFromResponse)) rssSource.ETag = eTagFromResponse;
+                if (!string.IsNullOrWhiteSpace(lastModifiedFromResponse)) rssSource.LastModifiedHeader = lastModifiedFromResponse;
+            }
+            else
+            {
+                rssSource.FetchErrorCount++;
+                if (rssSource.FetchErrorCount >= MaxErrorsToDeactivateSource && rssSource.IsActive)
+                {
+                    rssSource.IsActive = false;
+                    _logger.LogWarning("Deactivated RssSource {Id} due to {Count} consecutive errors.", rssSource.Id, rssSource.FetchErrorCount);
+                }
+            }
+
+            try
+            {
+                await _dbRetryPolicy.ExecuteAsync(async () =>
+                {
+                    using var connection = CreateConnection();
+                    await connection.OpenAsync(cancellationToken);
+
+                    var updateRssSourceSql = @"
+                        UPDATE RssSources SET
+                            LastSuccessfulFetchAt = @LastSuccessfulFetchAt,
+                            FetchErrorCount = @FetchErrorCount,
+                            UpdatedAt = @UpdatedAt,
+                            ETag = @ETag,
+                            LastModifiedHeader = @LastModifiedHeader,
+                            IsActive = @IsActive,
+                            LastFetchAttemptAt = @LastFetchAttemptAt
+                        WHERE Id = @Id;";
+
+                    await connection.ExecuteAsync(updateRssSourceSql, new
+                    {
+                        rssSource.LastSuccessfulFetchAt,
+                        rssSource.FetchErrorCount,
+                        rssSource.UpdatedAt,
+                        rssSource.ETag, // Use the updated ETag property from the RssSource entity
+                        rssSource.LastModifiedHeader, // Use the updated LastModifiedHeader property
+                        rssSource.IsActive,
+                        rssSource.LastFetchAttemptAt,
+                        rssSource.Id
+                    });
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error updating RssSource '{SourceName}' status in the database.", rssSource.SourceName);
+                // Wrap in custom exception for consistency
+                throw new RepositoryException($"Failed to update RssSource status for '{rssSource.SourceName}': {ex.Message}");
+            }
+
+            if (success)
+            {
+                return Result<IEnumerable<NewsItemDto>>.Success(Enumerable.Empty<NewsItemDto>(), operationMessage ?? "Status updated.");
+            }
+            return Result<IEnumerable<NewsItemDto>>.Failure($"Failed to update status. Errors: {rssSource.FetchErrorCount}. " + (operationMessage ?? ""));
+        }
+
+
+        // Other helper methods for HTML parsing (unchanged for this request)
         /// <summary>
         /// Cleans HTML from the provided text using HtmlAgilityPack and truncates it.
         /// Handles HTML entities and falls back to simple truncation on parsing failure.

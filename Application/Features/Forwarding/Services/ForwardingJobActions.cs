@@ -424,8 +424,29 @@ namespace Application.Features.Forwarding.Services
             return true;
         }
 
+        /// <summary>
+        /// Processes and sends a message (text or media group) according to custom forwarding rules.
+        /// This method applies content modifications (e.g., text edits, link removal, caption dropping)
+        /// and uses resilience policies for sending.
+        /// </summary>
+        /// <param name="toPeer">The target peer (user, chat, or channel) where the message will be sent.</param>
+        /// <param name="rule">The forwarding rule containing edit options and other parameters.</param>
+        /// <param name="initialMessageContentFromOrchestrator">The original text content of the message from the orchestrator.</param>
+        /// <param name="initialEntitiesFromOrchestrator">The original message entities (formatting) from the orchestrator.</param>
+        /// <param name="mediaGroupItems">A list of media items with captions, if the original message was a media group.</param>
+        /// <param name="originalMessageHadMediaContent">A flag indicating if the original message contained media content.</param>
+        /// <param name="originalMessageHadTextContent">A flag indicating if the original message contained text content.</param>
+        /// <param name="cancellationToken">Cancellation token for the operation.</param>
+        /// <param name="jobId">A unique identifier for the current forwarding job, used for logging context.</param>
+        /// <returns>A <see cref="Task"/> representing the asynchronous operation.</returns>
+        /// <exception cref="OperationCanceledException">Thrown if the operation is cancelled via the <paramref name="cancellationToken"/>.</exception>
+        /// <remarks>
+        /// This method handles the complexity of applying various editing rules,
+        /// deciding between single text, single media, or media group sends,
+        /// and ensuring resilient API calls.
+        /// </remarks>
         private async Task ProcessCustomSendAsync(
-            InputPeer toPeer,
+            TL.InputPeer toPeer,
             Domain.Features.Forwarding.Entities.ForwardingRule rule,
             string initialMessageContentFromOrchestrator,
             TL.MessageEntity[]? initialEntitiesFromOrchestrator,
@@ -435,166 +456,201 @@ namespace Application.Features.Forwarding.Services
             CancellationToken cancellationToken,
             string jobId)
         {
+            // Level 1: Early cancellation check.
             cancellationToken.ThrowIfCancellationRequested();
 
-            _logger.LogInformation("Job:{JobId}: ProcessCustomSendAsync: Entering custom send logic for Rule: '{RuleName}'. Target: {TargetPeer}. MediaGroup: {HasMediaGroup}. Initial Content Preview: '{OrchestratorContentPreview}'.",
-                jobId, rule.RuleName, GetInputPeerIdValueForLogging(toPeer), mediaGroupItems != null && mediaGroupItems.Any(), TruncateString(initialMessageContentFromOrchestrator, 50));
+            // Level 2: Initial logging with structured parameters for better traceability.
+            _logger.LogInformation("Job:{JobId}: ProcessCustomSendAsync: Entering custom send logic for Rule: '{RuleName}'. TargetPeer: {TargetPeerId}. HasMediaGroupItems: {HasMediaGroupItems}. InitialContentPreview: '{InitialContentPreview}'.",
+                jobId, rule.RuleName, GetInputPeerIdValueForLogging(toPeer), mediaGroupItems?.Any() ?? false, TruncateString(initialMessageContentFromOrchestrator, 50));
 
             string finalCaption;
             TL.MessageEntity[]? finalEntities;
 
-            // Apply content modifications based on rule.EditOptions
+            // Level 3: Apply content modifications based on rule.EditOptions.
+            // Logic for dropping captions vs. applying other edits.
             if (rule.EditOptions != null)
             {
-                // Decide if captions should be dropped before applying other edits
-                // DropMediaCaptions should only affect actual media captions, not standalone text messages.
                 bool shouldDropCaptionThisRun = rule.EditOptions.DropMediaCaptions && originalMessageHadMediaContent;
 
                 if (shouldDropCaptionThisRun)
                 {
+                    // If dropping caption, ensure it's empty and entities are null.
                     finalCaption = string.Empty;
                     finalEntities = null;
-                    _logger.LogInformation("Job:{JobId}: ProcessCustomSendAsync: Rule '{RuleName}' has DropMediaCaptions enabled for a media message. Caption and entities cleared.", jobId, rule.RuleName);
+                    _logger.LogInformation("Job:{JobId}: ProcessCustomSendAsync: Rule '{RuleName}' has DropMediaCaptions enabled for a media message. Caption and entities will be cleared.", jobId, rule.RuleName);
                 }
                 else
                 {
-                    // If not dropping caption, apply all other text/entity edits
-                    (finalCaption, finalEntities) = ApplyEditOptions(initialMessageContentFromOrchestrator, initialEntitiesFromOrchestrator, rule.EditOptions, null, jobId);
-                    _logger.LogDebug("Job:{JobId}: ProcessCustomSendAsync: Applied EditOptions. Final Caption Length: {Length}, Entities Count: {Entities}.", jobId, finalCaption.Length, finalEntities?.Length ?? 0);
+                    // If not dropping caption, apply all other text/entity edits.
+                    // Assumes ApplyEditOptions returns (string, TL.MessageEntity[]?).
+                    (finalCaption, finalEntities) = ApplyEditOptions(
+                        initialMessageContentFromOrchestrator,
+                        initialEntitiesFromOrchestrator,
+                        rule.EditOptions,
+                        null, // This parameter seems unused or for internal context in ApplyEditOptions
+                        jobId
+                    );
+                    _logger.LogDebug("Job:{JobId}: ProcessCustomSendAsync: Applied EditOptions. Final Caption Length: {FinalCaptionLength}, Entities Count: {FinalEntitiesCount}.", jobId, finalCaption.Length, finalEntities?.Length ?? 0);
                 }
             }
             else
             {
-                // No edit options, use original content as is
+                // No edit options, use original content as is.
                 finalCaption = initialMessageContentFromOrchestrator ?? string.Empty;
-                finalEntities = initialEntitiesFromOrchestrator?.ToArray();
+                finalEntities = initialEntitiesFromOrchestrator?.ToArray(); // Ensure it's an array if not already.
                 _logger.LogDebug("Job:{JobId}: ProcessCustomSendAsync: No EditOptions configured. Using original content as final.", jobId);
             }
 
-
-            // Log the final state of caption and entities after all edits
-            _logger.LogInformation("Job:{JobId}: ProcessCustomSendAsync: After ALL caption processing for Rule '{RuleName}': Final Caption (Length {Length}, IsEmpty: {IsEmpty}): '{CaptionPreview}'. Final Entities Count: {EntitiesCount}.",
-                jobId, rule.RuleName, finalCaption.Length, string.IsNullOrEmpty(finalCaption), TruncateString(finalCaption, 100), finalEntities?.Length ?? 0);
-
-            // Determine if there's *any* content to send after all edits.
-            bool hasFinalTextContent = !string.IsNullOrEmpty(finalCaption) || (finalEntities != null && finalEntities.Any());
-            bool hasFinalMediaContent = mediaGroupItems != null && mediaGroupItems.Any();
-
-            if (hasFinalMediaContent)
+            // Level 2: Log the final state of caption and entities after all edits.
+            // Use conditional logging for potentially long caption previews.
+            if (_logger.IsEnabled(LogLevel.Information))
             {
-                _logger.LogDebug("Job:{JobId}: ProcessCustomSendAsync: Handling as media group with {Count} item(s).", jobId, mediaGroupItems.Count);
+                _logger.LogInformation("Job:{JobId}: ProcessCustomSendAsync: After ALL caption processing for Rule '{RuleName}': Final Caption (Length {Length}, IsEmpty: {IsEmpty}): '{CaptionPreview}'. Final Entities Count: {EntitiesCount}.",
+                    jobId, rule.RuleName, finalCaption.Length, string.IsNullOrEmpty(finalCaption), TruncateString(finalCaption, 100), finalEntities?.Length ?? 0);
+            }
 
-                // Ensure mediaToSendForApi is correctly populated for the API call
-                ICollection<TL.InputMedia> mediaToSendForApi = mediaGroupItems
+
+            // Level 3: Determine the final content to send.
+            bool hasFinalTextContent = !string.IsNullOrEmpty(finalCaption) || (finalEntities?.Any() ?? false); // Check entities as well
+            bool hasMediaItemsForSending = mediaGroupItems?.Any(item => item.Media != null) ?? false; // Check if there's any valid media to send.
+
+            // Level 4: Conditional sending logic based on content.
+            if (hasMediaItemsForSending)
+            {
+                // Level 2: Log decision.
+                _logger.LogDebug("Job:{JobId}: ProcessCustomSendAsync: Handling as media group with {Count} potentially valid item(s).", jobId, mediaGroupItems!.Count);
+
+                // Filter out any null media items before sending to the API.
+                ICollection<TL.InputMedia> mediaToSendForApi = mediaGroupItems!
                                                         .Where(item => item.Media != null)
                                                         .Select(item => item.Media!)
                                                         .ToList();
 
                 if (mediaToSendForApi.Count == 0)
                 {
-                    _logger.LogWarning("Job:{JobId}: ProcessCustomSendAsync: No valid media items after filtering media group buffer. Skipping send for rule '{RuleName}'.", jobId, rule.RuleName);
+                    _logger.LogWarning("Job:{JobId}: ProcessCustomSendAsync: No valid media items after filtering media group buffer. Skipping send for rule '{RuleName}'. Target: {TargetPeerId}.",
+                        jobId, rule.RuleName, GetInputPeerIdValueForLogging(toPeer));
+                    return; // Exit if no valid media to send.
                 }
-                else if (mediaToSendForApi.Count == 1)
+
+                if (mediaToSendForApi.Count == 1)
                 {
+                    // If only one media item, send as a single media message.
                     _logger.LogDebug("Job:{JobId}: ProcessCustomSendAsync: Media group resolved to a single item. Sending as a single media message.", jobId);
+
+                    // Level 5: Execute SendMessageAsync with resilience.
                     await _sendMessageRetryPolicy.ExecuteAsync(
                         async (pollyContext, pollyCancellationToken) =>
                             await _userApiClient.SendMessageAsync(
                                 toPeer,
                                 finalCaption,
-                                cancellationToken: pollyCancellationToken,
+                                cancellationToken: pollyCancellationToken, // Pass cancellation token to API call
                                 entities: finalEntities,
                                 media: mediaToSendForApi.First(),
                                 noWebpage: rule.EditOptions?.RemoveLinks ?? false,
-                                background: false,
-                                schedule_date: null,
-                                sendAsBot: false
-                            ),
-                        new Context($"SendSingleMediaFromGroup_{GetInputPeerIdValueForLogging(toPeer)}_Rule_{rule.RuleName}"),
-                        cancellationToken
-                    );
-                    _logger.LogInformation("Job:{JobId}: Single media message (originally part of group) sent to Target {TargetChannelId} via Rule '{RuleName}'.",
+                                background: false, // WTelegramClient SendMessage supports 'background'
+                                schedule_date: null // Assuming no scheduling for now
+                                                    // sendAsBot is removed from SendMessageAsync interface/implementation
+                            ).ConfigureAwait(false), // Level 10: ConfigureAwait(false)
+                        new Context($"SendSingleMediaFromGroup_Job_{jobId}_Peer_{GetInputPeerIdValueForLogging(toPeer)}_Rule_{rule.RuleName}"), // Level 5: Detailed Polly context
+                        cancellationToken // Pass cancellation token to Polly ExecuteAsync
+                    ).ConfigureAwait(false); // Level 10: ConfigureAwait(false)
+
+                    _logger.LogInformation("Job:{JobId}: Single media message (originally part of group) sent to Target {TargetPeerId} via Rule '{RuleName}'.",
                         jobId, GetInputPeerIdValueForLogging(toPeer), rule.RuleName);
                 }
-                else // mediaToSendForApi.Count > 1, send as album
+                else // mediaToSendForApi.Count > 1, send as album (media group)
                 {
                     _logger.LogDebug("Job:{JobId}: ProcessCustomSendAsync: Sending {Count} media items as an album.", jobId, mediaToSendForApi.Count);
 
+                    // Level 5: Execute SendMediaGroupAsync with resilience.
                     await _sendMediaGroupRetryPolicy.ExecuteAsync(
                         async (pollyContext, pollyCancellationToken) =>
                             await _userApiClient.SendMediaGroupAsync(
                                 peer: toPeer,
                                 media: mediaToSendForApi,
-                                cancellationToken: pollyCancellationToken,
+                                cancellationToken: pollyCancellationToken, // Pass cancellation token to API call
                                 albumCaption: finalCaption,
                                 albumEntities: finalEntities,
-                                replyToMsgId: null,
-                                background: false,
-                                schedule_date: null,
-                                sendAsBot: false
-                            ),
-                        new Context(nameof(ITelegramUserApiClient.SendMediaGroupAsync)),
-                        cancellationToken
-                    );
-                    _logger.LogInformation("Job:{JobId}: Media group (Album) successfully sent to Target {TargetChannelId} via Rule '{RuleName}'.",
+                                replyToMsgId: null, // Assuming no replies for albums for now
+                                background: false, // WTelegramClient SendAlbumAsync does NOT have 'background' parameter, this will be ignored by implementation
+                                schedule_date: null
+                            // sendAsBot is removed from SendMediaGroupAsync interface/implementation
+                            ).ConfigureAwait(false), // Level 10: ConfigureAwait(false)
+                        new Context($"SendMediaGroup_Job_{jobId}_Peer_{GetInputPeerIdValueForLogging(toPeer)}_Rule_{rule.RuleName}"), // Level 5: Detailed Polly context
+                        cancellationToken // Pass cancellation token to Polly ExecuteAsync
+                    ).ConfigureAwait(false); // Level 10: ConfigureAwait(false)
+
+                    _logger.LogInformation("Job:{JobId}: Media group (Album) successfully sent to Target {TargetPeerId} via Rule '{RuleName}'.",
                         jobId, GetInputPeerIdValueForLogging(toPeer), rule.RuleName);
                 }
             }
-            else if (hasFinalTextContent) // Only send text if there's actual text/entities
+            else if (hasFinalTextContent) // Only send text if there's actual text/entities to send.
             {
-                _logger.LogInformation("Job:{JobId}: ProcessCustomSendAsync: Sending as single text message. Final Caption Length: {CaptionLength}. NoWebpagePreview: {NoWebpagePreview}. Rule: '{RuleName}'. Target: {TargetPeer}",
+                // Level 2: Log decision.
+                _logger.LogInformation("Job:{JobId}: ProcessCustomSendAsync: Sending as single text message. Final Caption Length: {CaptionLength}. NoWebpagePreview: {NoWebpagePreview}. Rule: '{RuleName}'. Target: {TargetPeerId}",
                     jobId, finalCaption.Length, rule.EditOptions?.RemoveLinks ?? false, rule.RuleName, GetInputPeerIdValueForLogging(toPeer));
 
+                // Level 5: Execute SendMessageAsync (text-only) with resilience.
                 await _sendMessageRetryPolicy.ExecuteAsync(
                     async (pollyContext, pollyCancellationToken) =>
                         await _userApiClient.SendMessageAsync(
                             toPeer,
                             finalCaption,
-                            cancellationToken: pollyCancellationToken,
+                            cancellationToken: pollyCancellationToken, // Pass cancellation token to API call
                             entities: finalEntities,
-                            media: null,
+                            media: null, // No media for a text-only message
                             noWebpage: rule.EditOptions?.RemoveLinks ?? false,
                             background: false,
-                            schedule_date: null,
-                            sendAsBot: false
-                        ),
-                    new Context($"SendTextMessage_{GetInputPeerIdValueForLogging(toPeer)}_Rule_{rule.RuleName}"),
-                    cancellationToken
-                );
-                _logger.LogInformation("Job:{JobId}: Single text message sent to Target {TargetChannelId} via Rule '{RuleName}'.",
+                            schedule_date: null
+                        // sendAsBot is removed
+                        ).ConfigureAwait(false), // Level 10: ConfigureAwait(false)
+                    new Context($"SendTextMessage_Job_{jobId}_Peer_{GetInputPeerIdValueForLogging(toPeer)}_Rule_{rule.RuleName}"), // Level 5: Detailed Polly context
+                    cancellationToken // Pass cancellation token to Polly ExecuteAsync
+                ).ConfigureAwait(false); // Level 10: ConfigureAwait(false)
+
+                _logger.LogInformation("Job:{JobId}: Single text message sent to Target {TargetPeerId} via Rule '{RuleName}'.",
                     jobId, GetInputPeerIdValueForLogging(toPeer), rule.RuleName);
             }
-            else if (originalMessageHadTextContent || originalMessageHadMediaContent) // Message became empty after edits, but original had content.
+            else if (originalMessageHadTextContent || originalMessageHadMediaContent)
             {
-                string defaultSkippedMessage = "[Original message filtered or content stripped by rule]";
-                _logger.LogWarning("Job:{JobId}: ProcessCustomSendAsync: Original message had content, but it became empty after edits for rule '{RuleName}'. Sending default placeholder: '{PlaceholderMessage}'",
-                    jobId, rule.RuleName, defaultSkippedMessage);
+                // Level 2: Log decision. Message became empty after edits, but original had content.
+                // Send a placeholder message to indicate that content was filtered/stripped.
+                string defaultSkippedMessage = "[Original message content filtered or stripped by rule]";
+                _logger.LogWarning("Job:{JobId}: ProcessCustomSendAsync: Original message had content, but it became empty after edits for rule '{RuleName}'. Sending default placeholder: '{PlaceholderMessage}' to Target {TargetPeerId}.",
+                    jobId, rule.RuleName, defaultSkippedMessage, GetInputPeerIdValueForLogging(toPeer));
 
+                // Level 5: Execute SendMessageAsync (placeholder) with resilience.
                 await _sendMessageRetryPolicy.ExecuteAsync(
                     async (pollyContext, pollyCancellationToken) =>
                         await _userApiClient.SendMessageAsync(
                             toPeer,
                             defaultSkippedMessage,
-                            cancellationToken: pollyCancellationToken,
-                            entities: null,
+                            cancellationToken: pollyCancellationToken, // Pass cancellation token to API call
+                            entities: null, // No entities for placeholder
                             media: null,
-                            noWebpage: true, // Always disable webpage for placeholders
+                            noWebpage: true, // Always disable webpage for placeholders to keep them minimal
                             background: false,
-                            schedule_date: null,
-                            sendAsBot: false
-                        ),
-                    new Context($"SendPlaceholderMessage_{GetInputPeerIdValueForLogging(toPeer)}_Rule_{rule.RuleName}"),
-                    cancellationToken
-                );
-                _logger.LogInformation("Job:{JobId}: Placeholder message sent to Target {TargetChannelId} for Rule '{RuleName}'.",
+                            schedule_date: null
+                        // sendAsBot is removed
+                        ).ConfigureAwait(false), // Level 10: ConfigureAwait(false)
+                    new Context($"SendPlaceholderMessage_Job_{jobId}_Peer_{GetInputPeerIdValueForLogging(toPeer)}_Rule_{rule.RuleName}"), // Level 5: Detailed Polly context
+                    cancellationToken // Pass cancellation token to Polly ExecuteAsync
+                ).ConfigureAwait(false); // Level 10: ConfigureAwait(false)
+
+                _logger.LogInformation("Job:{JobId}: Placeholder message sent to Target {TargetPeerId} for Rule '{RuleName}'.",
                     jobId, GetInputPeerIdValueForLogging(toPeer), rule.RuleName);
             }
-            else // No original content, no final content, nothing to send.
+            else
             {
-                _logger.LogDebug("Job:{JobId}: ProcessCustomSendAsync: Original message had no content, and no media to send. Skipping message transmission for rule '{RuleName}'.", jobId, rule.RuleName);
+                // Level 2: Log decision. No original content, no final content, nothing to send.
+                _logger.LogDebug("Job:{JobId}: ProcessCustomSendAsync: Original message had no content, and no media to send. Skipping message transmission for rule '{RuleName}'. Target: {TargetPeerId}.",
+                    jobId, rule.RuleName, GetInputPeerIdValueForLogging(toPeer));
             }
 
-            _logger.LogInformation("Job:{JobId}: Custom send for Rule '{RuleName}' completed for MsgID preview: '{MessageContentPreview}'", jobId, rule.RuleName, TruncateString(initialMessageContentFromOrchestrator, 50));
+            // Level 2: Final completion log.
+            _logger.LogInformation("Job:{JobId}: Custom send for Rule '{RuleName}' completed. Initial content preview: '{MessageContentPreview}'.",
+                jobId, rule.RuleName, TruncateString(initialMessageContentFromOrchestrator, 50));
         }
 
         private async Task ProcessSimpleForwardAsync(

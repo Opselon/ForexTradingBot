@@ -44,22 +44,6 @@ try
     Log.Information("--------------------------------------------------");
 
     var builder = WebApplication.CreateBuilder(args);
-
-    #region Configure Serilog Logging
-    // ------------------- ۱. پیکربندی Serilog با تنظیمات از appsettings.json -------------------
-    // این بخش Serilog را به عنوان سیستم لاگینگ اصلی برنامه تنظیم می‌کند.
-    builder.Host.UseSerilog((context, services, loggerConfiguration) => loggerConfiguration
-        .ReadFrom.Configuration(context.Configuration) // خواندن تنظیمات Serilog از appsettings.json (بخش "Serilog")
-        .ReadFrom.Services(services)                   // امکان غنی‌سازی لاگ‌ها با استفاده از سرویس‌های DI
-        .Enrich.FromLogContext()                       // اضافه کردن اطلاعات context به لاگ‌ها (مانند RequestId)
-        .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}") // فرمت خروجی کنسول
-                                                                                                               //  می‌توانید Sink های دیگری مانند File, Seq, ElasticSearch و ... را اینجا اضافه کنید
-                                                                                                               // .WriteTo.File($"logs/ForexBot_{builder.Environment.EnvironmentName}_.txt",
-                                                                                                               //               rollingInterval: RollingInterval.Day,
-                                                                                                               //               restrictedToMinimumLevel: Serilog.Events.LogEventLevel.Information,
-                                                                                                               //               outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] ({SourceContext}) {Message:lj}{NewLine}{Exception}")
-    );
-    #endregion
     #region Configure Serilog Logging
     // ------------------- ۱. پیکربندی Serilog با تنظیمات از appsettings.json -------------------
     // این بخش Serilog را به عنوان سیستم لاگینگ اصلی برنامه تنظیم می‌کند.

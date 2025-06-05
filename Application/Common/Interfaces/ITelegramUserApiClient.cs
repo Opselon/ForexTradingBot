@@ -17,18 +17,17 @@ namespace Application.Common.Interfaces
         Task<TL.Messages_MessagesBase> GetMessagesAsync(TL.InputPeer peer, int[] msgIds, CancellationToken cancellationToken);
 
         Task<TL.UpdatesBase> SendMessageAsync(
-            TL.InputPeer peer,
-            string message,
-            CancellationToken cancellationToken, // CancellationToken is required and comes first among optionals
-            int? replyToMsgId = null,
-            TL.ReplyMarkup? replyMarkup = null,
-            IEnumerable<TL.MessageEntity>? entities = null,
-            bool noWebpage = false,
-            bool background = false,
-            bool clearDraft = false,
-            DateTime? schedule_date = null,
-            bool sendAsBot = false,
-            TL.InputMedia? media = null); // TL.InputMedia instead of InputSingleMedia for single media messages
+          TL.InputPeer peer,
+          string message,
+          CancellationToken cancellationToken, // CancellationToken is required and comes first among optionals
+          int? replyToMsgId = null,
+          TL.ReplyMarkup? replyMarkup = null,
+          IEnumerable<TL.MessageEntity>? entities = null,
+          bool noWebpage = false,
+          bool background = false,
+          bool clearDraft = false,
+          DateTime? schedule_date = null,
+          TL.InputMedia? media = null); // TL.InputMedia instead of InputSingleMedia for single media messages
 
 
         /// <summary>

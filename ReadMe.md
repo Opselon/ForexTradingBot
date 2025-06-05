@@ -14,7 +14,6 @@
 [![Commit Activity](https://img.shields.io/github/commit-activity/y/Opselon/ForexTradingBot?style=for-the-badge&label=Commits/Year)](https://github.com/Opselon/ForexTradingBot/graphs/contributors "Yearly Commit Activity: Displays the frequency of code commits over the last year, indicating continuous development and active maintenance.")
 [![Code Size](https://img.shields.io/github/languages/code-size/Opselon/ForexTradingBot?style=for-the-badge&color=important)](https://github.com/Opselon/ForexTradingBot "Total Code Size: Indicates the total lines of code in the repository, offering a rough estimate of the project's scale and complexity. Click for code size details.")
 [![Contributors](https://img.shields.io/github/contributors/Opselon/ForexTradingBot?style=for-the-badge)](https://github.com/Opselon/ForexTradingBot/graphs/contributors "Number of Contributors: Shows the total number of individuals who have contributed code to this project, highlighting community involvement and collaborative efforts.")
-[![Chat on Telegram](https://img.shields.io/badge/Chat%20on%20Telegram-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/ForexSignalBotCommunity "Join our Telegram Community: Connect with other users and developers, get support, and discuss the project. Click to join the group.")
 
 ---
 

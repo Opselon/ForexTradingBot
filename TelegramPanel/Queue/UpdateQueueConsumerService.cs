@@ -1,17 +1,10 @@
-﻿// File: TelegramPanel.Queue/UpdateQueueConsumerService.cs
-
-using Microsoft.Extensions.DependencyInjection; // برای IServiceScopeFactory و CreateScope
+﻿using Microsoft.Extensions.DependencyInjection; // برای IServiceScopeFactory و CreateScope
 using Microsoft.Extensions.Hosting;             // برای BackgroundService
 using Microsoft.Extensions.Logging;             // برای ILogger
+using Polly;                                    // اضافه شده برای Polly.Context و Extension Methods
+using Polly.Retry;                              // اضافه شده برای AsyncRetryPolicy
 using TelegramPanel.Application.Interfaces;     // برای ITelegramUpdateProcessor
 using TelegramPanel.Infrastructure;             // برای ITelegramMessageSender (فرض شده در Infrastructure است)
-using Polly;                                    // ✅ اضافه شده برای Polly.Context و Extension Methods
-using Polly.Retry;                              // ✅ اضافه شده برای AsyncRetryPolicy
-using System;
-using System.Collections.Generic;               // برای Dictionary
-using System.Threading;
-using System.Threading.Tasks;
-using Telegram.Bot.Types;                       // برای Update
 
 namespace TelegramPanel.Queue
 {
@@ -27,12 +20,12 @@ namespace TelegramPanel.Queue
         private readonly ILogger<UpdateQueueConsumerService> _logger;
         private readonly ITelegramUpdateChannel _updateChannel;
         private readonly IServiceScopeFactory _scopeFactory;
-        private readonly AsyncRetryPolicy _processingRetryPolicy; // ✅ جدید: سیاست Polly برای پردازش آپدیت
+        private readonly AsyncRetryPolicy _processingRetryPolicy; // سیاست Polly برای پردازش آپدیت
 
         #region Private Fields
         // این فیلدها در کد اصلی ارائه شده برای ExecuteAsync استفاده نمی‌شوند، اما برای حفظ ساختار حفظ شده‌اند.
-        private WTelegram.Client? _client;
-        private SemaphoreSlim _connectionLock = new SemaphoreSlim(1, 1);
+        private WTelegram.Client? _client; // فرض شده این فیلد وجود دارد اما در اینجا استفاده نمی‌شود.
+        private SemaphoreSlim _connectionLock = new SemaphoreSlim(1, 1); // فرض شده این فیلد وجود دارد اما در اینجا استفاده نمی‌شود.
         #endregion
 
         /// <summary>
@@ -50,7 +43,7 @@ namespace TelegramPanel.Queue
             _updateChannel = updateChannel ?? throw new ArgumentNullException(nameof(updateChannel));
             _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
 
-            // ✅ تعریف سیاست تلاش مجدد برای پردازش آپدیت‌ها.
+            // تعریف سیاست تلاش مجدد برای پردازش آپدیت‌ها.
             // این سیاست هر Exception را مدیریت می‌کند به جز OperationCanceledException و TaskCanceledException
             // که نشان‌دهنده لغو عمدی عملیات هستند.
             _processingRetryPolicy = Policy
@@ -61,7 +54,6 @@ namespace TelegramPanel.Queue
                     onRetry: (exception, timeSpan, retryAttempt, context) =>
                     {
                         // استخراج اطلاعات آپدیت از Context Polly برای لاگ‌گذاری بهتر.
-                        // (TryGetValue یک Extension Method است که در صورت وجود Polly نصب شده، کار می‌کند.)
                         var updateId = context.TryGetValue("UpdateId", out var id) ? (int?)id : null;
                         var updateType = context.TryGetValue("UpdateType", out var type) ? type?.ToString() : "N/A";
                         _logger.LogWarning(exception,
@@ -83,6 +75,9 @@ namespace TelegramPanel.Queue
             {
                 // حلقه اصلی برای خواندن از کانال صف.
                 // .WithCancellation(stoppingToken) تضمین می‌کند که حلقه در صورت درخواست لغو متوقف می‌شود.
+                // ✅ مهم: این 'await foreach' خودش یک مکانیسم غیربلاک‌کننده و کارآمد برای مصرف Channel است.
+                // نیازی به Task.Run اضافی در اینجا نیست، زیرا هر آپدیت قبلاً توسط متد Dispatcher (مثلاً
+                // StartUpdateChannelPipeline در TelegramUserApiClient) به یک Task.Run منتقل شده است.
                 await foreach (var update in _updateChannel.ReadAllAsync(stoppingToken).WithCancellation(stoppingToken))
                 {
                     // بررسی مجدد stoppingToken در داخل حلقه برای پاسخ سریع‌تر به توقف
@@ -96,30 +91,28 @@ namespace TelegramPanel.Queue
                     var updateId = update.Id;
                     var updateType = update.Type;
 
-                    // ایجاد یک دیکشنری برای اطلاعات زمینه‌ای لاگ (Log Scope)
-                    var logScopeProps = new Dictionary<string, object?>
-                    {
-                        ["UpdateId"] = updateId,
-                        ["UpdateType"] = updateType,
-                        ["TelegramUserId"] = userId
-                    };
-
-                    // ✅ اصلاح: ساخت Polly.Context با استفاده از سازنده‌ای که Dictionary<string, object> را می‌پذیرد.
-                    // این کار نیاز به Extension Method 'WithData' را برطرف می‌کند.
-                    var pollyContext = new Polly.Context($"UpdateProcessing_{updateId}", new Dictionary<string, object>
+                    // ایجاد یک دیکشنری برای اطلاعات زمینه‌ای Polly.Context
+                    // این اطلاعات برای لاگ‌گذاری بهتر در Polly OnRetry استفاده می‌شود.
+                    var pollyContextData = new Dictionary<string, object>
                     {
                         { "UpdateId", updateId },
                         { "UpdateType", updateType.ToString() }
-                    });
+                    };
+
+                    // ایجاد Polly.Context با استفاده از سازنده‌ای که Dictionary<string, object> را می‌پذیرد.
+                    var pollyContext = new Polly.Context($"UpdateProcessing_{updateId}", pollyContextData);
 
                     // استفاده از BeginScope برای اضافه کردن اطلاعات زمینه‌ای به تمام لاگ‌های تولید شده در این تکرار حلقه.
-                    using (_logger.BeginScope(logScopeProps))
+                    using (_logger.BeginScope(pollyContextData)) // استفاده از همان Dictionary برای Log Scope
                     {
                         try
                         {
                             _logger.LogDebug("Dequeued update for processing.");
 
                             // اعمال سیاست تلاش مجدد Polly به منطق پردازش اصلی آپدیت.
+                            // ✅ این Task/Thread که در حال حاضر در آن هستیم، از قبل توسط Task.Run در لایه قبلی
+                            // (مثلاً StartUpdateChannelPipeline) ایجاد شده است.
+                            // افزودن Task.Run در اینجا باعث "Thread hopping" غیرضروری و کاهش کارایی می‌شود.
                             await _processingRetryPolicy.ExecuteAsync(async (context, ct) =>
                             {
                                 // ایجاد یک Scope جدید از Dependency Injection برای هر پردازش آپدیت،
@@ -129,6 +122,7 @@ namespace TelegramPanel.Queue
                                     var updateProcessor = scope.ServiceProvider.GetRequiredService<ITelegramUpdateProcessor>();
                                     _logger.LogInformation("Passing update to ITelegramUpdateProcessor.");
                                     // passing the original stoppingToken to ProcessUpdateAsync, which Polly will also observe
+                                    // ProcessUpdateAsync باید خودش به درستی async/await (برای I/O) یا Task.Run (برای CPU-bound) را رعایت کند.
                                     await updateProcessor.ProcessUpdateAsync(update, stoppingToken);
                                     _logger.LogInformation("Update processed successfully by ITelegramUpdateProcessor.");
                                 }
@@ -138,7 +132,9 @@ namespace TelegramPanel.Queue
                         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                         {
                             _logger.LogInformation("Processing of update was canceled due to stopping token.");
-                            break; // خروج از حلقه foreach برای توقف با آرامش
+                            // اینجا از 'break' استفاده می‌کنیم تا از حلقه 'await foreach' خارج شویم
+                            // و به طور طبیعی به بخش 'finally' برویم و سرویس را متوقف کنیم.
+                            break;
                         }
                         catch (Exception ex)
                         {
@@ -160,7 +156,7 @@ namespace TelegramPanel.Queue
                                             await messageSender.SendTextMessageAsync(
                                                 userId.Value,
                                                 "Sorry, an unexpected error occurred while processing your request. Our team has been notified.",
-                                                cancellationToken: CancellationToken.None);
+                                                cancellationToken: CancellationToken.None); // استفاده از CancellationToken.None برای اطمینان از ارسال پیام خطا حتی در زمان توقف سرویس.
                                         }
                                     }
                                 }
@@ -175,16 +171,27 @@ namespace TelegramPanel.Queue
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
+                // این خطا زمانی رخ می‌دهد که stoppingToken در زمان await _updateChannel.ReadAllAsync() فعال شود.
                 _logger.LogInformation("Update Queue Consumer Service was canceled gracefully during channel read operation.");
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Update Queue Consumer Service encountered an unexpected error while reading from the channel.");
+                // هر خطای غیرمنتظره‌ای که در حین خواندن از Channel رخ دهد.
+                _logger.LogError(ex, "Update Queue Consumer Service encountered an unexpected error while reading from the channel. Service will terminate.");
                 throw; // Re-throw to ensure the host marks the service as failed
             }
             finally
             {
                 _logger.LogInformation("Update Queue Consumer Service has stopped.");
+                // ایمن‌سازی در برابر ObjectDisposedException در صورت تلاش برای Disposed کردن مجدد
+                try
+                {
+                    _connectionLock.Dispose(); // این فیلد در این کلاس استفاده نشده، اما برای کامل بودن.
+                }
+                catch (ObjectDisposedException ode)
+                {
+                    _logger.LogWarning(ode, "Connection lock was already disposed during service shutdown.");
+                }
             }
         }
 
@@ -195,21 +202,9 @@ namespace TelegramPanel.Queue
         public override async Task StopAsync(CancellationToken cancellationToken)
         {
             _logger.LogInformation("Update Queue Consumer Service stop requested.");
-            // می‌توان Writer کانال را Complete کرد تا ReadAllAsync به طور طبیعی پایان یابد،
-            // اگرچه stoppingToken معمولاً همین کار را انجام می‌دهد.
-            // _updateChannel.CompleteWriter(); // این متد در اینترفیس فعلی ITelegramUpdateChannel وجود ندارد.
+            // فراخوانی متد پایه برای مدیریت توقف BackgroundService
             await base.StopAsync(cancellationToken);
             _logger.LogInformation("Update Queue Consumer Service has finished stopping procedures.");
-
-            // ایمن‌سازی در برابر ObjectDisposedException در صورت تلاش برای Disposed کردن مجدد
-            try
-            {
-                _connectionLock.Dispose();
-            }
-            catch (ObjectDisposedException)
-            {
-                // نادیده گرفتن اگر قبلاً Dispose شده باشد
-            }
         }
     }
 }

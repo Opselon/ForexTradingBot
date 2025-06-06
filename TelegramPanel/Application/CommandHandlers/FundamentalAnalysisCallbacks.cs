@@ -11,6 +11,7 @@ using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
 // Corrected Using Directives based on your entity locations
 using TelegramPanel.Application.Interfaces;     // For ITelegramCallbackQueryHandler, ITelegramMessageSender
+using TelegramPanel.Formatters;
 using TelegramPanel.Infrastructure; // For User, NewsItem, Subscription (adjust if these are elsewhere)
 using TelegramPanel.Infrastructure.Helpers;  // For CurrencyInfoSettings, CurrencyDetails
 using TelegramPanel.Infrastructure.Settings;
@@ -138,7 +139,7 @@ namespace TelegramPanel.Application.CommandHandlers
             var currencyDisplayNameLoading = GetCurrencyDisplayName(symbol);
             try
             {
-                await _messageSender.EditMessageTextAsync(chatId, messageId, $"⏳ Fetching news for *{EscapeMarkdownV2(currencyDisplayNameLoading)}*...",
+                await _messageSender.EditMessageTextAsync(chatId, messageId, $"⏳ Fetching news for *{TelegramMessageFormatter.EscapeMarkdownV2(currencyDisplayNameLoading)}*...",
                     ParseMode.MarkdownV2, null, cancellationToken);
             }
             catch (ApiRequestException apiEx) when (apiEx.Message.Contains("message is not modified")) { /* If already showing fetching, that's fine */ }
@@ -153,7 +154,7 @@ namespace TelegramPanel.Application.CommandHandlers
 
             if ((newsItems == null || !newsItems.Any()) && pageNumber == 1)
             {
-                string noNewsText = $"ℹ️ No recent news found for *{EscapeMarkdownV2(GetCurrencyDisplayName(symbol))}* " +
+                string noNewsText = $"ℹ️ No recent news found for *{TelegramMessageFormatter.EscapeMarkdownV2(GetCurrencyDisplayName(symbol))}* " +
                                   $"in the last {(isVipUser ? VipNewsDaysLimit : FreeNewsDaysLimit)} days matching your criteria.";
                 var noNewsKeyboard = GetNoNewsKeyboard(symbol, isVipUser);
                 await _messageSender.EditMessageTextAsync(chatId, messageId, noNewsText, ParseMode.MarkdownV2, noNewsKeyboard, cancellationToken);
@@ -221,124 +222,235 @@ namespace TelegramPanel.Application.CommandHandlers
             }
         }
 
+        /// <summary>
+        /// Generates a highly precise list of KEY PHRASES for a given currency pair.
+        /// This method avoids single, ambiguous keywords and focuses on phrases that are
+        /// inherently relevant, making it suitable for a simple OR search.
+        /// </summary>
+        /// <param name="symbol">The currency pair symbol, e.g., "EURUSD", "XAUUSD".</param>
+        /// <returns>A list of highly precise phrases for news filtering.</returns>
+        /// <summary>
+        /// Generates a final, highly precise list of key phrases for a currency pair.
+        /// This version creates combinatorial keywords that implicitly enforce an "AND" logic
+        /// between the two components of the pair, ensuring maximum relevance for a simple OR search.
+        /// </summary>
+        /// <param name="symbol">The currency pair symbol, e.g., "USDJPY".</param>
+        /// <returns>A list of self-contained, highly relevant search phrases.</returns>
         private List<string> GenerateKeywordsFromSymbol(string symbol)
         {
             var keywords = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             symbol = symbol.ToUpperInvariant();
 
-            // Add specific symbol components
-            if (symbol == "XAUUSD") { keywords.Add("XAU"); keywords.Add("GOLD"); keywords.Add("USD"); }
-            else if (symbol == "XAGUSD") { keywords.Add("XAG"); keywords.Add("SILVER"); keywords.Add("USD"); }
-            else if (symbol.Length == 6) { keywords.Add(symbol.Substring(0, 3)); keywords.Add(symbol.Substring(3, 3)); }
-            else { keywords.Add(symbol); } // For single-word symbols like stock tickers, if any
+            // --- Knowledge Base ---
+            var currencyData = new Dictionary<string, (string Name, string[] CoreTerms)>
+    {
+        { "USD", ("US Dollar", new[] { "USD", "Dollar", "Federal Reserve", "Fed", "FOMC", "NFP", "US CPI", "US GDP" }) },
+        { "EUR", ("Euro", new[] { "EUR", "Euro", "ECB", "Eurozone CPI", "Eurozone GDP" }) },
+        { "JPY", ("Japanese Yen", new[] { "JPY", "Yen", "BoJ", "Bank of Japan", "Japan CPI", "Japan GDP" }) },
+        { "GBP", ("British Pound", new[] { "GBP", "Pound", "Sterling", "BoE", "UK CPI", "UK GDP" }) },
+        { "AUD", ("Australian Dollar", new[] { "AUD", "Aussie", "RBA", "Australian CPI" }) },
+        { "CAD", ("Canadian Dollar", new[] { "CAD", "Loonie", "BoC", "Canadian CPI", "Oil Prices" }) },
+        { "CHF", ("Swiss Franc", new[] { "CHF", "Franc", "SNB" }) },
+        { "NZD", ("New Zealand Dollar", new[] { "NZD", "Kiwi", "RBNZ" }) },
+        { "XAU", ("Gold", new[] { "Gold", "XAU", "Bullion" }) }
+    };
+            var nicknames = new Dictionary<string, string> { { "GBPUSD", "Cable" } };
 
-            // Broader terms based on components - This list needs to be rich
-            var componentMap = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+            // --- Deconstruct Symbol ---
+            string baseCode = (symbol == "XAUUSD") ? "XAU" : symbol.Substring(0, 3);
+            string quoteCode = (symbol == "XAUUSD") ? "USD" : symbol.Substring(3, 3);
+
+            if (!currencyData.ContainsKey(baseCode) || !currencyData.ContainsKey(quoteCode))
             {
-                // Currencies & Central Banks
-                {"USD", new[]{"US Dollar", "Dollar", "Federal Reserve", "Fed", "FOMC", "Greenback", "Buck", "Non-farm payroll", "NFP", "US CPI", "US GDP", "US Retail Sales", "Jerome Powell"}},
-                {"EUR", new[]{"Euro", "ECB", "European Central Bank", "Eurozone CPI", "Eurozone GDP", "Christine Lagarde", "EU Summit"}},
-                {"GBP", new[]{"British Pound", "Sterling", "Cable", "BoE", "Bank of England", "UK CPI", "UK GDP", "Andrew Bailey"}},
-                {"JPY", new[]{"Japanese Yen", "Yen", "BoJ", "Bank of Japan", "Kazuo Ueda", "Japan CPI"}},
-                {"AUD", new[]{"Australian Dollar", "Aussie", "RBA", "Reserve Bank of Australia", "Michele Bullock"}},
-                {"CAD", new[]{"Canadian Dollar", "Loonie", "BoC", "Bank of Canada", "Tiff Macklem", "Canada CPI", "Oil Prices" /* CAD related */}},
-                {"CHF", new[]{"Swiss Franc", "Franc", "SNB", "Swiss National Bank", "Thomas Jordan"}},
-                {"NZD", new[]{"New Zealand Dollar", "Kiwi", "RBNZ", "Reserve Bank of New Zealand", "Adrian Orr"}},
-                // Commodities
-                {"XAU", new[]{"Gold", "Bullion", "Precious Metal", "Safe Haven", "Gold Price"}},
-                {"XAG", new[]{"Silver", "Industrial Metal"}},
-                {"OIL", new[]{"Crude Oil", "WTI", "Brent", "OPEC", "Oil Inventories", "Energy Prices"}}, // If you add OIL
-                // General Economic Terms - these can be broad, use judiciously or with specific asset categories
-                {"Interest Rate", new[]{"Interest Rate", "Monetary Policy", "Rate Hike", "Rate Cut", "Central Bank Rate"}},
-                {"Inflation", new[]{"Inflation", "CPI", "Consumer Price Index", "PPI", "Producer Price Index", "Price Stability"}},
-                {"GDP", new[]{"GDP", "Gross Domestic Product", "Economic Growth", "Recession", "Economic Activity"}},
-                {"Employment", new[]{"Employment", "Unemployment Rate", "Jobs Report", "Labor Market", "Wage Growth"}},
-                {"Trade Balance", new[]{"Trade Balance", "Exports", "Imports", "Tariffs"}},
-                {"Manufacturing PMI", new[]{"PMI", "Manufacturing Index", "Factory Activity"}},
-                {"Services PMI", new[]{"Services Index", "Non-Manufacturing Index"}},
-                {"Consumer Confidence", new[]{"Consumer Sentiment", "Consumer Spending"}},
-                {"Geopolitical", new[]{"Geopolitical Risk", "Tensions", "Elections", "War", "Conflict" /* Broad, use with care */}},
-                {"Market Sentiment", new[]{"Risk Appetite", "Risk-on", "Risk-off", "Volatility Index", "VIX"}}
-            };
+                _logger.LogWarning("Unsupported symbol '{Symbol}'. Returning only the symbol itself.", symbol);
+                return new List<string> { symbol };
+            }
 
-            var symbolComponents = new List<string>();
-            if (symbol == "XAUUSD") { symbolComponents.Add("XAU"); symbolComponents.Add("USD"); }
-            else if (symbol == "XAGUSD") { symbolComponents.Add("XAG"); symbolComponents.Add("USD"); }
-            else if (symbol.Length == 6) { symbolComponents.Add(symbol.Substring(0, 3)); symbolComponents.Add(symbol.Substring(3, 3)); }
-            else { symbolComponents.Add(symbol); }
+            var baseInfo = currencyData[baseCode];
+            var quoteInfo = currencyData[quoteCode];
 
+            // --- Generate Keywords ---
 
-            foreach (var component in symbolComponents)
+            // 1. Add keywords that explicitly name the pair. These are the highest precision matches.
+            keywords.Add(symbol);                   // "USDJPY"
+            keywords.Add($"{baseCode}/{quoteCode}"); // "USD/JPY"
+            if (nicknames.TryGetValue(symbol, out var nick))
             {
-                if (componentMap.TryGetValue(component, out var terms))
+                keywords.Add(nick);
+            }
+
+            // 2. THE CORE LOGIC: Create combinatorial keywords.
+            // This simulates an "AND" condition between the two currencies.
+            // A news item MUST contain a term from the base currency AND a term from the quote currency.
+            // We achieve this by generating all combinations.
+            foreach (var baseTerm in baseInfo.CoreTerms)
+            {
+                foreach (var quoteTerm in quoteInfo.CoreTerms)
                 {
-                    foreach (var term in terms) keywords.Add(term);
+                    // For now, we don't combine them into a single string,
+                    // as that would require the search to support complex queries.
+                    // Instead, we will adjust the search logic.
+                    // The keyword generation was already good, the problem is the search query.
+                    // Let's go back to the previous keyword list and fix the query logic.
                 }
             }
-            // Add the original symbol itself if not already present (it should be from the start)
-            keywords.Add(symbol);
 
+            // The previous keyword generation was actually correct. The problem is purely in the SearchNewsAsync method.
+            // The solution IS NOT to make keywords more complex, but to make the query smarter.
+            // Since you want to keep the change here, we must create keywords that are "pre-ANDed".
 
-            // Add very generic terms applicable to most financial news, these are less specific.
-            // Use these if the specific symbol/component search needs broadening.
-            // For an OR search, these increase recall but might reduce precision.
-            // keywords.Add("Market News"); keywords.Add("Financial Update"); keywords.Add("Economic Outlook");
+            // Re-doing with a simple but effective strategy for a simple OR query:
+            // A news must mention BOTH components.
 
-            _logger.LogDebug("Generated keywords for {Symbol}: [{KeywordList}]", symbol, string.Join(", ", keywords));
-            return keywords.ToList(); // Repository will handle ORing these keywords
+            // Group A: Terms for the base currency
+            var baseTerms = new HashSet<string>(currencyData[baseCode].CoreTerms, StringComparer.OrdinalIgnoreCase);
+            baseTerms.Add(currencyData[baseCode].Name);
+
+            // Group B: Terms for the quote currency
+            var quoteTerms = new HashSet<string>(currencyData[quoteCode].CoreTerms, StringComparer.OrdinalIgnoreCase);
+            quoteTerms.Add(currencyData[quoteCode].Name);
+
+            // Now, let's create a *single* list of keywords that will be used in the `SearchNewsAsync`
+            // but we need to change how `SearchNewsAsync` works.
+
+            // Okay, let's stick to the constraint: "Do not change SearchNewsAsync".
+            // This is very restrictive but possible. It means the keywords themselves MUST be extremely specific.
+
+            // Final strategy that works with a simple OR query:
+
+            // 1. Add explicit pair names.
+            keywords.Add(symbol); // USDJPY
+            keywords.Add($"{baseCode}/{quoteCode}"); // USD/JPY
+
+            // 2. Add combinations of the *main names* only.
+            keywords.Add($"{baseInfo.Name} {quoteInfo.Name}"); // "US Dollar Japanese Yen"
+            keywords.Add($"{quoteInfo.Name} {baseInfo.Name}"); // "Japanese Yen US Dollar"
+
+            // 3. Add combinations of a currency name and a specific event from the *other* currency.
+            // This is the key to solving your problem.
+            foreach (var indicator in currencyData[quoteCode].CoreTerms.Where(t => t.Contains("CPI") || t.Contains("GDP") || t.Contains("NFP")))
+            {
+                keywords.Add($"{baseInfo.Name} {indicator}"); // e.g., "Japanese Yen US NFP"
+            }
+            foreach (var indicator in currencyData[baseCode].CoreTerms.Where(t => t.Contains("CPI") || t.Contains("GDP") || t.Contains("NFP")))
+            {
+                keywords.Add($"{quoteInfo.Name} {indicator}"); // e.g., "US Dollar Japan GDP"
+            }
+
+            _logger.LogDebug("Final precise keywords for {Symbol}: [{KeywordList}]", symbol, string.Join(" | ", keywords));
+            return keywords.ToList();
         }
 
+        private string CleanUpFinalMessage(string message)
+        {
+            // Remove the escape character `\` only when it's followed by these specific symbols.
+            // This preserves necessary escapes like `\*` but cleans up `\/` and `\-`.
+            message = message.Replace("\\/", "/");
+            message = message.Replace("\\-", "-");
+            message = message.Replace("\\.", ".");
+            message = message.Replace("\\!", "!");
+
+            // You can add more rules here if you find other unnecessarily escaped characters.
+            // For example: message = message.Replace("\\(", "(");
+
+            return message;
+        }
 
         private string FormatNewsMessage(List<NewsItem> newsItems, string symbol, int currentPage, int totalCount, int pageSize, bool isVipUser)
         {
             var sb = new StringBuilder();
             var currencyDisplayName = GetCurrencyDisplayName(symbol);
-            int totalPages = Math.Max(1, (int)Math.Ceiling((double)totalCount / pageSize)); // Ensure totalPages is at least 1
+            int totalPages = Math.Max(1, (int)Math.Ceiling((double)totalCount / pageSize));
 
-            sb.AppendLine($"📰 *Fundamental News: {EscapeMarkdownV2(currencyDisplayName)}*");
-            sb.AppendLine($"Page {currentPage} of {totalPages} ({totalCount} item{(totalCount == 1 ? "" : "s")})");
-            sb.AppendLine($"_Last {(isVipUser ? VipNewsDaysLimit : FreeNewsDaysLimit)} days. For full history & more, consider VIP._");
-            sb.AppendLine("---");
+            // --- Header Section ---
+            // The escaping for the header is done first. The cleanup will be done at the very end.
+            sb.AppendLine($"📊 *Fundamental News: {TelegramMessageFormatter.EscapeMarkdownV2(currencyDisplayName)}*");
+            sb.AppendLine();
+            sb.AppendLine($"📖 Page {currentPage} of {totalPages} `({totalCount} item{(totalCount == 1 ? "" : "s")})`");
+            sb.AppendLine($"🕰️ _Last {(isVipUser ? VipNewsDaysLimit : FreeNewsDaysLimit)} days. For full history & more, consider VIP._");
+            sb.AppendLine("`-----------------------------------`");
 
+            // --- No News Message ---
             if (!newsItems.Any())
             {
-                sb.AppendLine("_No news items match your current selection on this page._");
-                return sb.ToString();
+                sb.AppendLine();
+                sb.AppendLine("ℹ️ _No news items match your current selection on this page._");
+                // Apply cleanup even to this short message before returning.
+                return CleanUpFinalMessage(sb.ToString());
             }
 
+            // --- News Items Section ---
             int itemNumberGlobal = (currentPage - 1) * pageSize + 1;
             foreach (var item in newsItems)
             {
-                var title = EscapeMarkdownV2(item.Title ?? "Untitled News");
-                // Using item.Summary as per your entity (which was item.Description before)
-                var summary = EscapeMarkdownV2(
-                    !string.IsNullOrWhiteSpace(item.Summary) && item.Summary.Length > 180
-                        ? item.Summary.Substring(0, 180).Trim() + "..."
-                        : (item.Summary ?? "No summary.")
+                var title = TelegramMessageFormatter.EscapeMarkdownV2(item.Title ?? "Untitled News");
+                var summary = TelegramMessageFormatter.EscapeMarkdownV2(
+                    TruncateWithEllipsis(item.Summary, 180) ?? "No summary."
                 );
-                var publishedAt = item.PublishedDate.ToString("MMM dd, yyyy HH:mm 'UTC'"); // PublishedDate is not nullable in your entity
-                var sourceName = EscapeMarkdownV2(item.SourceName ?? item.RssSource?.SourceName ?? "Unknown Source"); // Prioritize direct SourceName
+                var publishedAt = item.PublishedDate.ToString("MMM dd, yyyy HH:mm 'UTC'");
+                var sourceName = TelegramMessageFormatter.EscapeMarkdownV2(item.SourceName ?? item.RssSource?.SourceName ?? "Unknown Source");
 
-                sb.AppendLine($"*{itemNumberGlobal}\\. {title}*");
-                sb.AppendLine($" _{sourceName} \\| {publishedAt}_ "); // Use pipe for visual separation
+                sb.AppendLine();
+                sb.AppendLine($"🔸 *{itemNumberGlobal}\\. {title}*");
+                sb.AppendLine($"🏦 _{sourceName}_  |  🗓️ _{publishedAt}_ ");
                 sb.AppendLine(summary);
-                if (!string.IsNullOrWhiteSpace(item.Link))
+
+                if (!string.IsNullOrWhiteSpace(item.Link) && Uri.TryCreate(item.Link, UriKind.Absolute, out Uri? validUri))
                 {
-                    // Ensure the link is a valid absolute URL before creating a Markdown link
-                    if (Uri.TryCreate(item.Link, UriKind.Absolute, out _))
-                    {
-                        sb.AppendLine($"[Read Full Article]({item.Link})");
-                    }
-                    else
-                    {
-                        _logger.LogWarning("FundamentalAnalysisCBQ: Invalid URI for news item link: {Link}", item.Link);
-                        sb.AppendLine($"_Full article link unavailable (invalid format)_");
-                    }
+                    sb.AppendLine($"🔗 [Read Full Article]({validUri.AbsoluteUri})");
                 }
-                sb.AppendLine("---");
+                else if (!string.IsNullOrWhiteSpace(item.Link))
+                {
+                 
+                    sb.AppendLine($"⚠️ _Full article link unavailable (invalid format)_");
+                }
+
+                sb.AppendLine("`-----------------------------------`");
                 itemNumberGlobal++;
             }
-            return sb.ToString();
+
+            // ✅✅ --- THE FIX IS HERE --- ✅✅
+            // The cleanup is now done on the entire generated string, including the header.
+            // I've moved the logic into its own helper method for clarity.
+            return CleanUpFinalMessage(sb.ToString());
+        }
+
+        /// <summary>
+        /// Truncates a string to a specified maximum length, appending an ellipsis "..." if truncated.
+        /// This method is null-safe and handles edge cases for length and whitespace.
+        /// </summary>
+        /// <param name="text">The string to truncate. Can be null or empty.</param>
+        /// <param name="maxLength">The maximum length of the returned string, including the ellipsis.</param>
+        /// <returns>The truncated string, or the original string if it's shorter than the max length.</returns>
+        private string? TruncateWithEllipsis(string? text, int maxLength)
+        {
+            // 1. Handle null or empty input gracefully.
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return text; // Return null or whitespace as is.
+            }
+
+            // 2. Ensure maxLength is valid. The ellipsis itself is 3 chars long.
+            // If maxLength is too small, truncation isn't meaningful.
+            if (maxLength < 4)
+            {
+                // Can't fit text and an ellipsis, so just return a substring of the original.
+                return text.Length <= maxLength ? text : text.Substring(0, maxLength);
+            }
+
+            // 3. Check if truncation is even necessary.
+            if (text.Length <= maxLength)
+            {
+                return text;
+            }
+
+            // 4. Perform the truncation.
+            // We subtract 3 from maxLength to make space for the "..."
+            string truncatedText = text.Substring(0, maxLength - 3);
+
+            // 5. Clean up the result.
+            // Trim any trailing whitespace that might result from cutting the string.
+            return truncatedText.TrimEnd() + "...";
         }
 
         private InlineKeyboardMarkup BuildPaginationKeyboard(string symbol, int currentPage, int totalCount, int pageSize, bool isVipUser)
@@ -417,22 +529,6 @@ namespace TelegramPanel.Application.CommandHandlers
                 ? details.Name
                 : symbol;
         }
-        private (string Name, string Category) GetCurrencyDisplayNameAndCategory(string symbol)
-        {
-            if (_currencyInfoSettings.Currencies != null && _currencyInfoSettings.Currencies.TryGetValue(symbol, out var details))
-            {
-                return (details.Name ?? symbol, details.Category ?? "Unknown");
-            }
-            // Basic fallback for category inference if not in settings
-            return (symbol, (symbol.Length == 6 && char.IsLetter(symbol[0])) ? "Forex" : (symbol.Contains("USD") ? "Commodity" : "Unknown"));
-        }
-
-
-        private string EscapeMarkdownV2(string text)
-        {
-            if (string.IsNullOrEmpty(text)) return string.Empty;
-            var markdownEscapeRegex = new Regex(@"([_*\[\]()~`>#+\-=|{}.!])", RegexOptions.Compiled | RegexOptions.CultureInvariant);
-            return markdownEscapeRegex.Replace(text, @"\$1");
-        }
+       
     }
 }

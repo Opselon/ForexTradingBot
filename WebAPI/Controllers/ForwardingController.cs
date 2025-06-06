@@ -84,6 +84,9 @@ namespace WebAPI.Controllers
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
+
+
+
         /// <summary>
         /// Manually triggers background processing for a specific message.
         /// </summary>
@@ -135,6 +138,8 @@ namespace WebAPI.Controllers
         }
 
 
+
+
         [HttpGet("rules")]
         public async Task<ActionResult<IEnumerable<ForwardingRule>>> GetAllRules(CancellationToken cancellationToken)
         {
@@ -149,6 +154,9 @@ namespace WebAPI.Controllers
                 return StatusCode(500, "Error retrieving forwarding rules.");
             }
         }
+
+
+
 
         [HttpGet("rules/{ruleName}")]
         public async Task<ActionResult<ForwardingRule>> GetRule(string ruleName, CancellationToken cancellationToken)
@@ -174,6 +182,8 @@ namespace WebAPI.Controllers
             }
         }
 
+
+
         [HttpGet("rules/channel/{sourceChannelId}")]
         public async Task<ActionResult<IEnumerable<ForwardingRule>>> GetRulesBySourceChannel(long sourceChannelId, CancellationToken cancellationToken)
         {
@@ -192,6 +202,9 @@ namespace WebAPI.Controllers
                 return StatusCode(500, "Error retrieving forwarding rules.");
             }
         }
+
+
+
 
         [HttpPost("rules")]
         public async Task<ActionResult> CreateRule([FromBody] ForwardingRule rule, CancellationToken cancellationToken)
@@ -217,6 +230,8 @@ namespace WebAPI.Controllers
                 return StatusCode(500, "Error creating forwarding rule.");
             }
         }
+
+
 
         [HttpPut("rules/{ruleName}")]
         public async Task<ActionResult> UpdateRule(string ruleName, [FromBody] ForwardingRule rule, CancellationToken cancellationToken)
@@ -244,6 +259,8 @@ namespace WebAPI.Controllers
             }
         }
 
+
+
         [HttpDelete("rules/{ruleName}")]
         public async Task<ActionResult> DeleteRule(string ruleName, CancellationToken cancellationToken)
         {
@@ -268,5 +285,8 @@ namespace WebAPI.Controllers
                 return StatusCode(500, "Error deleting forwarding rule.");
             }
         }
+
+
+
     }
 }

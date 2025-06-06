@@ -172,14 +172,14 @@ namespace Infrastructure.Services
             // Subscribe to WTelegramClient's OnUpdates event to process incoming updates.
             _client.OnUpdates += async updates =>
             {
-          //      _logger.LogCritical("[USER_API_ON_UPDATES_TRIGGERED] Raw updates object of type: {UpdateType} from WTelegram.Client", updates.GetType().FullName);
+                //      _logger.LogCritical("[USER_API_ON_UPDATES_TRIGGERED] Raw updates object of type: {UpdateType} from WTelegram.Client", updates.GetType().FullName);
                 if (updates is TL.UpdatesBase updatesBase) // Use TL.UpdatesBase
                 {
                     await HandleUpdatesBaseAsync(updatesBase);
                 }
                 else
                 {
-                 //   _logger.LogWarning("[USER_API_ON_UPDATES_TRIGGERED] Received 'updates' that is NOT UpdatesBase. Type: {UpdateType}", updates.GetType().FullName);
+                    //   _logger.LogWarning("[USER_API_ON_UPDATES_TRIGGERED] Received 'updates' that is NOT UpdatesBase. Type: {UpdateType}", updates.GetType().FullName);
                 }
             };
 
@@ -257,8 +257,6 @@ namespace Infrastructure.Services
         }
         #endregion
 
-
-
         #region Configuration Provider
 
 
@@ -301,7 +299,7 @@ namespace Infrastructure.Services
             _logger.LogInformation("Update processing channel pipeline started.");
         }
 
-       
+
 
         public async Task StopUpdateChannelPipelineAsync()
         {
@@ -629,32 +627,26 @@ namespace Infrastructure.Services
 
             // Level 2: Smarter Cache Updates - Use ConcurrentDictionary's AddOrUpdate for efficiency
             // Level 1: Reduce String Allocations in Logging for cache updates by making logging conditional
-            if (_logger.IsEnabled(LogLevel.Trace))
+            // Refactoring: Moved AddOrUpdate outside the conditional logging as it's efficient.
+            // Only the LogTrace call is now conditional.
+            foreach (var userEntry in _internalWtcUserCache)
             {
-                foreach (var userEntry in _internalWtcUserCache)
+                _userCacheWithExpiry.AddOrUpdate(userEntry.Key,
+                                                (userEntry.Value, expiryTime),
+                                                (key, existingVal) => (userEntry.Value, expiryTime)); // Always update value and expiry
+                if (_logger.IsEnabled(LogLevel.Trace))
                 {
-                    _userCacheWithExpiry.AddOrUpdate(userEntry.Key,
-                                                    (userEntry.Value, expiryTime),
-                                                    (key, existingVal) => (userEntry.Value, expiryTime)); // Always update value and expiry
                     _logger.LogTrace("Cached user {UserId} with expiry {ExpiryTime}.", userEntry.Key, expiryTime);
                 }
-                foreach (var chatEntry in _internalWtcChatCache)
-                {
-                    _chatCacheWithExpiry.AddOrUpdate(chatEntry.Key,
-                                                    (chatEntry.Value, expiryTime),
-                                                    (key, existingVal) => (chatEntry.Value, expiryTime)); // Always update value and expiry
-                    _logger.LogTrace("Cached chat {ChatId} with expiry {ExpiryTime}.", chatEntry.Key, expiryTime);
-                }
             }
-            else // Optimized path if Trace logging is disabled to avoid delegate overhead
+            foreach (var chatEntry in _internalWtcChatCache)
             {
-                foreach (var userEntry in _internalWtcUserCache)
+                _chatCacheWithExpiry.AddOrUpdate(chatEntry.Key,
+                                                (chatEntry.Value, expiryTime),
+                                                (key, existingVal) => (chatEntry.Value, expiryTime)); // Always update value and expiry
+                if (_logger.IsEnabled(LogLevel.Trace))
                 {
-                    _userCacheWithExpiry.AddOrUpdate(userEntry.Key, (userEntry.Value, expiryTime), (key, existingVal) => (userEntry.Value, expiryTime));
-                }
-                foreach (var chatEntry in _internalWtcChatCache)
-                {
-                    _chatCacheWithExpiry.AddOrUpdate(chatEntry.Key, (chatEntry.Value, expiryTime), (key, existingVal) => (chatEntry.Value, expiryTime));
+                    _logger.LogTrace("Cached chat {ChatId} with expiry {ExpiryTime}.", chatEntry.Key, expiryTime);
                 }
             }
 
@@ -689,7 +681,7 @@ namespace Infrastructure.Services
             else
             {
                 // Log if an unknown update type is received and not handled
-              //  _logger.LogWarning("HandleUpdatesBaseAsync: Unhandled UpdatesBase type: {UpdatesBaseType}.", updatesBase.GetType().Name);
+                //  _logger.LogWarning("HandleUpdatesBaseAsync: Unhandled UpdatesBase type: {UpdatesBaseType}.", updatesBase.GetType().Name);
             }
 
             // Dispatch all collected updates to subscribers.
@@ -697,7 +689,7 @@ namespace Infrastructure.Services
             {
                 _logger.LogInformation("HandleUpdatesBaseAsync: Preparing to dispatch {DispatchCount} TL.Update object(s).", updatesToDispatch.Count);
 
-                // Level 10: Use Channel for dispatch if enabled
+                // Level 10: Use Channel for dispatch if enabled (Recommended for high-throughput and decoupled processing)
                 if (_useChannelForDispatch && _updateChannel != null)
                 {
                     foreach (var update in updatesToDispatch)
@@ -707,32 +699,54 @@ namespace Infrastructure.Services
                         {
                             _logger.LogTrace("HandleUpdatesBaseAsync: Writing update of type {UpdateType} to channel.", update.GetType().Name);
                         }
+                        // This WriteAsync is non-blocking and adds the update to the channel.
+                        // A separate consumer task (StartUpdateChannelPipeline) will read and process these updates.
                         await _updateChannel.Writer.WriteAsync(update); // Writer is now correctly accessed
                     }
                     _logger.LogInformation("HandleUpdatesBaseAsync: Finished writing {DispatchCount} TL.Update object(s) to channel.", updatesToDispatch.Count);
                 }
-                else // Fallback to direct event dispatch if channel is not used
+                else // Fallback to direct event dispatch if channel is not used (Potentially blocking if handlers are sync/long-running)
                 {
-                    // Due to interface constraints (Action<TL.Update>), we must invoke synchronously.
-                    // Subscribers must handle async work internally (e.g., Task.Run or async void).
+                    // CRITICAL FIX: To prevent HandleUpdatesBaseAsync from blocking the main update reception thread,
+                    // we offload the synchronous event invocation to the Thread Pool using Task.Run.
+                    // This makes the invocation fire-and-forget from the perspective of this method,
+                    // allowing it to quickly process the next incoming Telegram update.
                     foreach (var update in updatesToDispatch)
                     {
+                        // Capture the update variable for the lambda expression to avoid closure over loop variable,
+                        // ensuring each Task operates on its specific 'update' object.
+                        var currentUpdate = update;
+
                         // Level 7: Conditional logging for direct dispatch
                         if (_logger.IsEnabled(LogLevel.Trace))
                         {
-                            _logger.LogTrace("HandleUpdatesBaseAsync: Directly dispatching update of type {UpdateType}. Update content (partial): {UpdateContent}",
-                                             update.GetType().Name, GetUpdateContentForLogging(update));
+                            _logger.LogTrace("HandleUpdatesBaseAsync: Directly dispatching update of type {UpdateType}. Update content (partial): {UpdateContent} via Task.Run.",
+                                             currentUpdate.GetType().Name, GetUpdateContentForLogging(currentUpdate));
                         }
-                        try
+
+                        // IMPORTANT CHANGE: Wrapping the event invocation in Task.Run()
+                        // This allows HandleUpdatesBaseAsync to continue processing other updates
+                        // without waiting for the event subscribers to complete their work.
+                        // The '_' discards the Task, indicating a "fire-and-forget" pattern.
+                        _ = Task.Run(() =>
                         {
-                            OnCustomUpdateReceived?.Invoke(update);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogError(ex, "HandleUpdatesBaseAsync: Exception during OnCustomUpdateReceived invocation for update type {UpdateType}. Update content (partial): {UpdateContent}", update.GetType().Name, GetUpdateContentForLogging(update, 100));
-                        }
+                            try
+                            {
+                                // Invoke the event handler. Any long-running or blocking operation here
+                                // will now run on a Thread Pool thread, not blocking HandleUpdatesBaseAsync.
+                                OnCustomUpdateReceived?.Invoke(currentUpdate);
+                            }
+                            catch (Exception ex)
+                            {
+                                // Log any exceptions that occur within the event handlers,
+                                // as they won't propagate back to HandleUpdatesBaseAsync directly.
+                                _logger.LogError(ex, "HandleUpdatesBaseAsync: Exception during OnCustomUpdateReceived invocation in Task.Run for update type {UpdateType}. Update content (partial): {UpdateContent}", currentUpdate.GetType().Name, GetUpdateContentForLogging(currentUpdate, 100));
+                            }
+                        });
                     }
-                    _logger.LogInformation("HandleUpdatesBaseAsync: Finished direct dispatch of {DispatchCount} TL.Update object(s).", updatesToDispatch.Count);
+                    // Adjusted log message: We have initiated the dispatch of tasks to the Thread Pool,
+                    // but this method is no longer 'finished' waiting for their completion.
+                    _logger.LogInformation("HandleUpdatesBaseAsync: Initiated direct dispatch for {DispatchCount} TL.Update object(s) via Task.Run.", updatesToDispatch.Count);
                 }
             }
             else
@@ -743,7 +757,9 @@ namespace Infrastructure.Services
             // stopwatch.Stop();
             // _logger.LogInformation("HandleUpdatesBaseAsync completed in {ElapsedMs}ms.", stopwatch.Elapsed.TotalMilliseconds);
         }
-    
+
+
+
         /// <summary>
         /// Truncates a string for logging purposes.
         /// </summary>
@@ -1690,7 +1706,8 @@ namespace Infrastructure.Services
                     {
                         if (resolvedUsernameResponse.peer is PeerUser pu)
                         {
-                            User? userObj = resolvedUsernameResponse.users.GetValueOrDefault(pu.user_id);
+                            // THIS IS THE CORRECTED LINE 655
+                            TL.User? userObj = resolvedUsernameResponse.users.GetValueOrDefault(pu.user_id);
                             long accessHash = userObj?.access_hash ?? 0;
                             _logger.LogInformation("ResolvePeerAsync: Resolved via Contacts_ResolveUsername to User {UserId} (AccessHash: {AccessHash}) for string '{ResolveString}'.",
                                 pu.user_id, accessHash, resolveString);

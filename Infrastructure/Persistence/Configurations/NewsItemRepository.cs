@@ -242,39 +242,37 @@ namespace Infrastructure.Persistence.Repositories
             DateTime untilDate,
             int pageNumber,
             int pageSize,
-            bool matchAllKeywords = false, // Default is OR search for keywords
-            bool isUserVip = false,        // To filter by NewsItem.IsVipOnly
+            bool matchAllKeywords = false,
+            bool isUserVip = false,
             CancellationToken cancellationToken = default)
         {
-            _logger.LogDebug("SearchNewsAsync called. Keywords: [{Keywords}], Since: {SinceDate}, Until: {UntilDate}, Page: {Page}, PageSize: {PageSize}, IsVIP: {IsVip}",
-                string.Join(",", keywords ?? Enumerable.Empty<string>()), sinceDate, untilDate, pageNumber, pageSize, isUserVip);
+            _logger.LogDebug("SearchNewsAsync (Fallback LIKE method) called...");
 
             if (pageNumber <= 0) pageNumber = 1;
-            if (pageSize <= 0) pageSize = 10; // Default page size
+            if (pageSize <= 0) pageSize = 10;
 
             try
             {
-                return await _retryPolicy.ExecuteAsync(async () =>
+                // Using Polly as before
+                return await _retryPolicy.ExecuteAsync(async (ct) =>
                 {
                     using var connection = CreateConnection();
-                    await connection.OpenAsync(cancellationToken);
+                    await connection.OpenAsync(ct);
 
                     var whereClauses = new List<string>();
                     var parameters = new DynamicParameters();
 
-                    // Date filtering
-                    whereClauses.Add("n.PublishedDate >= @SinceDate");
-                    whereClauses.Add("n.PublishedDate <= @UntilDate");
+                    // --- Date and VIP Filtering ---
+                    whereClauses.Add("n.PublishedDate >= @SinceDate AND n.PublishedDate <= @UntilDate");
                     parameters.Add("SinceDate", sinceDate);
                     parameters.Add("UntilDate", untilDate);
-
-                    // VIP filtering
                     if (!isUserVip)
                     {
-                        whereClauses.Add("n.IsVipOnly = 0"); // SQL Server boolean false
+                        whereClauses.Add("n.IsVipOnly = 0");
                     }
 
-                    // Keyword filtering
+                    // ✅✅ --- REVERTING TO THE ORIGINAL, WORKING `LIKE` LOGIC --- ✅✅
+                    // This is not the fastest, but it works without any special DB setup.
                     var keywordList = keywords?.Select(k => k.Trim()).Where(k => !string.IsNullOrWhiteSpace(k)).ToList();
                     if (keywordList != null && keywordList.Any())
                     {
@@ -283,83 +281,71 @@ namespace Infrastructure.Persistence.Repositories
                         {
                             var keyword = keywordList[i];
                             var paramName = $"keyword{i}";
-                            // Use COLLATE for case-insensitive search if your database is not configured as such by default
-                            // Alternatively, ensure your DB collation is case-insensitive (e.g., SQL_Latin1_General_CP1_CI_AS)
-                            keywordConditions.Add($"(LOWER(n.Title) LIKE '%' + LOWER(@{paramName}) + '%') OR (LOWER(n.Summary) LIKE '%' + LOWER(@{paramName}) + '%') OR (LOWER(n.FullContent) LIKE '%' + LOWER(@{paramName}) + '%')");
+                            // We search in Title and Summary. Searching in FullContent can be very slow.
+                            keywordConditions.Add($"(LOWER(n.Title) LIKE '%' + LOWER(@{paramName}) + '%' OR LOWER(n.Summary) LIKE '%' + LOWER(@{paramName}) + '%')");
                             parameters.Add(paramName, keyword);
                         }
 
-                        if (matchAllKeywords) // AND logic
-                        {
-                            whereClauses.Add($"({string.Join(" AND ", keywordConditions)})");
-                        }
-                        else // OR logic (default)
-                        {
-                            whereClauses.Add($"({string.Join(" OR ", keywordConditions)})");
-                        }
+                        string keywordOperator = matchAllKeywords ? " AND " : " OR ";
+                        whereClauses.Add($"({string.Join(keywordOperator, keywordConditions)})");
                     }
 
-                    var fullWhereClause = whereClauses.Any() ? " WHERE " + string.Join(" AND ", whereClauses) : "";
+                    var fullWhereClause = whereClauses.Any() ? "WHERE " + string.Join(" AND ", whereClauses) : "";
 
-                    // Total Count Query
-                    // Pass CommandTimeout explicitly for potentially long-running count queries
+                    // --- Back to Two Separate Queries ---
+                    // This is necessary because QueryMultiple + Multi-mapping is problematic in Dapper.
+
+                    // Query 1: Get the total count
                     var countSql = $"SELECT COUNT(n.Id) FROM NewsItems n {fullWhereClause};";
-                    var totalCount = await connection.ExecuteScalarAsync<int>(new CommandDefinition(countSql, parameters, commandTimeout: CommandTimeoutSeconds));
+                    var totalCount = await connection.ExecuteScalarAsync<int>(
+                        new CommandDefinition(countSql, parameters, commandTimeout: CommandTimeoutSeconds, cancellationToken: ct)
+                    );
 
                     if (totalCount == 0)
                     {
                         return (new List<NewsItem>(), 0);
                     }
 
-                    // Main Search Query with Pagination and Ordering
+                    // Query 2: Get the paged data
                     var sql = $@"
-                        SELECT
-                            n.Id, n.Title, n.Link, n.Summary, n.FullContent, n.ImageUrl, n.PublishedDate, n.CreatedAt, n.LastProcessedAt,
-                            n.SourceName, n.SourceItemId, n.SentimentScore, n.SentimentLabel, n.DetectedLanguage, n.AffectedAssets,
-                            n.RssSourceId, n.IsVipOnly, n.AssociatedSignalCategoryId,
-                            rs.Id AS RssSource_Id, rs.Url AS RssSource_Url, rs.SourceName AS RssSource_SourceName, rs.IsActive AS RssSource_IsActive, rs.CreatedAt AS RssSource_CreatedAt, rs.UpdatedAt AS RssSource_UpdatedAt, rs.LastModifiedHeader AS RssSource_LastModifiedHeader, rs.ETag AS RssSource_ETag, rs.LastFetchAttemptAt AS RssSource_LastFetchAttemptAt, rs.LastSuccessfulFetchAt AS RssSource_LastSuccessfulFetchAt, rs.FetchIntervalMinutes AS RssSource_FetchIntervalMinutes, rs.FetchErrorCount AS RssSource_FetchErrorCount, rs.Description AS RssSource_Description, rs.DefaultSignalCategoryId AS RssSource_DefaultSignalCategoryId,
-                            sc.Id AS AssociatedSignalCategory_Id, sc.Name AS AssociatedSignalCategory_Name, sc.Description AS AssociatedSignalCategory_Description, sc.IsActive AS AssociatedSignalCategory_IsActive, sc.SortOrder AS AssociatedSignalCategory_SortOrder
-                        FROM NewsItems n
-                        LEFT JOIN RssSources rs ON n.RssSourceId = rs.Id
-                        LEFT JOIN SignalCategories sc ON n.AssociatedSignalCategoryId = sc.Id
-                        {fullWhereClause}
-                        ORDER BY n.PublishedDate DESC, n.CreatedAt DESC
-                        OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;";
+                SELECT
+                    n.Id, n.Title, n.Link, n.Summary, n.FullContent, n.ImageUrl, n.PublishedDate, n.CreatedAt, 
+                    n.SourceName, n.IsVipOnly, n.AssociatedSignalCategoryId,
+                    rs.Id AS RssSource_Id, rs.SourceName AS RssSource_SourceName,
+                    sc.Id AS AssociatedSignalCategory_Id, sc.Name AS AssociatedSignalCategory_Name
+                FROM NewsItems n
+                LEFT JOIN RssSources rs ON n.RssSourceId = rs.Id
+                LEFT JOIN SignalCategories sc ON n.AssociatedSignalCategoryId = sc.Id
+                {fullWhereClause}
+                ORDER BY n.PublishedDate DESC
+                OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;";
 
                     parameters.Add("Offset", (pageNumber - 1) * pageSize);
                     parameters.Add("PageSize", pageSize);
 
-                    // Multi-mapping to reconstruct NewsItem with RssSource and AssociatedSignalCategory
-                    // Use a Dictionary to keep track of unique NewsItem entities and avoid duplicates from joins.
+                    // This multi-mapping call is correct and works with a separate query.
                     var newsItemsMap = new Dictionary<Guid, NewsItem>();
-
                     var items = await connection.QueryAsync<NewsItemDbDto, RssSourceMapDto, SignalCategoryMapDto, NewsItem>(
-                        new CommandDefinition(sql, parameters, commandTimeout: CommandTimeoutSeconds), // <--- ADDED: Pass CommandTimeout
+                        new CommandDefinition(sql, parameters, commandTimeout: CommandTimeoutSeconds, cancellationToken: ct),
                         (newsItemDto, rssSourceDto, signalCategoryDto) =>
                         {
                             if (!newsItemsMap.TryGetValue(newsItemDto.Id, out var newsItem))
                             {
-                                newsItem = newsItemDto.ToDomainEntity(); // NewsItemDbDto includes RssSource and SignalCategory aliased fields
+                                newsItem = newsItemDto.ToDomainEntity();
                                 newsItemsMap.Add(newsItem.Id, newsItem);
                             }
-
-                            // The ToDomainEntity in NewsItemDbDto should handle populating NewsItem.RssSource and NewsItem.AssociatedSignalCategory
-                            // based on the aliased properties it receives.
-                            // So, no need to manually set newsItem.RssSource or newsItem.AssociatedSignalCategory here from rssSourceDto or signalCategoryDto.
-                            // The direct properties on NewsItemDbDto (RssSource_Id, RssSource_Url etc.) should have been used by NewsItemDbDto.ToDomainEntity()
-
-                            return newsItem; // Dapper still needs a return value from the delegate
+                            return newsItem;
                         },
-                        splitOn: "RssSource_Id,AssociatedSignalCategory_Id" // These mark where the next DTO starts in the flattened row
+                        splitOn: "RssSource_Id,AssociatedSignalCategory_Id"
                     );
 
-                    _logger.LogDebug("SearchNewsAsync found {TotalCount} items, returning page {PageNumber} with {PageItemCount} items.", totalCount, pageNumber, newsItemsMap.Values.Count);
                     return (newsItemsMap.Values.ToList(), totalCount);
-                });
+
+                }, cancellationToken);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error in SearchNewsAsync operation.");
+                _logger.LogError(ex, "Error in SearchNewsAsync operation (using LIKE fallback).");
                 throw new RepositoryException("Failed to search news items.", ex);
             }
         }

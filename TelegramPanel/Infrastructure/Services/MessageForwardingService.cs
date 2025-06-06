@@ -294,7 +294,7 @@ namespace TelegramPanel.Infrastructure.Services
                     MessageEntityType.PhoneNumber => new TL.MessageEntityPhone { Offset = tbEntity.Offset, Length = tbEntity.Length },
                     MessageEntityType.TextMention => new TL.MessageEntityMentionName { Offset = tbEntity.Offset, Length = tbEntity.Length, user_id = tbEntity.User?.Id ?? 0 },
                     MessageEntityType.Blockquote => new TL.MessageEntityBlockquote { Offset = tbEntity.Offset, Length = tbEntity.Length, flags = 0 },
-                  //  MessageEntityType.CustomEmoji => new TL.MessageEntityCustomEmoji { Offset = tbEntity.Offset, Length = tbEntity.Length, document_id = tbEntity.CustomEmojiId ?? 0 },
+                    //  MessageEntityType.CustomEmoji => new TL.MessageEntityCustomEmoji { Offset = tbEntity.Offset, Length = tbEntity.Length, document_id = tbEntity.CustomEmojiId ?? 0 },
                     _ => null
                 };
             }

@@ -24,6 +24,7 @@ namespace Application.Services
         private readonly INotificationJobScheduler _jobScheduler;
         private readonly ILogger<NotificationDispatchService> _logger;
         private readonly INewsItemRepository _newsItemRepository;
+        private const int BatchSize = 1;
         #endregion
 
         #region Constructor
@@ -52,20 +53,19 @@ namespace Application.Services
             NewsItem? newsItem = await _newsItemRepository.GetByIdAsync(newsItemId, cancellationToken);
             if (newsItem == null)
             {
-                _logger.LogWarning("News item with ID {NewsItemId} not found. Cannot dispatch notifications.", newsItemId);
+                _logger.LogWarning("News item with ID {NewsItemId} not found. Cannot dispatch.", newsItemId);
                 return;
             }
 
             using (_logger.BeginScope(new Dictionary<string, object?>
             {
                 ["NewsItemId"] = newsItem.Id,
-                ["NewsTitleScope"] = newsItem.Title?.Truncate(50) ?? "No Title",
-                ["NewsItemIsVip"] = newsItem.IsVipOnly,
-                ["NewsItemCategoryId"] = newsItem.AssociatedSignalCategoryId
+                ["NewsTitleScope"] = newsItem.Title?.Truncate(50) ?? "No Title"
             }))
             {
-                _logger.LogInformation("Initiating notification dispatch for news item.");
+                _logger.LogInformation("Initiating BATCH notification dispatch for news item.");
 
+                // دریافت کل کاربران (بدون تغییر در Repository)
                 IEnumerable<User> targetUsers;
                 try
                 {
@@ -81,76 +81,70 @@ namespace Application.Services
                     return;
                 }
 
-                if (targetUsers == null)
-                {
-                    _logger.LogError("User repository returned null for targetUsers, which is unexpected. Assuming no users.");
-                    targetUsers = Enumerable.Empty<User>();
-                }
-
-                var targetUserList = targetUsers.ToList();
-
+                var targetUserList = targetUsers?.ToList() ?? new List<User>();
                 if (!targetUserList.Any())
                 {
-                    _logger.LogInformation("No target users found for news item based on preferences/subscriptions.");
+                    _logger.LogInformation("No target users found for news item.");
                     return;
                 }
-                _logger.LogInformation("Identified {UserCount} target users for news item.", targetUserList.Count);
 
-                int dispatchedCount = 0;
-                int skippedInvalidTelegramIdCount = 0;
+                _logger.LogInformation("Fetched {UserCount} total users. Now chunking into batches of {BatchSize}.", targetUserList.Count, BatchSize);
 
+                // 1. دسته‌بندی کاربران (Chunking)
+                // ابتدا شناسه‌های تلگرام معتبر را استخراج کرده و سپس آن‌ها را دسته‌بندی می‌کنیم.
+                // متد Chunk نیازمند .NET 6 یا بالاتر است.
+                var userBatches = targetUserList
+                    .Select(u => long.TryParse(u.TelegramId, out long id) ? (long?)id : null)
+                    .Where(id => id.HasValue)
+                    .Select(id => id.Value)
+                    .Chunk(BatchSize);
+
+                // استخراج پارامترهای مشترک پیام (یک بار)
                 string messageText = BuildMessageText(newsItem);
                 string? imageUrl = newsItem.ImageUrl;
                 var buttons = BuildNotificationButtons(newsItem);
+                var categoryId = newsItem.AssociatedSignalCategoryId;
+                var categoryName = newsItem.AssociatedSignalCategory?.Name ?? string.Empty;
 
-                foreach (var user in targetUserList)
+                int totalUsersEnqueued = 0;
+                int batchNumber = 1;
+
+                // 2. ایجاد یک جاب برای هر دسته
+                foreach (var userBatch in userBatches)
                 {
                     if (cancellationToken.IsCancellationRequested)
                     {
-                        _logger.LogInformation("Notification dispatch process cancelled by request. {DispatchedCount} jobs enqueued.", dispatchedCount);
+                        _logger.LogWarning("Dispatch process was cancelled. {TotalUsersEnqueued} users were enqueued in batches.", totalUsersEnqueued);
                         break;
                     }
 
-                    if (string.IsNullOrWhiteSpace(user.TelegramId) || !long.TryParse(user.TelegramId, out long telegramUserId))
-                    {
-                        _logger.LogWarning("User {UserId} (System Username: {SystemUsername}) has an invalid or missing TelegramId ('{UserTelegramId}'). Skipping notification.",
-                                           user.Id, user.Username, user.TelegramId);
-                        skippedInvalidTelegramIdCount++;
-                        continue;
-                    }
-
-                    var payload = new NotificationJobPayload
-                    {
-                        TargetTelegramUserId = telegramUserId,
-                        MessageText = messageText,
-                        UseMarkdown = true, // Keep true, tells Telegram API to parse Markdown.
-                        ImageUrl = imageUrl,
-                        NewsItemId = newsItem.Id,
-                        NewsItemSignalCategoryId = newsItem.AssociatedSignalCategoryId,
-                        NewsItemSignalCategoryName = newsItem.AssociatedSignalCategory?.Name ?? string.Empty,
-                        Buttons = buttons,
-                        CustomData = new Dictionary<string, string> { { "NewsItemId", newsItem.Id.ToString() } }
-                    };
-
                     try
                     {
+                        // فراخوانی متد جدید برای ارسال دسته‌ای
                         string jobId = _jobScheduler.Enqueue<INotificationSendingService>(
-                            sendingService => sendingService.SendNotificationAsync(payload, CancellationToken.None)
+                            service => service.SendBatchNotificationAsync(
+                                userBatch.ToList(),
+                                messageText,
+                                imageUrl,
+                                buttons,
+                                newsItem.Id,
+                                categoryId,
+                                categoryName,
+                                CancellationToken.None
+                            )
                         );
-
-                        _logger.LogInformation("Enqueued notification job {JobId} for User (SystemID: {SystemUserId}, TG_ID: {TelegramUserId}).",
-                                               jobId, user.Id, telegramUserId);
-                        dispatchedCount++;
+                        _logger.LogInformation("Enqueued batch job {JobId} for {UserCount} users (Batch #{BatchNumber}).",
+                                               jobId, userBatch.Length, batchNumber);
+                        totalUsersEnqueued += userBatch.Length;
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError(ex, "Failed to enqueue notification job for User (SystemID: {SystemUserId}, TG_ID: {TelegramUserId}). Payload: {@NotificationPayload}",
-                                         user.Id, telegramUserId, payload);
+                        _logger.LogError(ex, "Failed to enqueue batch job #{BatchNumber}. This batch of {UserCount} users will be skipped.", batchNumber, userBatch.Length);
                     }
+                    batchNumber++;
                 }
 
-                _logger.LogInformation("Notification dispatch completed. Total jobs enqueued: {DispatchedCount}. Users skipped due to invalid TelegramId: {SkippedCount}.",
-                                       dispatchedCount, skippedInvalidTelegramIdCount);
+                _logger.LogInformation("Completed enqueuing all batches. Total jobs created: {BatchCount}. Total users enqueued: {TotalUsersEnqueued}.", batchNumber - 1, totalUsersEnqueued);
             }
         }
 

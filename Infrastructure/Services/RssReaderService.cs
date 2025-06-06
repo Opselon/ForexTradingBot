@@ -130,18 +130,18 @@ namespace Infrastructure.Services
                         if (pollyResponse?.Result?.Headers?.RetryAfter?.Delta.HasValue == true)
                         {
                             delay = pollyResponse.Result.Headers.RetryAfter.Delta.Value.Add(TimeSpan.FromMilliseconds(new Random().Next(500, 1500)));
-   
+
                         }
                         else
                         {
                             delay = TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)) + TimeSpan.FromMilliseconds(new Random().Next(0, 500));
- 
+
                         }
                         return delay;
                     },
                     onRetryAsync: (pollyResponse, timespan, retryAttempt, context) =>
                     {
-                
+
                         string requestUri = pollyResponse?.Result?.RequestMessage?.RequestUri?.ToString() ?? "N/A";
                         return Task.CompletedTask;
                     });
@@ -178,7 +178,7 @@ namespace Infrastructure.Services
                 sleepDurationProvider: retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)) + TimeSpan.FromMilliseconds(new Random().Next(0, 500)), // Add jitter
                 onRetryAsync: (exception, timeSpan, retryAttempt, context) => // Changed to onRetryAsync
                 {
-                 
+
                     return Task.CompletedTask;
                 });
         }

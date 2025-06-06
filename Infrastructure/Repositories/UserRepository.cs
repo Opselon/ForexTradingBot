@@ -313,6 +313,13 @@ namespace Infrastructure.Persistence.Repositories
         }
 
         /// <inheritdoc />
+        /// <summary>
+        /// Fetches a user and their complete related entity graph by their Telegram ID in a single,
+        /// highly optimized database round-trip.
+        /// </summary>
+        /// <param name="telegramId">The user's unique Telegram ID.</param>
+        /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+        /// <returns>The complete User entity, or null if not found.</returns>
         public async Task<User?> GetByTelegramIdAsync(string telegramId, CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(telegramId))
@@ -320,45 +327,84 @@ namespace Infrastructure.Persistence.Repositories
                 _logger.LogWarning("UserRepository: GetByTelegramIdAsync called with null or empty telegramId.");
                 return null;
             }
-            _logger.LogTrace("UserRepository: Fetching user by TelegramID: {TelegramId}.", telegramId);
-            return await _retryPolicy.ExecuteAsync(async () =>
+
+            _logger.LogTrace("UserRepository: Fetching user and related entities by TelegramID: {TelegramId} in a single trip.", telegramId);
+
+            // ✅✅ --- OPTIMIZATION 1: COMBINED SQL FOR A SINGLE ROUND-TRIP --- ✅✅
+            // All queries are now in one command, executed by QueryMultiple.
+            const string combinedSql = @"
+        -- 1st Result: The main user
+        SELECT Id, Username, TelegramId, Email, Level, CreatedAt, UpdatedAt, EnableGeneralNotifications, EnableVipSignalNotifications, EnableRssNewsNotifications, PreferredLanguage
+        FROM Users 
+        WHERE TelegramId = @TelegramId;
+
+        -- 2nd Result: The user's wallet (if exists)
+        SELECT w.Id, w.UserId, w.Balance, w.IsActive, w.CreatedAt, w.UpdatedAt
+        FROM TokenWallets w
+        INNER JOIN Users u ON w.UserId = u.Id
+        WHERE u.TelegramId = @TelegramId;
+
+        -- 3rd Result: The user's subscriptions
+        SELECT s.Id, s.UserId, s.StartDate, s.EndDate, s.Status, s.ActivatingTransactionId, s.CreatedAt, s.UpdatedAt
+        FROM Subscriptions s
+        INNER JOIN Users u ON s.UserId = u.Id
+        WHERE u.TelegramId = @TelegramId;
+
+        -- 4th Result: The user's signal preferences
+        SELECT p.Id, p.UserId, p.CategoryId, p.CreatedAt
+        FROM UserSignalPreferences p
+        INNER JOIN Users u ON p.UserId = u.Id
+        WHERE u.TelegramId = @TelegramId;";
+
+            try
             {
-                using var connection = CreateConnection();
-                await connection.OpenAsync(cancellationToken);
+                return await _retryPolicy.ExecuteAsync(async (ct) =>
+                {
+                    using var connection = CreateConnection();
+                    await connection.OpenAsync(ct);
 
-                // Fetch user ID first to ensure we have a valid UserId for related queries
-                var userIdQuery = "SELECT Id FROM Users WHERE TelegramId = @TelegramId;";
-                var userId = await connection.ExecuteScalarAsync<Guid?>(userIdQuery, new { TelegramId = telegramId });
-                if (!userId.HasValue) return null; // No user found with this Telegram ID
+                    // ✅✅ --- OPTIMIZATION 2: SINGLE EXECUTION WITH QueryMultipleAsync --- ✅✅
+                    using var multi = await connection.QueryMultipleAsync(
+                        new CommandDefinition(combinedSql, new { TelegramId = telegramId }, cancellationToken: ct)
+                    );
 
-                // Use QueryMultiple to fetch main user and related entities
-                var sql = @"
-                    SELECT Id, Username, TelegramId, Email, Level, CreatedAt, UpdatedAt, EnableGeneralNotifications, EnableVipSignalNotifications, EnableRssNewsNotifications, PreferredLanguage
-                    FROM Users WHERE Id = @UserId; -- Use UserId found from first query
+                    // Read the first result (the user). If null, no need to proceed.
+                    var userDto = await multi.ReadFirstOrDefaultAsync<UserDbDto>();
+                    if (userDto == null)
+                    {
+                        _logger.LogTrace("User with TelegramID {TelegramId} not found.", telegramId);
+                        return null;
+                    }
 
-                    SELECT Id, UserId, Balance, IsActive, CreatedAt, UpdatedAt
-                    FROM TokenWallets WHERE UserId = @UserId;
+                    var user = userDto.ToDomainEntity();
 
-                    SELECT Id, UserId, StartDate, EndDate, Status, ActivatingTransactionId, CreatedAt, UpdatedAt
-                    FROM Subscriptions WHERE UserId = @UserId;
+                    // ✅✅ --- OPTIMIZATION 3: EFFICIENTLY HYDRATE THE OBJECT GRAPH --- ✅✅
+                    // Read the subsequent results and build the user object.
 
-                    SELECT Id, UserId, CategoryId, CreatedAt
-                    FROM UserSignalPreferences WHERE UserId = @UserId;";
+                    // Read wallet
+                    var walletDto = await multi.ReadFirstOrDefaultAsync<TokenWalletDbDto>();
+                    user.TokenWallet = walletDto?.ToDomainEntity() ?? TokenWallet.Create(user.Id); // Create default if null
 
-                // Pass the found userId to the subsequent queries
-                using var multi = await connection.QueryMultipleAsync(sql, new { UserId = userId.Value, TelegramId = telegramId }); // Pass TelegramId for the main user select, UserId for related
+                    // Read subscriptions and preferences in parallel if desired, though sequential is fine here.
+                    var subscriptionsDto = await multi.ReadAsync<SubscriptionDbDto>();
+                    user.Subscriptions = subscriptionsDto.Select(s => s.ToDomainEntity()).ToList();
 
-                var userDto = await multi.ReadFirstOrDefaultAsync<UserDbDto>();
-                if (userDto == null) return null; // Defensive check, should match userId
+                    var preferencesDto = await multi.ReadAsync<UserSignalPreferenceDbDto>();
+                    user.Preferences = preferencesDto.Select(usp => usp.ToDomainEntity()).ToList();
 
-                var user = userDto.ToDomainEntity();
-                user.TokenWallet = (await multi.ReadFirstOrDefaultAsync<TokenWalletDbDto>())?.ToDomainEntity() ?? TokenWallet.Create(user.Id);
-                user.Subscriptions = (await multi.ReadAsync<SubscriptionDbDto>()).Select(s => s.ToDomainEntity()).ToList();
-                user.Preferences = (await multi.ReadAsync<UserSignalPreferenceDbDto>()).Select(usp => usp.ToDomainEntity()).ToList();
-                user.Transactions = new List<Transaction>(); // Not fetched
+                    // Transactions are not fetched in this query.
+                    user.Transactions = new List<Transaction>();
 
-                return user;
-            });
+                    _logger.LogDebug("Successfully fetched and composed user {UserId} from TelegramID {TelegramId}.", user.Id, telegramId);
+                    return user;
+
+                }, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to get user by TelegramID {TelegramId} after retries.", telegramId);
+                throw new RepositoryException($"An error occurred while fetching user by TelegramID: {telegramId}", ex);
+            }
         }
 
         /// <inheritdoc />

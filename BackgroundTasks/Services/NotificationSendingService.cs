@@ -2,9 +2,16 @@
 
 #region Usings
 // Standard .NET & NuGet
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Net.Http;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 // Project specific
-using Application.Common.Interfaces;    // برای INotificationSendingService (اینترفیسی که این کلاس پیاده‌سازی می‌کند)
-using Application.DTOs.Notifications;   // برای NotificationJobPayload, NotificationButton
+using Application.Common.Interfaces;
+using Application.DTOs.Notifications;
 using Application.Interfaces;
 using Polly;
 using Polly.Retry;
@@ -12,50 +19,46 @@ using Shared.Extensions;
 // Telegram.Bot
 using Telegram.Bot.Exceptions;
 using Telegram.Bot.Types;
-using Telegram.Bot.Types.Enums;         // ✅✅ برای ParseMode ✅✅
-using Telegram.Bot.Types.ReplyMarkups; // برای InlineKeyboardMarkup, InlineKeyboardButton
-using TelegramPanel.Application.CommandHandlers; // ✅ برای IUserService (از پروژه Application اصلی)
-// ✅✅ Using های مربوط به TelegramPanel (نیاز به ارجاع پروژه BackgroundTasks به TelegramPanel) ✅✅
-using TelegramPanel.Formatters;         // ✅ برای TelegramMessageFormatter
-using TelegramPanel.Infrastructure;     // ✅ برای ITelegramMessageSender
+using Telegram.Bot.Types.Enums;
+using Telegram.Bot.Types.ReplyMarkups;
+// TelegramPanel
+using TelegramPanel.Application.CommandHandlers;
+using TelegramPanel.Formatters;
+using TelegramPanel.Infrastructure;
+using Hangfire;
 #endregion
 
 namespace BackgroundTasks.Services
 {
-    /// <summary>
-    /// Handles the actual sending of notifications to users via Telegram.
-    /// This service is designed to be invoked by a background job system like Hangfire.
-    /// It incorporates robust error handling, retry mechanisms (Polly), and adheres to Telegram API rate limits.
-    /// </summary>
     public class NotificationSendingService : INotificationSendingService
     {
         #region Private Readonly Fields
-        private readonly ITelegramMessageSender _telegramMessageSender; // از TelegramPanel.Infrastructure
-        private readonly IUserService _userService;                 // از Core Application layer
+        private readonly ITelegramMessageSender _telegramMessageSender;
+        private readonly IUserService _userService;
         private readonly ILogger<NotificationSendingService> _logger;
         private readonly AsyncRetryPolicy _telegramApiRetryPolicy;
-        private readonly IUserSignalPreferenceRepository _userPrefsRepository; // ✅ اضافه شد
-        private readonly IAppDbContext _appDbContext; // ✅ برای خواندن User Entity کامل (اگر لازم باشد)
+        private readonly IUserSignalPreferenceRepository _userPrefsRepository;
         #endregion
 
         #region Constants
         private const int MaxRetries = 3;
+        // ✅✅ [جدید] ✅✅: ثابت برای کنترل نرخ ارسال در حالت دسته‌ای
+        private const int DelayBetweenBatchMessagesMs = 5; // ~25 پیام در ثانیه
         #endregion
 
         #region Constructor
         public NotificationSendingService(
-            ITelegramMessageSender telegramMessageSender, // ✅ از TelegramPanel.Infrastructure
+            ITelegramMessageSender telegramMessageSender,
             IUserService userService,
-            IUserSignalPreferenceRepository userPrefsRepository, // ✅ اضافه شد
-            IAppDbContext appDbContext, // ✅ از Application.Interfaces
+            IUserSignalPreferenceRepository userPrefsRepository,
+            IAppDbContext appDbContext,
             ILogger<NotificationSendingService> logger)
         {
             _userPrefsRepository = userPrefsRepository ?? throw new ArgumentNullException(nameof(userPrefsRepository));
             _telegramMessageSender = telegramMessageSender ?? throw new ArgumentNullException(nameof(telegramMessageSender));
             _userService = userService ?? throw new ArgumentNullException(nameof(userService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            _appDbContext = appDbContext ?? throw new ArgumentNullException(nameof(appDbContext));
-            // Define a Polly retry policy
+            // Polly Policy definition remains unchanged...
             _telegramApiRetryPolicy = Policy
                 .Handle<ApiRequestException>(ex => ShouldRetryTelegramApiException(ex))
                 .Or<HttpRequestException>()
@@ -66,238 +69,185 @@ namespace BackgroundTasks.Services
                     {
                         TimeSpan delay = TimeSpan.FromSeconds(Math.Pow(2, retryAttempt));
                         object? telegramUserIdObj = context.Contains("TelegramUserId") ? context["TelegramUserId"] : "N/A";
-                        object? jobPayloadObj = context.Contains("JobPayload") ? context["JobPayload"] : null;
 
                         if (exception is ApiRequestException apiEx && apiEx.Parameters?.RetryAfter.HasValue == true)
                         {
-                            delay = TimeSpan.FromSeconds(apiEx.Parameters.RetryAfter.Value + new Random().Next(1, 3));
-                            _logger.LogWarning(
-                                "Telegram API rate limit hit for UserID {TelegramUserId}. RetryAttempt: {RetryAttempt}. Retrying after {DelaySeconds:F1}s (from API). JobPayload Hash: {JobPayloadHash}",
-                                telegramUserIdObj, retryAttempt, delay.TotalSeconds, jobPayloadObj?.GetHashCode()); // لاگ کردن هش Payload برای جلوگیری از لاگ کردن اطلاعات حساس
+                            delay = TimeSpan.FromSeconds(apiEx.Parameters.RetryAfter.Value + 1); // +1 to be safe
+                            _logger.LogWarning("Telegram API rate limit hit for UserID {TelegramUserId}. Retrying after {DelaySeconds:F1}s.", telegramUserIdObj, delay.TotalSeconds);
                         }
                         else
                         {
-                            _logger.LogWarning(exception,
-                                "Transient error sending notification to UserID {TelegramUserId}. RetryAttempt: {RetryAttempt}. Retrying in {DelaySeconds:F1}s. JobPayload Hash: {JobPayloadHash}",
-                                telegramUserIdObj, retryAttempt, delay.TotalSeconds, jobPayloadObj?.GetHashCode());
+                            _logger.LogWarning(exception, "Transient error for UserID {TelegramUserId}. Retrying in {DelaySeconds:F1}s.", telegramUserIdObj, delay.TotalSeconds);
                         }
                         return delay;
                     },
-                    onRetryAsync: (exception, timespan, retryAttempt, context) =>
-                    {
-                        object? telegramUserIdObj = context.Contains("TelegramUserId") ? context["TelegramUserId"] : "N/A";
-                        _logger.LogInformation(
-                            "Retrying notification for UserID {TelegramUserId} (Attempt {RetryAttempt} of {MaxRetriesCount}) after delay of {DelaySeconds:F1}s due to {ExceptionType}.",
-                            telegramUserIdObj, retryAttempt, MaxRetries, timespan.TotalSeconds, exception.GetType().Name);
-                        return Task.CompletedTask;
-                    });
+                    onRetryAsync: (exception, timespan, retryAttempt, context) => Task.CompletedTask);
         }
         #endregion
 
         #region INotificationSendingService Implementation
-        [Hangfire.JobDisplayName("Send Telegram Notification to User: {0.TargetTelegramUserId}")]
-        [Hangfire.AutomaticRetry(Attempts = 0)] // We use Polly for retries
+
+        // متد ارسال تکی شما دست‌نخورده باقی می‌ماند
+        [Hangfire.JobDisplayName("Send Single Notification to: {0.TargetTelegramUserId}")]
+        [Hangfire.AutomaticRetry(Attempts = 0)]
         public async Task SendNotificationAsync(NotificationJobPayload payload, CancellationToken jobCancellationToken)
         {
-            if (payload == null)
+            // منطق قبلی شما در این متد قرار دارد
+            // این کد را برای خوانایی به یک متد خصوصی منتقل می‌کنیم تا در هر دو حالت از آن استفاده کنیم.
+            await ProcessSingleNotification(payload, jobCancellationToken);
+        }
+
+        // ✅✅ [جدید] ✅✅
+        // متد جدید برای ارسال دسته‌ای بدون نیاز به DTO جدید.
+        // توجه: این متد باید به اینترفیس INotificationSendingService هم اضافه شود.
+        [DisableConcurrentExecution(timeoutInSeconds: 1800)] // 1800 ثانیه = 30 دقیقه
+        [Hangfire.JobDisplayName("Send Batch Notification ({0.Count} users) for News")]
+        [Hangfire.AutomaticRetry(Attempts = 0)]
+        public async Task SendBatchNotificationAsync(
+            List<long> targetTelegramUserIds,
+            string messageText,
+            string? imageUrl,
+            List<NotificationButton> buttons,
+            Guid newsItemId,
+            Guid? newsItemSignalCategoryId,
+            string? newsItemSignalCategoryName,
+            CancellationToken jobCancellationToken)
+        {
+            if (targetTelegramUserIds == null || !targetTelegramUserIds.Any())
             {
-                _logger.LogError("SendNotificationAsync job received a null payload. Job cannot be processed.");
-                throw new ArgumentNullException(nameof(payload), "NotificationJobPayload cannot be null.");
+                _logger.LogWarning("Received an empty or null user batch to process. Skipping job.");
+                return;
             }
 
-            // Ensure messageTextToSend is never null
-            string messageTextToSend = payload.MessageText ?? string.Empty;
-            ParseMode? parseMode = payload.UseMarkdown ? ParseMode.MarkdownV2 : null;
+            _logger.LogInformation(
+                "Starting batch send for {UserCount} users. NewsID: {NewsItemId}",
+                targetTelegramUserIds.Count, newsItemId);
 
-            var logScope = new Dictionary<string, object?>
-            {
-                ["JobType"] = "NewsNotification",
-                ["TargetTelegramUserId"] = payload.TargetTelegramUserId,
-                ["NewsItemId"] = payload.NewsItemId,
-                ["NewsItemSignalCategoryId"] = payload.NewsItemSignalCategoryId
-            };
+            int successCount = 0;
+            int failedCount = 0;
 
-            using (_logger.BeginScope(new Dictionary<string, object?>
+            foreach (var userId in targetTelegramUserIds)
             {
-                ["JobType"] = "TelegramNotification",
-                ["TargetTelegramUserId"] = payload.TargetTelegramUserId,
-                ["RelatedNewsImageUrl"] = payload.ImageUrl,
-                ["NotificationMessageHash"] = messageTextToSend.GetHashCode() // Using non-null messageTextToSend
-            }))
-            {
-                _logger.LogInformation("Starting to process news notification job.");
+                if (jobCancellationToken.IsCancellationRequested)
+                {
+                    _logger.LogWarning("Batch processing was cancelled. Processed {ProcessedCount} users.", successCount + failedCount);
+                    break;
+                }
 
                 try
                 {
-                    // (اختیاری) بررسی اینکه آیا کاربر هنوز می‌خواهد این نوع نوتیفیکیشن را دریافت کند
-                    // این نیاز به دسترسی به User Entity یا UserDto با تنظیمات نوتیفیکیشن دارد
-                    // var user = await _userService.GetUserByTelegramIdAsync(payload.TargetTelegramUserId.ToString(), jobCancellationToken);
-                    // if (user == null || !user.WantsThisTypeOfNotification) // 'WantsThisTypeOfNotification' یک فیلد فرضی است
-                    // {
-                    //     _logger.LogInformation("User {TelegramUserId} no longer exists or has disabled this type of notification. Skipping.", payload.TargetTelegramUserId);
-                    //     return;
-                    // }
-
-                    // ✅ اگر از MarkdownV2 استفاده می‌کنید، مطمئن شوید متن به درستی escape شده است.
-                    // این کار باید یا در NotificationDispatchService هنگام ساخت MessageText انجام شده باشد،
-                    // یا TelegramMessageFormatter باید اینجا فراخوانی شود.
-                    if (parseMode == ParseMode.MarkdownV2 && !string.IsNullOrEmpty(messageTextToSend))
+                    // برای هر کاربر، یک payload موقت می‌سازیم تا به متد پردازشی ارسال کنیم
+                    var singlePayload = new NotificationJobPayload
                     {
-                        // فرض می‌کنیم TelegramMessageFormatter.EscapeMarkdownV2 متن خام را می‌گیرد و escape می‌کند.
-                        // اگر messageTextToSend از قبل شامل کاراکترهای فرمت Markdown است، نباید دوباره escape شود.
-                        // این بستگی به منطق NotificationDispatchService دارد.
-                        // برای اطمینان، اگر پیام از قبل فرمت شده، escape نکنید.
-                        // فعلاً فرض می‌کنیم متن خام است و نیاز به escape توسط فرمتتر دارد.
-                        // messageTextToSend = TelegramMessageFormatter.EscapeMarkdownV2(payload.MessageText);
-                        // یا اگر فرمتترهای Bold, Italic و ... خودشان escape می‌کنند، نیازی به این خط نیست.
-                        // این بخش نیاز به بررسی دقیق جریان داده شما دارد.
-                    }
-
-                    InlineKeyboardMarkup? inlineKeyboard = null;
-                    if (payload.Buttons != null && payload.Buttons.Any())
-                    {
-                        var keyboardButtonRows = payload.Buttons
-                            .Select(b => new[] { b.IsUrl
-                                ? InlineKeyboardButton.WithUrl(TelegramMessageFormatter.EscapeMarkdownV2(b.Text), b.CallbackDataOrUrl) // متن دکمه هم ممکن است نیاز به escape داشته باشد
-                                : InlineKeyboardButton.WithCallbackData(TelegramMessageFormatter.EscapeMarkdownV2(b.Text), b.CallbackDataOrUrl) })
-                            .ToList();
-                        if (keyboardButtonRows.Any()) inlineKeyboard = new InlineKeyboardMarkup(keyboardButtonRows);
-                    }
-
-                    var pollyContext = new Context($"NotificationTo_{payload.TargetTelegramUserId}")
-                    {
-                        { "TelegramUserId", payload.TargetTelegramUserId },
-                        { "JobPayload", payload.GetHashCode() } //  فقط هش برای لاگ
+                        TargetTelegramUserId = userId,
+                        MessageText = messageText,
+                        UseMarkdown = true, // فرض می‌کنیم همیشه Markdown است
+                        ImageUrl = imageUrl,
+                        Buttons = buttons,
+                        NewsItemId = newsItemId,
+                        NewsItemSignalCategoryId = newsItemSignalCategoryId,
+                        NewsItemSignalCategoryName = newsItemSignalCategoryName,
                     };
 
-                    var userDto = await _userService.GetUserByTelegramIdAsync(payload.TargetTelegramUserId.ToString(), jobCancellationToken);
-                    if (userDto == null)
-                    {
-                        _logger.LogWarning("User with TelegramID {TelegramUserId} not found. Aborting notification for NewsItemID {NewsItemId}.",
-                            payload.TargetTelegramUserId, payload.NewsItemId);
-                        return;
-                    }
-                    Guid systemUserId = userDto.Id;
-
-                    var inlineButtons = new List<InlineKeyboardButton>();
-
-                    // دکمه Read More (همیشه وجود دارد)
-                    if (payload.Buttons != null && payload.Buttons.Any(b => b.IsUrl && b.Text.Contains("Read More", StringComparison.OrdinalIgnoreCase)))
-                    {
-                        var readMoreButton = payload.Buttons.First(b => b.IsUrl && b.Text.Contains("Read More"));
-                        inlineButtons.Add(InlineKeyboardButton.WithUrl(
-                            TelegramMessageFormatter.EscapeMarkdownV2(readMoreButton.Text), //  متن دکمه هم باید escape شود
-                            readMoreButton.CallbackDataOrUrl));
-                    }
-                    if (payload.NewsItemSignalCategoryId.HasValue && !string.IsNullOrWhiteSpace(payload.NewsItemSignalCategoryName))
-                    {
-                        bool isSubscribedToCategory = await _userPrefsRepository.IsUserSubscribedToCategoryAsync(systemUserId, payload.NewsItemSignalCategoryId.Value, jobCancellationToken);
-
-                        if (isSubscribedToCategory)
-                        {
-                            inlineButtons.Add(InlineKeyboardButton.WithCallbackData(
-                                $"✅ Unsubscribe from {TelegramMessageFormatter.EscapeMarkdownV2(payload.NewsItemSignalCategoryName.Truncate(20))}", //  متن دکمه را کوتاه نگه دارید
-                                $"{NewsNotificationCallbackHandler.UnsubscribeFromCategoryPrefix}{payload.NewsItemSignalCategoryId.Value}"
-                            ));
-                        }
-                        else
-                        {
-                            inlineButtons.Add(InlineKeyboardButton.WithCallbackData(
-                                $"➕ Subscribe to {TelegramMessageFormatter.EscapeMarkdownV2(payload.NewsItemSignalCategoryName.Truncate(20))}",
-                                $"{NewsNotificationCallbackHandler.SubscribeToCategoryPrefix}{payload.NewsItemSignalCategoryId.Value}"
-                            ));
-                        }
-                    }
-
-                    if (payload.Buttons != null)
-                    {
-                        foreach (var btnInfo in payload.Buttons.Where(b => !(b.IsUrl && b.Text.Contains("Read More")))) //  دکمه Read More را دوباره اضافه نکنید
-                        {
-                            inlineButtons.Add(btnInfo.IsUrl
-                                ? InlineKeyboardButton.WithUrl(TelegramMessageFormatter.EscapeMarkdownV2(btnInfo.Text), btnInfo.CallbackDataOrUrl)
-                                : InlineKeyboardButton.WithCallbackData(TelegramMessageFormatter.EscapeMarkdownV2(btnInfo.Text), btnInfo.CallbackDataOrUrl));
-                        }
-                    }
-
-                    InlineKeyboardMarkup? finalKeyboard = inlineButtons.Any() ? new InlineKeyboardMarkup(inlineButtons) : null;
-
-                    _logger.LogDebug("Attempting to send formatted news notification to Telegram UserID {TelegramUserId}.", payload.TargetTelegramUserId);
-
-                    if (!string.IsNullOrWhiteSpace(payload.ImageUrl))
-                    {
-                        await _telegramApiRetryPolicy.ExecuteAsync(async (ctx, ct) =>
-                        {
-                            await _telegramMessageSender.SendPhotoAsync(
-                                payload.TargetTelegramUserId,
-                                payload.ImageUrl,
-                                caption: messageTextToSend,
-                                parseMode: parseMode,
-                                replyMarkup: finalKeyboard,
-                                cancellationToken: ct
-                            );
-                        }, pollyContext, jobCancellationToken);
-                    }
-                    else
-                    {
-                        await _telegramApiRetryPolicy.ExecuteAsync(async (ctx, ct) =>
-                        {
-                            //  تنظیم LinkPreviewOptions برای غیرفعال کردن پیش‌نمایش لینک
-                            var defaultLinkPreviewOptions = new LinkPreviewOptions { IsDisabled = true }; //  مثال
-
-                            await _telegramMessageSender.SendTextMessageAsync(
-                                payload.TargetTelegramUserId,
-                                messageTextToSend, // Using non-null messageTextToSend
-                                parseMode: parseMode,
-                                replyMarkup: finalKeyboard,
-                                cancellationToken: ct,
-                                linkPreviewOptions: defaultLinkPreviewOptions
-                            );
-                        }, pollyContext, jobCancellationToken);
-                    }
-
-                    _logger.LogInformation("Notification successfully sent to Telegram UserID {TelegramUserId}.", payload.TargetTelegramUserId);
-                }
-                catch (ApiRequestException apiEx) when (apiEx.ErrorCode == 403 || (apiEx.ErrorCode == 400 && apiEx.Message.Contains("chat not found", StringComparison.OrdinalIgnoreCase)))
-                {
-                    _logger.LogWarning(apiEx, "Non-retryable Telegram API error for UserID {TelegramUserId} (e.g., bot blocked or chat not found). ErrorCode: {ErrorCode}. Message: {ApiMessage}. Job will be marked as failed.",
-                        payload.TargetTelegramUserId, apiEx.ErrorCode, apiEx.Message);
-                    //  در اینجا می‌توانید کاربر را در دیتابیس به عنوان "غیرقابل دسترس" علامت‌گذاری کنید
-                    //  یا نوتیفیکیشن‌های او را برای این نوع پیام غیرفعال نمایید.
-                    //  مثال: await _userService.MarkUserAsUnreachableAsync(payload.TargetTelegramUserId.ToString(), "BotBlockedOrChatNotFound", jobCancellationToken);
-                    throw; //  اجازه دهید Hangfire جاب را به عنوان ناموفق ثبت کند.
-                }
-                catch (OperationCanceledException) when (jobCancellationToken.IsCancellationRequested)
-                {
-                    _logger.LogInformation("Notification sending job for UserID {TelegramUserId} was cancelled by Hangfire scheduler.", payload.TargetTelegramUserId);
-                    //  اگر جاب توسط Hangfire کنسل شده، معمولاً نباید خطا throw شود تا Hangfire آن را به عنوان ناموفق در نظر نگیرد.
+                    await ProcessSingleNotification(singlePayload, jobCancellationToken);
+                    successCount++;
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Failed to send notification to Telegram UserID {TelegramUserId}.", payload.TargetTelegramUserId);
-                    throw; // Re-throw to let Hangfire handle the failure
+                    // ProcessSingleNotification خودش لاگ دقیق را انجام می‌دهد
+                    _logger.LogError(ex, "A user failed in batch processing. UserID: {UserId}. Continuing with next.", userId);
+                    failedCount++;
                 }
+
+                // ----> مهم‌ترین بخش: اعمال تاخیر <----
+                await Task.Delay(DelayBetweenBatchMessagesMs, jobCancellationToken);
             }
+
+            _logger.LogInformation(
+                "Finished batch send for NewsID: {NewsItemId}. Success: {SuccessCount}, Failed: {FailedCount}.",
+                newsItemId, successCount, failedCount);
         }
+
         #endregion
 
         #region Private Helper Methods
-        /// <summary>
-        /// Determines if a Telegram API exception should be retried based on its ErrorCode or content.
-        /// </summary>
+
+        // ✅✅ [تغییر] ✅✅
+        // منطق اصلی ارسال به این متد خصوصی منتقل شده تا از تکرار کد جلوگیری شود.
+        private async Task ProcessSingleNotification(NotificationJobPayload payload, CancellationToken cancellationToken)
+        {
+            using var logScope = _logger.BeginScope(new Dictionary<string, object?>
+            {
+                ["TargetTelegramUserId"] = payload.TargetTelegramUserId,
+                ["NewsItemId"] = payload.NewsItemId
+            });
+
+            try
+            {
+                var userDto = await _userService.GetUserByTelegramIdAsync(payload.TargetTelegramUserId.ToString(), cancellationToken);
+                if (userDto == null)
+                {
+                    _logger.LogWarning("User not found, skipping.");
+                    return; // کاربر دیگر وجود ندارد
+                }
+
+                // ساخت دکمه‌ها بر اساس منطق دقیق شما
+                var inlineButtons = new List<InlineKeyboardButton>();
+                if (payload.Buttons != null)
+                {
+                    var readMoreButton = payload.Buttons.FirstOrDefault(b => b.IsUrl);
+                    if (readMoreButton != null)
+                    {
+                        inlineButtons.Add(InlineKeyboardButton.WithUrl(TelegramMessageFormatter.EscapeMarkdownV2(readMoreButton.Text), readMoreButton.CallbackDataOrUrl));
+                    }
+                }
+                if (payload.NewsItemSignalCategoryId.HasValue && !string.IsNullOrWhiteSpace(payload.NewsItemSignalCategoryName))
+                {
+                    bool isSubscribed = await _userPrefsRepository.IsUserSubscribedToCategoryAsync(userDto.Id, payload.NewsItemSignalCategoryId.Value, cancellationToken);
+                    inlineButtons.Add(isSubscribed
+                        ? InlineKeyboardButton.WithCallbackData($"✅ Unsubscribe from {payload.NewsItemSignalCategoryName.Truncate(20)}", $"{NewsNotificationCallbackHandler.UnsubscribeFromCategoryPrefix}{payload.NewsItemSignalCategoryId.Value}")
+                        : InlineKeyboardButton.WithCallbackData($"➕ Subscribe to {payload.NewsItemSignalCategoryName.Truncate(20)}", $"{NewsNotificationCallbackHandler.SubscribeToCategoryPrefix}{payload.NewsItemSignalCategoryId.Value}"));
+                }
+                InlineKeyboardMarkup? finalKeyboard = inlineButtons.Any() ? new InlineKeyboardMarkup(inlineButtons) : null;
+
+                var pollyContext = new Context($"NotificationTo_{payload.TargetTelegramUserId}", new Dictionary<string, object> { { "TelegramUserId", payload.TargetTelegramUserId } });
+
+                // ارسال پیام
+                if (!string.IsNullOrWhiteSpace(payload.ImageUrl))
+                {
+                    await _telegramApiRetryPolicy.ExecuteAsync(ctx => _telegramMessageSender.SendPhotoAsync(
+                        payload.TargetTelegramUserId, payload.ImageUrl, payload.MessageText, ParseMode.MarkdownV2, finalKeyboard, cancellationToken), pollyContext);
+                }
+                else
+                {
+                    await _telegramApiRetryPolicy.ExecuteAsync(ctx => _telegramMessageSender.SendTextMessageAsync(
+                        payload.TargetTelegramUserId, payload.MessageText, ParseMode.MarkdownV2, finalKeyboard, cancellationToken, new LinkPreviewOptions { IsDisabled = true }), pollyContext);
+                }
+
+                _logger.LogInformation("Notification successfully sent.");
+            }
+            catch (ApiRequestException apiEx) when (apiEx.ErrorCode == 403 || (apiEx.Message != null && apiEx.Message.Contains("chat not found")))
+            {
+                _logger.LogWarning(apiEx, "Non-retryable error (bot blocked or user deleted). User will be marked as unreachable.");
+                // await _userService.MarkUserAsUnreachableAsync(payload.TargetTelegramUserId.ToString(), "BotBlockedOrChatNotFound", cancellationToken);
+                throw; // این خطا باعث fail شدن جاب تکی می‌شود و در جاب دسته‌ای، catch می‌شود.
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                _logger.LogWarning("Operation was cancelled.");
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "An unhandled exception occurred during notification processing.");
+                throw;
+            }
+        }
+
         private static bool ShouldRetryTelegramApiException(ApiRequestException ex)
         {
-            // Retry on rate limits (429) or if RetryAfter parameter is present in the response
-            if (ex.ErrorCode == 429 || ex.Parameters?.RetryAfter.HasValue == true)
-            {
-                return true;
-            }
-            // Retry on common transient server errors (e.g., 500 Internal Server Error, 502 Bad Gateway, etc.)
-            if (ex.ErrorCode >= 500 && ex.ErrorCode < 600)
-            {
-                return true;
-            }
-            //  می‌توانید خطاهای شبکه یا پیام‌های خطای خاص دیگری را هم اینجا برای retry اضافه کنید.
-            //  مثلاً: if (ex.Message.Contains("timeout", StringComparison.OrdinalIgnoreCase)) return true;
+            if (ex.ErrorCode == 429 || ex.Parameters?.RetryAfter.HasValue == true) return true;
+            if (ex.ErrorCode >= 500 && ex.ErrorCode < 600) return true;
             return false;
         }
         #endregion

@@ -27,5 +27,17 @@ namespace Application.Common.Interfaces // ✅ Namespace: Application.Common.Int
         /// The [Hangfire. इसको कभी नहीं हटाएं] attribute (or similar for other job schedulers) might be needed on the implementation method.
         /// </remarks>
         Task SendNotificationAsync(NotificationJobPayload payload, CancellationToken cancellationToken);
+
+        // ✅✅ [جدید] ✅✅ متد جدید برای ارسال دسته‌ای
+        Task SendBatchNotificationAsync(
+            List<long> targetTelegramUserIds,
+            string messageText,
+            string? imageUrl,
+            List<NotificationButton> buttons,
+            Guid newsItemId,
+            Guid? newsItemSignalCategoryId,
+            string? newsItemSignalCategoryName,
+            CancellationToken jobCancellationToken);
+
     }
 }

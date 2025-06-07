@@ -45,6 +45,8 @@ namespace TelegramPanel.Infrastructure.Services
 
         public async Task<MarketData> GetMarketDataAsync(string symbol, bool forceRefresh = false, CancellationToken cancellationToken = default)
         {
+
+  
             string normalizedSymbol = symbol.ToUpperInvariant();
             _logger.LogInformation("GetMarketDataAsync for {Symbol}. ForceRefresh: {ForceRefresh}", normalizedSymbol, forceRefresh);
             var currencyInfo = GetCurrencyInfo(normalizedSymbol);

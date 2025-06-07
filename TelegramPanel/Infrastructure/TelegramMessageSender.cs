@@ -18,6 +18,7 @@ namespace TelegramPanel.Infrastructure
     // =========================================================================
     public interface IActualTelegramMessageActions
     {
+        Task EditMessageTextDirectAsync(long chatId, int messageId, string text, ParseMode? parseMode, InlineKeyboardMarkup? replyMarkup, CancellationToken cancellationToken);
         Task SendTextMessageToTelegramAsync(long chatId, string text, ParseMode? parseMode, ReplyMarkup? replyMarkup, bool disableNotification, LinkPreviewOptions? linkPreviewOptions, CancellationToken cancellationToken);
         Task EditMessageTextInTelegramAsync(long chatId, int messageId, string text, ParseMode? parseMode, InlineKeyboardMarkup? replyMarkup, CancellationToken cancellationToken);
         Task AnswerCallbackQueryToTelegramAsync(string callbackQueryId, string? text, bool showAlert, string? url, int cacheTime, CancellationToken cancellationToken);
@@ -36,7 +37,7 @@ namespace TelegramPanel.Infrastructure
         private readonly IUserRepository _userRepository;
         private readonly IAppDbContext _context;
         private readonly AsyncRetryPolicy _telegramApiRetryPolicy;
-
+        private readonly AsyncRetryPolicy _hangfireRetryPolicy; // <-- RENAME for clarity
         public ActualTelegramMessageActions(
             ITelegramBotClient botClient,
             ILogger<ActualTelegramMessageActions> logger,
@@ -47,6 +48,45 @@ namespace TelegramPanel.Infrastructure
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _userRepository = userRepository ?? throw new ArgumentNullException(nameof(userRepository));
             _context = context ?? throw new ArgumentNullException(nameof(context));
+
+
+            // --- THIS IS THE CRITICAL FIX ---
+            _hangfireRetryPolicy = Policy // <-- Use new name
+                .Handle<ApiRequestException>(apiEx =>
+                {
+                    // This logic determines if Polly should HANDLE (and thus RETRY) the exception.
+                    // We return 'true' for errors we want to retry, 'false' for those we want to ignore.
+
+                    // DO NOT RETRY if the message is simply not modified. Let the exception bubble up immediately.
+                    if (apiEx.Message.Contains("message is not modified", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return false; // False = Do Not Handle = Do Not Retry
+                    }
+
+                    // DO NOT RETRY for user-blocked/deactivated errors.
+                    if ((apiEx.ErrorCode == 403 && apiEx.Message.Contains("bot was blocked by the user", StringComparison.OrdinalIgnoreCase)) ||
+                        (apiEx.ErrorCode == 400 &&
+                         (apiEx.Message.Contains("chat not found", StringComparison.OrdinalIgnoreCase) ||
+                          apiEx.Message.Contains("USER_DEACTIVATED", StringComparison.OrdinalIgnoreCase) ||
+                          apiEx.Message.Contains("user is deactivated", StringComparison.OrdinalIgnoreCase) ||
+                          apiEx.Message.Contains("PEER_ID_INVALID", StringComparison.OrdinalIgnoreCase))
+                        ))
+                    {
+                        return false; // False = Do Not Handle = Do Not Retry
+                    }
+
+                    // For all OTHER ApiRequestExceptions, we DO want to retry.
+                    return true; // True = Handle this error = Retry
+                })
+                .Or<Exception>(ex => !(ex is OperationCanceledException || ex is TaskCanceledException))
+                .WaitAndRetryAsync(
+                    // ... rest of your policy remains the same
+                    retryCount: 3,
+                    sleepDurationProvider: retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
+                    onRetry: (exception, timeSpan, retryAttempt, context) =>
+                    {
+                        // ... your logging here
+                    });
 
             _telegramApiRetryPolicy = Policy
                 .Handle<ApiRequestException>(apiEx =>
@@ -221,7 +261,24 @@ namespace TelegramPanel.Infrastructure
                 throw;
             }
         }
+        public Task EditMessageTextDirectAsync(long chatId, int messageId, string text, ParseMode? parseMode, InlineKeyboardMarkup? replyMarkup, CancellationToken cancellationToken)
+        {
+            // It calls the base method directly, bypassing Polly entirely.
+            return _base_EditMessageText(chatId, messageId, text, parseMode, replyMarkup, cancellationToken);
+        }
 
+        // --- CREATE THIS NEW PRIVATE BASE METHOD ---
+        // This is the raw, unwrapped call to the Telegram API.
+        private Task _base_EditMessageText(long chatId, int messageId, string text, ParseMode? parseMode, InlineKeyboardMarkup? replyMarkup, CancellationToken cancellationToken)
+        {
+            return _botClient.EditMessageText(
+                chatId: new ChatId(chatId),
+                messageId: messageId,
+                text: text,
+                parseMode: ParseMode.Markdown,
+                replyMarkup: replyMarkup,
+                cancellationToken: cancellationToken);
+        }
 
         public async Task AnswerCallbackQueryToTelegramAsync(string callbackQueryId, string? text, bool showAlert, string? url, int cacheTime, CancellationToken cancellationToken)
         {

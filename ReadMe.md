@@ -196,7 +196,8 @@ This metric quantifies the number of signals processed, news articles aggregated
 
 ## 🎨 UI/UX Concepts: Intuitive & Engaging User Interfaces ✨🤩
 
-ForexSignalBot is designed from the ground up to provide a **fully intuitive and engaging user experience**, whether through the primary Telegram bot interface or the planned comprehensive web panel. Our UI/UX strategy is laser-focused on fostering effortless interactions, ensuring crystal-clear communication, and enabling extensive customization for every trader.
+ForexSignalBot is designed from the ground up to provide a **fully intuitive and engaging user experience**, whether through the primary Telegram bot interface or the planned comprehensive web panel. Our UI/UX 
+is laser-focused on fostering effortless interactions, ensuring crystal-clear communication, and enabling extensive customization for every trader.
 
 ### Telegram Bot: The Full UI Experience 🖼️🤳
 

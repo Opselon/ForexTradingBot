@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.Logging;
+using Telegram.Bot.Exceptions;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
@@ -17,7 +18,7 @@ namespace TelegramPanel.Application.CommandHandlers
         private const string MarketAnalysisCallback = "market_analysis";
         private const string RefreshMarketDataCallback = "refresh_market_data";
         private const string SelectCurrencyCallback = "select_currency";
-
+        private readonly IActualTelegramMessageActions _directMessageSender;
         // 13+ popular forex pairs + gold
         private static readonly (string Symbol, string Label)[] SupportedSymbols = new[]
         {
@@ -42,11 +43,13 @@ namespace TelegramPanel.Application.CommandHandlers
         public MarketAnalysisCallbackHandler(
             ILogger<MarketAnalysisCallbackHandler> logger,
             ITelegramMessageSender messageSender,
-            IMarketDataService marketDataService)
+            IMarketDataService marketDataService,
+            IActualTelegramMessageActions directMessageSender)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _messageSender = messageSender ?? throw new ArgumentNullException(nameof(messageSender));
             _marketDataService = marketDataService ?? throw new ArgumentNullException(nameof(marketDataService));
+            _directMessageSender = directMessageSender ?? throw new ArgumentNullException(nameof(directMessageSender));
         }
 
         public bool CanHandle(Update update)
@@ -56,6 +59,108 @@ namespace TelegramPanel.Application.CommandHandlers
                    update.CallbackQuery?.Data?.StartsWith(SelectCurrencyCallback) == true;
         }
 
+
+        // In MarketAnalysisCallbackHandler.cs
+
+        /// <summary>
+        /// Executes a long-running asynchronous operation while concurrently displaying an animated loading message.
+        /// This method uses a direct, non-retrying Telegram API call for the animation to ensure real-time feedback.
+        /// </summary>
+        /// <typeparam name="TResult">The return type of the long-running operation.</typeparam>
+        /// <param name="chatId">The identifier of the chat.</param>
+        /// <param name="messageId">The identifier of the message to edit.</param>
+        /// <param name="baseLoadingText">The static part of the loading message (e.g., "Fetching data...").</param>
+        /// <param name="operationToExecute">A factory function for the long-running Task.</param>
+        /// <param name="cancellationToken">The cancellation token for the entire operation.</param>
+        /// <returns>The result of the long-running operation.</returns>
+        private async Task<TResult> AnimateWhileExecutingAsync<TResult>(
+            long chatId,
+            int messageId,
+            string baseLoadingText,
+            Func<CancellationToken, Task<TResult>> operationToExecute,
+            CancellationToken cancellationToken)
+        {
+            var animationFrames = new[] { " .", " . .", " . . .", " . . . ." };
+            var frameIndex = 0;
+
+            // This CTS allows us to cancel the animation loop from within this method
+            // once the main data fetching task is complete.
+            using var animationCts = new CancellationTokenSource();
+            // This linked CTS ensures that if the original caller cancels, BOTH the data fetch AND the animation stop.
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, animationCts.Token);
+
+            // Start the long-running data fetch operation but do not await it yet.
+            var dataFetchTask = operationToExecute(linkedCts.Token);
+
+            // This task runs the UI animation loop in a separate thread.
+            var animationTask = Task.Run(async () =>
+            {
+                // This state variable prevents us from sending redundant API calls
+                // if the animation frame text happens to be the same as the last one.
+                string? lastSentText = null;
+
+                try
+                {
+                    while (!linkedCts.Token.IsCancellationRequested)
+                    {
+                        var currentFrame = animationFrames[frameIndex++ % animationFrames.Length];
+                        var newText = $"{baseLoadingText}{currentFrame}";
+
+                        // **Proactive Check:** Only edit the message if the content has actually changed.
+                        if (newText != lastSentText)
+                        {
+                            // **CRITICAL:** Call the DIRECT method that bypasses the Hangfire queue and Polly retries.
+                            await _directMessageSender.EditMessageTextDirectAsync(
+                                chatId,
+                                messageId,
+                                newText,
+                                ParseMode.Markdown,
+                                null, // No keyboard during animation
+                                linkedCts.Token);
+
+                            lastSentText = newText;
+                        }
+
+                        // Wait for the next frame at the end of the loop.
+                        await Task.Delay(TimeSpan.FromMilliseconds(800), linkedCts.Token);
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    // This is the expected and clean way to exit the loop when cancelled.
+                }
+                catch (ApiRequestException apiEx) when (apiEx.Message.Contains("message is not modified"))
+                {
+                    // This is a defensive catch. The `lastSentText` check should prevent this,
+                    // but if it ever happens, we safely ignore it and let the loop continue.
+                    _logger.LogTrace("Ignoring a 'message not modified' exception during animation.");
+                }
+                catch (Exception ex)
+                {
+                    // For any other unexpected error, log it and terminate the animation gracefully.
+                    _logger.LogWarning(ex, "Animation loop was terminated by an unexpected exception.");
+                }
+            }, linkedCts.Token);
+
+            try
+            {
+                // Now, we wait for the main event: the data fetching operation.
+                return await dataFetchTask;
+            }
+            finally
+            {
+                // **VERY IMPORTANT:** Regardless of success or failure, we MUST stop the animation loop.
+                if (!animationCts.IsCancellationRequested)
+                {
+                    await animationCts.CancelAsync();
+                }
+
+                // Wait briefly for the animation task to fully stop. This prevents a race condition
+                // where a final animation frame might overwrite the real success/error message
+                // that the calling method is about to send.
+                await Task.WhenAny(animationTask, Task.Delay(150));
+            }
+        }
         public async Task HandleAsync(Update update, CancellationToken cancellationToken)
         {
             if (update.CallbackQuery == null || update.CallbackQuery.Message == null)
@@ -228,79 +333,131 @@ namespace TelegramPanel.Application.CommandHandlers
         }
 
 
+        // --- CHANGE START: Replace the entire ShowMarketAnalysis method ---
+        // --- REWRITE START ---
         private async Task ShowMarketAnalysis(long chatId, int messageId, string symbol, bool isRefresh, string callbackQueryId, CancellationToken cancellationToken)
         {
-            // ... (loading message edit as before)
-            string loadingMessage = isRefresh
-                ? $"🔄 _Refreshing data for {symbol}..._"
-                : $"📊 _Fetching analysis for {symbol}..._";
+            string loadingMessageBase = isRefresh
+                ? $"🔄 _Refreshing data for {symbol}_"
+                : $"📊 _Fetching analysis for {symbol}_";
+
+            (MarketData? Data, Exception? Error) result;
             try
             {
-                await _messageSender.EditMessageTextAsync(chatId, messageId, loadingMessage, ParseMode.Markdown, null, cancellationToken);
-            }
-            catch (Telegram.Bot.Exceptions.ApiRequestException apiEx) when (apiEx.Message.Contains("message is not modified")) { /*Ignore if already loading*/ }
-            catch (Exception ex) { _logger.LogWarning(ex, "Could not edit to loading message for {Symbol}", symbol); }
-
-
-            MarketData marketData;
-            try
-            {
-                marketData = await _marketDataService.GetMarketDataAsync(symbol, forceRefresh: isRefresh, cancellationToken: cancellationToken);
+                // Execute the operation with the animation and await its combined result.
+                var marketData = await AnimateWhileExecutingAsync(
+                    chatId,
+                    messageId,
+                    loadingMessageBase,
+                    ct => _marketDataService.GetMarketDataAsync(symbol, forceRefresh: isRefresh, cancellationToken: ct),
+                    cancellationToken
+                );
+                result = (marketData, null);
             }
             catch (Exception serviceEx)
             {
-                _logger.LogError(serviceEx, "MarketDataService threw an exception for {Symbol}", symbol);
-                var errorKeyboard = GetMarketAnalysisKeyboard(symbol); // Get keyboard with refresh/change options
-                await _messageSender.EditMessageTextAsync(chatId, messageId, $"❌ Error fetching data for *{symbol}*: Service error.", ParseMode.Markdown, errorKeyboard, cancellationToken);
-                // No AnswerCallbackQuery here as we want the main HandleAsync to potentially show a generic error alert.
-                // Or, if this is the final point for this specific error:
-                // await _messageSender.AnswerCallbackQueryAsync(callbackQueryId, "Service error retrieving data.", showAlert: true, cancellationToken: CancellationToken.None);
-                return;
+                // This captures any failure from the data service or the animation logic.
+                result = (null, serviceEx);
             }
 
-            if (marketData == null || (!marketData.IsPriceLive && marketData.DataSource == "Unavailable"))
+            // Now, delegate to a specific handler based on the result.
+            if (result.Error is not null)
             {
-                _logger.LogWarning("Data unavailable for {Symbol}. IsLive:{IsLive}, Source:{Source}", symbol, marketData?.IsPriceLive, marketData?.DataSource);
-                string errorText = $"⚠️ Data for *{symbol}* is currently unavailable.";
-                if (marketData != null && marketData.Remarks.Any()) errorText += "\n\n*Notes:*\n• " + string.Join("\n• ", marketData.Remarks);
-
-                var errorKeyboard = GetMarketAnalysisKeyboard(symbol); // Get keyboard with refresh/change options
-                await _messageSender.EditMessageTextAsync(chatId, messageId, errorText, ParseMode.Markdown, errorKeyboard, cancellationToken);
-                // Answer here if this is the final state for this callback.
-                // await _messageSender.AnswerCallbackQueryAsync(callbackQueryId, $"Data for {symbol} unavailable.", cancellationToken: CancellationToken.None);
-                return;
+                await HandleServiceErrorAsync(chatId, messageId, symbol, callbackQueryId, result.Error, cancellationToken);
             }
+            else if (result.Data is null || !result.Data.IsPriceLive && result.Data.DataSource == "Unavailable")
+            {
+                await HandleDataUnavailableAsync(chatId, messageId, symbol, callbackQueryId, result.Data, cancellationToken);
+            }
+            else
+            {
+                await HandleSuccessAsync(chatId, messageId, symbol, isRefresh, callbackQueryId, result.Data, cancellationToken);
+            }
+        }
 
+        private async Task HandleSuccessAsync(long chatId, int messageId, string symbol, bool isRefresh, string callbackQueryId, MarketData marketData, CancellationToken cancellationToken)
+        {
             var newMessageText = FormatMarketAnalysisMessage(marketData);
-            var newKeyboard = GetMarketAnalysisKeyboard(symbol); // This now generates "Change Currency" with MarketAnalysisCallback
+            var newKeyboard = GetMarketAnalysisKeyboard(symbol);
+
+            // Create the task to edit the message. DO NOT await it yet.
+            var editMessageTask = _messageSender.EditMessageTextAsync(
+                chatId,
+                messageId,
+                newMessageText,
+                ParseMode.Markdown,
+                newKeyboard,
+                cancellationToken);
 
             try
             {
-                await _messageSender.EditMessageTextAsync(chatId, messageId, newMessageText, ParseMode.Markdown, newKeyboard, cancellationToken);
-                // If edit was successful, and it was a refresh that *did* change content, no specific answer needed beyond the visual update.
-                // The main HandleAsync already did an initial ack.
+                // For refresh actions, we also want to send a non-blocking "up-to-date" toast.
+                if (isRefresh)
+                {
+                    var ackTask = _messageSender.AnswerCallbackQueryAsync(callbackQueryId, "Data refreshed!", showAlert: false);
+                    // Execute both the message edit and the acknowledgement IN PARALLEL.
+                    await Task.WhenAll(editMessageTask, ackTask);
+                }
+                else
+                {
+                    // If it's not a refresh, just perform the message edit.
+                    await editMessageTask;
+                }
             }
-            catch (Telegram.Bot.Exceptions.ApiRequestException apiEx) when (apiEx.Message.Contains("message is not modified"))
+            catch (ApiRequestException apiEx) when (apiEx.Message.Contains("message is not modified"))
             {
                 _logger.LogInformation("Message for {Symbol} not modified (data likely unchanged).", symbol);
-                if (isRefresh) // Only provide "up to date" feedback if it was an explicit refresh action
+                // If the content was the same and it was a refresh action, tell the user it's up to date.
+                // This is a "fire-and-forget" call as the user's primary interaction is complete.
+                if (isRefresh)
                 {
-                    try
-                    {
-                        // This is where we specifically answer for a refresh that yielded no change.
-                        await _messageSender.AnswerCallbackQueryAsync(callbackQueryId, "Data is already up to date.", showAlert: false, cancellationToken: CancellationToken.None);
-                    }
-                    catch (Exception ackEx) { _logger.LogWarning(ackEx, "Failed to send 'no new data' ack for refresh."); }
+                    await _messageSender.AnswerCallbackQueryAsync(callbackQueryId, "Data is already up to date.", showAlert: false);
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error rendering market analysis for {Symbol}", symbol);
-                var errorKeyboard = GetMarketAnalysisKeyboard(symbol); // Get keyboard with refresh/change options
-                await _messageSender.EditMessageTextAsync(chatId, messageId, $"❌ Error displaying data for *{symbol}*.", ParseMode.Markdown, errorKeyboard, cancellationToken);
-                // Consider if an AnswerCallbackQuery is needed here.
+                _logger.LogError(ex, "Error rendering final successful analysis for {Symbol}", symbol);
+                // If the final render fails, escalate to the main error handler logic.
+                await HandleServiceErrorAsync(chatId, messageId, symbol, callbackQueryId, ex, cancellationToken);
             }
         }
+        private Task HandleDataUnavailableAsync(long chatId, int messageId, string symbol, string callbackQueryId, MarketData? marketData, CancellationToken cancellationToken)
+        {
+            _logger.LogWarning("Data unavailable for {Symbol}. IsLive:{IsLive}, Source:{Source}",
+                symbol, marketData?.IsPriceLive, marketData?.DataSource);
+
+            string errorText = $"⚠️ Data for *{symbol}* is currently unavailable.";
+            var errorKeyboard = GetMarketAnalysisKeyboard(symbol);
+
+            // Edit the message to show the "unavailable" state.
+            var editTask = _messageSender.EditMessageTextAsync(chatId, messageId, errorText, ParseMode.Markdown, errorKeyboard, cancellationToken);
+
+            // Send a pop-up alert to the user explaining the issue.
+            var ackTask = _messageSender.AnswerCallbackQueryAsync(callbackQueryId, "Data for this pair is currently unavailable.", showAlert: true);
+
+            // Execute both in parallel for maximum responsiveness.
+            return Task.WhenAll(editTask, ackTask);
+        }
+
+        private Task HandleServiceErrorAsync(long chatId, int messageId, string symbol, string callbackQueryId, Exception ex, CancellationToken cancellationToken)
+        {
+            _logger.LogError(ex, "A service error occurred while fetching data for {Symbol}", symbol);
+
+            string errorText = $"❌ An unexpected error occurred while fetching data for *{symbol}*.";
+            var errorKeyboard = GetMarketAnalysisKeyboard(symbol);
+
+            // Edit the message to show the error state.
+            var editTask = _messageSender.EditMessageTextAsync(chatId, messageId, errorText, ParseMode.Markdown, errorKeyboard, cancellationToken);
+
+            // Send a prominent pop-up alert to the user.
+            var ackTask = _messageSender.AnswerCallbackQueryAsync(callbackQueryId, "An error occurred. Please try again.", showAlert: true);
+
+            // Execute both in parallel for maximum responsiveness.
+            return Task.WhenAll(editTask, ackTask);
+        }
+
+
+
         private string FormatMarketAnalysisMessage(MarketData data)
         {
             var priceChangeEmoji = data.Change24h >= 0 ? "📈" : "📉";

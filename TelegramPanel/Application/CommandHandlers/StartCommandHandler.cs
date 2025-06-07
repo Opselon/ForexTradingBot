@@ -1,7 +1,9 @@
 ﻿using Application.DTOs;              // برای RegisterUserDto و UserDto از پروژه اصلی Application
 using Application.Interfaces;        // برای IUserService از پروژه اصلی Application
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Telegram.Bot;
+using Telegram.Bot.Exceptions;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
@@ -16,22 +18,21 @@ namespace TelegramPanel.Application.CommandHandlers
     {
         private readonly ILogger<StartCommandHandler> _logger;
         private readonly ITelegramMessageSender _messageSender;
-        private readonly IUserService _userService; // از پروژه Application اصلی
         private readonly ITelegramStateMachine? _stateMachine; // اختیاری، اگر نیاز به تغییر وضعیت دارید
         private readonly ITelegramBotClient _botClient; // Added ITelegramBotClient
-
+        private readonly IServiceScopeFactory _scopeFactory;
         private const string ShowMainMenuCallback = "show_main_menu";
 
         public StartCommandHandler(
             ILogger<StartCommandHandler> logger,
             ITelegramMessageSender messageSender,
-            IUserService userService,
+            IServiceScopeFactory scopeFactory,
             ITelegramBotClient botClient, // Added ITelegramBotClient
             ITelegramStateMachine? stateMachine = null)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _messageSender = messageSender ?? throw new ArgumentNullException(nameof(messageSender));
-            _userService = userService ?? throw new ArgumentNullException(nameof(userService));
+            _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory)); // Assign it
             _botClient = botClient ?? throw new ArgumentNullException(nameof(botClient)); // Added ITelegramBotClient
             _stateMachine = stateMachine;
         }
@@ -70,149 +71,170 @@ namespace TelegramPanel.Application.CommandHandlers
 
         private async Task HandleShowMainMenuCallback(CallbackQuery callbackQuery, CancellationToken cancellationToken)
         {
-            var message = callbackQuery.Message!; // Null check for Message should happen before calling this
+            var message = callbackQuery.Message!;
             var user = callbackQuery.From;
             var chatId = message.Chat.Id;
-            var messageId = message.MessageId; // The ID of the message with the "Back to Main Menu" button
+            var messageId = message.MessageId;
 
-            _logger.LogInformation("Handling '{Callback}' for UserID: {UserId}, ChatID: {ChatId}",
-                ShowMainMenuCallback, user.Id, chatId);
+            _logger.LogInformation("Handling '{Callback}' for UserID: {UserId}, editing message {MessageId} to become main menu.",
+                ShowMainMenuCallback, user.Id, messageId);
 
             try
             {
-                // 1. Answer the callback query immediately to remove the loading spinner on the client.
-                //    No specific text is needed here if we're about to change the message content significantly.
+                // 1. Answer the callback query immediately.
                 await _botClient.AnswerCallbackQuery(callbackQuery.Id, cancellationToken: cancellationToken);
 
-                // 2. Option A: Edit the current message to *become* the main menu.
-                //    This is often a cleaner experience than sending a new message after closing the old one.
-                //    It avoids chat clutter.
+                // 2. Prepare the personalized main menu text.
+                var effectiveUsername = !string.IsNullOrWhiteSpace(user.Username) ? user.Username : user.FirstName;
+                var welcomeText = $"🎉 *Welcome back, {TelegramMessageFormatter.EscapeMarkdownV2(effectiveUsername)}!*";
+                var messageBody = GenerateWelcomeMessageBody(welcomeText, isExistingUser: true);
+                var keyboard = GetMainMenuKeyboard();
 
-                // string mainMenuText = $"Welcome back to the Main Menu, {EscapeMarkdown(user.FirstName)}!";
-                // InlineKeyboardMarkup mainMenuKeyboard = GetMainMenuKeyboard(); // You need a method to generate this
+                // 3. EDIT the current message to become the main menu. Use the DIRECT client for speed.
+                await _botClient.EditMessageText(
+                    chatId: chatId,
+                    messageId: messageId,
+                    text: messageBody,
+                    parseMode: ParseMode.MarkdownV2,
+                    replyMarkup: keyboard,
+                    cancellationToken: cancellationToken
+                );
 
-                // await _botClient.EditMessageTextAsync( // Or _messageSender.EditMessageTextAsync
-                //     chatId: chatId,
-                //     messageId: messageId,
-                //     text: mainMenuText,
-                //     parseMode: ParseMode.Markdown,
-                //     replyMarkup: mainMenuKeyboard,
-                //     cancellationToken: cancellationToken);
-                // _logger.LogInformation("Edited message {MessageId} in ChatID {ChatId} to show main menu.", messageId, chatId);
-
-                // 2. Option B: Delete the old message and send a new main menu message.
-                //    This can also be clean if the old message is context-specific and no longer needed.
-                //    However, deleting messages can sometimes fail or be delayed.
-                //    Editing (Option A) is often more reliable if the message still makes sense to be the "host" for the main menu.
-
-                // For now, let's stick to your original approach of editing to a "closing" message,
-                // then sending a new main menu message, but we'll make the "closing" message optional or quicker.
-
-                // Minimal "closing" message, or skip if sending new menu immediately
-                await _messageSender.EditMessageTextAsync(
-                    chatId,
-                    messageId,
-                    "🔹 Returning to main menu...", // Shorter, less stateful message
-                    ParseMode.Markdown,
-                    null, // Remove keyboard from the old message
-                    cancellationToken);
-                _logger.LogDebug("Edited market analysis message {MessageId} to 'returning to menu'.", messageId);
-
-
-                // 3. Send the main menu as a NEW message.
-                // This is your existing SendMainMenuMessage call.
-                var effectiveUsername = !string.IsNullOrWhiteSpace(user.Username) ? user.Username : $"{user.FirstName} {user.LastName}".Trim();
-                if (string.IsNullOrWhiteSpace(effectiveUsername)) effectiveUsername = $"User_{user.Id}";
-
-                // Ensure SendMainMenuMessage actually sends a message with the main menu keyboard.
-                await SendMainMenuMessage(chatId, effectiveUsername, cancellationToken, isExistingUser: true); // isExistingUser might not be needed if context is just showing menu
-                _logger.LogInformation("Sent main menu message to ChatID {ChatId}.", chatId);
-
-
-                // 4. Clear user state if applicable (Good practice)
-                if (_stateMachine != null) // Ensure _stateMachine is not null
+                // 4. Clear state if applicable.
+                if (_stateMachine != null)
                 {
                     await _stateMachine.ClearStateAsync(user.Id, cancellationToken);
-                    _logger.LogInformation("Cleared state for UserID: {UserId}", user.Id);
                 }
             }
-            catch (Telegram.Bot.Exceptions.ApiRequestException apiEx) when (apiEx.Message.Contains("message is not modified"))
+            catch (ApiRequestException apiEx) when (apiEx.Message.Contains("message is not modified"))
             {
-                _logger.LogInformation("Message was not modified (already showing 'returning to menu' or similar). Error: {Error}", apiEx.Message);
-                // If the edit to "returning to menu" failed because it was already that,
-                // we should still try to send the main menu message if it hasn't been sent.
-                // This block usually means the EditMessageTextAsync for the "closing" message failed.
-                // The main menu sending should still proceed if not part of this try-catch.
-                // To handle this better, the SendMainMenuMessage could be outside this specific catch,
-                // or we ensure the logic proceeds.
-                // For now, if this specific edit fails, the SendMainMenuMessage call above will still execute
-                // unless an exception in AnswerCallbackQueryAsync bubbles up.
-
-                // If we are here, it's likely the edit to "returning to main menu" failed.
-                // We might still want to attempt sending the main menu if that's robust.
-                // Consider if SendMainMenuMessage should be called even if this edit fails.
-                // The current structure will proceed to SendMainMenuMessage.
+                _logger.LogInformation("Message {MessageId} was already the main menu. No action taken.", messageId);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error handling '{Callback}' for UserID {UserId}, ChatID {ChatId}.", ShowMainMenuCallback, user.Id, chatId);
-                // Don't try to AnswerCallbackQueryAsync again if it was already answered at the start of the try block.
-                // If the error happened before the initial AnswerCallbackQueryAsync, then attempting it here is fine.
-                // The AnswerCallbackQueryAsync was moved to the top, so here we just log.
-                // Optionally, send an error message to the user if the *main menu display itself* failed.
+                _logger.LogError(ex, "Error handling '{Callback}' for UserID {UserId}", ShowMainMenuCallback, user.Id);
             }
         }
 
+
+        // New private helper to centralize the welcome message body creation
+        private string GenerateWelcomeMessageBody(string welcomeHeader, bool isExistingUser)
+        {
+            return $"{welcomeHeader}\n\n" +
+                   "Your trusted companion for gold trading signals and market analysis.\n\n" +
+                   "📊 *Available Features:*\n" +
+                   "• 📈 Real-time gold price alerts\n" +
+                   "• 💎 Professional trading signals\n" +
+                   "• 📰 Market analysis and insights\n" +
+                   (isExistingUser ? "• 💼 Portfolio tracking\n• 🔔 Customizable notifications\n\n" :
+                    "• 💼 Portfolio tracking\n\n") +
+                   "Use the menu below or type /help for more information.";
+        }
+
+
+        // --- REWRITE THIS METHOD ---
+        // --- REWRITE HandleStartCommand ---
         private async Task HandleStartCommand(Message message, CancellationToken cancellationToken)
         {
-            var telegramUserId = message.From!.Id.ToString();
-            var firstName = message.From.FirstName ?? "";
-            var lastName = message.From.LastName ?? "";
-            var username = message.From.Username;
+            var user = message.From!;
             var chatId = message.Chat.Id;
 
-            string effectiveUsername = !string.IsNullOrWhiteSpace(username) ? username : $"{firstName} {lastName}".Trim();
-            if (string.IsNullOrWhiteSpace(effectiveUsername)) effectiveUsername = $"User_{telegramUserId}";
+            _logger.LogInformation("FAST /start received for UserID: {UserId}. Sending initial generic welcome.", user.Id);
 
-            _logger.LogInformation("Handling /start command for TelegramUserID: {TelegramUserId}, ChatID: {ChatId}, EffectiveUsername: {EffectiveUsername}",
-                telegramUserId, chatId, effectiveUsername);
-
+            Message? sentMessage;
             try
             {
-                var existingUser = await _userService.GetUserByTelegramIdAsync(telegramUserId, cancellationToken);
-
-                if (existingUser != null)
+                // STEP 1: Send the initial message DIRECTLY to get its ID back.
+                // We use _botClient here to bypass the Hangfire queue for an immediate response.
+                sentMessage = await SendInitialWelcomeMessageAsync(chatId, user.FirstName, cancellationToken);
+                if (sentMessage == null)
                 {
-                    _logger.LogInformation("Existing user {Username} (TelegramID: {TelegramId}) initiated /start.", existingUser.Username, telegramUserId);
-                    await SendMainMenuMessage(chatId, existingUser.Username, cancellationToken, isExistingUser: true);
-                    if (_stateMachine != null) await _stateMachine.ClearStateAsync(message.From.Id, cancellationToken);
-                }
-                else
-                {
-                    _logger.LogInformation("New user initiating /start. TelegramID: {TelegramId}, EffectiveUsername: {EffectiveUsername}. Registering...",
-                        telegramUserId, effectiveUsername);
-                    string emailForRegistration = $"{telegramUserId}@telegram.temp.user";
-                    var registerDto = new RegisterUserDto
-                    {
-                        Username = effectiveUsername,
-                        TelegramId = telegramUserId,
-                        Email = emailForRegistration
-                    };
-                    var newUser = await _userService.RegisterUserAsync(registerDto, cancellationToken);
-                    _logger.LogInformation("User {Username} (ID: {UserId}, TelegramID: {TelegramId}) registered successfully with email {Email}.",
-                        newUser.Username, newUser.Id, newUser.TelegramId, emailForRegistration);
-                    await SendMainMenuMessage(chatId, newUser.Username, cancellationToken, isExistingUser: false);
+                    _logger.LogError("Failed to send initial welcome message and get its ID for UserID {UserId}.", user.Id);
+                    return;
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error handling /start command for TelegramUserID {TelegramUserId}. EffectiveUsername: {EffectiveUsername}", telegramUserId, effectiveUsername);
-                await _messageSender.SendTextMessageAsync(chatId, "An error occurred while processing your request. Please try again.", cancellationToken: cancellationToken);
+                _logger.LogError(ex, "Could not send initial /start welcome message to UserID {UserId}. Aborting.", user.Id);
+                return;
             }
+
+            // STEP 2: Start the background work, passing the ID of the message we just sent.
+            _ = Task.Run(async () =>
+            {
+                using (var scope = _scopeFactory.CreateScope())
+                {
+                    var scopedLogger = scope.ServiceProvider.GetRequiredService<ILogger<StartCommandHandler>>();
+                    var userService = scope.ServiceProvider.GetRequiredService<IUserService>();
+                    var stateMachine = scope.ServiceProvider.GetService<ITelegramStateMachine>();
+                    var messageSender = scope.ServiceProvider.GetRequiredService<ITelegramMessageSender>(); // Use queued sender for the edit
+
+                    try
+                    {
+                        var telegramUserId = user.Id.ToString();
+                        var existingUser = await userService.GetUserByTelegramIdAsync(telegramUserId, cancellationToken);
+
+                        bool isNewRegistration = existingUser == null;
+                        string finalUsername;
+
+                        if (isNewRegistration)
+                        {
+                            // Logic to register the new user
+                            var firstName = user.FirstName ?? "";
+                            var lastName = user.LastName ?? "";
+                            var username = user.Username;
+                            string effectiveUsername = !string.IsNullOrWhiteSpace(username) ? username : $"{firstName} {lastName}".Trim();
+                            if (string.IsNullOrWhiteSpace(effectiveUsername)) effectiveUsername = $"User_{telegramUserId}";
+
+                            await userService.RegisterUserAsync(new RegisterUserDto { Username = effectiveUsername, TelegramId = telegramUserId, Email = $"{telegramUserId}@telegram.temp.user" }, cancellationToken);
+                            finalUsername = effectiveUsername;
+                            scopedLogger.LogInformation("[BackgroundScope] New user {finalUsername} registered successfully.", finalUsername);
+                        }
+                        else
+                        {
+                            finalUsername = existingUser!.Username;
+                            scopedLogger.LogInformation("[BackgroundScope] Existing user {finalUsername} found.", finalUsername);
+                            if (stateMachine != null) await stateMachine.ClearStateAsync(user.Id, cancellationToken);
+                        }
+
+                        // STEP 3: Edit the original message with personalized content.
+                        // We can use the queued sender here, as a slight delay for the edit is acceptable.
+                        await EditWelcomeMessageWithDetailsAsync(
+                            chatId,
+                            sentMessage.MessageId,
+                            finalUsername,
+                            !isNewRegistration, // isExistingUser is the opposite of isNewRegistration
+                            messageSender, // Pass the scoped sender
+                            cancellationToken);
+                    }
+                    catch (Exception ex)
+                    {
+                        scopedLogger.LogError(ex, "[BackgroundScope] Error during user processing or message edit for TelegramID {UserId}.", user.Id);
+                    }
+                }
+            }, cancellationToken);
         }
 
-        // Helper method to send the main menu message to avoid code duplication
-        private async Task SendMainMenuMessage(long chatId, string username, CancellationToken cancellationToken, bool isExistingUser)
+        // --- NEW HELPER: For the initial, fast send ---
+        private Task<Message> SendInitialWelcomeMessageAsync(long chatId, string firstName, CancellationToken cancellationToken)
+        {
+            var welcomeText = $"Hello {TelegramMessageFormatter.EscapeMarkdownV2(firstName)}! 👋\n\n" +
+                              "🌟 *Welcome to Gold Market Trading Bot*\n\n" +
+                              "Initializing your profile, please wait...";
+
+            var keyboard = GetMainMenuKeyboard(); // Centralize keyboard creation
+
+            // Use the direct _botClient to send and get the Message object back.
+            return _botClient.SendMessage(
+                 chatId: chatId,
+                 text: welcomeText,
+                 parseMode: ParseMode.Markdown,
+                 replyMarkup: keyboard,
+                 cancellationToken: cancellationToken);
+        }
+
+        // --- NEW HELPER: For the follow-up edit ---
+        private Task EditWelcomeMessageWithDetailsAsync(long chatId, int messageId, string username, bool isExistingUser, ITelegramMessageSender messageSender, CancellationToken cancellationToken)
         {
             var welcomeText = isExistingUser ? $"🎉 *Welcome back, {TelegramMessageFormatter.EscapeMarkdownV2(username)}!*" :
                                                $"Hello {TelegramMessageFormatter.EscapeMarkdownV2(username)}! 👋\n\n🌟 *Welcome to Gold Market Trading Bot*";
@@ -227,32 +249,34 @@ namespace TelegramPanel.Application.CommandHandlers
                                "• 💼 Portfolio tracking\n\n") +
                               "Use the menu below or type /help for more information.";
 
-            var keyboard = MarkupBuilder.CreateInlineKeyboard(
-           new[] // ردیف اول
-           {
-            InlineKeyboardButton.WithCallbackData("📈 Gold Signals", MenuCommandHandler.SignalsCallbackData),
-            InlineKeyboardButton.WithCallbackData("📊 Market Analysis", "market_analysis")
-           },
-           new[] // ردیف دوم
-           {
-            InlineKeyboardButton.WithCallbackData("💎 Subscribe", MenuCommandHandler.SubscribeCallbackData),
-            InlineKeyboardButton.WithCallbackData("⚙️ Settings", MenuCommandHandler.SettingsCallbackData)
-           },
-           new[] // ردیف سوم
-           {
-            InlineKeyboardButton.WithCallbackData("👤 My Profile", MenuCommandHandler.ProfileCallbackData)
-           }
-       );
+            var keyboard = GetMainMenuKeyboard();
 
-
-
-
-            await _messageSender.SendTextMessageAsync(
+            // Use the provided message sender (which will be the queued one from the background scope)
+            return messageSender.EditMessageTextAsync(
                 chatId,
+                messageId,
                 messageBody,
                 ParseMode.MarkdownV2,
-                replyMarkup: keyboard, // Now keyboard is constructed with Lists
-                cancellationToken: cancellationToken);
+                keyboard,
+                cancellationToken);
+        }
+
+        // --- NEW HELPER: Centralize keyboard creation to avoid duplication ---
+        private InlineKeyboardMarkup GetMainMenuKeyboard()
+        {
+            return MarkupBuilder.CreateInlineKeyboard(
+               new[] {
+        InlineKeyboardButton.WithCallbackData("📈 Gold Signals", MenuCommandHandler.SignalsCallbackData),
+        InlineKeyboardButton.WithCallbackData("📊 Market Analysis", "market_analysis")
+               },
+               new[] {
+        InlineKeyboardButton.WithCallbackData("💎 Subscribe", MenuCommandHandler.SubscribeCallbackData),
+        InlineKeyboardButton.WithCallbackData("⚙️ Settings", MenuCommandHandler.SettingsCallbackData)
+               },
+               new[] {
+        InlineKeyboardButton.WithCallbackData("👤 My Profile", MenuCommandHandler.ProfileCallbackData)
+               }
+           );
         }
     }
 }

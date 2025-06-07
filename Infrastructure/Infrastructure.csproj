@@ -50,6 +50,7 @@
     <Folder Include="Data\Extensions\" />
     <Folder Include="Data\Migrations\" />
     <Folder Include="Migrations\" />
+    <Folder Include="Services\MarketData\" />
   </ItemGroup>
 
 </Project>

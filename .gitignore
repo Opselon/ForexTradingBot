@@ -363,3 +363,4 @@ MigrationBackup/
 FodyWeavers.xsd
 /.tmp.driveupload
 /_site
+/WebAPI/appsettings.json

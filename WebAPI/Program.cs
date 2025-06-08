@@ -182,7 +182,7 @@ try
     builder.Services.AddForwardingOrchestratorServices();
     Log.Information("Forwarding orchestrator services registered.");
 
-
+    builder.Services.AddWindowsService();
     try
     {
         SqlServiceManager.EnsureSqlServicesRunning();

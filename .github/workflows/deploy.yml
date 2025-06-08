@@ -2,7 +2,7 @@ name: '[PROD] Build and Push-Deploy ForexTradingBot'
 
 on:
   push:
-    branches: [ master ] # Corrected to use your 'master' branch
+    branches: [ master ]
   workflow_dispatch:
 
 jobs:
@@ -14,20 +14,14 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: 'Setup .NET 9 Preview SDK' # ✅ THE FIX IS HERE
+      - name: 'Setup .NET 9 Preview SDK'
         uses: actions/setup-dotnet@v4
         with:
-          # This tells the runner to install the .NET 9 SDK
           dotnet-version: '9.0.x'
-          # This line is important for using preview versions
           dotnet-quality: 'preview'
 
-      - name: Restore, Build, and Publish
-        run: |
-          dotnet restore
-          dotnet build --configuration Release --no-restore
-          # We publish directly here since testing a preview SDK can be complex
-          dotnet publish ./WebAPI/WebAPI.csproj --configuration Release --output ./publish
+      - name: Publish WebAPI Project
+        run: dotnet publish ./WebAPI/WebAPI.csproj --configuration Release --output ./publish
       
       - name: Zip Release Artifact
         run: zip -r release.zip ./publish
@@ -69,36 +63,34 @@ jobs:
         host: ${{ secrets.PROD_SERVER_IP }}
         username: ${{ secrets.PROD_SERVER_USERNAME }}
         password: ${{ secrets.PROD_SERVER_PASSWORD }}
+        # ✅ FIX: Removed all comment lines and corrected the syntax
         script: |
-          # 1. Kill the running application
-          Write-Host "Stopping WebAPI.exe process..."
+          Write-Host "--- Starting Remote Deployment on Server ---"
+
+          Write-Host "[Step 1/5] Stopping any running WebAPI.exe process..."
           Stop-Process -Name "WebAPI" -Force -ErrorAction SilentlyContinue
           Start-Sleep -Seconds 3
           
-          # 2. Clean directory, preserving session data
-          Write-Host "Cleaning deployment directory..."
+          Write-Host "[Step 2/5] Cleaning deployment directory (preserving Session folder)..."
+          if (-not (Test-Path "${{ env.REMOTE_DEPLOY_PATH }}")) { New-Item -Path "${{ env.REMOTE_DEPLOY_PATH }}" -ItemType Directory }
           Get-ChildItem -Path "${{ env.REMOTE_DEPLOY_PATH }}" -Exclude "Session" | Remove-Item -Recurse -Force
           
-          # 3. Unpack new version
-          Write-Host "Unpacking new application version..."
+          Write-Host "[Step 3/5] Unpacking new application version..."
           Expand-Archive -Path "${{ env.REMOTE_TEMP_PATH }}\\release.zip" -DestinationPath "${{ env.REMOTE_DEPLOY_PATH }}" -Force
           Remove-Item -Path "${{ env.REMOTE_TEMP_PATH }}\\release.zip" -Force
 
-          # 4. Inject secrets into config file
-          Write-Host "Injecting production secrets..."
+          Write-Host "[Step 4/5] Injecting production secrets..."
           $appSettingsPath = "${{ env.REMOTE_DEPLOY_PATH }}\\appsettings.Production.json"
-          $content = Get-Content $appSettingsPath | ForEach-Object { 
-            $_ -replace '#{ConnectionString}#', '${{ secrets.PROD_CONNECTION_STRING }}' `
+          # The closing brace '}' was removed from the end of the line below, fixing the syntax error.
+          $content = (Get-Content $appSettingsPath -Raw) -replace '#{ConnectionString}#', '${{ secrets.PROD_CONNECTION_STRING }}' `
                -replace '#{TelegramBotToken}#', '${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}' `
                -replace '#{TelegramApiId}#', '${{ secrets.TELEGRAM_API_ID }}' `
                -replace '#{TelegramApiHash}#', '${{ secrets.TELEGRAM_API_HASH }}' `
                -replace '#{TelegramPhoneNumber}#', '${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}' `
                -replace '#{CryptoPayApiToken}#', '${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}'
-          }
           Set-Content -Path $appSettingsPath -Value $content
           
-          # 5. Start the new version
-          Write-Host "Starting new WebAPI.exe process..."
+          Write-Host "[Step 5/5] Starting new WebAPI.exe process..."
           Start-Process -FilePath "${{ env.REMOTE_DEPLOY_PATH }}\\WebAPI.exe"
           
-          Write-Host "Deployment successful!"
+          Write-Host "--- Deployment Successful ---"

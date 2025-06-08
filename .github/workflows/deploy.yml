@@ -13,19 +13,15 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-
       - name: 'Setup .NET 9 Preview SDK'
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '9.0.x'
           dotnet-quality: 'preview'
-
       - name: Publish WebAPI Project
         run: dotnet publish ./WebAPI/WebAPI.csproj --configuration Release --output ./publish
-      
       - name: Zip Release Artifact
         run: zip -r release.zip ./publish
-        
       - uses: actions/upload-artifact@v4
         with:
           name: forex-bot-release
@@ -63,8 +59,10 @@ jobs:
         host: ${{ secrets.PROD_SERVER_IP }}
         username: ${{ secrets.PROD_SERVER_USERNAME }}
         password: ${{ secrets.PROD_SERVER_PASSWORD }}
-        # ✅ FIX: Removed all comment lines and corrected the syntax
+        # ✅ THE FIX: Tell the action to use PowerShell.
+        shell: powershell
         script: |
+          # Now that the shell is PowerShell, these commands will work correctly.
           Write-Host "--- Starting Remote Deployment on Server ---"
 
           Write-Host "[Step 1/5] Stopping any running WebAPI.exe process..."
@@ -81,7 +79,6 @@ jobs:
 
           Write-Host "[Step 4/5] Injecting production secrets..."
           $appSettingsPath = "${{ env.REMOTE_DEPLOY_PATH }}\\appsettings.Production.json"
-          # The closing brace '}' was removed from the end of the line below, fixing the syntax error.
           $content = (Get-Content $appSettingsPath -Raw) -replace '#{ConnectionString}#', '${{ secrets.PROD_CONNECTION_STRING }}' `
                -replace '#{TelegramBotToken}#', '${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}' `
                -replace '#{TelegramApiId}#', '${{ secrets.TELEGRAM_API_ID }}' `

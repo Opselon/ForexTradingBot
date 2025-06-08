@@ -2,7 +2,7 @@ name: '[PROD] Push-Deploy ForexBot Console App to Windows VPS'
 
 on:
   push:
-    branches: [ main ]
+    branches: [ master ]
   workflow_dispatch:
 
 jobs:

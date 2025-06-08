@@ -1,48 +1,59 @@
-name: '[PROD] Push-Deploy ForexBot Console App to Windows VPS'
+name: '[PROD] Build and Push-Deploy ForexTradingBot'
 
 on:
   push:
-    branches: [ master ]
+    branches: [ master ] # Corrected to use your 'master' branch
   workflow_dispatch:
 
 jobs:
-  # JOB 1: Build the application (This part is correct and does not need to change)
+  # JOB 1: Build the .NET 9 Application
   build:
-    name: '✅ 1. Build .NET Application'
+    name: '✅ 1. Build .NET 9 Application'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 'Setup .NET 9 Preview SDK' # ✅ THE FIX IS HERE
+        uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.0.x'
-      - name: Publish WebAPI Project
-        run: dotnet publish ./WebAPI/WebAPI.csproj --configuration Release --output ./publish
-      - name: Zip the Published Output
+          # This tells the runner to install the .NET 9 SDK
+          dotnet-version: '9.0.x'
+          # This line is important for using preview versions
+          dotnet-quality: 'preview'
+
+      - name: Restore, Build, and Publish
+        run: |
+          dotnet restore
+          dotnet build --configuration Release --no-restore
+          # We publish directly here since testing a preview SDK can be complex
+          dotnet publish ./WebAPI/WebAPI.csproj --configuration Release --output ./publish
+      
+      - name: Zip Release Artifact
         run: zip -r release.zip ./publish
+        
       - uses: actions/upload-artifact@v4
         with:
           name: forex-bot-release
           path: release.zip
 
-  # JOB 2: Deploy to your Windows Server using SSH/SCP
+  # JOB 2: Deploy to your Windows Server
   deploy:
-    name: '🚢 2. Deploy Console App to Windows VPS'
+    name: '🚢 2. Deploy to Windows VPS'
     needs: build
     runs-on: ubuntu-latest
 
     env:
-      # The permanent folder for your application on the server
       REMOTE_DEPLOY_PATH: "C:\\Apps\\ForexTradingBot"
-      # A temporary folder for the upload
       REMOTE_TEMP_PATH: "C:\\Apps\\Temp"
 
     steps:
-    - name: '⬇️ Download Build Artifact'
+    - name: Download Build Artifact
       uses: actions/download-artifact@v4
       with:
         name: forex-bot-release
 
-    - name: '📦 Upload Release Package to Server'
+    - name: Upload Release Package to Server
       uses: appleboy/scp-action@master
       with:
         host: ${{ secrets.PROD_SERVER_IP }}
@@ -50,38 +61,31 @@ jobs:
         password: ${{ secrets.PROD_SERVER_PASSWORD }}
         source: "release.zip"
         target: "${{ env.REMOTE_TEMP_PATH }}"
-        strip_components: 1 # This helps flatten the directory structure
+        strip_components: 1
 
-    - name: '🚀 Execute Deployment Script on Server'
+    - name: Execute Deployment Script on Server
       uses: appleboy/ssh-action@master
       with:
         host: ${{ secrets.PROD_SERVER_IP }}
         username: ${{ secrets.PROD_SERVER_USERNAME }}
         password: ${{ secrets.PROD_SERVER_PASSWORD }}
         script: |
-          # --- This entire script runs remotely on your Windows Server via SSH ---
-          
-          # 1. Kill the currently running application process by name.
-          Write-Host "Attempting to stop the existing WebAPI.exe process..."
+          # 1. Kill the running application
+          Write-Host "Stopping WebAPI.exe process..."
           Stop-Process -Name "WebAPI" -Force -ErrorAction SilentlyContinue
-          Start-Sleep -Seconds 3 # Give it time to release file locks
+          Start-Sleep -Seconds 3
           
-          # 2. Clean the deployment directory, PRESERVING the 'Session' folder.
-          Write-Host "Cleaning deployment directory but preserving session data..."
-          if (-not (Test-Path "${{ env.REMOTE_DEPLOY_PATH }}")) {
-            New-Item -Path "${{ env.REMOTE_DEPLOY_PATH }}" -ItemType Directory
-          }
+          # 2. Clean directory, preserving session data
+          Write-Host "Cleaning deployment directory..."
           Get-ChildItem -Path "${{ env.REMOTE_DEPLOY_PATH }}" -Exclude "Session" | Remove-Item -Recurse -Force
           
-          # 3. Unzip the new files from the temp location into the main app folder.
+          # 3. Unpack new version
           Write-Host "Unpacking new application version..."
           Expand-Archive -Path "${{ env.REMOTE_TEMP_PATH }}\\release.zip" -DestinationPath "${{ env.REMOTE_DEPLOY_PATH }}" -Force
-
-          # 4. Clean up the temporary zip file
           Remove-Item -Path "${{ env.REMOTE_TEMP_PATH }}\\release.zip" -Force
 
-          # 5. Inject Secrets into appsettings.Production.json
-          Write-Host "Injecting production secrets into configuration file..."
+          # 4. Inject secrets into config file
+          Write-Host "Injecting production secrets..."
           $appSettingsPath = "${{ env.REMOTE_DEPLOY_PATH }}\\appsettings.Production.json"
           $content = Get-Content $appSettingsPath | ForEach-Object { 
             $_ -replace '#{ConnectionString}#', '${{ secrets.PROD_CONNECTION_STRING }}' `
@@ -89,13 +93,12 @@ jobs:
                -replace '#{TelegramApiId}#', '${{ secrets.TELEGRAM_API_ID }}' `
                -replace '#{TelegramApiHash}#', '${{ secrets.TELEGRAM_API_HASH }}' `
                -replace '#{TelegramPhoneNumber}#', '${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}' `
-               -replace '#{CryptoPayApiToken}#', '${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}' `
+               -replace '#{CryptoPayApiToken}#', '${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}'
           }
           Set-Content -Path $appSettingsPath -Value $content
           
-          # 6. Start the new version of the .exe in the background.
+          # 5. Start the new version
           Write-Host "Starting new WebAPI.exe process..."
-          # Start-Process is the PowerShell way to launch a background process.
           Start-Process -FilePath "${{ env.REMOTE_DEPLOY_PATH }}\\WebAPI.exe"
           
-          Write-Host "Deployment to ${{ secrets.PROD_SERVER_IP }} successful! The application is running."
+          Write-Host "Deployment successful!"

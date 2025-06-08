@@ -426,7 +426,8 @@ namespace TelegramPanel.Application.CommandHandlers
             _logger.LogWarning("Data unavailable for {Symbol}. IsLive:{IsLive}, Source:{Source}",
                 symbol, marketData?.IsPriceLive, marketData?.DataSource);
 
-            string errorText = $"⚠️ Data for *{symbol}* is currently unavailable.";
+            string errorText = $"⚠️ Live market data for *{symbol}* is currently unavailable.\n\n" +
+                      $"However, you can fetch the latest fundamental news for this pair using the button below.";
             var errorKeyboard = GetMarketAnalysisKeyboard(symbol);
 
             // Edit the message to show the "unavailable" state.

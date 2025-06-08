@@ -12,6 +12,7 @@ using System.Linq; // برای Reverse(), FirstOrDefault(), Any()
 using System.Threading;
 using System.Threading.Tasks;
 using Telegram.Bot.Exceptions;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace TelegramPanel.Infrastructure // یا Application اگر در آن لایه است
 {
@@ -35,7 +36,7 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
         private readonly IDirectMessageSender _directMessageSender; // <-- INJECT THE NEW SENDER
         private readonly AsyncRetryPolicy _internalServiceRetryPolicy; // سیاست Polly برای سرویس‌های داخلی/DB
         private readonly AsyncRetryPolicy _externalApiRetryPolicy;    // سیاست Polly برای فراخوانی‌های API خارجی
-
+        private readonly IMemoryCache _memoryCache; // ✅ INJECT THE MEMORY CACHE
         #endregion
 
         #region Constructor
@@ -48,7 +49,8 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
             IEnumerable<ITelegramCallbackQueryHandler> callbackQueryHandlers,
             ITelegramStateMachine stateMachine,
             ITelegramMessageSender messageSender,
-            IDirectMessageSender directMessageSender)
+            IDirectMessageSender directMessageSender,
+            IMemoryCache memoryCache)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
@@ -89,6 +91,7 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
                             updateId, chatId, timeSpan, retryAttempt, exception.Message);
                     });
             _directMessageSender = directMessageSender;
+            _memoryCache = memoryCache;
         }
         #endregion
 
@@ -346,25 +349,46 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
 
         private async Task SendAndDeleteEphemeralMessageAsync(long chatId, CancellationToken cancellationToken)
         {
+            // --- ANTI-SPAM LOGIC ---
+            // Define a unique cache key for this user's rate limit.
+            var rateLimitCacheKey = $"unknown_command_ratelimit_{chatId}";
+
+            // Check if a rate-limit entry already exists for this user.
+            // The '_' is a discard, we only care IF the value exists, not what it is.
+            if (_memoryCache.TryGetValue(rateLimitCacheKey, out _))
+            {
+                // The user is rate-limited. Log it for debugging and do nothing.
+                _logger.LogInformation("Rate limit triggered for ChatId {ChatId}. Suppressing 'unknown command' message.", chatId);
+                return; // Exit the method silently.
+            }
+            // --- END ANTI-SPAM LOGIC ---
+
             try
             {
-                // STEP 1: Send the message DIRECTLY and get its ID
+                // If not rate-limited, proceed to send the message.
                 var sentMessage = await _directMessageSender.SendTextMessageAsync(
                     chatId: chatId,
                     text: "Sorry, I didn't understand that command. This message will self-destruct.",
                     cancellationToken: cancellationToken);
 
-                // If the message failed to send (e.g., user blocked bot), stop here.
                 if (sentMessage is null)
                 {
                     _logger.LogWarning("Failed to send ephemeral message to chat {ChatId}, it might be blocked.", chatId);
                     return;
                 }
 
-                // STEP 2: Wait for 3 seconds
+                // --- ANTI-SPAM LOGIC ---
+                // After successfully sending, set the rate-limit cache entry for this user.
+                // It will automatically expire after 10 seconds.
+                var cacheEntryOptions = new MemoryCacheEntryOptions()
+                    .SetAbsoluteExpiration(TimeSpan.FromSeconds(10));
+
+                _memoryCache.Set(rateLimitCacheKey, true, cacheEntryOptions);
+                // --- END ANTI-SPAM LOGIC ---
+
+                // Wait for 3 seconds to delete the message.
                 await Task.Delay(TimeSpan.FromSeconds(3), cancellationToken);
 
-                // STEP 3: Delete the message DIRECTLY
                 await _directMessageSender.DeleteMessageAsync(
                     chatId: chatId,
                     messageId: sentMessage.MessageId,
@@ -372,16 +396,13 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
             }
             catch (OperationCanceledException)
             {
-                // This is expected if the application is shutting down. Safe to ignore.
+                // Safe to ignore.
             }
             catch (Exception ex)
             {
-                // CRITICAL: Catch all other exceptions. An unhandled exception in a fire-and-forget
-                // task will crash the entire application process.
                 _logger.LogError(ex, "Error in fire-and-forget task 'SendAndDeleteEphemeralMessageAsync' for chat {ChatId}.", chatId);
             }
         }
-
 
 
         /// <summary>

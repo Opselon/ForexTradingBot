@@ -566,56 +566,93 @@ namespace Infrastructure.Persistence.Repositories
         #endregion
 
         #region INewsItemRepository Write Operations
+        /// <summary>
+        /// Adds a new NewsItem to the database, but only if it does not already exist.
+        /// Duplicates are identified first by a combination of RssSourceId and a non-empty SourceItemId.
+        /// If SourceItemId is null or empty, it falls back to checking RssSourceId and the Title.
+        /// The entire operation is performed within a single database transaction to ensure atomicity.
+        /// </summary>
+        /// <param name="newsItem">The news item to add.</param>
+        /// <param name="cancellationToken">A token to cancel the operation.</param>
+        /// <summary>
+        /// Adds a new NewsItem to the database if it does not already exist, using a single, atomic MERGE operation.
+        /// This is an efficient "upsert" that prevents duplicate entries.
+        /// <para>
+        /// Duplicates are identified first by a combination of RssSourceId and a non-empty SourceItemId.
+        /// If SourceItemId is unavailable, it falls back to checking RssSourceId and the Title.
+        /// </para>
+        /// </summary>
+        /// <param name="newsItem">The news item to add.</param>
+        /// <param name="cancellationToken">A token to cancel the operation.</param>
         public async Task AddAsync(NewsItem newsItem, CancellationToken cancellationToken = default)
         {
             if (newsItem == null) throw new ArgumentNullException(nameof(newsItem));
-            _logger.LogInformation("Adding new NewsItem. NewsItemId: {NewsItemId}, Title: {Title}", newsItem.Id, newsItem.Title.Truncate(50));
+
+            _logger.LogDebug("Attempting to upsert NewsItem. Title: {Title}", newsItem.Title.Truncate(50));
+
             try
             {
-                await _retryPolicy.ExecuteAsync(async () =>
+                await _retryPolicy.ExecuteAsync(async (ct) =>
                 {
-                    using var connection = CreateConnection();
-                    await connection.OpenAsync(cancellationToken);
+                    await using var connection = CreateConnection();
 
-                    var sql = @"
-                        INSERT INTO NewsItems (
-                            Id, Title, Link, Summary, FullContent, ImageUrl, PublishedDate, CreatedAt, LastProcessedAt,
-                            SourceName, SourceItemId, SentimentScore, SentimentLabel, DetectedLanguage, AffectedAssets,
-                            RssSourceId, IsVipOnly, AssociatedSignalCategoryId
-                        ) VALUES (
-                            @Id, @Title, @Link, @Summary, @FullContent, @ImageUrl, @PublishedDate, @CreatedAt, @LastProcessedAt,
-                            @SourceName, @SourceItemId, @SentimentScore, @SentimentLabel, @DetectedLanguage, @AffectedAssets,
-                            @RssSourceId, @IsVipOnly, @AssociatedSignalCategoryId
-                        );";
+                    string mergeSql;
+                    object mergeParams;
+                    string identityColumn; // The column used for matching
 
-                    await connection.ExecuteAsync(new CommandDefinition(sql, new
+                    // --- Step 1: Prepare the correct MERGE statement based on available data ---
+                    if (!string.IsNullOrWhiteSpace(newsItem.SourceItemId))
                     {
-                        newsItem.Id,
-                        newsItem.Title,
-                        newsItem.Link,
-                        newsItem.Summary,
-                        newsItem.FullContent,
-                        newsItem.ImageUrl,
-                        newsItem.PublishedDate,
-                        newsItem.CreatedAt,
-                        newsItem.LastProcessedAt,
-                        newsItem.SourceName,
-                        newsItem.SourceItemId,
-                        newsItem.SentimentScore,
-                        newsItem.SentimentLabel,
-                        newsItem.DetectedLanguage,
-                        newsItem.AffectedAssets,
-                        newsItem.RssSourceId,
-                        newsItem.IsVipOnly,
-                        newsItem.AssociatedSignalCategoryId
-                    }, commandTimeout: CommandTimeoutSeconds)); // <--- ADDED: Pass CommandTimeout
-                });
-                _logger.LogInformation("Successfully added NewsItem: {NewsItemId}", newsItem.Id);
+                        identityColumn = "SourceItemId";
+                        mergeParams = newsItem; // The whole object can be used as Dapper parameters
+                        mergeSql = @"
+MERGE INTO NewsItems AS Target
+USING (SELECT @RssSourceId AS RssSourceId, @SourceItemId AS SourceItemId) AS Source
+ON (Target.RssSourceId = Source.RssSourceId AND Target.SourceItemId = Source.SourceItemId)
+WHEN NOT MATCHED BY TARGET THEN
+    INSERT (Id, Title, Link, Summary, FullContent, ImageUrl, PublishedDate, CreatedAt, LastProcessedAt, SourceName, SourceItemId, SentimentScore, SentimentLabel, DetectedLanguage, AffectedAssets, RssSourceId, IsVipOnly, AssociatedSignalCategoryId)
+    VALUES (@Id, @Title, @Link, @Summary, @FullContent, @ImageUrl, @PublishedDate, @CreatedAt, @LastProcessedAt, @SourceName, @SourceItemId, @SentimentScore, @SentimentLabel, @DetectedLanguage, @AffectedAssets, @RssSourceId, @IsVipOnly, @AssociatedSignalCategoryId);
+";
+                    }
+                    else
+                    {
+                        identityColumn = "Title";
+                        mergeParams = newsItem;
+                        mergeSql = @"
+MERGE INTO NewsItems AS Target
+USING (SELECT @RssSourceId AS RssSourceId, @Title AS Title) AS Source
+ON (Target.RssSourceId = Source.RssSourceId AND Target.Title = Source.Title)
+WHEN NOT MATCHED BY TARGET THEN
+    INSERT (Id, Title, Link, Summary, FullContent, ImageUrl, PublishedDate, CreatedAt, LastProcessedAt, SourceName, SourceItemId, SentimentScore, SentimentLabel, DetectedLanguage, AffectedAssets, RssSourceId, IsVipOnly, AssociatedSignalCategoryId)
+    VALUES (@Id, @Title, @Link, @Summary, @FullContent, @ImageUrl, @PublishedDate, @CreatedAt, @LastProcessedAt, @SourceName, @SourceItemId, @SentimentScore, @SentimentLabel, @DetectedLanguage, @AffectedAssets, @RssSourceId, @IsVipOnly, @AssociatedSignalCategoryId);
+";
+                    }
+
+                    // --- Step 2: Execute the atomic MERGE operation ---
+                    var command = new CommandDefinition(
+                        mergeSql,
+                        mergeParams,
+                        commandTimeout: CommandTimeoutSeconds,
+                        cancellationToken: ct);
+
+                    // .ExecuteAsync returns the number of rows affected. 1 for an insert, 0 if it already existed.
+                    var rowsAffected = await connection.ExecuteAsync(command).ConfigureAwait(false);
+
+                    if (rowsAffected > 0)
+                    {
+                        _logger.LogInformation("Successfully inserted new NewsItem via MERGE. NewsItemId: {NewsItemId}", newsItem.Id);
+                    }
+                    else
+                    {
+                        _logger.LogInformation("Duplicate NewsItem found (matched by {IdentityColumn}). MERGE operation skipped insert. Title: {Title}", identityColumn, newsItem.Title.Truncate(50));
+                    }
+
+                }, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error adding NewsItem {NewsItemId} to the database.", newsItem.Id);
-                throw new RepositoryException($"Failed to add news item '{newsItem.Id}'.", ex);
+                _logger.LogError(ex, "Error during MERGE operation for NewsItem {NewsItemId}. Title: {Title}", newsItem.Id, newsItem.Title.Truncate(50));
+                throw new RepositoryException($"Failed to add or merge news item '{newsItem.Id}'.", ex);
             }
         }
 
@@ -678,74 +715,79 @@ namespace Infrastructure.Persistence.Repositories
             }
         }
 
+        /// <summary>
+        /// Updates an existing NewsItem in the database.
+        /// Throws an exception if the item with the specified ID is not found, indicating a potential concurrency issue.
+        /// </summary>
+        /// <param name="newsItem">The news item with updated values.</param>
+        /// <param name="cancellationToken">A token to cancel the operation.</param>
+        /// <exception cref="InvalidOperationException">Thrown if no rows are affected, which implies the item ID does not exist.</exception>
+        /// <exception cref="RepositoryException">Thrown for general database or retry policy errors.</exception>
         public async Task UpdateAsync(NewsItem newsItem, CancellationToken cancellationToken = default)
         {
             if (newsItem == null) throw new ArgumentNullException(nameof(newsItem));
+
             _logger.LogInformation("Updating NewsItem. NewsItemId: {NewsItemId}", newsItem.Id);
+
             try
             {
-                await _retryPolicy.ExecuteAsync(async () =>
+                await _retryPolicy.ExecuteAsync(async (ct) =>
                 {
-                    using var connection = CreateConnection();
-                    await connection.OpenAsync(cancellationToken);
+                    // Use 'await using' for modern async disposal
+                    await using var connection = CreateConnection();
+                    await connection.OpenAsync(ct).ConfigureAwait(false);
 
                     var sql = @"
-                        UPDATE NewsItems SET
-                            Title = @Title,
-                            Link = @Link,
-                            Summary = @Summary,
-                            FullContent = @FullContent,
-                            ImageUrl = @ImageUrl,
-                            PublishedDate = @PublishedDate,
-                            LastProcessedAt = @LastProcessedAt,
-                            SourceName = @SourceName,
-                            SourceItemId = @SourceItemId,
-                            SentimentScore = @SentimentScore,
-                            SentimentLabel = @SentimentLabel,
-                            DetectedLanguage = @DetectedLanguage,
-                            AffectedAssets = @AffectedAssets,
-                            RssSourceId = @RssSourceId,
-                            IsVipOnly = @IsVipOnly,
-                            AssociatedSignalCategoryId = @AssociatedSignalCategoryId
-                        WHERE Id = @Id;";
+                UPDATE NewsItems SET
+                    Title = @Title,
+                    Link = @Link,
+                    Summary = @Summary,
+                    FullContent = @FullContent,
+                    ImageUrl = @ImageUrl,
+                    PublishedDate = @PublishedDate,
+                    LastProcessedAt = @LastProcessedAt,
+                    SourceName = @SourceName,
+                    SourceItemId = @SourceItemId,
+                    SentimentScore = @SentimentScore,
+                    SentimentLabel = @SentimentLabel,
+                    DetectedLanguage = @DetectedLanguage,
+                    AffectedAssets = @AffectedAssets,
+                    RssSourceId = @RssSourceId,
+                    IsVipOnly = @IsVipOnly,
+                    AssociatedSignalCategoryId = @AssociatedSignalCategoryId
+                WHERE Id = @Id;";
 
-                    var rowsAffected = await connection.ExecuteAsync(new CommandDefinition(sql, new
-                    {
-                        newsItem.Title,
-                        newsItem.Link,
-                        newsItem.Summary,
-                        newsItem.FullContent,
-                        newsItem.ImageUrl,
-                        newsItem.PublishedDate,
-                        newsItem.LastProcessedAt,
-                        newsItem.SourceName,
-                        newsItem.SourceItemId,
-                        newsItem.SentimentScore,
-                        newsItem.SentimentLabel,
-                        newsItem.DetectedLanguage,
-                        newsItem.AffectedAssets,
-                        newsItem.RssSourceId,
-                        newsItem.IsVipOnly,
-                        newsItem.AssociatedSignalCategoryId,
-                        newsItem.Id // WHERE clause parameter
-                    }, commandTimeout: CommandTimeoutSeconds)); // <--- ADDED: Pass CommandTimeout
+                    // ✅ UPGRADE: Pass the entire newsItem object directly.
+                    // Dapper will map all the properties to the SQL parameters. This is cleaner.
+                    var command = new CommandDefinition(
+                        sql,
+                        newsItem, // <-- Cleaner parameter passing
+                        commandTimeout: CommandTimeoutSeconds,
+                        cancellationToken: ct);
 
+                    var rowsAffected = await connection.ExecuteAsync(command).ConfigureAwait(false);
+
+                    // ✅ UPGRADE: More precise concurrency check.
                     if (rowsAffected == 0)
                     {
-                        // If no rows affected, it means the item was not found or was concurrently deleted/modified.
-                        throw new InvalidOperationException($"NewsItem with ID '{newsItem.Id}' not found for update, or no changes were made. Concurrency conflict suspected.");
+                        // This is the most likely reason for 0 rows affected.
+                        // It's a clear signal that the entity we tried to update doesn't exist.
+                        throw new InvalidOperationException($"Update failed: NewsItem with ID '{newsItem.Id}' was not found in the database.");
                     }
-                });
+
+                }, cancellationToken).ConfigureAwait(false);
+
                 _logger.LogInformation("Successfully updated NewsItem: {NewsItemId}", newsItem.Id);
             }
-            catch (InvalidOperationException ex) // Catch concurrency specific error
+            catch (InvalidOperationException ex) // Catch our specific "not found" error
             {
-                _logger.LogError(ex, "Concurrency conflict or NewsItem not found for update. NewsItemId: {NewsItemId}", newsItem.Id);
-                throw; // Re-throw to propagate this specific error type
+                // This log is now more accurate.
+                _logger.LogWarning(ex, "Update failed for NewsItem {NewsItemId}, likely because it was deleted before the update could be applied.", newsItem.Id);
+                throw; // Re-throw to let the caller know the update failed.
             }
-            catch (Exception ex)
+            catch (Exception ex) // Catch all other errors (DB connection, Polly timeout, etc.)
             {
-                _logger.LogError(ex, "Error updating NewsItem {NewsItemId} in the database.", newsItem.Id);
+                _logger.LogError(ex, "An unexpected error occurred while updating NewsItem {NewsItemId} in the database.", newsItem.Id);
                 throw new RepositoryException($"Failed to update news item '{newsItem.Id}'.", ex);
             }
         }

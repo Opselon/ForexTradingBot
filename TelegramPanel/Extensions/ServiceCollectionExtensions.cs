@@ -6,6 +6,7 @@ using Domain.Features.Forwarding.Entities;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Microsoft.Win32;
 using Telegram.Bot;
 using TelegramPanel.Application.CommandHandlers; // For marker types like StartCommandHandler, MenuCommandHandler
 using TelegramPanel.Application.Interfaces;    // For ITelegram...Handler interfaces
@@ -45,7 +46,8 @@ namespace TelegramPanel.Extensions
             services.AddSingleton<ITelegramUpdateChannel, TelegramUpdateChannel>();
             services.AddScoped<ITelegramUpdateProcessor, UpdateProcessingService>();
             services.AddScoped<IMarketDataService, MarketDataService>();
-
+            //For IMMEDIATE, interactive messages, register the new Direct Sender.
+            services.AddScoped<IDirectMessageSender, DirectTelegramMessageSender>();
             // 4. Register Middleware
             services.AddScoped<ITelegramMiddleware, LoggingMiddleware>();
             services.AddScoped<ITelegramMiddleware, AuthenticationMiddleware>();

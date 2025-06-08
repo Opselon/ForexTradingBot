@@ -11,6 +11,7 @@ using System.Collections.Generic; // برای IReadOnlyList
 using System.Linq; // برای Reverse(), FirstOrDefault(), Any()
 using System.Threading;
 using System.Threading.Tasks;
+using Telegram.Bot.Exceptions;
 
 namespace TelegramPanel.Infrastructure // یا Application اگر در آن لایه است
 {
@@ -31,7 +32,7 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
         private readonly IEnumerable<ITelegramCallbackQueryHandler> _callbackQueryHandlers;
         private readonly ITelegramStateMachine _stateMachine;
         private readonly ITelegramMessageSender _messageSender;
-
+        private readonly IDirectMessageSender _directMessageSender; // <-- INJECT THE NEW SENDER
         private readonly AsyncRetryPolicy _internalServiceRetryPolicy; // سیاست Polly برای سرویس‌های داخلی/DB
         private readonly AsyncRetryPolicy _externalApiRetryPolicy;    // سیاست Polly برای فراخوانی‌های API خارجی
 
@@ -46,7 +47,8 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
             IEnumerable<ITelegramCommandHandler> commandHandlers,
             IEnumerable<ITelegramCallbackQueryHandler> callbackQueryHandlers,
             ITelegramStateMachine stateMachine,
-            ITelegramMessageSender messageSender)
+            ITelegramMessageSender messageSender,
+            IDirectMessageSender directMessageSender)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
@@ -86,6 +88,7 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
                             "PollyRetry (ExternalAPI): API call failed for UpdateId {UpdateId}, ChatId {ChatId}. Retrying in {TimeSpan} for attempt {RetryAttempt}. Error: {Message}",
                             updateId, chatId, timeSpan, retryAttempt, exception.Message);
                     });
+            _directMessageSender = directMessageSender;
         }
         #endregion
 
@@ -313,53 +316,73 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
         }
 
         /// <summary>
-        /// آپدیت‌هایی را که توسط هیچ Command Handler یا وضعیت فعالی مدیریت نشده‌اند، مدیریت می‌کند.
-        /// معمولاً با ارسال یک پیام پیش‌فرض به کاربر همراه است.
-        /// این متد از سیاست تلاش مجدد <see cref="_externalApiRetryPolicy"/> برای ارسال پیام استفاده می‌کند.
+        /// Handles updates that were not managed by any Command Handler or active state.
+        /// It sends a default message to the user which self-destructs after a few seconds.
+        /// This method uses the <see cref="_externalApiRetryPolicy"/> retry policy for sending and deleting the message.
         /// </summary>
-        /// <param name="update">آپدیت نامشخص یا بدون تطابق.</param>
-        /// <param name="cancellationToken">توکن برای لغو عملیات.</param>
-        private async Task HandleUnknownOrUnmatchedUpdateAsync(Update update, CancellationToken cancellationToken)
+        /// <param name="update">The unhandled or unmatched update.</param>
+        /// <param name="cancellationToken">A token to cancel the operation.</param>
+        /// <summary>
+        /// Handles updates that were not managed by any other handler.
+        /// This method immediately returns while launching a background task to handle the response.
+        /// </summary>
+        private Task HandleUnknownOrUnmatchedUpdateAsync(Update update, CancellationToken cancellationToken)
         {
-            var messageText = update.Message?.Text ?? update.CallbackQuery?.Data ?? update.Type.ToString();
-            var partialMessageText = messageText.Length > 50 ? messageText.Substring(0, 50) + "..." : messageText;
-            _logger.LogWarning(
-                "Handling unmatched update ID: {UpdateId}. UpdateType: {UpdateType}, Content (partial): '{PartialMessageText}'",
-                update.Id,
-                update.Type,
-                partialMessageText);
-
             var chatId = update.Message?.Chat?.Id ?? update.CallbackQuery?.Message?.Chat?.Id;
+
             if (chatId.HasValue)
             {
-                // اطلاعات برای Context مربوط به Polly
-                var pollyContext = new Polly.Context($"UnknownUpdateMessage_{update.Id}", new Dictionary<string, object>
-                {
-                    { "UpdateId", update.Id },
-                    { "ChatId", chatId.Value }
-                });
-
-                try
-                {
-                    // ✅ اعمال سیاست تلاش مجدد بر روی SendTextMessageAsync
-                    await _externalApiRetryPolicy.ExecuteAsync(async (context, ct) =>
-                    {
-                        // این فراخوانی باید async باشد و Thread را بلاک نکند.
-                        await _messageSender.SendTextMessageAsync(chatId.Value,
-                            "Sorry, I didn't understand that. Please type /help to see available commands or check the menu.",
-                            cancellationToken: ct); // از ct برای Polly استفاده می‌شود
-                    }, pollyContext, cancellationToken);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Failed to send 'unknown command' message to user {ChatId} for update ID: {UpdateId} after retries.", chatId.Value, update.Id);
-                }
+                // ✅ FIRE-AND-FORGET: Start the task but don't wait for it.
+                // This allows the handler to return immediately and process the next update.
+                _ = SendAndDeleteEphemeralMessageAsync(chatId.Value, cancellationToken);
             }
             else
             {
-                _logger.LogWarning("Cannot send 'unknown command' message for update ID: {UpdateId} as ChatId is missing.", update.Id);
+                _logger.LogWarning("Cannot handle unknown update {UpdateId} because ChatId is missing.", update.Id);
+            }
+
+            return Task.CompletedTask;
+        }
+
+        private async Task SendAndDeleteEphemeralMessageAsync(long chatId, CancellationToken cancellationToken)
+        {
+            try
+            {
+                // STEP 1: Send the message DIRECTLY and get its ID
+                var sentMessage = await _directMessageSender.SendTextMessageAsync(
+                    chatId: chatId,
+                    text: "Sorry, I didn't understand that command. This message will self-destruct.",
+                    cancellationToken: cancellationToken);
+
+                // If the message failed to send (e.g., user blocked bot), stop here.
+                if (sentMessage is null)
+                {
+                    _logger.LogWarning("Failed to send ephemeral message to chat {ChatId}, it might be blocked.", chatId);
+                    return;
+                }
+
+                // STEP 2: Wait for 3 seconds
+                await Task.Delay(TimeSpan.FromSeconds(3), cancellationToken);
+
+                // STEP 3: Delete the message DIRECTLY
+                await _directMessageSender.DeleteMessageAsync(
+                    chatId: chatId,
+                    messageId: sentMessage.MessageId,
+                    cancellationToken: cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                // This is expected if the application is shutting down. Safe to ignore.
+            }
+            catch (Exception ex)
+            {
+                // CRITICAL: Catch all other exceptions. An unhandled exception in a fire-and-forget
+                // task will crash the entire application process.
+                _logger.LogError(ex, "Error in fire-and-forget task 'SendAndDeleteEphemeralMessageAsync' for chat {ChatId}.", chatId);
             }
         }
+
+
 
         /// <summary>
         /// خطاهای پیش‌بینی نشده در حین پردازش آپدیت را مدیریت می‌کند و یک پیام عمومی خطا به کاربر ارسال می‌کند.

@@ -15,7 +15,8 @@ using Application.Common.Interfaces; // For IUserRepository
 using Domain.Entities;             // For User, Subscription, TokenWallet, UserSignalPreference entities
 using Domain.Enums; // For UserLevel enum (stored as string in DB)
 using System.Linq.Expressions; // Still included, but will throw NotSupportedException
-using Shared.Exceptions; // For custom RepositoryException
+using Shared.Exceptions;
+using Polly.Timeout; // For custom RepositoryException
 #endregion
 
 namespace Infrastructure.Persistence.Repositories
@@ -125,7 +126,7 @@ namespace Infrastructure.Persistence.Repositories
                 };
             }
         }
-
+        private readonly AsyncTimeoutPolicy _timeoutPolicy;
         // --- Constructor ---
         public UserRepository(IConfiguration configuration, ILogger<UserRepository> logger)
         {
@@ -134,6 +135,7 @@ namespace Infrastructure.Persistence.Repositories
             _connectionString = configuration.GetConnectionString("DefaultConnection")
                                 ?? throw new ArgumentNullException("DefaultConnection", "DefaultConnection string not found.");
 
+            _timeoutPolicy = Policy.TimeoutAsync(TimeSpan.FromMinutes(5), Polly.Timeout.TimeoutStrategy.Pessimistic);
             // Polly configuration for transient errors (e.g., network issues, temporary DB unavailability)
             // Excludes primary key violation errors (e.g., trying to add a user with an existing ID/email/telegramId)
             _retryPolicy = Policy
@@ -358,17 +360,25 @@ namespace Infrastructure.Persistence.Repositories
 
             try
             {
-                return await _retryPolicy.ExecuteAsync(async (ct) =>
+                // --- THIS IS THE CORE CHANGE ---
+                // We create a combined policy on the fly. The timeout policy wraps the retry policy.
+                // This means the 5-minute timer starts, and WITHIN that time, Polly can perform its retries.
+                var combinedPolicy = _timeoutPolicy.WrapAsync(_retryPolicy);
+
+                return await combinedPolicy.ExecuteAsync(async (ct) =>
                 {
+                    // The 'ct' CancellationToken passed here is now managed by the Pessimistic Timeout policy.
+                    // If the timeout is reached, this token will be cancelled.
+
                     using var connection = CreateConnection();
+                    // Pass the policy-managed token to OpenAsync
                     await connection.OpenAsync(ct);
 
-                    // ✅✅ --- OPTIMIZATION 2: SINGLE EXECUTION WITH QueryMultipleAsync --- ✅✅
+                    // Dapper's CommandDefinition will respect the cancellation token.
                     using var multi = await connection.QueryMultipleAsync(
                         new CommandDefinition(combinedSql, new { TelegramId = telegramId }, cancellationToken: ct)
                     );
 
-                    // Read the first result (the user). If null, no need to proceed.
                     var userDto = await multi.ReadFirstOrDefaultAsync<UserDbDto>();
                     if (userDto == null)
                     {
@@ -378,31 +388,32 @@ namespace Infrastructure.Persistence.Repositories
 
                     var user = userDto.ToDomainEntity();
 
-                    // ✅✅ --- OPTIMIZATION 3: EFFICIENTLY HYDRATE THE OBJECT GRAPH --- ✅✅
-                    // Read the subsequent results and build the user object.
-
-                    // Read wallet
                     var walletDto = await multi.ReadFirstOrDefaultAsync<TokenWalletDbDto>();
-                    user.TokenWallet = walletDto?.ToDomainEntity() ?? TokenWallet.Create(user.Id); // Create default if null
+                    user.TokenWallet = walletDto?.ToDomainEntity() ?? TokenWallet.Create(user.Id);
 
-                    // Read subscriptions and preferences in parallel if desired, though sequential is fine here.
                     var subscriptionsDto = await multi.ReadAsync<SubscriptionDbDto>();
                     user.Subscriptions = subscriptionsDto.Select(s => s.ToDomainEntity()).ToList();
 
                     var preferencesDto = await multi.ReadAsync<UserSignalPreferenceDbDto>();
                     user.Preferences = preferencesDto.Select(usp => usp.ToDomainEntity()).ToList();
 
-                    // Transactions are not fetched in this query.
                     user.Transactions = new List<Transaction>();
 
-                    _logger.LogDebug("Successfully fetched and composed user {UserId} from TelegramID {TelegramId}.", user.Id, telegramId);
+                    _logger.LogDebug("Successfully fetched user {UserId} from TelegramID {TelegramId}.", user.Id, telegramId);
                     return user;
 
-                }, cancellationToken);
+                }, cancellationToken); // Pass the original cancellationToken here
+            }
+            // --- CATCHING THE TIMEOUT EXCEPTION ---
+            catch (Polly.Timeout.TimeoutRejectedException ex)
+            {
+                _logger.LogError(ex, "UserRepository: Operation timed out after 5 minutes while fetching user by TelegramID {TelegramId}.", telegramId);
+                // Rethrow as a more specific domain exception
+                throw new RepositoryException($"The operation to fetch user by TelegramID {telegramId} timed out.", ex);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to get user by TelegramID {TelegramId} after retries.", telegramId);
+                _logger.LogError(ex, "Failed to get user by TelegramID {TelegramId} after retries and within timeout.", telegramId);
                 throw new RepositoryException($"An error occurred while fetching user by TelegramID: {telegramId}", ex);
             }
         }

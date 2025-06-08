@@ -26,6 +26,9 @@ using TelegramPanel.Extensions;
 using TelegramPanel.Infrastructure;
 using Hangfire.SqlServer;
 using TL;
+using WebAPI.Extensions;
+using System;
+using Shared.Maintenance;
 #endregion
 
 // ------------------- پیکربندی اولیه لاگر Serilog (Bootstrap Logger) -------------------
@@ -52,17 +55,6 @@ try
      .ReadFrom.Services(services)
      .Enrich.FromLogContext()
 
-     // MODIFIED LINE: Set the DEFAULT minimum level for ALL logs.
-     // Change '.Information()' to '.Warning()' or '.Error()' or '.Fatal()'.
-     // Setting it to '.Error()' will suppress all Info/Warn/Debug from your custom logs too.
-     .MinimumLevel.Warning() // Or .MinimumLevel.Error(), or .MinimumLevel.Fatal() if you want very few logs.
-
-     // Keep overrides for Microsoft/System/Hangfire for finer control (e.g., if you set default to Info for YOUR app, but suppress theirs to Error).
-     // If you set default to Error/Fatal, these overrides are less necessary but can still be left.
-     .MinimumLevel.Override("Microsoft", Serilog.Events.LogEventLevel.Warning)
-     .MinimumLevel.Override("System", Serilog.Events.LogEventLevel.Warning)
-     .MinimumLevel.Override("Hangfire", Serilog.Events.LogEventLevel.Warning)
-
      .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
  //  می‌توانید Sink های دیگری مانند File, Seq, ElasticSearch و ... را اینجا اضافه کنید                                                                                             //               restrictedToMinimumLevel: Serilog.Events.LogEventLevel.Information,
  //               outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] ({SourceContext}) {Message:lj}{NewLine}{Exception}")
@@ -87,7 +79,7 @@ try
                    .AllowCredentials();
         });
     });
-
+    var environment = builder.Environment;
     // پیکربندی Swagger/OpenAPI برای مستندسازی API
     builder.Services.AddSwaggerGen(options =>
     {
@@ -223,6 +215,12 @@ try
 
     builder.Services.AddHangfireServer();
     Log.Information("Hangfire services (with SQL Server for production) added.");
+
+    builder.Services.AddHangfireCleaner();
+
+    Log.Information("Hangfire cleaner service added.");
+
+
     builder.Services.Configure<List<Infrastructure.Settings.ForwardingRule>>( // <<< Fully qualified
     builder.Configuration.GetSection("ForwardingRules"));
     builder.Services.AddScoped<IActualTelegramMessageActions, ActualTelegramMessageActions>();
@@ -233,8 +231,39 @@ try
 
     // ------------------- ساخت WebApplication instance -------------------
     var app = builder.Build(); //  ساخت برنامه با تمام سرویس‌های پیکربندی شده
-                               // ------------------- دریافت لاگر از DI برای استفاده در ادامه Program.cs -------------------
-                               //  این لاگر، لاگری است که توسط UseSerilog پیکربندی شده است.
+    Log.Information("Application host built. Performing mandatory startup tasks...");
+
+    using (var scope = app.Services.CreateScope())
+    {
+        try
+        {
+            var cleaner = scope.ServiceProvider.GetRequiredService<IHangfireCleaner>();
+            var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
+            string connectionString = configuration.GetConnectionString("DefaultConnection")!;
+
+            // --- 1. Perform Hangfire Cleanup ---
+            Log.Information("Executing automatic Hangfire database cleanup...");
+            cleaner.PurgeCompletedAndFailedJobs(connectionString);
+            Log.Information("Hangfire database cleanup completed.");
+
+            // --- 2. Perform NewsItem Duplicate Cleanup ---
+            Log.Information("Executing automatic duplicate NewsItem cleanup...");
+            cleaner.PurgeDuplicateNewsItems(connectionString); // ✅ CALL THE NEW METHOD
+            Log.Information("Duplicate NewsItem cleanup completed.");
+
+        }
+        catch (Exception ex)
+        {
+            Log.Fatal(ex, "A critical error occurred during automatic startup maintenance tasks. The application will not start.");
+            return;
+        }
+    }
+
+    Log.Information("Mandatory startup tasks completed.");
+
+
+    // ------------------- دریافت لاگر از DI برای استفاده در ادامه Program.cs -------------------
+    //  این لاگر، لاگری است که توسط UseSerilog پیکربندی شده است.
     var programLogger = app.Services.GetRequiredService<ILogger<Program>>(); //  استفاده از ILogger<Program> برای لاگ‌های مختص Program.cs
 
     #region Configure HTTP Request Pipeline
@@ -291,6 +320,7 @@ try
         // For production, you MUST implement proper authentication/authorization here.
         Authorization = new[] { new LocalRequestsOnlyAuthorizationFilter() }
     };
+
     app.UseHangfireDashboard("/hangfire", hangfireDashboardOptions);
     programLogger.LogInformation("Hangfire Dashboard configured at /hangfire (For development, open to local requests. Secure for production!).");
 
@@ -333,6 +363,7 @@ try
         var orchestrator = scope.ServiceProvider.GetRequiredService<UserApiForwardingOrchestrator>();
         // Use orchestrator if needed
     }
+
     app.Run(); //  شروع به گوش دادن به درخواست‌های HTTP و اجرای برنامه
     #endregion
 }
@@ -344,6 +375,7 @@ catch (Exception ex)
 }
 finally
 {
+
     Log.Information("--------------------------------------------------");
     Log.Information("Application Shutting Down...");
     Log.CloseAndFlush(); //  بسیار مهم: اطمینان از نوشته شدن تمام لاگ‌های بافر شده قبل از خروج کامل برنامه

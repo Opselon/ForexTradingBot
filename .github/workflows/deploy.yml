@@ -6,28 +6,28 @@ on:
   workflow_dispatch:
 
 jobs:
-  # JOB 1: Build the .NET 9 Application
   build:
-    name: '✅ 1. Build .NET 9 Application'
+    name: '✅ 1. Build & Package Application'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-      - name: 'Setup .NET 9 Preview SDK'
+      - uses: actions/checkout@v4
+      - name: 'Setup .NET 9 SDK'
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '9.0.x'
           dotnet-quality: 'preview'
       - name: Publish WebAPI Project
-        run: dotnet publish ./WebAPI/WebAPI.csproj --configuration Release --output ./publish
-      - name: Zip Release Artifact
-        run: zip -r release.zip ./publish
+        run: dotnet publish ./WebAPI/WebAPI.csproj -c Release -o ./publish
+      - name: 'Package Release (App + Scripts)'
+        # We copy the deployment scripts into the publish folder before zipping
+        run: |
+          cp -r ./deployment_scripts ./publish/
+          cd ./publish && zip -r ../release.zip .
       - uses: actions/upload-artifact@v4
         with:
           name: forex-bot-release
           path: release.zip
 
-  # JOB 2: Deploy to your Windows Server
   deploy:
     name: '🚢 2. Deploy to Windows VPS'
     needs: build
@@ -43,7 +43,7 @@ jobs:
       with:
         name: forex-bot-release
 
-    - name: Upload Release Package to Server
+    - name: 'Upload Release Package to Server'
       uses: appleboy/scp-action@master
       with:
         host: ${{ secrets.PROD_SERVER_IP }}
@@ -51,43 +51,29 @@ jobs:
         password: ${{ secrets.PROD_SERVER_PASSWORD }}
         source: "release.zip"
         target: "${{ env.REMOTE_TEMP_PATH }}"
-        strip_components: 1
 
-    - name: Execute Deployment Script on Server
+    - name: 'Execute Deployment Script on Server'
       uses: appleboy/ssh-action@master
       with:
         host: ${{ secrets.PROD_SERVER_IP }}
         username: ${{ secrets.PROD_SERVER_USERNAME }}
         password: ${{ secrets.PROD_SERVER_PASSWORD }}
-        # ✅ THE FIX: Tell the action to use PowerShell.
-        shell: powershell
         script: |
-          # Now that the shell is PowerShell, these commands will work correctly.
-          Write-Host "--- Starting Remote Deployment on Server ---"
+          echo [Step 1/5] Stopping WebAPI.exe process...
+          taskkill /IM WebAPI.exe /F 2>nul || echo No process found.
+          timeout /t 3
 
-          Write-Host "[Step 1/5] Stopping any running WebAPI.exe process..."
-          Stop-Process -Name "WebAPI" -Force -ErrorAction SilentlyContinue
-          Start-Sleep -Seconds 3
-          
-          Write-Host "[Step 2/5] Cleaning deployment directory (preserving Session folder)..."
-          if (-not (Test-Path "${{ env.REMOTE_DEPLOY_PATH }}")) { New-Item -Path "${{ env.REMOTE_DEPLOY_PATH }}" -ItemType Directory }
-          Get-ChildItem -Path "${{ env.REMOTE_DEPLOY_PATH }}" -Exclude "Session" | Remove-Item -Recurse -Force
-          
-          Write-Host "[Step 3/5] Unpacking new application version..."
-          Expand-Archive -Path "${{ env.REMOTE_TEMP_PATH }}\\release.zip" -DestinationPath "${{ env.REMOTE_DEPLOY_PATH }}" -Force
-          Remove-Item -Path "${{ env.REMOTE_TEMP_PATH }}\\release.zip" -Force
+          echo [Step 2/5] Cleaning deployment directory (preserving Session)...
+          powershell -Command "if (Test-Path '${{ env.REMOTE_DEPLOY_PATH }}') { Get-ChildItem -Path '${{ env.REMOTE_DEPLOY_PATH }}' -Exclude 'Session' | Remove-Item -Recurse -Force }"
 
-          Write-Host "[Step 4/5] Injecting production secrets..."
-          $appSettingsPath = "${{ env.REMOTE_DEPLOY_PATH }}\\appsettings.Production.json"
-          $content = (Get-Content $appSettingsPath -Raw) -replace '#{ConnectionString}#', '${{ secrets.PROD_CONNECTION_STRING }}' `
-               -replace '#{TelegramBotToken}#', '${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}' `
-               -replace '#{TelegramApiId}#', '${{ secrets.TELEGRAM_API_ID }}' `
-               -replace '#{TelegramApiHash}#', '${{ secrets.TELEGRAM_API_HASH }}' `
-               -replace '#{TelegramPhoneNumber}#', '${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}' `
-               -replace '#{CryptoPayApiToken}#', '${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}'
-          Set-Content -Path $appSettingsPath -Value $content
-          
-          Write-Host "[Step 5/5] Starting new WebAPI.exe process..."
-          Start-Process -FilePath "${{ env.REMOTE_DEPLOY_PATH }}\\WebAPI.exe"
-          
-          Write-Host "--- Deployment Successful ---"
+          echo [Step 3/5] Unpacking new application version...
+          powershell -File "${{ env.REMOTE_TEMP_PATH }}\\deployment_scripts\\Unpack-And-Clean.ps1" -TempPath "${{ env.REMOTE_TEMP_PATH }}" -DeployPath "${{ env.REMOTE_DEPLOY_PATH }}"
+
+          echo [Step 4/5] Injecting production secrets...
+          powershell -File "${{ env.REMOTE_TEMP_PATH }}\\deployment_scripts\\Inject-Secrets.ps1" -DeployPath "${{ env.REMOTE_DEPLOY_PATH }}" -ConnectionString "${{ secrets.PROD_CONNECTION_STRING }}" -TelegramBotToken "${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}" -TelegramApiId "${{ secrets.TELEGRAM_API_ID }}" -TelegramApiHash "${{ secrets.TELEGRAM_API_HASH }}" -TelegramPhoneNumber "${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}" -CryptoPayApiToken "${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}"
+
+          echo [Step 5/5] Starting new WebAPI.exe process...
+          cd "${{ env.REMOTE_DEPLOY_PATH }}"
+          start "" "WebAPI.exe"
+
+          echo --- Deployment Successful ---

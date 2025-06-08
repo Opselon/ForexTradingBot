@@ -11,7 +11,7 @@ using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Formatters;
 #endregion
 
-namespace TelegramPanel.Application.CommandHandlers
+namespace TelegramPanel.Application.CommandHandlers.Features.News
 {
     public class NewsNotificationCallbackHandler : ITelegramCallbackQueryHandler
     {

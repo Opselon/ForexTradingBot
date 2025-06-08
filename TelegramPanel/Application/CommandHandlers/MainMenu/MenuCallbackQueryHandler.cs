@@ -9,6 +9,7 @@ using Telegram.Bot.Exceptions;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
+using TelegramPanel.Application.CommandHandlers.Settings;
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Application.States;
 using TelegramPanel.Formatters;
@@ -16,7 +17,7 @@ using TelegramPanel.Infrastructure;
 using TelegramPanel.Infrastructure.Helpers;
 #endregion
 
-namespace TelegramPanel.Application.CommandHandlers
+namespace TelegramPanel.Application.CommandHandlers.MainMenu
 {
     public class MenuCallbackQueryHandler : ITelegramCommandHandler, ITelegramCallbackQueryHandler
     {

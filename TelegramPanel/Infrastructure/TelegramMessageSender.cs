@@ -18,6 +18,7 @@ namespace TelegramPanel.Infrastructure
     // =========================================================================
     public interface IActualTelegramMessageActions
     {
+        Task CopyMessageToTelegramAsync(long targetChatId, long sourceChatId, int messageId, CancellationToken cancellationToken);
         Task EditMessageTextDirectAsync(long chatId, int messageId, string text, ParseMode? parseMode, InlineKeyboardMarkup? replyMarkup, CancellationToken cancellationToken);
         Task SendTextMessageToTelegramAsync(long chatId, string text, ParseMode? parseMode, ReplyMarkup? replyMarkup, bool disableNotification, LinkPreviewOptions? linkPreviewOptions, CancellationToken cancellationToken);
         Task EditMessageTextInTelegramAsync(long chatId, int messageId, string text, ParseMode? parseMode, InlineKeyboardMarkup? replyMarkup, CancellationToken cancellationToken);
@@ -113,6 +114,34 @@ namespace TelegramPanel.Infrastructure
                             "PollyRetry: Telegram API operation '{Operation}' failed (ChatId: {ChatId}, Code: {ApiErrorCode}). Retrying in {TimeSpan} for attempt {RetryAttempt}. Message preview: '{MessagePreview}'. Error: {Message}",
                             operationName, chatId, apiErrorCode, timeSpan, retryAttempt, messagePreview, exception.Message);
                     });
+        }
+        // --- ✅ IMPLEMENT THE NEW METHOD ---
+        public async Task CopyMessageToTelegramAsync(long targetChatId, long sourceChatId, int messageId, CancellationToken cancellationToken)
+        {
+            _logger.LogDebug("Hangfire Job: Copying message {MessageId} to ChatID {TargetChatId}", messageId, targetChatId);
+
+            try
+            {
+                await _telegramApiRetryPolicy.ExecuteAsync(async ct =>
+                {
+                    await _botClient.CopyMessage(
+                        chatId: targetChatId,
+                        fromChatId: sourceChatId,
+                        messageId: messageId,
+                        cancellationToken: ct
+                    );
+                }, cancellationToken);
+            }
+            catch (ApiRequestException apiEx) when (apiEx.ErrorCode == 403 || (apiEx.ErrorCode == 400 && apiEx.Message.Contains("chat not found")))
+            {
+                _logger.LogWarning(apiEx, "User {TargetChatId} blocked the bot or chat was not found during broadcast. They will be skipped.", targetChatId);
+                // In a real system, you might mark this user as inactive in your database.
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Hangfire Job: Failed to copy message to ChatID {TargetChatId} after retries.", targetChatId);
+                throw; // Re-throw to let Hangfire handle the failure.
+            }
         }
 
         public async Task SendTextMessageToTelegramAsync(

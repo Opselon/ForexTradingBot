@@ -9,7 +9,7 @@ using TelegramPanel.Infrastructure;
 using TelegramPanel.Infrastructure.Helpers;
 #endregion
 
-namespace TelegramPanel.Application.CommandHandlers
+namespace TelegramPanel.Application.CommandHandlers.MainMenu
 {
     public class MenuCommandHandler : ITelegramCommandHandler
     {
@@ -88,7 +88,7 @@ namespace TelegramPanel.Application.CommandHandlers
             _logger.LogInformation("Handling /menu command for ChatID {ChatId}, UserID {UserId}", chatId, userId);
 
             // Use the static GetMainMenuMarkup method
-            var (text, inlineKeyboard) = MenuCommandHandler.GetMainMenuMarkup(); //  اطمینان حاصل کنید که GetMainMenuMarkup اصلاح شده است
+            var (text, inlineKeyboard) = GetMainMenuMarkup(); //  اطمینان حاصل کنید که GetMainMenuMarkup اصلاح شده است
 
             await _messageSender.SendTextMessageAsync(
                 chatId: chatId,

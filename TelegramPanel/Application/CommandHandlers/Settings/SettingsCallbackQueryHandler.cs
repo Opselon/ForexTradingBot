@@ -15,6 +15,9 @@ using Telegram.Bot.Exceptions;      // برای ApiRequestException
 using Telegram.Bot.Types;           // برای Update, CallbackQuery, Message, Chat, User (از نوع تلگرام)
 using Telegram.Bot.Types.Enums;     // برای UpdateType, ParseMode
 using Telegram.Bot.Types.ReplyMarkups; // برای InlineKeyboardMarkup, InlineKeyboardButton, IReplyMarkup
+using TelegramPanel.Application.CommandHandlers.MainMenu;
+
+
 // Project specific: TelegramPanel Layer
 using TelegramPanel.Application.Interfaces; // برای ITelegramCommandHandler, ITelegramStateMachine
 using TelegramPanel.Application.States;   // برای IUserConversationStateService, UserConversationState
@@ -23,7 +26,7 @@ using TelegramPanel.Infrastructure;
 using TelegramPanel.Infrastructure.Helpers;       // برای ITelegramMessageSender
 #endregion
 
-namespace TelegramPanel.Application.CommandHandlers
+namespace TelegramPanel.Application.CommandHandlers.Settings
 {
     /// <summary>
     /// Handles callback queries originating from the "/settings" menu and its various sub-options.

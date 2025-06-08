@@ -9,13 +9,14 @@ using Telegram.Bot.Exceptions;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
+using TelegramPanel.Application.CommandHandlers.MainMenu;
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Formatters;
 using TelegramPanel.Infrastructure;
 using TelegramPanel.Infrastructure.Helpers;
 using TelegramPanel.Infrastructure.Settings;
 
-namespace TelegramPanel.Application.CommandHandlers
+namespace TelegramPanel.Application.CommandHandlers.Features.News
 {
     public class FundamentalAnalysisCallbackHandler : ITelegramCallbackQueryHandler
     {
@@ -202,7 +203,7 @@ namespace TelegramPanel.Application.CommandHandlers
                 var user = await _userRepository.GetByTelegramIdAsync(telegramUserIdString, cancellationToken);
                 bool isVipUser = user?.Subscriptions?.Any(s => s.IsCurrentlyActive) ?? false;
                 int daysToFetch = isVipUser ? VipNewsDaysLimit : FreeNewsDaysLimit;
-                DateTime startDate = DateTime.UtcNow.Date.AddDays(-(daysToFetch));
+                DateTime startDate = DateTime.UtcNow.Date.AddDays(-daysToFetch);
 
                 await UpdateNewsMessageAsync(chatId, messageId, symbol, startDate, pageNumber, NewsItemsPerPage, isVipUser, cancellationToken);
             }
@@ -243,8 +244,8 @@ namespace TelegramPanel.Application.CommandHandlers
             var combinedNews = new Dictionary<Guid, NewsItem>();
             foreach (var item in highPrecisionItems) combinedNews[item.Id] = item;
 
-            string baseCode = (symbol == "XAUUSD") ? "XAU" : symbol.Substring(0, 3);
-            string quoteCode = (symbol == "XAUUSD") ? "USD" : symbol.Substring(3, 3);
+            string baseCode = symbol == "XAUUSD" ? "XAU" : symbol.Substring(0, 3);
+            string quoteCode = symbol == "XAUUSD" ? "USD" : symbol.Substring(3, 3);
 
             if (keywordSet.TermsByCurrency.TryGetValue(baseCode, out var baseTerms) && keywordSet.TermsByCurrency.TryGetValue(quoteCode, out var quoteTerms))
             {
@@ -275,8 +276,8 @@ namespace TelegramPanel.Application.CommandHandlers
             symbol = symbol.ToUpperInvariant();
 
             var nicknames = new Dictionary<string, string> { { "GBPUSD", "Cable" }, { "XAUUSD", "Gold" } };
-            string baseCode = (symbol == "XAUUSD") ? "XAU" : symbol.Substring(0, 3);
-            string quoteCode = (symbol == "XAUUSD") ? "USD" : symbol.Substring(3, 3);
+            string baseCode = symbol == "XAUUSD" ? "XAU" : symbol.Substring(0, 3);
+            string quoteCode = symbol == "XAUUSD" ? "USD" : symbol.Substring(3, 3);
 
             if (!_currencyKnowledgeBase.TryGetValue(baseCode, out var baseInfo) || !_currencyKnowledgeBase.TryGetValue(quoteCode, out var quoteInfo))
             {

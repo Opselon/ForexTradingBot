@@ -32,6 +32,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Folder Include="Application\CommandHandlers\Account\" />
+    <Folder Include="Application\CommandHandlers\Analysis\" />
     <Folder Include="Application\Commands\" />
     <Folder Include="Auth\" />
     <Folder Include="Polling\" />

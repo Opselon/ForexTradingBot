@@ -14,6 +14,11 @@ namespace TelegramPanel.Settings
         /// </summary>
         public string BotToken { get; set; } = string.Empty;
 
+
+        public List<long> AdminUserIds { get; set; } = new();
+
+
+
         /// <summary>
         /// مشخص می‌کند که آیا ربات باید از Webhook برای دریافت آپدیت‌ها استفاده کند یا خیر.
         /// اگر false باشد یا WebhookAddress خالی باشد، ربات از Polling استفاده خواهد کرد.

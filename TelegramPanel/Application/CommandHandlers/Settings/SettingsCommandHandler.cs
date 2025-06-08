@@ -6,6 +6,9 @@ using Microsoft.Extensions.Logging; // برای لاگ‌برداری وقایع
 using Telegram.Bot.Types;           // برای Update, Message و سایر تایپ‌های تلگرام
 using Telegram.Bot.Types.Enums;     // برای UpdateType, ParseMode
 using Telegram.Bot.Types.ReplyMarkups; // برای InlineKeyboardMarkup, InlineKeyboardButton
+using TelegramPanel.Application.CommandHandlers.MainMenu;
+
+
 // Using های مربوط به پروژه TelegramPanel
 using TelegramPanel.Application.Interfaces; // برای ITelegramCommandHandler
 using TelegramPanel.Formatters;           // برای TelegramMessageFormatter (ابزار فرمت‌بندی متن)
@@ -13,7 +16,7 @@ using TelegramPanel.Infrastructure;
 using TelegramPanel.Infrastructure.Helpers;       // برای ITelegramMessageSender (سرویس ارسال پیام)
 #endregion
 
-namespace TelegramPanel.Application.CommandHandlers
+namespace TelegramPanel.Application.CommandHandlers.Settings
 {
     /// <summary>
     /// Command Handler برای پردازش دستور "/settings" ارسالی توسط کاربر.

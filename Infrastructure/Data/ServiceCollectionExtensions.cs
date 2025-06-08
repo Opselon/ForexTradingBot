@@ -109,7 +109,7 @@ namespace Infrastructure
             // IHttpClientFactory به مدیریت بهینه نمونه‌های HttpClient کمک می‌کند (مثل مدیریت Pool و Lifetime).
             services.AddHttpClient<ICryptoPayApiClient, CryptoPayApiClient>(); // برای ارتباط با CryptoPay API
             services.AddScoped<IRssFetchingCoordinatorService, RssFetchingCoordinatorService>(); // هماهنگ کننده برای خواندن RSS
-
+  
             // رجیستر کردن یک HttpClient نام‌گذاری شده برای سرویس <see cref="RssReaderService"/>.
             // این رویکرد امکان پیکربندی خاص برای HttpClient‌های مختلف را فراهم می‌کند.
             services.AddHttpClient(RssReaderService.HttpClientNamedClient, client =>
@@ -145,7 +145,7 @@ namespace Infrastructure
             services.AddScoped<IUserSignalPreferenceRepository, UserSignalPreferenceRepository>(); // رجیستر UserSignalPreferenceRepository
             services.AddScoped<ISignalAnalysisRepository, SignalAnalysisRepository>(); // رجیستر SignalAnalysisRepository
             services.AddScoped<ITransactionRepository, TransactionRepository>(); // رجیستر TransactionRepository
-
+            services.AddScoped<IAdminService, AdminService>();
             // بازگرداندن IServiceCollection به‌روزرسانی شده برای فعال کردن زنجیره‌ای کردن متدها در Program.cs
             return services;
         }

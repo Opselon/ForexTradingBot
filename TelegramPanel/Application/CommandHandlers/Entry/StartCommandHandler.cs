@@ -7,12 +7,13 @@ using Telegram.Bot.Exceptions;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
+using TelegramPanel.Application.CommandHandlers.MainMenu;
 using TelegramPanel.Application.Interfaces; // برای ITelegramCommandHandler
 using TelegramPanel.Formatters;         // برای TelegramMessageFormatter
 using TelegramPanel.Infrastructure;
 using TelegramPanel.Infrastructure.Helpers;       // برای ITelegramMessageSender
 
-namespace TelegramPanel.Application.CommandHandlers
+namespace TelegramPanel.Application.CommandHandlers.Entry
 {
     public class StartCommandHandler : ITelegramCommandHandler, ITelegramCallbackQueryHandler
     {

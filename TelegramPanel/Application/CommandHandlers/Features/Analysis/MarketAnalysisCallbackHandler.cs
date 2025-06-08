@@ -3,11 +3,13 @@ using Telegram.Bot.Exceptions;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
+using TelegramPanel.Application.CommandHandlers.Features.News;
+using TelegramPanel.Application.CommandHandlers.MainMenu;
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Infrastructure;
 using TelegramPanel.Infrastructure.Helpers;
 
-namespace TelegramPanel.Application.CommandHandlers
+namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
 {
     public class MarketAnalysisCallbackHandler : ITelegramCallbackQueryHandler, ITelegramCommandHandler
     {
@@ -249,7 +251,7 @@ namespace TelegramPanel.Application.CommandHandlers
                     }
                 }
             }
-            catch (Telegram.Bot.Exceptions.ApiRequestException apiEx) when (apiEx.Message.Contains("message is not modified"))
+            catch (ApiRequestException apiEx) when (apiEx.Message.Contains("message is not modified"))
             {
                 // This catch block is important here if ShowMarketAnalysis's "message not modified" exception bubbles up
                 // and we haven't answered the callback query from a *refresh* action yet.

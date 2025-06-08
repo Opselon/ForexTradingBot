@@ -6,7 +6,7 @@ using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Formatters; // برای TelegramMessageFormatter
 using TelegramPanel.Infrastructure;
 
-namespace TelegramPanel.Application.CommandHandlers
+namespace TelegramPanel.Application.CommandHandlers.Entry
 {
     public class HelpCommandHandler : ITelegramCommandHandler
     {

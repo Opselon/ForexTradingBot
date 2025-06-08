@@ -13,6 +13,7 @@ using Application.Interfaces; // برای IRssFetchingCoordinatorService (جهت
 using BackgroundTasks;                    // برای متد توسعه‌دهنده AddBackgroundTasksServices (اگر تعریف کرده‌اید)
 using Hangfire;                             // برای پیکربندی‌های Hangfire مانند CompatibilityLevel, RecurringJob, Cron
 using Hangfire.Dashboard;                   // برای DashboardOptions, IDashboardAuthorizationFilter
+using Hangfire.SqlServer;
 // using Hangfire.SqlServer;              // اگر از SQL Server برای Hangfire استفاده می‌کنید
 using Infrastructure;                     // برای متد توسعه‌دهنده AddInfrastructureServices
 // using WebAPI.Filters; //  Namespace برای HangfireNoAuthFilter (اگر در این مسیر است و استفاده می‌کنید)
@@ -21,14 +22,14 @@ using Infrastructure.Services;
 using Microsoft.OpenApi.Models;             // برای OpenApiInfo
 using Serilog;                              // برای Log, LoggerConfiguration, UseSerilog
 using Shared.Helpers;
+using Shared.Maintenance;
 using Shared.Settings;                    // برای CryptoPaySettings (از پروژه Shared)
+using TelegramPanel.Application.CommandHandlers.Admin;
+using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Extensions;
 using TelegramPanel.Infrastructure;
-using Hangfire.SqlServer;
 using TL;
 using WebAPI.Extensions;
-using System;
-using Shared.Maintenance;
 #endregion
 
 // ------------------- پیکربندی اولیه لاگر Serilog (Bootstrap Logger) -------------------
@@ -220,13 +221,18 @@ try
 
     Log.Information("Hangfire cleaner service added.");
 
+    Log.Information("Performing final manual service registrations...");
 
+    // FIX FOR: Unable to resolve 'IBotCommandSetupService'
+    builder.Services.AddTransient<IBotCommandSetupService, BotCommandSetupService>();
+
+    Log.Information("Final manual service registrations complete.");
     builder.Services.Configure<List<Infrastructure.Settings.ForwardingRule>>( // <<< Fully qualified
     builder.Configuration.GetSection("ForwardingRules"));
-    builder.Services.AddScoped<IActualTelegramMessageActions, ActualTelegramMessageActions>();
-    builder.Services.AddScoped<ITelegramMessageSender, HangfireRelayTelegramMessageSender>();
-    builder.Services.AddScoped<IForwardingJobActions, ForwardingJobActions>();
-    builder.Services.AddTransient<IBotCommandSetupService, BotCommandSetupService>();
+
+ 
+
+
     #endregion
 
     // ------------------- ساخت WebApplication instance -------------------

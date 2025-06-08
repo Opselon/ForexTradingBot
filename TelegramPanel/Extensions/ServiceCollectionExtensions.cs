@@ -6,9 +6,9 @@ using Domain.Features.Forwarding.Entities;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
-using Microsoft.Win32;
 using Telegram.Bot;
 using TelegramPanel.Application.CommandHandlers; // For marker types like StartCommandHandler, MenuCommandHandler
+using TelegramPanel.Application.CommandHandlers.Entry;
 using TelegramPanel.Application.Interfaces;    // For ITelegram...Handler interfaces
 using TelegramPanel.Application.Pipeline;
 using TelegramPanel.Application.Services;
@@ -41,16 +41,23 @@ namespace TelegramPanel.Extensions
                 }
                 return new TelegramBotClient(settings.BotToken);
             });
-
-            // 3. Register Core TelegramPanel Services
             services.AddSingleton<ITelegramUpdateChannel, TelegramUpdateChannel>();
             services.AddScoped<ITelegramUpdateProcessor, UpdateProcessingService>();
-            services.AddScoped<IMarketDataService, MarketDataService>();
-            //For IMMEDIATE, interactive messages, register the new Direct Sender.
             services.AddScoped<IDirectMessageSender, DirectTelegramMessageSender>();
-            // 4. Register Middleware
+            // 3. Register Core TelegramPanel Services
+            services.AddSingleton<ITelegramUpdateChannel, TelegramUpdateChannel>();
+            services.AddScoped<IMarketDataService, MarketDataService>();
+
             services.AddScoped<ITelegramMiddleware, LoggingMiddleware>();
             services.AddScoped<ITelegramMiddleware, AuthenticationMiddleware>();
+            // This is the main sender that application code uses to queue jobs
+
+            services.AddScoped<IBroadcastScheduler, BroadcastScheduler>();
+
+            services.AddTransient<IBotCommandSetupService, BotCommandSetupService>();
+
+
+
 
             // --- ✅ CONSOLIDATED HANDLER REGISTRATION ---
             // Assuming ALL your command and callback query handlers for this panel
@@ -59,18 +66,16 @@ namespace TelegramPanel.Extensions
 
             // 5. Register ALL ITelegramCommandHandler implementations from the assembly
             services.Scan(scan => scan
-                .FromAssemblyOf<StartCommandHandler>() // Scans the assembly of StartCommandHandler
+                .FromAssemblyOf<StartCommandHandler>() // A marker from your TelegramPanel.Application assembly
                 .AddClasses(classes => classes.AssignableTo<ITelegramCommandHandler>())
-                .AsImplementedInterfaces() // Registers them as ITelegramCommandHandler
-                .WithScopedLifetime());
-
-            // 5.1. Register ALL ITelegramCallbackQueryHandler implementations from the SAME assembly
-            services.Scan(scan => scan
-                .FromAssemblyOf<StartCommandHandler>() // Scans the assembly of StartCommandHandler again (or use another marker from same assembly)
+                    .AsImplementedInterfaces().WithScopedLifetime()
                 .AddClasses(classes => classes.AssignableTo<ITelegramCallbackQueryHandler>())
-                .AsImplementedInterfaces() // Registers them as ITelegramCallbackQueryHandler
-            .WithScopedLifetime());
+                    .AsImplementedInterfaces().WithScopedLifetime()
+                .AddClasses(classes => classes.AssignableTo<ITelegramState>())
+                    .AsImplementedInterfaces().WithScopedLifetime());
 
+            // 6. Register State Machine
+        
             services.AddScoped<IActualTelegramMessageActions, ActualTelegramMessageActions>(); // << ثبت صحیح برای اجرای واقعی
                                                                                                // سپس ITelegramMessageSender که جاب‌ها را به Hangfire رله می‌کند
             services.AddScoped<ITelegramMessageSender, HangfireRelayTelegramMessageSender>(); // << ثبت صحیح برای انکیو کردن

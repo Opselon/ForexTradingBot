@@ -7,8 +7,10 @@ namespace TelegramPanel.Application.States // ✅ Namespace صحیح
     /// </summary>
     public class UserConversationState
     {
+
         public string? CurrentStateName { get; set; }
-        public Dictionary<string, object> StateData { get; set; } = new Dictionary<string, object>();
+        public ConversationState CurrentState { get; set; } = ConversationState.None;
+        public Dictionary<string, object> StateData { get; set; } = new();
     }
 
     /// <summary>

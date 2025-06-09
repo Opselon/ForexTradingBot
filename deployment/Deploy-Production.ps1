@@ -1,10 +1,8 @@
 # ====================================================================================
-# THE ULTIMATE DEPLOYMENT & DEBUGGING SCRIPT
-# This script logs every single action to a transcript file, leaving no room for doubt.
-# It is designed to be executed remotely by the GitHub Actions workflow.
+# THE ULTIMATE DEPLOYMENT & DEBUGGING SCRIPT (v2)
+# This script is designed to be executed from a temporary location after being unpacked.
+# It logs every single action to a transcript file, leaving no room for doubt.
 # ====================================================================================
-
-# This param block receives all secrets securely from the GitHub Actions workflow.
 param(
     [string]$ConnectionString,
     [string]$TelegramBotToken,
@@ -15,18 +13,15 @@ param(
 )
 
 # --- Define Core Paths & Configuration ---
-$DeployPath = 'C:\Apps\ForexTradingBot'
-$TempPath   = 'C:\Apps\Temp'
-$LogPath    = Join-Path $TempPath "Deployment-Log-$(Get-Date -f yyyy-MM-dd_HH-mm-ss).txt"
-$AppName    = "WebAPI"
-$ExeName    = "WebAPI.exe"
-$ZipFile    = Join-Path $TempPath "release.zip"
-$Launcher   = Join-Path $DeployPath "start-app.bat"
+$DeployPath      = 'C:\Apps\ForexTradingBot'
+$TempUnpackPath  = 'C:\Apps\Temp\unpack'
+$LogPath         = "C:\Apps\Temp\Deployment-Log-$(Get-Date -f yyyy-MM-dd_HH-mm-ss).txt"
+$AppName         = "WebAPI"
+$ExeName         = "WebAPI.exe"
+$Launcher        = Join-Path $DeployPath "start-app.bat"
 
 # --- CRITICAL: Start a detailed log of everything this script does ---
 Start-Transcript -Path $LogPath -Append
-
-# Stop script immediately if any command fails.
 $ErrorActionPreference = 'Stop'
 
 Write-Host "--- SCRIPT STARTED: Logging all actions to $LogPath ---"
@@ -43,20 +38,20 @@ try {
     }
 
     # --- Step 2: The UNDENIABLE Directory Cleanup ---
-    Write-Host "[2/6] Starting cleanup of deployment directory: $DeployPath..."
+    Write-Host "[2/6] Starting cleanup of FINAL deployment directory: $DeployPath..."
     if (Test-Path $DeployPath) {
-        # This will list every single file and folder it deletes. No more guessing.
         Get-ChildItem -Path $DeployPath -Exclude 'Session' | Remove-Item -Recurse -Force -Verbose
-        Write-Host "✅ Directory cleanup complete."
+        Write-Host "✅ Final directory cleanup complete."
     } else {
         New-Item -ItemType Directory -Path $DeployPath -Force | Out-Null
-        Write-Host "🟡 Directory did not exist; created a new one."
+        Write-Host "🟡 Final directory did not exist; created a new one."
     }
 
-    # --- Step 3: Unpack the new release ---
-    Write-Host "[3/6] Unpacking new release from: $ZipFile..."
-    Expand-Archive -Path $ZipFile -DestinationPath $DeployPath -Force -Verbose
-    Write-Host "✅ Archive unpacked."
+    # --- Step 3: Copy new files from temporary location to final destination ---
+    Write-Host "[3/6] Copying new application files from $TempUnpackPath to $DeployPath..."
+    # Copy all items from the temporary unpack folder to the final destination
+    Copy-Item -Path "$TempUnpackPath\*" -Destination $DeployPath -Recurse -Force -Verbose
+    Write-Host "✅ New files copied."
 
     # --- Step 4: Create the launcher batch file ---
     Write-Host "[4/6] Creating application launcher: $Launcher..."
@@ -86,7 +81,6 @@ start "" "$ExeName"
     Start-Sleep -Seconds 5
     $runningProcess = Get-Process -Name $AppName -ErrorAction SilentlyContinue
     if (-not $runningProcess) {
-        # This is not a fatal error for the script, just a warning.
         Write-Warning "PROCESS '$AppName' IS NOT RUNNING. The application likely crashed on startup."
     } else {
         Write-Host "✅ SUCCESS: Process '$AppName' is confirmed to be running with ID $($runningProcess.Id)."
@@ -97,14 +91,10 @@ start "" "$ExeName"
 } catch {
     Write-Error "--- ❌ DEPLOYMENT SCRIPT FAILED! ---"
     Write-Error "Error at line $($_.InvocationInfo.ScriptLineNumber): $($_.Exception.ToString())"
-    # Exit with a non-zero code to fail the GitHub Actions job
     exit 1
 } finally {
-    # --- Final Cleanup of temporary files ---
-    Write-Host "[CLEANUP] Removing temporary release archive..."
-    if (Test-Path $ZipFile) { Remove-Item -Path $ZipFile -Force -ErrorAction SilentlyContinue }
-    
-    # --- CRITICAL: Stop logging to save the log file ---
+    Write-Host "[CLEANUP] Removing temporary unpack folder..."
+    if (Test-Path $TempUnpackPath) { Remove-Item -Path $TempUnpackPath -Recurse -Force -ErrorAction SilentlyContinue }
     Write-Host "--- SCRIPT FINISHED: Log saved to $LogPath ---"
     Stop-Transcript
 }

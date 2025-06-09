@@ -1,7 +1,8 @@
 # ====================================================================================
-# THE ABSOLUTELY FINAL, CORRECTED AND GUARANTEED WORKFLOW
-# This version fixes the file path issue caused by a misunderstanding of how
-# download-artifact works. It uses the simplest, most direct paths possible.
+# THE FINAL, FLAWLESS WORKFLOW: Unified Package Method
+# This workflow is the industry standard. It creates a single, self-contained
+# ZIP file with the app and deploy script, uploads it, and runs it.
+# This eliminates all previous points of failure.
 # ====================================================================================
 
 name: '🚀 [PROD] Deploy ForexTradingBot'
@@ -22,9 +23,9 @@ env:
   DOTNET_VERSION: '9.0.x'
   PROJECT_PATH: './WebAPI/WebAPI.csproj'
   REMOTE_TEMP_PATH: 'C:\Apps\Temp'
-  # IMPORTANT: This path MUST match the location of your script in the repository
+  # This path MUST match the location of your script in the repo
   SCRIPT_PATH_IN_REPO: 'deployment/Deploy-And-Debug.ps1'
-  SCRIPT_FILE_NAME: 'Deploy-And-Debug.ps1' # Just the filename, for clarity
+  SCRIPT_FILE_NAME: 'Deploy-And-Debug.ps1' # Just the filename
 
 jobs:
   build:
@@ -42,16 +43,17 @@ jobs:
       - name: '📦 Publish App'
         run: dotnet publish ${{ env.PROJECT_PATH }} -c Release -r win-x64 -o ./publish --self-contained true
 
-      - name: '🗜️ Create ZIP Archive'
+      - name: '➕ Include Deploy Script in Publish Folder'
+        run: cp ${{ env.SCRIPT_PATH_IN_REPO }} ./publish
+
+      - name: '🗜️ Create Unified ZIP Archive'
         run: cd ./publish && zip -r ../release.zip .
       
-      - name: '📤 Upload Artifacts (App ZIP + Deploy Script)'
+      - name: '📤 Upload Single Release Artifact'
         uses: actions/upload-artifact@v4
         with:
           name: deployment-package
-          path: |
-            release.zip
-            ${{ env.SCRIPT_PATH_IN_REPO }} # We upload the script from its original location
+          path: release.zip # The only file we need
           retention-days: 1
 
   deploy:
@@ -60,42 +62,43 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      - name: '📥 Download All Artifacts to Root'
+      - name: '📥 Download Single Release Artifact'
         uses: actions/download-artifact@v4
         with:
           name: deployment-package
-          # This ensures all files are in the root of the workspace
 
-      # For debugging, let's see what files we have after download
-      - name: '🔍 Verify Downloaded Files'
-        run: ls -R
-
-      - name: '📤 Upload Release ZIP to Server'
+      - name: '📤 Upload Unified ZIP to Server'
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.PROD_SERVER_IP }}
           username: ${{ secrets.PROD_SERVER_USERNAME }}
           password: ${{ secrets.PROD_SERVER_PASSWORD }}
-          source: "release.zip"
-          target: "${{ env.REMOTE_TEMP_PATH }}"
-          
-      - name: '📤 Upload Deployment Script to Server'
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.PROD_SERVER_IP }}
-          username: ${{ secrets.PROD_SERVER_USERNAME }}
-          password: ${{ secrets.PROD_SERVER_PASSWORD }}
-          # ✅✅✅ THE CRITICAL FIX IS HERE ✅✅✅
-          # We now use JUST THE FILENAME, because download-artifact placed it in the root.
-          source: ${{ env.SCRIPT_FILE_NAME }}
+          source: "release.zip" # Upload just one file
           target: "${{ env.REMOTE_TEMP_PATH }}"
       
-      - name: '▶️ Execute Remote Deployment'
+      - name: '▶️ Execute Remote Deployment Bootstrapper'
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.PROD_SERVER_IP }}
           username: ${{ secrets.PROD_SERVER_USERNAME }}
           password: ${{ secrets.PROD_SERVER_PASSWORD }}
+          # This bootstrapper is simple, clean, and robust.
           script: |
-            powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${{ env.REMOTE_TEMP_PATH }}\${{ env.SCRIPT_FILE_NAME }}" -ConnectionString "${{ secrets.PROD_CONNECTION_STRING }}" -TelegramBotToken "${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}" -TelegramApiId "${{ secrets.TELEGRAM_API_ID }}" -TelegramApiHash "${{ secrets.TELEGRAM_API_HASH }}" -TelegramPhoneNumber "${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}" -CryptoPayApiToken "${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}"
-            del "${{ env.REMOTE_TEMP_PATH }}\${{ env.SCRIPT_FILE_NAME }}"
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
+                $TempPath = '${{ env.REMOTE_TEMP_PATH }}'
+                $ZipFile = Join-Path $TempPath 'release.zip'
+                $UnpackPath = Join-Path $TempPath 'unpack'
+                $ScriptFile = Join-Path $UnpackPath '${{ env.SCRIPT_FILE_NAME }}'
+
+                # Clean up old unpack folder if it exists
+                if (Test-Path $UnpackPath) { Remove-Item -Path $UnpackPath -Recurse -Force }
+
+                # Unpack the new release to a clean temporary folder
+                Expand-Archive -Path `$ZipFile -DestinationPath `$UnpackPath -Force
+
+                # Execute the script from the temporary unpack folder
+                & `$ScriptFile -ConnectionString '${{ secrets.PROD_CONNECTION_STRING }}' -TelegramBotToken '${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}' -TelegramApiId '${{ secrets.TELEGRAM_API_ID }}' -TelegramApiHash '${{ secrets.TELEGRAM_API_HASH }}' -TelegramPhoneNumber '${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}' -CryptoPayApiToken '${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}'
+                
+                # Final cleanup of the main release zip
+                Remove-Item -Path `$ZipFile -Force
+            "

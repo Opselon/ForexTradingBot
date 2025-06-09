@@ -167,9 +167,15 @@ try
     builder.Services.AddHostedService<Infrastructure.Services.TelegramUserApiInitializationService>();
     // مپ کردن بخش CryptoPaySettings.SectionName (که "CryptoPay" است) از appsettings.json به کلاس Shared.Settings.CryptoPaySettings
     builder.Services.Configure<CryptoPaySettings>(builder.Configuration.GetSection(CryptoPaySettings.SectionName));
+
+
     builder.Services.AddMemoryCache();
+
+
     // TelegramPanelSettings در متد AddTelegramPanelServices پیکربندی می‌شود.
     Log.Information("Application settings (Options pattern) configured.");
+
+
     #endregion
 
     #region Register Custom Application Layers and Services

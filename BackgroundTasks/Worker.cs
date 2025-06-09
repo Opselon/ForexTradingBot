@@ -261,6 +261,7 @@ public static class WorkerServiceCollectionExtensions
         services.Configure(configureOptions);
         // Register the task processor as a transient service.
         services.AddTransient<ITaskProcessor, ExampleTaskProcessor>();
+
         // Register the Worker as a hosted service.
         services.AddHostedService<BackgroundTasks.Worker>();
 

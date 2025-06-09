@@ -2,15 +2,14 @@
 # [PROD] Workflow: Build, Package, and Deploy .NET WebAPI to Windows Server
 # ====================================================================================
 # This workflow automates the deployment of the ForexTradingBot to the production
-# server. It ensures a consistent, secure, and reliable deployment process.
+# server using a secure password-based connection.
 #
 # Trigger:
 #   - Pushing to the 'master' branch.
 #   - Manual trigger via the 'workflow_dispatch' event.
 #
 # Key Features:
-#   - ✅ Secure: Uses SSH keys instead of passwords.
-#   - ✅ Robust: Fails immediately if any step encounters an error.
+#   - ✅ Robust: Fails immediately if any step on the server encounters an error.
 #   - ✅ Atomic: Prevents multiple concurrent deployments.
 #   - ✅ Verifiable: Includes verification steps to confirm success.
 #   - ✅ Maintainable: Clean, well-commented, and uses environment variables.
@@ -25,14 +24,13 @@ on:
 
 # --- Security & Concurrency Best Practices ---
 permissions:
-  contents: read # Workflow only needs to read the repository content.
+  contents: read
 
 concurrency:
-  group: production-deploy # Unique name for the concurrency group.
-  cancel-in-progress: true # Cancel older runs in the queue if a new one starts.
+  group: production-deploy
+  cancel-in-progress: true
 
 # --- Environment Variables ---
-# Central place to manage common settings.
 env:
   DOTNET_VERSION: '9.0.x'
   PROJECT_PATH: './WebAPI/WebAPI.csproj'
@@ -42,9 +40,6 @@ env:
 jobs:
   # ====================================================================
   # JOB 1: Build & Package
-  # ====================================================================
-  # Builds the .NET application for a Windows target, creating a
-  # self-contained .exe, and packages it into a ZIP artifact.
   # ====================================================================
   build:
     name: '✅ 1. Build & Package Application'
@@ -69,13 +64,11 @@ jobs:
           --self-contained true
       
       - name: '📦 Create ZIP Archive'
-        # Creates release.zip from the contents of the 'publish' folder.
         run: |
           cd ./publish
           zip -r ../release.zip .
 
       - name: '🔍 Verify ZIP Contents'
-        # Lists the contents of the zip file for easy debugging in logs.
         run: unzip -l release.zip
 
       - name: '📤 Upload Release Artifact'
@@ -83,20 +76,17 @@ jobs:
         with:
           name: forex-bot-release-package
           path: release.zip
-          retention-days: 7 # Keep artifact for 7 days.
+          retention-days: 7
 
   # ====================================================================
   # JOB 2: Deploy to Server
-  # ====================================================================
-  # Deploys the built artifact to the production Windows VPS.
-  # This job uses a robust PowerShell script for the deployment steps.
   # ====================================================================
   deploy:
     name: '🚢 2. Deploy to Windows VPS'
     needs: build
     runs-on: ubuntu-latest
     
-    environment: Production # Optional: for environment-specific secrets/rules
+    environment: Production
 
     steps:
       - name: '📥 Download Release Artifact'
@@ -104,56 +94,12 @@ jobs:
         with:
           name: forex-bot-release-package
 
-      - name: '🔑 Setup SSH Agent for Secure Connection'
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.PROD_SERVER_SSH_KEY }}
-          
-      - name: '🚀 Execute Remote Deployment Script'
-        # This action uses the SSH agent configured above for a secure, passwordless connection.
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.PROD_SERVER_IP }}
-          username: ${{ secrets.PROD_SERVER_USERNAME }}
-          # The key is used from the ssh-agent, no password needed.
-          
-          # The entire script is wrapped in a single PowerShell command for robustness.
-          # $ErrorActionPreference = 'Stop' ensures that if any command fails, the script exits immediately.
-          script: |
-            powershell -Command {
-              $ErrorActionPreference = 'Stop' # Critical for fail-fast behavior.
-              
-              $deployPath = "${{ env.REMOTE_DEPLOY_PATH }}"
-              $tempPath = "${{ env.REMOTE_TEMP_PATH }}"
-              $zipFile = Join-Path $tempPath "release.zip"
-
-              try {
-                Write-Host "--- Starting Deployment on ${{ secrets.PROD_SERVER_IP }} ---" -ForegroundColor Green
-
-                # Step 1: Transfer release file to server
-                Write-Host "[1/8] Transferring release.zip to server..."
-                # Create the temp directory if it doesn't exist
-                New-Item -ItemType Directory -Path $tempPath -Force | Out-Null
-                # scp command runs from the GitHub Runner to the target server
-                # This is done *before* this script block via a dedicated action, 
-                # but we'll re-implement it inside for clarity if needed.
-                # Here, we assume a separate SCP step or we'd use it here.
-                # For appleboy/ssh-action, we need a separate upload step.
-                # Let's assume scp-action is better. We'll use appleboy/scp-action before this step.
-
-                # Pre-computation for the SCP step
-              } catch {
-                 Write-Host "Initial setup failed!" -ForegroundColor Red
-                 exit 1
-              }
-            }
-            
-      - name: '📤 Upload Release ZIP to Server (Securely)'
+      - name: '📤 Upload Release ZIP to Server'
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.PROD_SERVER_IP }}
           username: ${{ secrets.PROD_SERVER_USERNAME }}
-          key: ${{ secrets.PROD_SERVER_SSH_KEY }} # Use SSH Key
+          password: ${{ secrets.PROD_SERVER_PASSWORD }} # <-- Using password
           source: "release.zip"
           target: "${{ env.REMOTE_TEMP_PATH }}"
           
@@ -162,7 +108,7 @@ jobs:
         with:
           host: ${{ secrets.PROD_SERVER_IP }}
           username: ${{ secrets.PROD_SERVER_USERNAME }}
-          key: ${{ secrets.PROD_SERVER_SSH_KEY }} # Use SSH Key
+          password: ${{ secrets.PROD_SERVER_PASSWORD }} # <-- Using password
 
           script: |
             powershell -NoProfile -ExecutionPolicy Bypass -Command {
@@ -173,6 +119,7 @@ jobs:
               $tempPath = "${{ env.REMOTE_TEMP_PATH }}"
               $zipFile = Join-Path $tempPath "release.zip"
               $appName = "WebAPI.exe"
+              $appProcessName = "WebAPI"
 
               try {
                 Write-Host "--- Starting Deployment Script on Server ---" -ForegroundColor Cyan
@@ -183,15 +130,15 @@ jobs:
                 New-Item -ItemType Directory -Path $tempPath -Force | Out-Null
                 
                 # Step 2: Stop the running application
-                Write-Host "[2/7] Stopping running application ($appName)..."
-                $process = Get-Process -Name $appName.Replace('.exe', '') -ErrorAction SilentlyContinue
+                Write-Host "[2/7] Stopping running application ($appProcessName)..."
+                $process = Get-Process -Name $appProcessName -ErrorAction SilentlyContinue
                 if ($process) {
-                  Stop-Process -Name $appName.Replace('.exe', '') -Force
+                  Stop-Process -Name $appProcessName -Force
                   Write-Host "Process stopped successfully."
                 } else {
                   Write-Host "Process not found. No action needed." -ForegroundColor Yellow
                 }
-                Start-Sleep -Seconds 5 # Wait for the process to release files
+                Start-Sleep -Seconds 3
 
                 # Step 3: Clean the deployment directory (excluding 'Session')
                 Write-Host "[3/7] Cleaning deployment directory..."
@@ -217,15 +164,17 @@ jobs:
                 
                 # Step 7: Start the new application
                 Write-Host "[7/7] Starting the new application..."
-                Start-Process -FilePath (Join-Path $deployPath $appName) -WorkingDirectory $deployPath
-                Write-Host "Application started."
+                # Using cmd's start command to run in the background without waiting
+                cmd /c "cd /d $deployPath && start /b $appName"
+                Write-Host "Application start command issued."
                 
                 Write-Host "--- ✅ Deployment Successful! ---" -ForegroundColor Green
 
               } catch {
                 Write-Host "--- ❌ DEPLOYMENT FAILED! ---" -ForegroundColor Red
                 Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
-                exit 1 # Exit with a non-zero code to fail the GitHub Action job
+                # Exit with a non-zero code to fail the GitHub Action job
+                exit 1
               } finally {
                 # Cleanup: Always remove the temporary zip file
                 if (Test-Path $zipFile) {

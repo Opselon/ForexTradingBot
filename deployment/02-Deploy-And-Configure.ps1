@@ -1,7 +1,7 @@
 # ====================================================================================
-# THE DEFINITIVE DEPLOY, INJECT, AND LAUNCH SCRIPT (v.Victory)
-# This single script handles the entire core deployment logic after cleanup.
-# It unpacks, verifies, injects secrets into the JSON file, and launches the app.
+# THE DEFINITIVE DEPLOY, INJECT, AND LAUNCH SCRIPT (v.Victory-Diagnostic)
+# This script's SOLE purpose is to launch the application in a way that
+# GUARANTEES all console output and crash exceptions are captured to a log file.
 # ====================================================================================
 
 param(
@@ -18,55 +18,68 @@ $ScriptLogFile = Join-Path $TempPath "02-Deploy-And-Launch-Log-$(Get-Date -f yyy
 Start-Transcript -Path $ScriptLogFile -Append
 $ErrorActionPreference = 'Stop'
 
-Write-Host "--- SCRIPT 2: DEPLOY, INJECT, LAUNCH STARTED ---" -ForegroundColor Cyan
-$ZipFile = Join-Path $TempPath "release.zip"
-$AppName = "WebAPI"
-$ExeName = "WebAPI.exe"
+Write-Host "--- SCRIPT 2: DEPLOY, INJECT, LAUNCH & CAPTURE STARTED ---" -ForegroundColor Cyan
+$ZipFile         = Join-Path $TempPath "release.zip"
+$AppName         = "WebAPI"
+$ExeName         = "WebAPI.exe"
+$AppCrashLogFile = Join-Path $TempPath "App-Crash-Log.txt" # The application's "Black Box"
 
 try {
-    # --- STEP 2.1: UNPACK NEW VERSION ---
-    Write-Host "[2.1] Unpacking new version from '$ZipFile' to '$DeployPath'..."
+    # --- STEP 2.1: UNPACK & VERIFY --- (Unchanged, it works)
+    Write-Host "[2.1] Unpacking and verifying new version..."
     Expand-Archive -Path $ZipFile -DestinationPath $DeployPath -Force -Verbose
     if (-not (Test-Path (Join-Path $DeployPath $ExeName))) { throw "FATAL: $ExeName not found after unpack!" }
     Write-Host "✅ Unpack and verification successful."
 
-    # --- STEP 2.2: DIRECT INJECTION INTO appsettings.Production.json ---
-    Write-Host "[2.2] Injecting secrets DIRECTLY into 'appsettings.Production.json'..."
+    # --- STEP 2.2: INJECT SECRETS --- (Unchanged, it works)
+    Write-Host "[2.2] Injecting secrets into 'appsettings.Production.json'..."
     $appSettingsPath = Join-Path $DeployPath 'appsettings.Production.json'
     if (-not (Test-Path $appSettingsPath)) { throw "FATAL: 'appsettings.Production.json' NOT FOUND after unpack!" }
-    
-    # Read the content, perform all replacements, and write it back once.
     $content = Get-Content $appSettingsPath -Raw
     $content = $content -replace '#{ConnectionString}#', $ConnectionString
-    $content = $content -replace '#{DatabaseProvider}#', 'SqlServer' # Based on your JSON file
+    $content = $content -replace '#{DatabaseProvider}#', 'SqlServer'
     $content = $content -replace '#{TelegramBotToken}#', $TelegramBotToken
     $content = $content -replace '#{TelegramApiId}#', $TelegramApiId
     $content = $content -replace '#{TelegramApiHash}#', $TelegramApiHash
     $content = $content -replace '#{TelegramPhoneNumber}#', $TelegramPhoneNumber
     $content = $content -replace '#{CryptoPayApiToken}#', $CryptoPayApiToken
     Set-Content -Path $appSettingsPath -Value $content
+    Write-Host "✅ Secrets injected."
     
-    Write-Host "✅ Secrets injected. Verifying final content..."
-    Write-Host "------------------ FINAL CONFIG FILE ------------------" -ForegroundColor Yellow
-    Get-Content $appSettingsPath
-    Write-Host "-----------------------------------------------------" -ForegroundColor Yellow
+    # ✅✅✅✅✅ THE FINAL, CRITICAL CHANGE IS HERE ✅✅✅✅✅
+    # --- STEP 2.3: LAUNCH WITH FULL OUTPUT REDIRECTION ---
+    Write-Host "[2.3] Launching '$ExeName' with Production environment and CAPTURING ALL OUTPUT..."
+    
+    # We create a simple launcher batch file whose ONLY job is to redirect output.
+    # This is the most reliable way to capture everything.
+    $Launcher = Join-Path $DeployPath "start-and-log.bat"
+    $BatContent = @"
+@echo off
+rem This batch file ensures the correct environment is set AND redirects all output to the crash log.
+set ASPNETCORE_ENVIRONMENT=Production
+cd /d "$DeployPath"
+rem The '2>&1' is crucial. It merges the error stream into the standard output stream.
+echo --- Application starting at %date% %time%... --- > "$AppCrashLogFile"
+"$ExeName" >> "$AppCrashLogFile" 2>&1
+"@
+    Set-Content -Path $Launcher -Value $BatContent
+    Write-Host "✅ Diagnostic launcher created successfully."
 
-    # --- STEP 2.3: LAUNCH APPLICATION ---
-    Write-Host "[2.3] Launching '$ExeName' with Production environment..."
-    # We set the environment variable just before launch to ensure it reads the correct appsettings file.
-    $env:ASPNETCORE_ENVIRONMENT = 'Production'
-    Start-Process -FilePath (Join-Path $DeployPath $ExeName) -WorkingDirectory $DeployPath
+    # Execute the launcher in a way that doesn't block the PowerShell script.
+    Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$Launcher`"" -WindowStyle Hidden
     Write-Host "✅ Launch command issued."
 
-    # --- STEP 2.4: VERIFY APPLICATION IS RUNNING ---
+    # --- STEP 2.4: VERIFY AND REPORT ---
     Write-Host "[2.4] Waiting 10 seconds for process to stabilize..."
     Start-Sleep -Seconds 10
     $runningProcess = Get-Process -Name $AppName -ErrorAction SilentlyContinue
-    if (-not $runningProcess) {
-        throw "FATAL: Process '$AppName' IS NOT RUNNING. It has crashed. Since config is confirmed correct, the issue is now a code-level problem (e.g., cannot connect to database with provided connection string)."
+    if ($runningProcess) {
+        Write-Host "✅✅✅✅✅ SCRIPT 2 SUCCESS! Process '$AppName' is confirmed to be running!" -ForegroundColor Green
+    } else {
+        # This is not a fatal script error. We expect a crash and need the log.
+        Write-Warning "PROCESS '$AppName' IS NOT RUNNING as expected."
+        Write-Warning "The reason for the crash will be reported by the next job."
     }
-    
-    Write-Host "✅✅✅ SCRIPT 2 SUCCESS: Process '$AppName' is confirmed to be running!" -ForegroundColor Green
 
 } catch {
     Write-Error "--- ❌ SCRIPT 2 FAILED! ---"

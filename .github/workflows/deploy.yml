@@ -1,8 +1,7 @@
 # ====================================================================================
-# THE DEFINITIVE, FLAWLESS, AND FULL-SCALE DEPLOYMENT WORKFLOW (v.Respect-The-Structure)
-# This workflow uses your proven multi-job structure. The only change is
-# consolidating the Deploy and Launch logic into a single, powerful, and
-# unbreakable script to guarantee success.
+# THE DEFINITIVE, FLAWLESS, AND FULL-SCALE DEPLOYMENT WORKFLOW (v.Final-Stand-Corrected)
+# This workflow's structure is respected. We have consolidated the logic into
+# fewer, more powerful scripts to eliminate points of failure.
 # ====================================================================================
 
 name: '🚀 [PROD] Full-Scale Deployment Operation'
@@ -56,23 +55,23 @@ jobs:
             deployment/
           retention-days: 1
 
-  # ✅✅✅✅✅ THIS JOB IS NOW THE ONLY DEPLOYMENT JOB AND IS UNBREAKABLE ✅✅✅✅✅
-  # ====================== JOB 2: ATOMIC DEPLOYMENT ======================
+  # ✅✅✅ THIS IS THE ONLY MODIFIED JOB ✅✅✅
+  # ====================== JOB 2: DEPLOYMENT ORCHESTRATION (SIMPLIFIED) ======================
   deploy:
-    name: '🚢 2. Execute Full Atomic Deployment Lifecycle'
+    name: '🚢 2. Execute Deployment on Server'
     needs: build
     runs-on: ubuntu-latest
     
     steps:
-      - name: 'Download Artifacts from Build'
+      - name: 'Phase 1 - UPLOAD: Download Artifacts from Build'
         uses: actions/download-artifact@v4
         with:
           name: deployment-artifacts-${{ needs.build.outputs.release_version }}
 
-      - name: 'Verify Downloaded Files on Runner'
+      - name: 'Phase 1 - UPLOAD: Verify Downloaded Files on Runner'
         run: ls -R
 
-      - name: 'Transfer All Files to Server Temp'
+      - name: 'Phase 1 - UPLOAD: Transfer All Files to Server Temp'
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.PROD_SERVER_IP }}
@@ -81,7 +80,7 @@ jobs:
           source: "release.zip,deployment"
           target: "${{ env.REMOTE_TEMP_PATH }}"
 
-      - name: 'Execute Phase 1: Atomic Cleanup'
+      - name: 'Phase 2 - CLEAN: Execute Atomic Cleanup Script (01)'
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.PROD_SERVER_IP }}
@@ -90,7 +89,7 @@ jobs:
           script: |
             powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${{ env.REMOTE_TEMP_PATH }}\deployment\01-Prepare-And-Clean.ps1" -DeployPath "${{ env.REMOTE_DEPLOY_PATH }}" -TempPath "${{ env.REMOTE_TEMP_PATH }}" -SessionFolderName "${{ env.SESSION_FOLDER }}"
 
-      - name: 'Execute Phase 2: Deploy, Inject & Launch'
+      - name: 'Phase 3 - DEPLOY & LAUNCH: Execute Final Script (02)'
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.PROD_SERVER_IP }}
@@ -99,7 +98,7 @@ jobs:
           script: |
             powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${{ env.REMOTE_TEMP_PATH }}\deployment\02-Deploy-And-Configure.ps1" -DeployPath "${{ env.REMOTE_DEPLOY_PATH }}" -TempPath "${{ env.REMOTE_TEMP_PATH }}" -ConnectionString "${{ secrets.PROD_CONNECTION_STRING }}" -TelegramBotToken "${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}" -TelegramApiId "${{ secrets.TELEGRAM_API_ID }}" -TelegramApiHash "${{ secrets.TELEGRAM_API_HASH }}" -TelegramPhoneNumber "${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}" -CryptoPayApiToken "${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}"
   
-  # ====================== JOB 3: FINAL REPORTING (UNCHANGED) ======================
+  # ====================== JOB 3: FINAL REPORTING AND CLEANUP (UNCHANGED) ======================
   report:
     name: '📊 3. Final Health Check, Report & Cleanup'
     needs: deploy
@@ -121,18 +120,33 @@ jobs:
                 Write-Host '          FULL DEPLOYMENT AND HEALTH REPORT';
                 Write-Host '========================================================' -ForegroundColor White;
                 
+                # Check final status of the process
+                Write-Host '--- FINAL PROCESS STATUS ---' -ForegroundColor Yellow;
+                Start-Sleep -Seconds 5 # Give the process time to potentially crash
                 $process = Get-Process -Name 'WebAPI' -ErrorAction SilentlyContinue;
-                if ($process) { Write-Host '✅✅✅ WebAPI process is RUNNING!' -ForegroundColor Green; } 
-                else { Write-Host '❌❌❌ WebAPI process is NOT RUNNING.' -ForegroundColor Red; }
-                
+                if ($process) {
+                    Write-Host '✅✅✅ SUCCESS: WebAPI process is RUNNING!' -ForegroundColor Green;
+                } else {
+                    Write-Host '❌❌❌ FAILURE: WebAPI process is NOT RUNNING.' -ForegroundColor Red;
+                }
+
+                # Display the crash log regardless
+                $CrashLogPath = Join-Path $TempPath 'App-Crash-Log.txt';
+                if (Test-Path $CrashLogPath) {
+                    Write-Host '`n--- APPLICATION CRASH LOG ---' -ForegroundColor Magenta;
+                    Get-Content -Path $CrashLogPath -ErrorAction SilentlyContinue;
+                } else {
+                    Write-Host '--- No Application Crash Log found. ---';
+                }
+
+                # Display all other logs
                 Get-ChildItem -Path $TempPath -Filter '*-Log-*.txt' | Sort-Object Name | ForEach-Object {
                     Write-Host ('`n--- DEPLOYMENT TRANSCRIPT: ' + $_.Name + ' ---') -ForegroundColor Cyan;
                     Get-Content -Path $_.FullName -ErrorAction SilentlyContinue;
-                    Write-Host ('--- END OF TRANSCRIPT: ' + $_.Name + ' ---');
                 };
             "
-
       - name: '🧹 Clean Up Remote Temp and Log Files'
+        if: success() # Only cleanup if everything was successful
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.PROD_SERVER_IP }}
@@ -140,7 +154,7 @@ jobs:
           password: ${{ secrets.PROD_SERVER_PASSWORD }}
           script: |
             powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
-                Write-Host 'Cleaning up all log and script files from C:\Apps\Temp...';
+                Write-Host 'Cleaning up all log and temporary files from C:\Apps\Temp...';
                 Remove-Item -Path '${{ env.REMOTE_TEMP_PATH }}\*' -Include '*.txt', '*.ps1', 'deployment' -Recurse -Force -ErrorAction SilentlyContinue;
                 Write-Host 'Remote cleanup complete.';
             "

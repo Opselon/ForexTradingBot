@@ -239,31 +239,42 @@ try
     var app = builder.Build(); //  ساخت برنامه با تمام سرویس‌های پیکربندی شده
     Log.Information("Application host built. Performing mandatory startup tasks...");
 
-    using (var scope = app.Services.CreateScope())
+    // The application will now start INSTANTLY.
+    #region Queue Startup Maintenance Jobs to Hangfire
+
+    // We register a callback that runs ONCE, right after the application has fully started.
+    app.Lifetime.ApplicationStarted.Register(() =>
     {
+        Log.Information("Application has fully started. Now enqueuing background maintenance jobs.");
         try
         {
-            var cleaner = scope.ServiceProvider.GetRequiredService<IHangfireCleaner>();
-            var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
-            string connectionString = configuration.GetConnectionString("DefaultConnection")!;
+            // We get the necessary services from the application's root service provider.
+            var backgroundJobClient = app.Services.GetRequiredService<IBackgroundJobClient>();
+            var configuration = app.Services.GetRequiredService<IConfiguration>();
+            var connectionString = configuration.GetConnectionString("DefaultConnection");
 
-            // --- 1. Perform Hangfire Cleanup ---
-            Log.Information("Executing automatic Hangfire database cleanup...");
-            cleaner.PurgeCompletedAndFailedJobs(connectionString);
-            Log.Information("Hangfire database cleanup completed.");
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                Log.Error("Cannot enqueue maintenance jobs: DefaultConnection string is missing.");
+                return;
+            }
 
-            // --- 2. Perform NewsItem Duplicate Cleanup ---
-            Log.Information("Executing automatic duplicate NewsItem cleanup...");
-            cleaner.PurgeDuplicateNewsItems(connectionString); // ✅ CALL THE NEW METHOD
-            Log.Information("Duplicate NewsItem cleanup completed.");
+            Log.Information("Enqueuing Hangfire core cleanup job to run in the background...");
+            // This job will run once, as soon as a Hangfire server is available.
+            backgroundJobClient.Enqueue<IHangfireCleaner>(cleaner => cleaner.PurgeCompletedAndFailedJobs(connectionString));
 
+            Log.Information("Enqueuing duplicate NewsItem cleanup job to run in the background...");
+            backgroundJobClient.Enqueue<IHangfireCleaner>(cleaner => cleaner.PurgeDuplicateNewsItems(connectionString));
+
+            Log.Information("✅ All startup maintenance jobs have been successfully enqueued. They will run asynchronously.");
         }
         catch (Exception ex)
         {
-            Log.Fatal(ex, "A critical error occurred during automatic startup maintenance tasks. The application will not start.");
-            return;
+            Log.Error(ex, "An error occurred while trying to enqueue startup maintenance jobs.");
         }
-    }
+    });
+
+    #endregion
 
     Log.Information("Mandatory startup tasks completed.");
 

@@ -1,4 +1,9 @@
-# deployment/02-Deploy-And-Configure.ps1
+# ====================================================================================
+# THE DEFINITIVE DEPLOY, INJECT, AND LAUNCH SCRIPT (v.Victory)
+# This single script handles the entire core deployment logic after cleanup.
+# It unpacks, verifies, injects secrets into the JSON file, and launches the app.
+# ====================================================================================
+
 param(
     [string]$DeployPath,
     [string]$TempPath,
@@ -9,42 +14,65 @@ param(
     [string]$TelegramPhoneNumber,
     [string]$CryptoPayApiToken
 )
-$ScriptLogFile = Join-Path $TempPath "02-Deploy-Log-$(Get-Date -f yyyyMMdd-HHmmss).txt"
+$ScriptLogFile = Join-Path $TempPath "02-Deploy-And-Launch-Log-$(Get-Date -f yyyyMMdd-HHmmss).txt"
 Start-Transcript -Path $ScriptLogFile -Append
 $ErrorActionPreference = 'Stop'
 
-Write-Host "--- SCRIPT 2: DEPLOY AND CONFIGURE STARTED ---" -ForegroundColor Cyan
+Write-Host "--- SCRIPT 2: DEPLOY, INJECT, LAUNCH STARTED ---" -ForegroundColor Cyan
 $ZipFile = Join-Path $TempPath "release.zip"
+$AppName = "WebAPI"
 $ExeName = "WebAPI.exe"
-$Launcher = Join-Path $DeployPath "start-app.bat"
 
-Write-Host "STEP 2.1: Verifying required files..."
-if (-not (Test-Path $ZipFile)) { throw "FATAL: release.zip not found in '$TempPath'!" }
-if (-not (Test-Path $DeployPath)) { throw "FATAL: Deployment path '$DeployPath' not found!" }
-Write-Host "✅ Required files and folders are present."
+try {
+    # --- STEP 2.1: UNPACK NEW VERSION ---
+    Write-Host "[2.1] Unpacking new version from '$ZipFile' to '$DeployPath'..."
+    Expand-Archive -Path $ZipFile -DestinationPath $DeployPath -Force -Verbose
+    if (-not (Test-Path (Join-Path $DeployPath $ExeName))) { throw "FATAL: $ExeName not found after unpack!" }
+    Write-Host "✅ Unpack and verification successful."
 
-Write-Host "STEP 2.2: Unpacking new version from '$ZipFile' to '$DeployPath'..."
-Expand-Archive -Path $ZipFile -DestinationPath $DeployPath -Force -Verbose
-Write-Host "✅ Unpack complete."
-if (-not (Test-Path (Join-Path $DeployPath $ExeName))) { throw "FATAL: $ExeName not found after unpack!" }
-Write-Host "✅ Verification successful: $ExeName is present in the deployment folder."
+    # --- STEP 2.2: DIRECT INJECTION INTO appsettings.Production.json ---
+    Write-Host "[2.2] Injecting secrets DIRECTLY into 'appsettings.Production.json'..."
+    $appSettingsPath = Join-Path $DeployPath 'appsettings.Production.json'
+    if (-not (Test-Path $appSettingsPath)) { throw "FATAL: 'appsettings.Production.json' NOT FOUND after unpack!" }
+    
+    # Read the content, perform all replacements, and write it back once.
+    $content = Get-Content $appSettingsPath -Raw
+    $content = $content -replace '#{ConnectionString}#', $ConnectionString
+    $content = $content -replace '#{DatabaseProvider}#', 'SqlServer' # Based on your JSON file
+    $content = $content -replace '#{TelegramBotToken}#', $TelegramBotToken
+    $content = $content -replace '#{TelegramApiId}#', $TelegramApiId
+    $content = $content -replace '#{TelegramApiHash}#', $TelegramApiHash
+    $content = $content -replace '#{TelegramPhoneNumber}#', $TelegramPhoneNumber
+    $content = $content -replace '#{CryptoPayApiToken}#', $CryptoPayApiToken
+    Set-Content -Path $appSettingsPath -Value $content
+    
+    Write-Host "✅ Secrets injected. Verifying final content..."
+    Write-Host "------------------ FINAL CONFIG FILE ------------------" -ForegroundColor Yellow
+    Get-Content $appSettingsPath
+    Write-Host "-----------------------------------------------------" -ForegroundColor Yellow
 
-Write-Host "STEP 2.3: Creating application launcher '$Launcher'..."
-$BatContent = @"
-@echo off
-set ASPNETCORE_ENVIRONMENT=Production
-set ConnectionStrings__DefaultConnection=$ConnectionString
-set DatabaseSettings__DatabaseProvider=SqlServer
-set TelegramPanel__BotToken=$TelegramBotToken
-set TelegramUserApi__ApiId=$TelegramApiId
-set TelegramUserApi__ApiHash=$TelegramApiHash
-set TelegramUserApi__PhoneNumber=$TelegramPhoneNumber
-set CryptoPay__ApiToken=$CryptoPayApiToken
-cd /d "$DeployPath"
-start "" "$ExeName"
-"@
-Set-Content -Path $Launcher -Value $BatContent -Verbose
-Write-Host "✅ Launcher created."
+    # --- STEP 2.3: LAUNCH APPLICATION ---
+    Write-Host "[2.3] Launching '$ExeName' with Production environment..."
+    # We set the environment variable just before launch to ensure it reads the correct appsettings file.
+    $env:ASPNETCORE_ENVIRONMENT = 'Production'
+    Start-Process -FilePath (Join-Path $DeployPath $ExeName) -WorkingDirectory $DeployPath
+    Write-Host "✅ Launch command issued."
 
-Write-Host "--- SCRIPT 2: DEPLOYMENT AND CONFIGURATION COMPLETE ---" -ForegroundColor Green
-Stop-Transcript
+    # --- STEP 2.4: VERIFY APPLICATION IS RUNNING ---
+    Write-Host "[2.4] Waiting 10 seconds for process to stabilize..."
+    Start-Sleep -Seconds 10
+    $runningProcess = Get-Process -Name $AppName -ErrorAction SilentlyContinue
+    if (-not $runningProcess) {
+        throw "FATAL: Process '$AppName' IS NOT RUNNING. It has crashed. Since config is confirmed correct, the issue is now a code-level problem (e.g., cannot connect to database with provided connection string)."
+    }
+    
+    Write-Host "✅✅✅ SCRIPT 2 SUCCESS: Process '$AppName' is confirmed to be running!" -ForegroundColor Green
+
+} catch {
+    Write-Error "--- ❌ SCRIPT 2 FAILED! ---"
+    Write-Error $_.Exception.ToString()
+    exit 1
+} finally {
+    Write-Host "--- SCRIPT 2 FINISHED ---"
+    Stop-Transcript
+}

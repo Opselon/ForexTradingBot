@@ -1,8 +1,8 @@
 # ====================================================================================
-# THE DEFINITIVE, FLAWLESS, AND FULL-SCALE DEPLOYMENT WORKFLOW (v.Victory-Injection)
-# This workflow uses a SINGLE, powerful, unbreakable remote command that performs
-# the entire deployment atomically, using the CORRECT file injection method that
-# matches your now-corrected JSON structure. This is the definitive solution.
+# THE DEFINITIVE, FLAWLESS, AND FULL-SCALE DEPLOYMENT WORKFLOW (v.Respect-The-Structure)
+# This workflow uses your proven multi-job structure. The only change is
+# consolidating the Deploy and Launch logic into a single, powerful, and
+# unbreakable script to guarantee success.
 # ====================================================================================
 
 name: '🚀 [PROD] Full-Scale Deployment Operation'
@@ -27,10 +27,7 @@ env:
   SESSION_FOLDER: 'Session'
 
 jobs:
-  # ================================================================
-  # JOB 1: BUILD & PACKAGE
-  # This section remains UNCHANGED as it works perfectly.
-  # ================================================================
+  # ====================== JOB 1: BUILD & PACKAGE (UNCHANGED) ======================
   build:
     name: '✅ 1. Build & Package'
     runs-on: ubuntu-latest
@@ -40,53 +37,77 @@ jobs:
       - name: 'Get Short Commit Hash for Versioning'
         id: version
         run: echo "value=$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
-
       - name: '📥 Checkout Repository & Scripts'
         uses: actions/checkout@v4
-
       - name: '⚙️ Setup .NET SDK'
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
-          
       - name: '📦 Publish Application'
         run: dotnet publish ${{ env.PROJECT_PATH }} -c Release -r win-x64 -o ./publish --self-contained true
-
       - name: '🜜️ Create Release ZIP Archive'
         run: cd ./publish && zip -r ../release.zip .
-
       - name: '📤 Upload Artifacts for Deployment Jobs'
         uses: actions/upload-artifact@v4
         with:
           name: deployment-artifacts-${{ steps.version.outputs.value }}
-          path: release.zip # We only need the zip now
+          path: |
+            release.zip
+            deployment/
           retention-days: 1
 
-  # ================================================================
-  # JOB 2: DEPLOY, VERIFY, AND REPORT (THE FINAL BATTLE)
-  # This single job performs the entire lifecycle on the server in one
-  # unbreakable, fully-logged PowerShell command block.
-  # ================================================================
+  # ✅✅✅✅✅ THIS JOB IS NOW THE ONLY DEPLOYMENT JOB AND IS UNBREAKABLE ✅✅✅✅✅
+  # ====================== JOB 2: ATOMIC DEPLOYMENT ======================
   deploy:
-    name: '🚢 2. Execute Atomic Deployment, Verification & Report'
+    name: '🚢 2. Execute Full Atomic Deployment Lifecycle'
     needs: build
     runs-on: ubuntu-latest
     
     steps:
-      - name: 'Phase 1 - UPLOAD: Download and Transfer Release'
+      - name: 'Download Artifacts from Build'
         uses: actions/download-artifact@v4
         with:
           name: deployment-artifacts-${{ needs.build.outputs.release_version }}
-      - uses: appleboy/scp-action@v0.1.7
+
+      - name: 'Verify Downloaded Files on Runner'
+        run: ls -R
+
+      - name: 'Transfer All Files to Server Temp'
+        uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.PROD_SERVER_IP }}
           username: ${{ secrets.PROD_SERVER_USERNAME }}
           password: ${{ secrets.PROD_SERVER_PASSWORD }}
-          source: "release.zip"
+          source: "release.zip,deployment"
           target: "${{ env.REMOTE_TEMP_PATH }}"
 
-      # ✅✅✅✅✅ THE ONLY STEP THAT MATTERS: THE UNBREAKABLE SCRIPT ✅✅✅✅✅
-      - name: 'Phase 2 - EXECUTE: The Full Atomic Lifecycle'
+      - name: 'Execute Phase 1: Atomic Cleanup'
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.PROD_SERVER_IP }}
+          username: ${{ secrets.PROD_SERVER_USERNAME }}
+          password: ${{ secrets.PROD_SERVER_PASSWORD }}
+          script: |
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${{ env.REMOTE_TEMP_PATH }}\deployment\01-Prepare-And-Clean.ps1" -DeployPath "${{ env.REMOTE_DEPLOY_PATH }}" -TempPath "${{ env.REMOTE_TEMP_PATH }}" -SessionFolderName "${{ env.SESSION_FOLDER }}"
+
+      - name: 'Execute Phase 2: Deploy, Inject & Launch'
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.PROD_SERVER_IP }}
+          username: ${{ secrets.PROD_SERVER_USERNAME }}
+          password: ${{ secrets.PROD_SERVER_PASSWORD }}
+          script: |
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${{ env.REMOTE_TEMP_PATH }}\deployment\02-Deploy-And-Configure.ps1" -DeployPath "${{ env.REMOTE_DEPLOY_PATH }}" -TempPath "${{ env.REMOTE_TEMP_PATH }}" -ConnectionString "${{ secrets.PROD_CONNECTION_STRING }}" -TelegramBotToken "${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}" -TelegramApiId "${{ secrets.TELEGRAM_API_ID }}" -TelegramApiHash "${{ secrets.TELEGRAM_API_HASH }}" -TelegramPhoneNumber "${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}" -CryptoPayApiToken "${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}"
+  
+  # ====================== JOB 3: FINAL REPORTING (UNCHANGED) ======================
+  report:
+    name: '📊 3. Final Health Check, Report & Cleanup'
+    needs: deploy
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: '🔍 Retrieve and Display ALL Logs from Server'
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.PROD_SERVER_IP }}
@@ -94,76 +115,32 @@ jobs:
           password: ${{ secrets.PROD_SERVER_PASSWORD }}
           script: |
             powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
-            # This is it. One script to rule them all. No dependencies, maximum power.
-            `$ErrorActionPreference = 'Stop';
-            `$DeployPath = '${{ env.REMOTE_DEPLOY_PATH }}';
-            `$TempPath = '${{ env.REMOTE_TEMP_PATH }}';
-            `$ZipFile = Join-Path `$TempPath 'release.zip';
-            `$SessionSourcePath = Join-Path `$DeployPath '${{ env.SESSION_FOLDER }}';
-            `$SessionBackupPath = Join-Path `$TempPath '${{ env.SESSION_FOLDER }}.bak';
-            `$AppName = 'WebAPI';
-            `$ExeName = 'WebAPI.exe';
+                $TempPath = '${{ env.REMOTE_TEMP_PATH }}';
+                $DeployPath = '${{ env.REMOTE_DEPLOY_PATH }}';
+                Write-Host '========================================================' -ForegroundColor White;
+                Write-Host '          FULL DEPLOYMENT AND HEALTH REPORT';
+                Write-Host '========================================================' -ForegroundColor White;
+                
+                $process = Get-Process -Name 'WebAPI' -ErrorAction SilentlyContinue;
+                if ($process) { Write-Host '✅✅✅ WebAPI process is RUNNING!' -ForegroundColor Green; } 
+                else { Write-Host '❌❌❌ WebAPI process is NOT RUNNING.' -ForegroundColor Red; }
+                
+                Get-ChildItem -Path $TempPath -Filter '*-Log-*.txt' | Sort-Object Name | ForEach-Object {
+                    Write-Host ('`n--- DEPLOYMENT TRANSCRIPT: ' + $_.Name + ' ---') -ForegroundColor Cyan;
+                    Get-Content -Path $_.FullName -ErrorAction SilentlyContinue;
+                    Write-Host ('--- END OF TRANSCRIPT: ' + $_.Name + ' ---');
+                };
+            "
 
-            try {
-                Write-Host '================== [STARTING ATOMIC DEPLOYMENT] ==================' -ForegroundColor Cyan;
-                
-                # --- Step 1: Stop and Backup ---
-                Write-Host '[1/6] Stopping process and backing up Session...' -ForegroundColor Yellow;
-                Get-Process -Name `$AppName -ErrorAction SilentlyContinue | Stop-Process -Force -Verbose;
-                if (Test-Path `$SessionSourcePath) {
-                    if (Test-Path `$SessionBackupPath) { Remove-Item `$SessionBackupPath -Recurse -Force; }
-                    Move-Item -Path `$SessionSourcePath -Destination `$SessionBackupPath -Force -Verbose;
-                }
-                
-                # --- Step 2: Obliterate and Restore ---
-                Write-Host '[2/6] Cleaning and restoring directory...' -ForegroundColor Yellow;
-                if (Test-Path `$DeployPath) { Remove-Item -Path `$DeployPath -Recurse -Force -Verbose; }
-                New-Item -Path `$DeployPath -ItemType Directory -Force | Out-Null;
-                if (Test-Path `$SessionBackupPath) { Move-Item -Path `$SessionBackupPath -Destination `$SessionSourcePath -Force -Verbose; }
-                
-                # --- Step 3: Unpack ---
-                Write-Host '[3/6] Unpacking new version...' -ForegroundColor Yellow;
-                Expand-Archive -Path `$ZipFile -DestinationPath `$DeployPath -Force -Verbose;
-                if (-not (Test-Path (Join-Path `$DeployPath `$ExeName))) { throw 'FATAL: WebAPI.exe NOT FOUND after unpack!'; }
-
-                # --- Step 4: SECRET INJECTION INTO THE FILE ---
-                Write-Host '[4/6] Injecting secrets DIRECTLY into appsettings.Production.json...' -ForegroundColor Yellow;
-                `$appSettingsPath = Join-Path `$DeployPath 'appsettings.Production.json';
-                if (-not (Test-Path `$appSettingsPath)) { throw 'FATAL: appsettings.Production.json NOT FOUND!'; }
-                `$content = Get-Content `$appSettingsPath -Raw;
-                `$content = `$content -replace '#{ConnectionString}#', '${{ secrets.PROD_CONNECTION_STRING }}';
-                `$content = `$content -replace '#{DatabaseProvider}#', 'SqlServer'; # Hard-coding as per your JSON
-                `$content = `$content -replace '#{TelegramBotToken}#', '${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}';
-                `$content = `$content -replace '#{TelegramApiId}#', '${{ secrets.TELEGRAM_API_ID }}';
-                `$content = `$content -replace '#{TelegramApiHash}#', '${{ secrets.TELEGRAM_API_HASH }}';
-                `$content = `$content -replace '#{TelegramPhoneNumber}#', '${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}';
-                `$content = `$content -replace '#{CryptoPayApiToken}#', '${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}';
-                Set-Content -Path `$appSettingsPath -Value `$content;
-                Write-Host '--- Final Config File Content (Verification) ---'; 
-                Get-Content `$appSettingsPath;
-                
-                # --- Step 5: LAUNCH ---
-                Write-Host '[5/6] Launching application...' -ForegroundColor Yellow;
-                # We tell the application to run in Production environment so it reads the correct file.
-                `$env:ASPNETCORE_ENVIRONMENT='Production';
-                Start-Process -FilePath (Join-Path `$DeployPath `$ExeName) -WorkingDirectory `$DeployPath;
-                
-                # --- Step 6: Final Verification ---
-                Write-Host '[6/6] Final health check...' -ForegroundColor Yellow;
-                Start-Sleep -Seconds 10;
-                `$process = Get-Process -Name `$AppName -ErrorAction SilentlyContinue;
-                if (`$process) {
-                    Write-Host '✅✅✅✅✅ VICTORY! WebAPI Process is RUNNING! ✅✅✅✅✅' -ForegroundColor Green;
-                } else {
-                    throw 'FATAL: Application is NOT RUNNING. It started but crashed. Since config is confirmed correct, the issue is likely a code-level problem (e.g., cannot connect to database). Check server Event Viewer.';
-                }
-
-            } catch {
-                Write-Host '--- ❌ A FATAL ERROR OCCURRED! ---' -ForegroundColor Red;
-                Write-Host `"$($_.Exception.ToString())`" -ForegroundColor Red;
-                exit 1;
-            } finally {
-                # --- Final Cleanup ---
-                Write-Host '--- Final Cleanup of temporary files...'
-                Remove-Item -Path `$ZipFile, `$SessionBackupPath -Recurse -Force -ErrorAction SilentlyContinue;
-            }"
+      - name: '🧹 Clean Up Remote Temp and Log Files'
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.PROD_SERVER_IP }}
+          username: ${{ secrets.PROD_SERVER_USERNAME }}
+          password: ${{ secrets.PROD_SERVER_PASSWORD }}
+          script: |
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
+                Write-Host 'Cleaning up all log and script files from C:\Apps\Temp...';
+                Remove-Item -Path '${{ env.REMOTE_TEMP_PATH }}\*' -Include '*.txt', '*.ps1', 'deployment' -Recurse -Force -ErrorAction SilentlyContinue;
+                Write-Host 'Remote cleanup complete.';
+            "

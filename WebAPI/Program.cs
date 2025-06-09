@@ -201,13 +201,18 @@ try
         // Optionally rethrow if it's critical, or decide if the app can continue
     }
 
-    //  ❌❌ یادآوری: رجیستری‌های تکراری یا جابجا شده باید از اینجا حذف شده باشند ❌❌
-    //  MediatR باید در AddApplicationServices با اسمبلی لایه Application رجیستر شود.
-    //  ISignalService و سایر سرویس‌های لایه Application باید در AddApplicationServices رجیستر شوند.
     #endregion
 
+
+
+
+
     #region Configure Hangfire
+
     // ------------------- ۵. پیکربندی Hangfire برای اجرای کارهای پس‌زمینه -------------------
+
+
+    
     builder.Services.AddHangfire(config => config
         .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
         .UseSimpleAssemblyNameTypeSerializer()
@@ -221,6 +226,8 @@ try
             DisableGlobalLocks = true, // Set to true if using Azure SQL Database or similar cloud environments
             SchemaName = "HangFire" // Optional: Specify a custom schema name if you don't want the default "HangFire"
         }));
+
+
 
     builder.Services.AddHangfireServer();
     Log.Information("Hangfire services (with SQL Server for production) added.");
@@ -237,8 +244,6 @@ try
     Log.Information("Final manual service registrations complete.");
     builder.Services.Configure<List<Infrastructure.Settings.ForwardingRule>>( // <<< Fully qualified
     builder.Configuration.GetSection("ForwardingRules"));
-
- 
 
 
     #endregion
@@ -403,6 +408,6 @@ finally
 
     Log.Information("--------------------------------------------------");
     Log.Information("Application Shutting Down...");
-    Log.CloseAndFlush(); //  بسیار مهم: اطمینان از نوشته شدن تمام لاگ‌های بافر شده قبل از خروج کامل برنامه
+    Log.CloseAndFlush(); 
     Log.Information("--------------------------------------------------");
 }

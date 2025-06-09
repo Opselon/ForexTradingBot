@@ -52,14 +52,22 @@ try
     // ------------------- ۱. پیکربندی Serilog با تنظیمات از appsettings.json -------------------
     // این بخش Serilog را به عنوان سیستم لاگینگ اصلی برنامه تنظیم می‌کند.
     builder.Host.UseSerilog((context, services, loggerConfiguration) => loggerConfiguration
-     .ReadFrom.Configuration(context.Configuration)
-     .ReadFrom.Services(services)
-     .Enrich.FromLogContext()
+       .ReadFrom.Configuration(context.Configuration)
+       .ReadFrom.Services(services)
+       .Enrich.FromLogContext()
+       .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
 
-     .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
- //  می‌توانید Sink های دیگری مانند File, Seq, ElasticSearch و ... را اینجا اضافه کنید                                                                                             //               restrictedToMinimumLevel: Serilog.Events.LogEventLevel.Information,
- //               outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] ({SourceContext}) {Message:lj}{NewLine}{Exception}")
- );
+       // ✅✅✅✅✅ THE FIX FOR FILE LOGGING IS HERE ✅✅✅✅✅
+       // این بخش لاگ‌ها را در فایلی در مسیر 'C:\Apps\ForexTradingBot\logs' ذخیره می‌کند
+       // هر روز یک فایل جدید ساخته می‌شود و فایل‌های قدیمی‌تر از ۷ روز به طور خودکار پاک می‌شوند.
+       .WriteTo.File(
+           path: Path.Combine(AppContext.BaseDirectory, "logs", "log-.txt"), // مسیر و الگوی نام فایل
+           rollingInterval: RollingInterval.Day, // ایجاد یک فایل جدید به صورت روزانه
+           rollOnFileSizeLimit: true, // اگر حجم فایل زیاد شد، یک فایل جدید بساز
+           fileSizeLimitBytes: 10 * 1024 * 1024, // محدودیت حجم فایل: ۱۰ مگابایت
+           retainedFileCountLimit: 1, // حداکثر ۷ فایل لاگ (۷ روز) را نگه دار
+           outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] ({SourceContext}) {Message:lj}{NewLine}{Exception}")
+   );
     #endregion
 
     #region Add Core ASP.NET Core Services

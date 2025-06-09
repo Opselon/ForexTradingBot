@@ -1,7 +1,7 @@
 # ====================================================================================
-# THE FINAL, FLAWLESS DEPLOYMENT SCRIPT (v.2024-FinalBoss)
+# THE FINAL, FLAWLESS DEPLOYMENT SCRIPT (v.2024-FinalBoss-Corrected)
 # This script is executed from a temporary unpack location and manages the
-# entire lifecycle, from cleanup to launch, with extensive logging.
+# entire lifecycle, from cleanup to launch, with extensive, verbose logging.
 # ====================================================================================
 
 param(
@@ -22,7 +22,7 @@ $AppName         = "WebAPI"
 $ExeName         = "WebAPI.exe"
 $Launcher        = Join-Path $DeployPath "start-app.bat"
 
-# --- CRITICAL: Start a detailed transcript of everything this script does ---
+# --- CRITICAL: Start a detailed transcript of every command and its output ---
 Start-Transcript -Path $ScriptLogFile -Append
 $ErrorActionPreference = 'Stop'
 
@@ -40,19 +40,21 @@ try {
     }
 
     # --- Step 2: Full and Verbose Cleanup of the Final Destination ---
-    Write-Host "[2/6] Starting full cleanup of final deployment directory: $DeployPath..."
+    Write-Host "[2/6] Starting FULL cleanup of final deployment directory: $DeployPath (preserving 'Session')..."
     if (Test-Path $DeployPath) {
         Get-ChildItem -Path $DeployPath -Exclude 'Session' | ForEach-Object { 
             Write-Host "  - Deleting: $($_.FullName)" -ForegroundColor Yellow
             Remove-Item -Recurse -Force -Path $_.FullName -Verbose
         }
-        Write-Host "✅ Directory cleanup complete (preserved 'Session' folder)."
+        Write-Host "✅ Directory cleanup complete."
     } else {
         New-Item -ItemType Directory -Path $DeployPath -Force | Out-Null
         Write-Host "🟡 Deployment directory did not exist; created a new one."
     }
 
     # --- Step 3: Copy New Files from Temporary Unpack Folder ---
+    # ✅✅✅ THE CRITICAL FIX IS HERE ✅✅✅
+    # Get the location of the currently running script. This will be 'C:\Apps\Temp\unpack'.
     $UnpackFolder = Split-Path -Parent $MyInvocation.MyCommand.Path
     Write-Host "[3/6] Copying new application files from '$UnpackFolder' to '$DeployPath'..."
     # We get all items from the unpack folder, but we EXCLUDE the script itself from being copied.
@@ -63,7 +65,7 @@ try {
     Write-Host "✅ New files copied successfully."
 
     # --- Step 4: Create the Launcher Batch File ---
-    Write-Host "[4/6] Creating application launcher: $Launcher..."
+    Write-Host "[4/6] Creating application launcher with crash logging: $Launcher..."
     $BatContent = @"
 @echo off
 set ASPNETCORE_ENVIRONMENT=Production
@@ -75,6 +77,7 @@ set TelegramUserApi__ApiHash=$TelegramApiHash
 set TelegramUserApi__PhoneNumber=$TelegramPhoneNumber
 set CryptoPay__ApiToken=$CryptoPayApiToken
 cd /d "$DeployPath"
+rem The '2>&1' is crucial. It merges the error stream into the standard output stream.
 "$ExeName" > "$AppCrashLogFile" 2>&1
 "@
     Set-Content -Path $Launcher -Value $BatContent
@@ -103,6 +106,7 @@ cd /d "$DeployPath"
     exit 1
 } finally {
     Write-Host "[CLEANUP] Script cleanup phase started."
+    # --- CRITICAL: Stop logging to save the transcript file ---
     Write-Host "--- SCRIPT FINISHED: Full transcript saved to $ScriptLogFile ---"
     Stop-Transcript
 }

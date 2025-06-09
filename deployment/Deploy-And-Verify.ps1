@@ -1,5 +1,5 @@
 # ====================================================================================
-# THE FINAL, FLAWLESS DEPLOYMENT SCRIPT (v.2024-FinalBoss-Corrected)
+# THE FINAL, FLAWLESS DEPLOYMENT SCRIPT (v.2024-FinalBoss)
 # This script is executed from a temporary unpack location and manages the
 # entire lifecycle, from cleanup to launch, with extensive, verbose logging.
 # ====================================================================================

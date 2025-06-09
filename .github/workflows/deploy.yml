@@ -1,7 +1,7 @@
 # ====================================================================================
-# THE DEFINITIVE WORKFLOW (v.2024-FinalBoss-Corrected)
+# THE DEFINITIVE WORKFLOW (v.2024-FinalBoss)
 # This workflow uses a bootstrapper to run the main deployment script from a
-# temporary location, which then handles the final, clean deployment.
+# temporary location, which then handles the final, clean deployment and reporting.
 # ====================================================================================
 
 name: '🚀 [PROD] Deploy ForexTradingBot'
@@ -71,11 +71,13 @@ jobs:
           target: "${{ env.REMOTE_TEMP_PATH }}"
       
       - name: '▶️ Execute Remote Bootstrapper'
+        id: deploy_step
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.PROD_SERVER_IP }}
           username: ${{ secrets.PROD_SERVER_USERNAME }}
           password: ${{ secrets.PROD_SERVER_PASSWORD }}
+          # This bootstrapper is simple, clean, and robust.
           script: |
             powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
                 $TempPath = '${{ env.REMOTE_TEMP_PATH }}'
@@ -91,8 +93,11 @@ jobs:
                 Remove-Item -Path `$ZipFile -Force
             "
       
+      # ==================================================================================
+      # ✅✅✅ THE FINAL HEALTH CHECK AND REPORT STEP ✅✅✅
+      # ==================================================================================
       - name: '🔍 Final Health Check & Report'
-        if: always()
+        if: always() # This step runs NO MATTER WHAT.
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.PROD_SERVER_IP }}
@@ -107,6 +112,9 @@ jobs:
                 Write-Host '========================================================'
                 Write-Host '          FINAL DEPLOYMENT HEALTH CHECK REPORT'
                 Write-Host '========================================================'
+
+                # Verification 1: Application Status
+                Write-Host '--- Verifying Application Status ---'
                 $process = Get-Process -Name 'WebAPI' -ErrorAction SilentlyContinue
                 if ($process) {
                     Write-Host '✅✅✅ SUCCESS: WebAPI process is RUNNING!' -ForegroundColor Green
@@ -124,6 +132,7 @@ jobs:
                     } else { Write-Host '🟡 No crash log file found.' }
                 }
                 
+                # Verification 2: Deployment Script Log
                 Write-Host '--- Displaying Latest Deployment Log ---'
                 $DeployLog = Get-ChildItem -Path $TempPath -Filter 'Deployment-Log-*.txt' | Sort-Object CreationTime -Descending | Select-Object -First 1
                 if ($DeployLog) {
@@ -132,5 +141,14 @@ jobs:
                     Get-Content -Path $DeployLog.FullName
                     Write-Host '------------------- DEPLOY LOG END -------------------'
                 } else { Write-Host '❌ No deployment script log found.' -ForegroundColor Red }
+                
+                # Verification 3: Final File Structure
+                Write-Host '--- Verifying Final File Structure ---'
+                if (Test-Path $DeployPath) {
+                    Write-Host 'Listing contents of C:\Apps\ForexTradingBot:'
+                    tree /f $DeployPath
+                } else {
+                    Write-Host 'Final deployment path not found!'
+                }
                 Write-Host '========================================================'
             "

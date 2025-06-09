@@ -431,36 +431,71 @@ namespace Infrastructure.Services
         }
 
         // Level 8: Improved SourceItemId determination.
+        #region 🔍 Determine a stable SourceItemId for RSS entries
+        /// <summary>
+        /// Determines a stable, unique SourceItemId based on available metadata of a feed item.
+        /// Prioritizes item.Id, then link, then hashes key fields.
+        /// </summary>
         private string DetermineSourceItemId(SyndicationItem item, string? primaryLink, string title, Guid rssSourceGuid)
         {
-            // Strategy 1: Use item.Id if it looks like a stable, unique identifier (e.g., GUID, stable URL, URN).
-            if (!string.IsNullOrWhiteSpace(item.Id))
+            var itemId = item.Id;
+            if (!string.IsNullOrWhiteSpace(itemId))
             {
-                // Heuristic: If it's a well-formed URI or contains a colon (like a URN, e.g., "tag:example.com,2023:news/123"),
-                // or if it's long enough to be reasonably unique without being a full article.
-                if (Uri.IsWellFormedUriString(item.Id, UriKind.Absolute) || item.Id.Contains(":", StringComparison.Ordinal) || item.Id.Length > 30)
+                // Prefer stable-looking IDs (GUID, URN, or long-enough unique strings)
+                if (Uri.IsWellFormedUriString(itemId, UriKind.Absolute) ||
+                    itemId.Contains(':', StringComparison.Ordinal) ||
+                    itemId.Length > 30)
                 {
-                    return item.Id.Truncate(NewsSourceItemIdMaxLenDb);
+                    return itemId.Truncate(NewsSourceItemIdMaxLenDb);
                 }
             }
 
-            // Strategy 2: Use the primary link if available and well-formed. This is often unique.
-            if (!string.IsNullOrWhiteSpace(primaryLink) && Uri.IsWellFormedUriString(primaryLink, UriKind.Absolute))
+            if (!string.IsNullOrWhiteSpace(primaryLink) &&
+                Uri.IsWellFormedUriString(primaryLink, UriKind.Absolute))
             {
                 return primaryLink.Truncate(NewsSourceItemIdMaxLenDb);
             }
 
-            // Strategy 3: Generate a SHA256 hash from a combination of stable properties.
-            // This is a robust fallback for feeds that lack stable IDs or links.
-            using (var sha256Hash = SHA256.Create())
-            {
-                // Level 8: Include RssSource ID, Title, and PublishDate for a highly deterministic hash.
-                // PublishDate format "o" (round-trip) is precise and stable across cultures.
-                var data = Encoding.UTF8.GetBytes($"{rssSourceGuid}_{title}_{item.PublishDate.ToString("o", CultureInfo.InvariantCulture)}");
-                var hashBytes = sha256Hash.ComputeHash(data);
-                return BitConverter.ToString(hashBytes).Replace("-", "").ToLowerInvariant().Truncate(NewsSourceItemIdMaxLenDb);
-            }
+            // Final fallback: deterministic SHA256 hash of sourceGuid + title + publishDate
+            return GenerateDeterministicHash(title, item.PublishDate, rssSourceGuid);
         }
+        #endregion
+
+        #region ⚙️ SHA256-based fallback hash generator
+        /// <summary>
+        /// Generates a SHA256-based hash as a string from key fields of the RSS item.
+        /// </summary>
+        private static string GenerateDeterministicHash(string title, DateTimeOffset publishDate, Guid rssSourceGuid)
+        {
+            var input = $"{rssSourceGuid}_{title}_{publishDate.ToString("o", CultureInfo.InvariantCulture)}";
+            byte[] bytes = Encoding.UTF8.GetBytes(input);
+
+            // Reuse static SHA256 for performance (thread-safe)
+            using var sha = SHA256.Create();
+            byte[] hash = sha.ComputeHash(bytes);
+
+            // Convert to lowercase hex string manually (faster than BitConverter)
+            return ConvertHashToHexString(hash).Truncate(NewsSourceItemIdMaxLenDb);
+        }
+
+        /// <summary>
+        /// Converts byte array to lowercase hexadecimal string.
+        /// </summary>
+        private static string ConvertHashToHexString(byte[] hash)
+        {
+            Span<char> chars = stackalloc char[hash.Length * 2];
+            for (int i = 0; i < hash.Length; i++)
+            {
+                byte b = hash[i];
+                chars[i * 2] = GetHexChar(b >> 4);
+                chars[i * 2 + 1] = GetHexChar(b & 0xF);
+            }
+            return new string(chars);
+
+            static char GetHexChar(int val) => (char)(val < 10 ? '0' + val : 'a' + (val - 10));
+        }
+        #endregion
+
         #endregion
 
         #region Database Interaction, Metadata Update, and Notification Dispatch (MODIFIED FOR DAPPER & Level 9)

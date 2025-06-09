@@ -1,7 +1,6 @@
 # ====================================================================================
-# FINAL GUARANTEED VERSION: Return to Script Upload Method
-# This method is the only reliable way to bypass all the ssh-action's
-# shell interpretation bugs on Windows.
+# FINAL, GUARANTEED v2: Script Upload with Correct Process Start
+# The ONLY change is adding UseShellExecute = $false to the process start info.
 # ====================================================================================
 
 name: '🚀 [PROD] Deploy ForexTradingBot'
@@ -23,9 +22,10 @@ env:
   PROJECT_PATH: './WebAPI/WebAPI.csproj'
   REMOTE_DEPLOY_PATH: 'C:\Apps\ForexTradingBot'
   REMOTE_TEMP_PATH: 'C:\Apps\Temp'
-  SCRIPT_FILE_NAME: 'FinalDeploy.ps1' # New name to avoid any caching
+  SCRIPT_FILE_NAME: 'FinalDeploy.ps1'
 
 jobs:
+  # ... (Job 'build' remains the same) ...
   build:
     name: '✅ 1. Build & Package'
     runs-on: ubuntu-latest
@@ -64,7 +64,6 @@ jobs:
           # This script will be uploaded to and executed on the remote Windows server.
           # It has no parameters and defines everything internally for robustness.
 
-          # --- DEFINE ALL VARIABLES INTERNALLY ---
           $DeployPath     = "${{ env.REMOTE_DEPLOY_PATH }}"
           $TempPath       = "${{ env.REMOTE_TEMP_PATH }}"
           
@@ -88,11 +87,13 @@ jobs:
               Write-Host "✅ Archive unpacked."
               
               Write-Host "--- [4/5] Starting Service with Production Environment ---"
-              # Set environment variables for the process to be started.
-              # THIS IS THE MOST RELIABLE WAY.
               $ProcessInfo = New-Object System.Diagnostics.ProcessStartInfo
               $ProcessInfo.FileName = Join-Path $DeployPath $exeName
               $ProcessInfo.WorkingDirectory = $DeployPath
+              # ✅✅✅ THE CRITICAL FIX IS HERE ✅✅✅
+              $ProcessInfo.UseShellExecute = $false
+              
+              # Set environment variables
               $ProcessInfo.EnvironmentVariables['ASPNETCORE_ENVIRONMENT'] = 'Production'
               $ProcessInfo.EnvironmentVariables['ConnectionStrings__DefaultConnection'] = '${{ secrets.PROD_CONNECTION_STRING }}'
               $ProcessInfo.EnvironmentVariables['DatabaseSettings__DatabaseProvider'] = 'SqlServer'
@@ -132,7 +133,6 @@ jobs:
           host: ${{ secrets.PROD_SERVER_IP }}
           username: ${{ secrets.PROD_SERVER_USERNAME }}
           password: ${{ secrets.PROD_SERVER_PASSWORD }}
-          # A single, clean command to execute the script, then a second to clean up.
           script: |
             powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${{ env.REMOTE_TEMP_PATH }}\${{ env.SCRIPT_FILE_NAME }}"
             del "${{ env.REMOTE_TEMP_PATH }}\${{ env.SCRIPT_FILE_NAME }}"

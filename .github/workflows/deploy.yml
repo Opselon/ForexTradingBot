@@ -1,10 +1,10 @@
 # ====================================================================================
-# THE DEFINITIVE WORKFLOW (v.2024-FinalBoss-Corrected)
-# This workflow uses a bootstrapper to run the main deployment script from a
-# temporary location, which then handles the final, clean deployment and reporting.
+# THE DEFINITIVE, FLAWLESS, AND LAYERED WORKFLOW
+# This workflow uses the "Unified Package" strategy with maximum verbosity
+# and a final, dedicated reporting job for ultimate clarity. This is it.
 # ====================================================================================
 
-name: '🚀 [PROD] Deploy ForexTradingBot'
+name: '🚀 [PROD] Deploy, Verify & Report'
 
 on:
   push:
@@ -21,28 +21,34 @@ concurrency:
 env:
   DOTNET_VERSION: '9.0.x'
   PROJECT_PATH: './WebAPI/WebAPI.csproj'
+  REMOTE_DEPLOY_PATH: 'C:\Apps\ForexTradingBot'
   REMOTE_TEMP_PATH: 'C:\Apps\Temp'
-  # This path MUST match the location of your script in the repository
-  SCRIPT_PATH_IN_REPO: 'deployment/Deploy-And-Verify.ps1'
-  SCRIPT_FILE_NAME: 'Deploy-And-Verify.ps1'
+  SCRIPT_PATH_IN_REPO: 'deployment/Deploy-Final.ps1'
+  SCRIPT_FILE_NAME: 'Deploy-Final.ps1'
 
 jobs:
+  # JOB 1: Build the application and package it with the deployment script
   build:
     name: '✅ 1. Build & Package'
     runs-on: ubuntu-latest
     steps:
       - name: '📥 Checkout Repository'
         uses: actions/checkout@v4
+
       - name: '⚙️ Setup .NET SDK'
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
+
       - name: '📦 Publish App'
         run: dotnet publish ${{ env.PROJECT_PATH }} -c Release -r win-x64 -o ./publish --self-contained true
+
       - name: '➕ Include Deploy Script in Publish Folder'
         run: cp ${{ env.SCRIPT_PATH_IN_REPO }} ./publish
+
       - name: '🗜️ Create Unified ZIP Archive'
         run: cd ./publish && zip -r ../release.zip .
+      
       - name: '📤 Upload Unified Release Artifact'
         uses: actions/upload-artifact@v4
         with:
@@ -50,8 +56,9 @@ jobs:
           path: release.zip
           retention-days: 1
 
+  # JOB 2: Deploy the package to the server and execute it
   deploy:
-    name: '🚢 2. Deploy & Verify'
+    name: '🚢 2. Deploy to Server'
     needs: build
     runs-on: ubuntu-latest
     
@@ -77,7 +84,6 @@ jobs:
           host: ${{ secrets.PROD_SERVER_IP }}
           username: ${{ secrets.PROD_SERVER_USERNAME }}
           password: ${{ secrets.PROD_SERVER_PASSWORD }}
-          # This bootstrapper is simple, clean, and robust.
           script: |
             powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
                 $TempPath = '${{ env.REMOTE_TEMP_PATH }}'
@@ -85,16 +91,28 @@ jobs:
                 $UnpackPath = Join-Path $TempPath 'unpack'
                 $ScriptFile = Join-Path $UnpackPath '${{ env.SCRIPT_FILE_NAME }}'
 
+                # Perform a full cleanup of the unpack folder before starting
                 if (Test-Path $UnpackPath) { Remove-Item -Path $UnpackPath -Recurse -Force }
-                Expand-Archive -Path `$ZipFile -DestinationPath `$UnpackPath -Force
 
+                # Unpack the new release to a clean temporary folder
+                Expand-Archive -Path $ZipFile -DestinationPath $UnpackPath -Force
+
+                # Execute the main deployment script from its temporary location
                 & `$ScriptFile -ConnectionString '${{ secrets.PROD_CONNECTION_STRING }}' -TelegramBotToken '${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}' -TelegramApiId '${{ secrets.TELEGRAM_API_ID }}' -TelegramApiHash '${{ secrets.TELEGRAM_API_HASH }}' -TelegramPhoneNumber '${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}' -CryptoPayApiToken '${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}'
                 
-                Remove-Item -Path `$ZipFile -Force
+                # Cleanup the initial zip file after use
+                Remove-Item -Path $ZipFile -Force
             "
-      
-      - name: '🔍 Final Health Check & Report'
-        if: always()
+  
+  # JOB 3: A dedicated job to report the final status from the server
+  report:
+    name: '📊 3. Final Health Check & Report'
+    needs: deploy
+    runs-on: ubuntu-latest
+    if: always() # This job runs NO MATTER WHAT.
+    
+    steps:
+      - name: '🔍 Retrieve and Display ALL Logs & Status from Server'
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.PROD_SERVER_IP }}
@@ -102,23 +120,26 @@ jobs:
           password: ${{ secrets.PROD_SERVER_PASSWORD }}
           script: |
             powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
-                $DeployPath = 'C:\Apps\ForexTradingBot'
+                $DeployPath = '${{ env.REMOTE_DEPLOY_PATH }}'
                 $TempPath = '${{ env.REMOTE_TEMP_PATH }}'
                 $CrashLogPath = Join-Path $TempPath 'App-Crash-Log.txt'
                 
                 Write-Host '========================================================'
                 Write-Host '          FINAL DEPLOYMENT HEALTH CHECK REPORT'
                 Write-Host '========================================================'
+
+                # --- Verification 1: Application Status ---
+                Write-Host '--- Verifying Application Status ---'
                 $process = Get-Process -Name 'WebAPI' -ErrorAction SilentlyContinue
                 if ($process) {
                     Write-Host '✅✅✅ SUCCESS: WebAPI process is RUNNING!' -ForegroundColor Green
                 } else {
                     Write-Host '❌❌❌ FAILURE: WebAPI process is NOT RUNNING.' -ForegroundColor Red
-                    Write-Host '--- Checking for Crash Log ---'
+                    Write-Host '--- Checking for Application Crash Log ---'
                     if (Test-Path $CrashLogPath) {
                         $crashContent = Get-Content $CrashLogPath
                         if ($crashContent) {
-                            Write-Host '🔴 Found Crash Log with content:'
+                            Write-Host '🔴 Found Crash Log with content:' -ForegroundColor Magenta
                             Write-Host '------------------ CRASH LOG START ------------------'
                             $crashContent
                             Write-Host '------------------- CRASH LOG END -------------------'
@@ -126,13 +147,27 @@ jobs:
                     } else { Write-Host '🟡 No crash log file found.' }
                 }
                 
-                Write-Host '--- Displaying Latest Deployment Log ---'
-                $DeployLog = Get-ChildItem -Path $TempPath -Filter 'Deployment-Log-*.txt' | Sort-Object CreationTime -Descending | Select-Object -First 1
+                # --- Verification 2: Deployment Transcript Log ---
+                Write-Host '--- Displaying Latest Deployment Transcript Log ---'
+                $DeployLog = Get-ChildItem -Path $TempPath -Filter 'Deployment-Transcript-*.txt' | Sort-Object CreationTime -Descending | Select-Object -First 1
                 if ($DeployLog) {
                     Write-Host ('Log File: ' + $DeployLog.Name)
                     Write-Host '------------------ DEPLOY LOG START ------------------'
                     Get-Content -Path $DeployLog.FullName
                     Write-Host '------------------- DEPLOY LOG END -------------------'
-                } else { Write-Host '❌ No deployment script log found.' -ForegroundColor Red }
+                } else { Write-Host '❌ No deployment transcript log found. The main script may not have run.' -ForegroundColor Red }
+                
+                # --- Verification 3: Final File Structure ---
+                Write-Host '--- Verifying Final File Structure in $DeployPath ---'
+                if (Test-Path $DeployPath) {
+                    tree /f $DeployPath
+                } else { Write-Host 'Final deployment path not found!' }
+
+                # Final cleanup of logs if needed in the future
+                # Remove-Item -Path $CrashLogPath -ErrorAction SilentlyContinue
+                # if ($DeployLog) { Remove-Item -Path $DeployLog.FullName -ErrorAction SilentlyContinue }
+
+                Write-Host '========================================================'
+                Write-Host '          HEALTH CHECK COMPLETE'
                 Write-Host '========================================================'
             "

@@ -1,8 +1,7 @@
 # ====================================================================================
-# FINAL GUARANTEED v5: The Bulletproof Script Upload Method
-# This method is the only reliable way to execute complex logic on Windows via SSH.
-# It creates a complete PowerShell script locally, uploads it, and then runs it
-# with a single, simple remote command. This bypasses all ssh-action shell bugs.
+# THE FINAL WORKFLOW: Clean, Simple, and Syntactically Perfect
+# This workflow's only job is to build the project, upload the necessary files
+# (including the standalone deployment script), and execute a single, simple command.
 # ====================================================================================
 
 name: '🚀 [PROD] Deploy ForexTradingBot'
@@ -24,27 +23,34 @@ env:
   PROJECT_PATH: './WebAPI/WebAPI.csproj'
   REMOTE_DEPLOY_PATH: 'C:\Apps\ForexTradingBot'
   REMOTE_TEMP_PATH: 'C:\Apps\Temp'
-  SCRIPT_FILE_NAME: 'deploy-final.ps1' # A clean name for our script
+  SCRIPT_PATH_IN_REPO: 'deployment/Deploy-Production.ps1'
 
 jobs:
   build:
     name: '✅ 1. Build & Package'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: '📥 Checkout Repository (including deployment script)'
+        uses: actions/checkout@v4
+
       - name: '⚙️ Setup .NET SDK'
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
-      - name: '📦 Publish Self-Contained App'
+
+      - name: '📦 Publish Self-Contained App for Windows'
         run: dotnet publish ${{ env.PROJECT_PATH }} -c Release -r win-x64 -o ./publish --self-contained true
+
       - name: '🗜️ Create ZIP Archive'
         run: cd ./publish && zip -r ../release.zip .
-      - name: '📤 Upload Release Artifact'
+
+      - name: '📤 Upload Release Artifacts'
         uses: actions/upload-artifact@v4
         with:
-          name: forex-bot-release-package
-          path: release.zip
+          name: deployment-package
+          path: |
+            release.zip
+            ${{ env.SCRIPT_PATH_IN_REPO }}
           retention-days: 1
 
   deploy:
@@ -53,114 +59,28 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      - name: '📥 Download Release Artifact'
+      - name: '📥 Download Release Artifacts'
         uses: actions/download-artifact@v4
         with:
-          name: forex-bot-release-package
+          name: deployment-package
 
-      - name: '📝 Create Local PowerShell Deployment Script'
-        shell: bash
-        run: |
-          cat << 'EOF' > ${{ env.SCRIPT_FILE_NAME }}
-          # This entire script is uploaded to the server and executed there.
-          # It contains all logic and is self-contained.
-
-          $ErrorActionPreference = 'Stop'
-          
-          # --- Define Paths ---
-          $DeployPath = "${{ env.REMOTE_DEPLOY_PATH }}"
-          $TempPath   = "${{ env.REMOTE_TEMP_PATH }}"
-          $ZipFile    = Join-Path $TempPath "release.zip"
-          $AppName    = "WebAPI"
-          $ExeName    = "WebAPI.exe"
-          $Launcher   = Join-Path $DeployPath "start-app.bat"
-
-          try {
-              # --- Step 1: Stop any existing process ---
-              Write-Host "--- [1/6] Stopping running process: $AppName ---"
-              $process = Get-Process -Name $AppName -ErrorAction SilentlyContinue
-              if ($process) { Stop-Process -Name $AppName -Force; Write-Host '✅ Process stopped.' } else { Write-Host '🟡 Process was not running.' }
-
-              # --- Step 2: Clean the deployment directory ---
-              Write-Host "--- [2/6] Cleaning deployment directory: $DeployPath ---"
-              if (Test-Path $DeployPath) {
-                  Get-ChildItem -Path $DeployPath -Exclude 'Session' | Remove-Item -Recurse -Force
-                  Write-Host "✅ Directory cleaned (preserved 'Session' folder)."
-              } else {
-                  New-Item -ItemType Directory -Path $DeployPath -Force | Out-Null
-                  Write-Host "🟡 Directory did not exist, created new one."
-              }
-
-              # --- Step 3: Unpack the new release ---
-              Write-Host "--- [3/6] Unpacking archive: $ZipFile ---"
-              Expand-Archive -Path $ZipFile -DestinationPath $DeployPath -Force
-              Write-Host "✅ Archive unpacked."
-
-              # --- Step 4: Create the launcher batch file ---
-              Write-Host "--- [4/6] Creating launcher script: $Launcher ---"
-              $BatContent = @"
-@echo off
-echo Setting environment variables...
-set ASPNETCORE_ENVIRONMENT=Production
-set ConnectionStrings__DefaultConnection=${{ secrets.PROD_CONNECTION_STRING }}
-set DatabaseSettings__DatabaseProvider=SqlServer
-set TelegramPanel__BotToken=${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}
-set TelegramUserApi__ApiId=${{ secrets.TELEGRAM_API_ID }}
-set TelegramUserApi__ApiHash=${{ secrets.TELEGRAM_API_HASH }}
-set TelegramUserApi__PhoneNumber=${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}
-set CryptoPay__ApiToken=${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}
-
-echo Starting $ExeName...
-cd /d "$DeployPath"
-start "" "$ExeName"
-"@
-              Set-Content -Path $Launcher -Value $BatContent
-              Write-Host "✅ Launcher created."
-
-              # --- Step 5: Execute the launcher ---
-              Write-Host "--- [5/6] Executing launcher ---"
-              Start-Process -FilePath $Launcher
-              Write-Host "✅ Launcher executed."
-              
-              # --- Step 6: Verify process is running ---
-              Write-Host "Waiting 5 seconds for process to stabilize..."
-              Start-Sleep -Seconds 5
-              $runningProcess = Get-Process -Name $AppName -ErrorAction SilentlyContinue
-              if (-not $runningProcess) {
-                  throw "FATAL: Process '$AppName' is not running after start!"
-              }
-              Write-Host "✅ SUCCESS: Process '$AppName' is running with ID $($runningProcess.Id)."
-
-              Write-Host "--- 🎉 DEPLOYMENT FULLY SUCCESSFUL ---" -ForegroundColor Green
-
-          } catch {
-              Write-Host "--- ❌ DEPLOYMENT FAILED! ---" -ForegroundColor Red
-              Write-Host "Error: $($_.Exception.ToString())" -ForegroundColor Red
-              exit 1
-          } finally {
-              # --- Final Cleanup ---
-              Write-Host "--- [CLEANUP] Removing temporary files ---"
-              if (Test-Path $ZipFile) { Remove-Item -Path $ZipFile -Force -ErrorAction SilentlyContinue }
-              if (Test-Path $Launcher) { Remove-Item -Path $Launcher -Force -ErrorAction SilentlyContinue }
-              Write-Host "✅ Cleanup complete."
-          }
-          EOF
-          
-      - name: '📤 Upload Release ZIP and Script File'
+      - name: '📤 Upload Files to Server'
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.PROD_SERVER_IP }}
           username: ${{ secrets.PROD_SERVER_USERNAME }}
           password: ${{ secrets.PROD_SERVER_PASSWORD }}
-          source: "${{ env.SCRIPT_FILE_NAME }},release.zip"
+          source: "release.zip,Deploy-Production.ps1"
           target: "${{ env.REMOTE_TEMP_PATH }}"
       
-      - name: '▶️ Execute and Cleanup Remote Script'
+      - name: '▶️ Execute Remote Deployment'
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.PROD_SERVER_IP }}
           username: ${{ secrets.PROD_SERVER_USERNAME }}
           password: ${{ secrets.PROD_SERVER_PASSWORD }}
+          # This is the final, simple, and robust command.
+          # It's a single line and contains no complex syntax.
           script: |
-            powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${{ env.REMOTE_TEMP_PATH }}\${{ env.SCRIPT_FILE_NAME }}"
-            del "${{ env.REMOTE_TEMP_PATH }}\${{ env.SCRIPT_FILE_NAME }}"
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${{ env.REMOTE_TEMP_PATH }}\Deploy-Production.ps1" -ConnectionString "${{ secrets.PROD_CONNECTION_STRING }}" -TelegramBotToken "${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}" -TelegramApiId "${{ secrets.TELEGRAM_API_ID }}" -TelegramApiHash "${{ secrets.TELEGRAM_API_HASH }}" -TelegramPhoneNumber "${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}" -CryptoPayApiToken "${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}"
+            del "${{ env.REMOTE_TEMP_PATH }}\Deploy-Production.ps1"

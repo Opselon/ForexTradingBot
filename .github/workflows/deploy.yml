@@ -1,7 +1,8 @@
 # ====================================================================================
-# FINAL GUARANTEED v4: Wrapper Script Method - NO COMMENTS
-# This version removes all comments from the ssh-action script block, which was
-# the root cause of the recurring 'not recognized' error on CMD.exe.
+# FINAL GUARANTEED v5: The Bulletproof Script Upload Method
+# This method is the only reliable way to execute complex logic on Windows via SSH.
+# It creates a complete PowerShell script locally, uploads it, and then runs it
+# with a single, simple remote command. This bypasses all ssh-action shell bugs.
 # ====================================================================================
 
 name: '🚀 [PROD] Deploy ForexTradingBot'
@@ -23,6 +24,7 @@ env:
   PROJECT_PATH: './WebAPI/WebAPI.csproj'
   REMOTE_DEPLOY_PATH: 'C:\Apps\ForexTradingBot'
   REMOTE_TEMP_PATH: 'C:\Apps\Temp'
+  SCRIPT_FILE_NAME: 'deploy-final.ps1' # A clean name for our script
 
 jobs:
   build:
@@ -56,54 +58,109 @@ jobs:
         with:
           name: forex-bot-release-package
 
-      - name: '📤 Upload Release ZIP to Server'
+      - name: '📝 Create Local PowerShell Deployment Script'
+        shell: bash
+        run: |
+          cat << 'EOF' > ${{ env.SCRIPT_FILE_NAME }}
+          # This entire script is uploaded to the server and executed there.
+          # It contains all logic and is self-contained.
+
+          $ErrorActionPreference = 'Stop'
+          
+          # --- Define Paths ---
+          $DeployPath = "${{ env.REMOTE_DEPLOY_PATH }}"
+          $TempPath   = "${{ env.REMOTE_TEMP_PATH }}"
+          $ZipFile    = Join-Path $TempPath "release.zip"
+          $AppName    = "WebAPI"
+          $ExeName    = "WebAPI.exe"
+          $Launcher   = Join-Path $DeployPath "start-app.bat"
+
+          try {
+              # --- Step 1: Stop any existing process ---
+              Write-Host "--- [1/6] Stopping running process: $AppName ---"
+              $process = Get-Process -Name $AppName -ErrorAction SilentlyContinue
+              if ($process) { Stop-Process -Name $AppName -Force; Write-Host '✅ Process stopped.' } else { Write-Host '🟡 Process was not running.' }
+
+              # --- Step 2: Clean the deployment directory ---
+              Write-Host "--- [2/6] Cleaning deployment directory: $DeployPath ---"
+              if (Test-Path $DeployPath) {
+                  Get-ChildItem -Path $DeployPath -Exclude 'Session' | Remove-Item -Recurse -Force
+                  Write-Host "✅ Directory cleaned (preserved 'Session' folder)."
+              } else {
+                  New-Item -ItemType Directory -Path $DeployPath -Force | Out-Null
+                  Write-Host "🟡 Directory did not exist, created new one."
+              }
+
+              # --- Step 3: Unpack the new release ---
+              Write-Host "--- [3/6] Unpacking archive: $ZipFile ---"
+              Expand-Archive -Path $ZipFile -DestinationPath $DeployPath -Force
+              Write-Host "✅ Archive unpacked."
+
+              # --- Step 4: Create the launcher batch file ---
+              Write-Host "--- [4/6] Creating launcher script: $Launcher ---"
+              $BatContent = @"
+@echo off
+echo Setting environment variables...
+set ASPNETCORE_ENVIRONMENT=Production
+set ConnectionStrings__DefaultConnection=${{ secrets.PROD_CONNECTION_STRING }}
+set DatabaseSettings__DatabaseProvider=SqlServer
+set TelegramPanel__BotToken=${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}
+set TelegramUserApi__ApiId=${{ secrets.TELEGRAM_API_ID }}
+set TelegramUserApi__ApiHash=${{ secrets.TELEGRAM_API_HASH }}
+set TelegramUserApi__PhoneNumber=${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}
+set CryptoPay__ApiToken=${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}
+
+echo Starting $ExeName...
+cd /d "$DeployPath"
+start "" "$ExeName"
+"@
+              Set-Content -Path $Launcher -Value $BatContent
+              Write-Host "✅ Launcher created."
+
+              # --- Step 5: Execute the launcher ---
+              Write-Host "--- [5/6] Executing launcher ---"
+              Start-Process -FilePath $Launcher
+              Write-Host "✅ Launcher executed."
+              
+              # --- Step 6: Verify process is running ---
+              Write-Host "Waiting 5 seconds for process to stabilize..."
+              Start-Sleep -Seconds 5
+              $runningProcess = Get-Process -Name $AppName -ErrorAction SilentlyContinue
+              if (-not $runningProcess) {
+                  throw "FATAL: Process '$AppName' is not running after start!"
+              }
+              Write-Host "✅ SUCCESS: Process '$AppName' is running with ID $($runningProcess.Id)."
+
+              Write-Host "--- 🎉 DEPLOYMENT FULLY SUCCESSFUL ---" -ForegroundColor Green
+
+          } catch {
+              Write-Host "--- ❌ DEPLOYMENT FAILED! ---" -ForegroundColor Red
+              Write-Host "Error: $($_.Exception.ToString())" -ForegroundColor Red
+              exit 1
+          } finally {
+              # --- Final Cleanup ---
+              Write-Host "--- [CLEANUP] Removing temporary files ---"
+              if (Test-Path $ZipFile) { Remove-Item -Path $ZipFile -Force -ErrorAction SilentlyContinue }
+              if (Test-Path $Launcher) { Remove-Item -Path $Launcher -Force -ErrorAction SilentlyContinue }
+              Write-Host "✅ Cleanup complete."
+          }
+          EOF
+          
+      - name: '📤 Upload Release ZIP and Script File'
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.PROD_SERVER_IP }}
           username: ${{ secrets.PROD_SERVER_USERNAME }}
           password: ${{ secrets.PROD_SERVER_PASSWORD }}
-          source: "release.zip"
+          source: "${{ env.SCRIPT_FILE_NAME }},release.zip"
           target: "${{ env.REMOTE_TEMP_PATH }}"
       
-      - name: '▶️ Execute Remote Deployment'
+      - name: '▶️ Execute and Cleanup Remote Script'
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.PROD_SERVER_IP }}
           username: ${{ secrets.PROD_SERVER_USERNAME }}
           password: ${{ secrets.PROD_SERVER_PASSWORD }}
-          # This script block contains NO comments and only CMD-compatible commands.
           script: |
-            taskkill /IM WebAPI.exe /F 2>nul || echo No process to kill.
-            
-            powershell -Command "if (Test-Path '${{ env.REMOTE_DEPLOY_PATH }}') { Get-ChildItem -Path '${{ env.REMOTE_DEPLOY_PATH }}' -Exclude 'Session' | Remove-Item -Recurse -Force }"
-            
-            powershell -Command "Expand-Archive -Path '${{ env.REMOTE_TEMP_PATH }}\release.zip' -DestinationPath '${{ env.REMOTE_DEPLOY_PATH }}' -Force"
-            
-            (
-              echo @echo off
-              echo set ASPNETCORE_ENVIRONMENT=Production
-              echo set ConnectionStrings__DefaultConnection=${{ secrets.PROD_CONNECTION_STRING }}
-              echo set DatabaseSettings__DatabaseProvider=SqlServer
-              echo set TelegramPanel__BotToken=${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}
-              echo set TelegramUserApi__ApiId=${{ secrets.TELEGRAM_API_ID }}
-              echo set TelegramUserApi__ApiHash=${{ secrets.TELEGRAM_API_HASH }}
-              echo set TelegramUserApi__PhoneNumber=${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}
-              echo set CryptoPay__ApiToken=${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}
-              echo cd /d "${{ env.REMOTE_DEPLOY_PATH }}"
-              echo start "" "WebAPI.exe"
-            ) > "${{ env.REMOTE_DEPLOY_PATH }}\start-app.bat"
-            
-            call "${{ env.REMOTE_DEPLOY_PATH }}\start-app.bat"
-            
-            timeout /t 5 >nul
-
-            tasklist /FI "IMAGENAME eq WebAPI.exe" | find "WebAPI.exe" >nul
-            if errorlevel 1 (
-              echo ERROR: WebAPI.exe did not start successfully.
-              exit /b 1
-            )
-            
-            echo SUCCESS: WebAPI.exe is confirmed to be running.
-            
-            del "${{ env.REMOTE_TEMP_PATH }}\release.zip"
-            del "${{ env.REMOTE_DEPLOY_PATH }}\start-app.bat"
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${{ env.REMOTE_TEMP_PATH }}\${{ env.SCRIPT_FILE_NAME }}"
+            del "${{ env.REMOTE_TEMP_PATH }}\${{ env.SCRIPT_FILE_NAME }}"

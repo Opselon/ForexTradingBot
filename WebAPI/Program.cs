@@ -48,6 +48,8 @@ try
     Log.Information("--------------------------------------------------");
 
     var builder = WebApplication.CreateBuilder(args);
+    builder.WebHost.UseKestrel();
+
     #region Configure Serilog Logging
     // ------------------- ۱. پیکربندی Serilog با تنظیمات از appsettings.json -------------------
     // این بخش Serilog را به عنوان سیستم لاگینگ اصلی برنامه تنظیم می‌کند.

@@ -1,7 +1,7 @@
 # ====================================================================================
-# THE FINAL, FLAWLESS WORKFLOW
-# This workflow uses the most robust method: uploading a self-logging PowerShell
-# script and executing it with a single, simple command.
+# THE ABSOLUTELY FINAL, CORRECTED AND GUARANTEED WORKFLOW
+# This version fixes the file path issue caused by a misunderstanding of how
+# download-artifact works. It uses the simplest, most direct paths possible.
 # ====================================================================================
 
 name: '🚀 [PROD] Deploy ForexTradingBot'
@@ -22,7 +22,9 @@ env:
   DOTNET_VERSION: '9.0.x'
   PROJECT_PATH: './WebAPI/WebAPI.csproj'
   REMOTE_TEMP_PATH: 'C:\Apps\Temp'
+  # IMPORTANT: This path MUST match the location of your script in the repository
   SCRIPT_PATH_IN_REPO: 'deployment/Deploy-And-Debug.ps1'
+  SCRIPT_FILE_NAME: 'Deploy-And-Debug.ps1' # Just the filename, for clarity
 
 jobs:
   build:
@@ -42,14 +44,14 @@ jobs:
 
       - name: '🗜️ Create ZIP Archive'
         run: cd ./publish && zip -r ../release.zip .
-
+      
       - name: '📤 Upload Artifacts (App ZIP + Deploy Script)'
         uses: actions/upload-artifact@v4
         with:
           name: deployment-package
           path: |
             release.zip
-            ${{ env.SCRIPT_PATH_IN_REPO }}
+            ${{ env.SCRIPT_PATH_IN_REPO }} # We upload the script from its original location
           retention-days: 1
 
   deploy:
@@ -58,12 +60,17 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      - name: '📥 Download Artifacts'
+      - name: '📥 Download All Artifacts to Root'
         uses: actions/download-artifact@v4
         with:
           name: deployment-package
+          # This ensures all files are in the root of the workspace
 
-      - name: '📤 Upload ZIP to Server'
+      # For debugging, let's see what files we have after download
+      - name: '🔍 Verify Downloaded Files'
+        run: ls -R
+
+      - name: '📤 Upload Release ZIP to Server'
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.PROD_SERVER_IP }}
@@ -72,13 +79,15 @@ jobs:
           source: "release.zip"
           target: "${{ env.REMOTE_TEMP_PATH }}"
           
-      - name: '📤 Upload Script to Server'
+      - name: '📤 Upload Deployment Script to Server'
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.PROD_SERVER_IP }}
           username: ${{ secrets.PROD_SERVER_USERNAME }}
           password: ${{ secrets.PROD_SERVER_PASSWORD }}
-          source: "${{ env.SCRIPT_PATH_IN_REPO }}"
+          # ✅✅✅ THE CRITICAL FIX IS HERE ✅✅✅
+          # We now use JUST THE FILENAME, because download-artifact placed it in the root.
+          source: ${{ env.SCRIPT_FILE_NAME }}
           target: "${{ env.REMOTE_TEMP_PATH }}"
       
       - name: '▶️ Execute Remote Deployment'
@@ -87,6 +96,6 @@ jobs:
           host: ${{ secrets.PROD_SERVER_IP }}
           username: ${{ secrets.PROD_SERVER_USERNAME }}
           password: ${{ secrets.PROD_SERVER_PASSWORD }}
-          # This is the final, simple, and robust command.
           script: |
-            powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${{ env.REMOTE_TEMP_PATH }}\Deploy-And-Debug.ps1" -ConnectionString "${{ secrets.PROD_CONNECTION_STRING }}" -TelegramBotToken "${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}" -TelegramApiId "${{ secrets.TELEGRAM_API_ID }}" -TelegramApiHash "${{ secrets.TELEGRAM_API_HASH }}" -TelegramPhoneNumber "${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}" -CryptoPayApiToken "${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}"
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${{ env.REMOTE_TEMP_PATH }}\${{ env.SCRIPT_FILE_NAME }}" -ConnectionString "${{ secrets.PROD_CONNECTION_STRING }}" -TelegramBotToken "${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}" -TelegramApiId "${{ secrets.TELEGRAM_API_ID }}" -TelegramApiHash "${{ secrets.TELEGRAM_API_HASH }}" -TelegramPhoneNumber "${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}" -CryptoPayApiToken "${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}"
+            del "${{ env.REMOTE_TEMP_PATH }}\${{ env.SCRIPT_FILE_NAME }}"

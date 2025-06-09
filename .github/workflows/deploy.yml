@@ -1,9 +1,7 @@
 # ====================================================================================
-# THE ABSOLUTELY FINAL, BULLETPROOF WORKFLOW: Script-in-the-Zip Method
-# This is the industry-standard, most reliable method.
-# 1. The deployment script is PACKAGED INSIDE the release.zip.
-# 2. Only ONE file is uploaded, eliminating all previous points of failure.
-# 3. The remote commands are simple and directly use the unpacked script.
+# THE FINAL, FLAWLESS WORKFLOW
+# This workflow uses the most robust method: uploading a self-logging PowerShell
+# script and executing it with a single, simple command.
 # ====================================================================================
 
 name: '🚀 [PROD] Deploy ForexTradingBot'
@@ -23,18 +21,15 @@ concurrency:
 env:
   DOTNET_VERSION: '9.0.x'
   PROJECT_PATH: './WebAPI/WebAPI.csproj'
-  REMOTE_DEPLOY_PATH: 'C:\Apps\ForexTradingBot'
   REMOTE_TEMP_PATH: 'C:\Apps\Temp'
-  # IMPORTANT: Make sure this path matches the location of your script in the repository
-  SCRIPT_PATH_IN_REPO: 'deployment/Deploy-Production.ps1'
-  SCRIPT_FILE_NAME: 'Deploy-Production.ps1' # Just the filename
+  SCRIPT_PATH_IN_REPO: 'deployment/Deploy-And-Debug.ps1'
 
 jobs:
   build:
     name: '✅ 1. Build & Package'
     runs-on: ubuntu-latest
     steps:
-      - name: '📥 Checkout Repository (including deployment script)'
+      - name: '📥 Checkout Repository'
         uses: actions/checkout@v4
 
       - name: '⚙️ Setup .NET SDK'
@@ -42,24 +37,19 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
-      - name: '📦 Publish Self-Contained App for Windows'
+      - name: '📦 Publish App'
         run: dotnet publish ${{ env.PROJECT_PATH }} -c Release -r win-x64 -o ./publish --self-contained true
 
-      # ✅✅✅ THE CRITICAL CHANGE IS HERE ✅✅✅
-      - name: '➕ Include Deployment Script in Publish Folder'
-        run: cp ${{ env.SCRIPT_PATH_IN_REPO }} ./publish
-
-      - name: '🗜️ Create ZIP Archive (with script inside)'
+      - name: '🗜️ Create ZIP Archive'
         run: cd ./publish && zip -r ../release.zip .
-      
-      - name: '🔍 Verify ZIP Contents (Optional but good practice)'
-        run: unzip -l release.zip
 
-      - name: '📤 Upload Single Release Artifact'
+      - name: '📤 Upload Artifacts (App ZIP + Deploy Script)'
         uses: actions/upload-artifact@v4
         with:
           name: deployment-package
-          path: release.zip
+          path: |
+            release.zip
+            ${{ env.SCRIPT_PATH_IN_REPO }}
           retention-days: 1
 
   deploy:
@@ -68,18 +58,27 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      - name: '📥 Download Single Release Artifact'
+      - name: '📥 Download Artifacts'
         uses: actions/download-artifact@v4
         with:
           name: deployment-package
 
-      - name: '📤 Upload SINGLE Release ZIP to Server'
+      - name: '📤 Upload ZIP to Server'
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.PROD_SERVER_IP }}
           username: ${{ secrets.PROD_SERVER_USERNAME }}
           password: ${{ secrets.PROD_SERVER_PASSWORD }}
-          source: "release.zip" # Only one file to upload
+          source: "release.zip"
+          target: "${{ env.REMOTE_TEMP_PATH }}"
+          
+      - name: '📤 Upload Script to Server'
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.PROD_SERVER_IP }}
+          username: ${{ secrets.PROD_SERVER_USERNAME }}
+          password: ${{ secrets.PROD_SERVER_PASSWORD }}
+          source: "${{ env.SCRIPT_PATH_IN_REPO }}"
           target: "${{ env.REMOTE_TEMP_PATH }}"
       
       - name: '▶️ Execute Remote Deployment'
@@ -88,30 +87,6 @@ jobs:
           host: ${{ secrets.PROD_SERVER_IP }}
           username: ${{ secrets.PROD_SERVER_USERNAME }}
           password: ${{ secrets.PROD_SERVER_PASSWORD }}
-          # The script is now very simple: Unpack, then execute the script from INSIDE the app folder.
+          # This is the final, simple, and robust command.
           script: |
-            powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
-            try {
-                $ErrorActionPreference = 'Stop'
-                $DeployPath = '${{ env.REMOTE_DEPLOY_PATH }}'
-                $TempPath = '${{ env.REMOTE_TEMP_PATH }}'
-                $ZipFile = Join-Path $TempPath 'release.zip'
-                
-                # Unpack the entire archive (app files + deployment script)
-                Write-Host 'Unpacking archive to $DeployPath...'
-                Expand-Archive -Path `$ZipFile -DestinationPath `$DeployPath -Force
-                
-                # Define the path to the script *inside* the deployment folder
-                $ScriptToRun = Join-Path $DeployPath '${{ env.SCRIPT_FILE_NAME }}'
-                
-                # Execute the script
-                Write-Host 'Executing deployment script...'
-                & `$ScriptToRun -ConnectionString '${{ secrets.PROD_CONNECTION_STRING }}' -TelegramBotToken '${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}' -TelegramApiId '${{ secrets.TELEGRAM_API_ID }}' -TelegramApiHash '${{ secrets.TELEGRAM_API_HASH }}' -TelegramPhoneNumber '${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}' -CryptoPayApiToken '${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}'
-                
-                Write-Host 'Deployment script finished successfully.'
-
-            } catch {
-                Write-Host 'A fatal error occurred during the initial unpack/execute phase.' -ForegroundColor Red
-                Write-Host `"$($_.Exception.ToString())`" -ForegroundColor Red
-                exit 1
-            }"
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${{ env.REMOTE_TEMP_PATH }}\Deploy-And-Debug.ps1" -ConnectionString "${{ secrets.PROD_CONNECTION_STRING }}" -TelegramBotToken "${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}" -TelegramApiId "${{ secrets.TELEGRAM_API_ID }}" -TelegramApiHash "${{ secrets.TELEGRAM_API_HASH }}" -TelegramPhoneNumber "${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}" -CryptoPayApiToken "${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}"

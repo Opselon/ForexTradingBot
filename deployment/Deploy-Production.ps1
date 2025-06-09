@@ -1,9 +1,10 @@
 # ====================================================================================
-# FINAL DIAGNOSTIC SCRIPT
-# This version's primary goal is to capture the application's console output
-# to a log file, which will reveal the true reason for the startup crash.
+# THE ULTIMATE DEPLOYMENT & DEBUGGING SCRIPT
+# This script logs every single action to a transcript file, leaving no room for doubt.
+# It is designed to be executed remotely by the GitHub Actions workflow.
 # ====================================================================================
 
+# This param block receives all secrets securely from the GitHub Actions workflow.
 param(
     [string]$ConnectionString,
     [string]$TelegramBotToken,
@@ -13,38 +14,52 @@ param(
     [string]$CryptoPayApiToken
 )
 
-$ErrorActionPreference = 'Stop'
-
-# --- Define Paths ---
+# --- Define Core Paths & Configuration ---
 $DeployPath = 'C:\Apps\ForexTradingBot'
 $TempPath   = 'C:\Apps\Temp'
-$ZipFile    = Join-Path $TempPath "release.zip"
+$LogPath    = Join-Path $TempPath "Deployment-Log-$(Get-Date -f yyyy-MM-dd_HH-mm-ss).txt"
 $AppName    = "WebAPI"
 $ExeName    = "WebAPI.exe"
+$ZipFile    = Join-Path $TempPath "release.zip"
 $Launcher   = Join-Path $DeployPath "start-app.bat"
-$StartupLog = Join-Path $TempPath "startup_log.txt" # The "Black Box" log file
+
+# --- CRITICAL: Start a detailed log of everything this script does ---
+Start-Transcript -Path $LogPath -Append
+
+# Stop script immediately if any command fails.
+$ErrorActionPreference = 'Stop'
+
+Write-Host "--- SCRIPT STARTED: Logging all actions to $LogPath ---"
 
 try {
-    # --- Step 1: Stop and Clean ---
-    Write-Host "--- [1/5] Stopping and Cleaning ---"
-    Get-Process -Name $AppName -ErrorAction SilentlyContinue | Stop-Process -Force
+    # --- Step 1: Stop any existing process ---
+    Write-Host "[1/6] Stopping running process: $AppName..."
+    $process = Get-Process -Name $AppName -ErrorAction SilentlyContinue
+    if ($process) { 
+        Stop-Process -Name $AppName -Force -Verbose
+        Write-Host "✅ Process stopped." 
+    } else { 
+        Write-Host "🟡 Process was not running." 
+    }
+
+    # --- Step 2: The UNDENIABLE Directory Cleanup ---
+    Write-Host "[2/6] Starting cleanup of deployment directory: $DeployPath..."
     if (Test-Path $DeployPath) {
-        Get-ChildItem -Path $DeployPath -Exclude 'Session' | Remove-Item -Recurse -Force
+        # This will list every single file and folder it deletes. No more guessing.
+        Get-ChildItem -Path $DeployPath -Exclude 'Session' | Remove-Item -Recurse -Force -Verbose
+        Write-Host "✅ Directory cleanup complete."
     } else {
         New-Item -ItemType Directory -Path $DeployPath -Force | Out-Null
+        Write-Host "🟡 Directory did not exist; created a new one."
     }
-    # Clean up old startup log
-    if (Test-Path $StartupLog) { Remove-Item $StartupLog -Force }
-    Write-Host "✅ Stop and Clean complete."
 
-    # --- Step 2: Unpack ---
-    Write-Host "--- [2/5] Unpacking new release ---"
-    Expand-Archive -Path $ZipFile -DestinationPath $DeployPath -Force
-    Write-Host "✅ Unpack complete."
+    # --- Step 3: Unpack the new release ---
+    Write-Host "[3/6] Unpacking new release from: $ZipFile..."
+    Expand-Archive -Path $ZipFile -DestinationPath $DeployPath -Force -Verbose
+    Write-Host "✅ Archive unpacked."
 
-    # --- Step 3: Create Launcher with LOGGING ---
-    Write-Host "--- [3/5] Creating application launcher with logging ---"
-    # This batch file now redirects all output (stdout and stderr) to our log file.
+    # --- Step 4: Create the launcher batch file ---
+    Write-Host "[4/6] Creating application launcher: $Launcher..."
     $BatContent = @"
 @echo off
 set ASPNETCORE_ENVIRONMENT=Production
@@ -53,44 +68,43 @@ set DatabaseSettings__DatabaseProvider=SqlServer
 set TelegramPanel__BotToken=$TelegramBotToken
 set TelegramUserApi__ApiId=$TelegramApiId
 set TelegramUserApi__ApiHash=$TelegramApiHash
-set TelegramUserApi__PhoneNumber=$PhoneNumber
+set TelegramUserApi__PhoneNumber=$TelegramPhoneNumber
 set CryptoPay__ApiToken=$CryptoPayApiToken
-
 cd /d "$DeployPath"
-echo Starting $ExeName at %date% %time%... >> "$StartupLog"
-"$ExeName" >> "$StartupLog" 2>&1
+start "" "$ExeName"
 "@
     Set-Content -Path $Launcher -Value $BatContent
     Write-Host "✅ Launcher created."
 
-    # --- Step 4: Execute the launcher ---
-    Write-Host "--- [4/5] Executing launcher ---"
-    Start-Process -FilePath $Launcher
+    # --- Step 5: Execute the launcher ---
+    Write-Host "[5/6] Executing launcher to start application..."
+    Invoke-Expression -Command "cmd.exe /c $Launcher"
     Write-Host "✅ Launcher executed."
     
-    # --- Step 5: Verify (and report) ---
-    Write-Host "--- [5/5] Waiting 5 seconds and checking status ---"
+    # --- Step 6: Verify process is running ---
+    Write-Host "[6/6] Waiting 5 seconds and verifying process..."
     Start-Sleep -Seconds 5
     $runningProcess = Get-Process -Name $AppName -ErrorAction SilentlyContinue
     if (-not $runningProcess) {
-        Write-Host "--- ❌ PROCESS IS NOT RUNNING! ---" -ForegroundColor Red
-        Write-Host "This is expected if the app crashed. Checking the startup log..."
-        if (Test-Path $StartupLog) {
-            Write-Host "--- Startup Log Content (`$StartupLog`) ---"
-            Get-Content $StartupLog
-            Write-Host "--- End of Log ---"
-        } else {
-            Write-Host "FATAL: Startup log file was not even created."
-        }
-        # We will not fail the workflow, so we can analyze the log.
+        # This is not a fatal error for the script, just a warning.
+        Write-Warning "PROCESS '$AppName' IS NOT RUNNING. The application likely crashed on startup."
     } else {
-        Write-Host "--- ✅ SUCCESS: Process '$AppName' is confirmed to be running! ---" -ForegroundColor Green
+        Write-Host "✅ SUCCESS: Process '$AppName' is confirmed to be running with ID $($runningProcess.Id)."
     }
 
+    Write-Host "--- 🎉 DEPLOYMENT SCRIPT FINISHED ---" -ForegroundColor Green
+
 } catch {
-    Write-Host "--- ❌ DEPLOYMENT SCRIPT FAILED! ---" -ForegroundColor Red
-    Write-Host "Error: $($_.Exception.ToString())" -ForegroundColor Red
+    Write-Error "--- ❌ DEPLOYMENT SCRIPT FAILED! ---"
+    Write-Error "Error at line $($_.InvocationInfo.ScriptLineNumber): $($_.Exception.ToString())"
+    # Exit with a non-zero code to fail the GitHub Actions job
     exit 1
 } finally {
+    # --- Final Cleanup of temporary files ---
+    Write-Host "[CLEANUP] Removing temporary release archive..."
     if (Test-Path $ZipFile) { Remove-Item -Path $ZipFile -Force -ErrorAction SilentlyContinue }
+    
+    # --- CRITICAL: Stop logging to save the log file ---
+    Write-Host "--- SCRIPT FINISHED: Log saved to $LogPath ---"
+    Stop-Transcript
 }

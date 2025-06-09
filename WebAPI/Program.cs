@@ -371,23 +371,29 @@ try
     // ------------------- ۸. زمان‌بندی Job های تکرارشونده Hangfire -------------------
     //  این Job ها پس از شروع کامل برنامه، توسط سرور Hangfire به طور خودکار اجرا خواهند شد.
     var appLifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
-    appLifetime.ApplicationStarted.Register(() => //  اجرا پس از اینکه برنامه به طور کامل شروع به کار کرد
+    appLifetime.ApplicationStarted.Register(() => // اجرا پس از اینکه برنامه کامل شروع شد
     {
+        // آیا این لاگ را در کنسول می‌بینید؟
         programLogger.LogInformation("Application fully started. Scheduling/Updating Hangfire recurring jobs...");
         try
         {
-            // زمان‌بندی اجرای متد FetchAllActiveFeedsAsync از سرویس IRssFetchingCoordinatorService
-            RecurringJob.AddOrUpdate<IRssFetchingCoordinatorService>(
-                recurringJobId: "fetch-all-active-rss-feeds", //  یک شناسه منحصر به فرد و خوانا برای این Job
-                methodCall: service => service.FetchAllActiveFeedsAsync(CancellationToken.None), // متدی که باید اجرا شود
-                cronExpression: Cron.MinuteInterval(30),    // ✅ برای تست: هر ۱ دقیقه اجرا شود. برای Production بیشتر کنید (مثلاً "*/15 * * * *")
-                options: new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc } //  اجرای Job بر اساس زمان UTC
+            var recurringJobManager = app.Services.GetRequiredService<IRecurringJobManager>();
+
+            // از این روش استفاده کنیم که وابستگی‌ها را بهتر مدیریت می‌کند
+            recurringJobManager.AddOrUpdate<IRssFetchingCoordinatorService>(
+                recurringJobId: "fetch-all-active-rss-feeds",
+                methodCall: service => service.FetchAllActiveFeedsAsync(CancellationToken.None),
+                cronExpression: "*/5 * * * *", // برای تست، هر ۵ دقیقه
+                options: new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc }
             );
-            programLogger.LogInformation("Recurring job 'fetch-all-active-rss-feeds' scheduled to run every 1 minute (for testing).");
+
+            // آیا این لاگ موفقیت را در کنسول می‌بینید؟
+            programLogger.LogInformation(">>> Recurring job 'fetch-all-active-rss-feeds' was successfully scheduled. <<<");
         }
         catch (Exception ex)
         {
-            programLogger.LogCritical(ex, "CRITICAL: Failed to schedule/update Hangfire recurring job 'fetch-all-active-rss-feeds'. RSS fetching will NOT occur automatically!");
+            // اگر خطایی رخ دهد، آیا این لاگ را می‌بینید؟
+            programLogger.LogCritical(ex, ">>> CRITICAL: FAILED to schedule Hangfire recurring job. <<<");
         }
     });
     programLogger.LogInformation("Hangfire recurring jobs registration initiated (will run after application starts).");

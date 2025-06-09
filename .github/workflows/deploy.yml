@@ -1,7 +1,7 @@
 # ====================================================================================
-# THE FINAL DIAGNOSTIC WORKFLOW
-# This workflow's sole purpose is to run a powerful, self-logging script
-# on the server and report back the findings by printing the log files.
+# THE FINAL DIAGNOSTIC WORKFLOW (NO COMMENTS)
+# This workflow runs a self-logging script and reports back the findings.
+# All comments from the sensitive script blocks have been removed to prevent errors.
 # ====================================================================================
 
 name: '🚀 [PROD] Deploy ForexTradingBot'
@@ -76,12 +76,12 @@ jobs:
           host: ${{ secrets.PROD_SERVER_IP }}
           username: ${{ secrets.PROD_SERVER_USERNAME }}
           password: ${{ secrets.PROD_SERVER_PASSWORD }}
+          # This script block now has NO comments.
           script: |
-            # This script is now just a simple bootstrapper. All logic is in the .ps1 file.
             powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
                 $TempPath = '${{ env.REMOTE_TEMP_PATH }}'
                 $ZipFile = Join-Path $TempPath 'release.zip'
-                $UnpackPath = 'C:\Apps\Temp\unpack' # A dedicated temporary unpack location
+                $UnpackPath = 'C:\Apps\Temp\unpack'
                 $ScriptFile = Join-Path $UnpackPath '${{ env.SCRIPT_FILE_NAME }}'
 
                 if (Test-Path $UnpackPath) { Remove-Item -Path $UnpackPath -Recurse -Force }
@@ -90,9 +90,8 @@ jobs:
                 & `$ScriptFile -ConnectionString '${{ secrets.PROD_CONNECTION_STRING }}' -TelegramBotToken '${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}' -TelegramApiId '${{ secrets.TELEGRAM_API_ID }}' -TelegramApiHash '${{ secrets.TELEGRAM_API_HASH }}' -TelegramPhoneNumber '${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}' -CryptoPayApiToken '${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}'
             "
       
-      # ✅✅✅ THE MOST IMPORTANT STEP: REPORTING THE FINDINGS ✅✅✅
       - name: '🔍 Retrieve and Display Logs from Server'
-        if: always() # This step runs even if the previous one fails
+        if: always()
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.PROD_SERVER_IP }}
@@ -108,4 +107,3 @@ jobs:
             echo "          DEPLOYMENT SCRIPT LOG (`Deployment-Log-*.txt`)"
             echo "========================================================"
             powershell -Command "Get-ChildItem -Path '${{ env.REMOTE_TEMP_PATH }}' -Filter 'Deployment-Log-*.txt' | ForEach-Object { Get-Content -Path $_.FullName }"
-            

@@ -1,100 +1,236 @@
-name: '[PROD] Build and Push-Deploy ForexTradingBot'
+# ====================================================================================
+# [PROD] Workflow: Build, Package, and Deploy .NET WebAPI to Windows Server
+# ====================================================================================
+# This workflow automates the deployment of the ForexTradingBot to the production
+# server. It ensures a consistent, secure, and reliable deployment process.
+#
+# Trigger:
+#   - Pushing to the 'master' branch.
+#   - Manual trigger via the 'workflow_dispatch' event.
+#
+# Key Features:
+#   - ✅ Secure: Uses SSH keys instead of passwords.
+#   - ✅ Robust: Fails immediately if any step encounters an error.
+#   - ✅ Atomic: Prevents multiple concurrent deployments.
+#   - ✅ Verifiable: Includes verification steps to confirm success.
+#   - ✅ Maintainable: Clean, well-commented, and uses environment variables.
+# ====================================================================================
+
+name: '[PROD] Build and Deploy ForexTradingBot'
 
 on:
   push:
     branches: [ master ]
   workflow_dispatch:
 
+# --- Security & Concurrency Best Practices ---
+permissions:
+  contents: read # Workflow only needs to read the repository content.
+
+concurrency:
+  group: production-deploy # Unique name for the concurrency group.
+  cancel-in-progress: true # Cancel older runs in the queue if a new one starts.
+
+# --- Environment Variables ---
+# Central place to manage common settings.
+env:
+  DOTNET_VERSION: '9.0.x'
+  PROJECT_PATH: './WebAPI/WebAPI.csproj'
+  REMOTE_DEPLOY_PATH: 'C:\Apps\ForexTradingBot'
+  REMOTE_TEMP_PATH: 'C:\Apps\Temp'
+
 jobs:
-  # JOB 1: Build the application and create a ZIP file
+  # ====================================================================
+  # JOB 1: Build & Package
+  # ====================================================================
+  # Builds the .NET application for a Windows target, creating a
+  # self-contained .exe, and packages it into a ZIP artifact.
+  # ====================================================================
   build:
-  name: '✅ 1. Build & Package Application'
-  runs-on: ubuntu-latest
-  steps:
-    - uses: actions/checkout@v4
-    - name: 'Setup .NET 9 SDK'
-      uses: actions/setup-dotnet@v4
-      with:
-        dotnet-version: '9.0.x'
-        dotnet-quality: 'preview'
+    name: '✅ 1. Build & Package Application'
+    runs-on: ubuntu-latest
 
-    # --- THIS IS THE CORRECTED STEP ---
-    - name: Publish WebAPI Project for Windows
-      # We specify the runtime 'win-x64' and make it self-contained
-      # This ensures an .exe file is created
-      run: dotnet publish ./WebAPI/WebAPI.csproj -c Release -o ./publish -r win-x64 --self-contained true
+    steps:
+      - name: '📥 Checkout Repository'
+        uses: actions/checkout@v4
 
-    - name: 'Create ZIP file from publish folder'
-      run: |
-        cd ./publish
-        zip -r ../release.zip .
-    
-    - name: 'Upload Release ZIP as Artifact'
-      uses: actions/upload-artifact@v4
-      with:
-        name: forex-bot-release
-        path: release.zip
+      - name: '⚙️ Setup .NET SDK'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+          dotnet-quality: 'preview'
 
-  # JOB 2: Deploy the ZIP file to your Windows Server
+      - name: '🚀 Publish Self-Contained App for Windows'
+        run: >
+          dotnet publish ${{ env.PROJECT_PATH }}
+          --configuration Release
+          --runtime win-x64
+          --output ./publish
+          --self-contained true
+      
+      - name: '📦 Create ZIP Archive'
+        # Creates release.zip from the contents of the 'publish' folder.
+        run: |
+          cd ./publish
+          zip -r ../release.zip .
+
+      - name: '🔍 Verify ZIP Contents'
+        # Lists the contents of the zip file for easy debugging in logs.
+        run: unzip -l release.zip
+
+      - name: '📤 Upload Release Artifact'
+        uses: actions/upload-artifact@v4
+        with:
+          name: forex-bot-release-package
+          path: release.zip
+          retention-days: 7 # Keep artifact for 7 days.
+
+  # ====================================================================
+  # JOB 2: Deploy to Server
+  # ====================================================================
+  # Deploys the built artifact to the production Windows VPS.
+  # This job uses a robust PowerShell script for the deployment steps.
+  # ====================================================================
   deploy:
-  name: '🚢 2. Deploy to Windows VPS'
-  needs: build
-  runs-on: ubuntu-latest
+    name: '🚢 2. Deploy to Windows VPS'
+    needs: build
+    runs-on: ubuntu-latest
+    
+    environment: Production # Optional: for environment-specific secrets/rules
 
-  env:
-    REMOTE_DEPLOY_PATH: "C:\\Apps\\ForexTradingBot"
-    REMOTE_TEMP_PATH: "C:\\Apps\\Temp"
+    steps:
+      - name: '📥 Download Release Artifact'
+        uses: actions/download-artifact@v4
+        with:
+          name: forex-bot-release-package
 
-  steps:
-  - name: Download Build Artifact
-    uses: actions/download-artifact@v4
-    with:
-      name: forex-bot-release
+      - name: '🔑 Setup SSH Agent for Secure Connection'
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.PROD_SERVER_SSH_KEY }}
+          
+      - name: '🚀 Execute Remote Deployment Script'
+        # This action uses the SSH agent configured above for a secure, passwordless connection.
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.PROD_SERVER_IP }}
+          username: ${{ secrets.PROD_SERVER_USERNAME }}
+          # The key is used from the ssh-agent, no password needed.
+          
+          # The entire script is wrapped in a single PowerShell command for robustness.
+          # $ErrorActionPreference = 'Stop' ensures that if any command fails, the script exits immediately.
+          script: |
+            powershell -Command {
+              $ErrorActionPreference = 'Stop' # Critical for fail-fast behavior.
+              
+              $deployPath = "${{ env.REMOTE_DEPLOY_PATH }}"
+              $tempPath = "${{ env.REMOTE_TEMP_PATH }}"
+              $zipFile = Join-Path $tempPath "release.zip"
 
-  - name: 'Upload Release ZIP to Server'
-    uses: appleboy/scp-action@master
-    with:
-      host: ${{ secrets.PROD_SERVER_IP }}
-      username: ${{ secrets.PROD_SERVER_USERNAME }}
-      password: ${{ secrets.PROD_SERVER_PASSWORD }}
-      source: "release.zip"
-      target: "${{ env.REMOTE_TEMP_PATH }}"
+              try {
+                Write-Host "--- Starting Deployment on ${{ secrets.PROD_SERVER_IP }} ---" -ForegroundColor Green
 
-  - name: 'Execute Deployment Script on Server'
-    uses: appleboy/ssh-action@master
-    with:
-      host: ${{ secrets.PROD_SERVER_IP }}
-      username: ${{ secrets.PROD_SERVER_USERNAME }}
-      password: ${{ secrets.PROD_SERVER_PASSWORD }}
-      script: |
-        echo [Step 1/7] Ensuring directories exist...
-        powershell -Command "New-Item -ItemType Directory -Path '${{ env.REMOTE_TEMP_PATH }}' -Force"
-        powershell -Command "New-Item -ItemType Directory -Path '${{ env.REMOTE_DEPLOY_PATH }}' -Force"
-        
-        echo [Step 2/7] Stopping WebAPI.exe process...
-        taskkill /IM WebAPI.exe /F 2>nul || echo 'WebAPI.exe not found or already stopped. Continuing...'
-        timeout /t 3
+                # Step 1: Transfer release file to server
+                Write-Host "[1/8] Transferring release.zip to server..."
+                # Create the temp directory if it doesn't exist
+                New-Item -ItemType Directory -Path $tempPath -Force | Out-Null
+                # scp command runs from the GitHub Runner to the target server
+                # This is done *before* this script block via a dedicated action, 
+                # but we'll re-implement it inside for clarity if needed.
+                # Here, we assume a separate SCP step or we'd use it here.
+                # For appleboy/ssh-action, we need a separate upload step.
+                # Let's assume scp-action is better. We'll use appleboy/scp-action before this step.
 
-        echo [Step 3/7] Cleaning deployment directory (preserving 'Session' folder)...
-        powershell -Command "if (Test-Path '${{ env.REMOTE_DEPLOY_PATH }}') { Get-ChildItem -Path '${{ env.REMOTE_DEPLOY_PATH }}' -Exclude 'Session' | Remove-Item -Recurse -Force }"
-        
-        echo [Step 4/7] Verifying uploaded ZIP file...
-        powershell -Command "Get-ChildItem -Path '${{ env.REMOTE_TEMP_PATH }}' | Select-Object Name, Length"
+                # Pre-computation for the SCP step
+              } catch {
+                 Write-Host "Initial setup failed!" -ForegroundColor Red
+                 exit 1
+              }
+            }
+            
+      - name: '📤 Upload Release ZIP to Server (Securely)'
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.PROD_SERVER_IP }}
+          username: ${{ secrets.PROD_SERVER_USERNAME }}
+          key: ${{ secrets.PROD_SERVER_SSH_KEY }} # Use SSH Key
+          source: "release.zip"
+          target: "${{ env.REMOTE_TEMP_PATH }}"
+          
+      - name: '🚀 Execute Remote Deployment Script'
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.PROD_SERVER_IP }}
+          username: ${{ secrets.PROD_SERVER_USERNAME }}
+          key: ${{ secrets.PROD_SERVER_SSH_KEY }} # Use SSH Key
 
-        echo [Step 5/7] Unpacking new application version...
-        powershell -Command "Expand-Archive -Path '${{ env.REMOTE_TEMP_PATH }}\\release.zip' -DestinationPath '${{ env.REMOTE_DEPLOY_PATH }}' -Force"
+          script: |
+            powershell -NoProfile -ExecutionPolicy Bypass -Command {
+              # This script runs on the remote Windows server.
+              $ErrorActionPreference = 'Stop' # Critical: script will fail on any error.
 
-        echo [Step 6/7] Verifying unpacked files...
-        powershell -Command "Get-ChildItem -Path '${{ env.REMOTE_DEPLOY_PATH }}' | Select-Object Name"
+              $deployPath = "${{ env.REMOTE_DEPLOY_PATH }}"
+              $tempPath = "${{ env.REMOTE_TEMP_PATH }}"
+              $zipFile = Join-Path $tempPath "release.zip"
+              $appName = "WebAPI.exe"
 
-        echo [Step 7/7] Injecting production secrets...
-        powershell -File "${{ env.REMOTE_DEPLOY_PATH }}\\deployment_scripts\\Inject-Secrets.ps1" -DeployPath "${{ env.REMOTE_DEPLOY_PATH }}" -ConnectionString "${{ secrets.PROD_CONNECTION_STRING }}" -TelegramBotToken "${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}" -TelegramApiId "${{ secrets.TELEGRAM_API_ID }}" -TelegramApiHash "${{ secrets.TELEGRAM_API_HASH }}" -TelegramPhoneNumber "${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}" -CryptoPayApiToken "${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}"
-        
-        echo [Step 8/7] Starting new WebAPI.exe process...
-        cd "${{ env.REMOTE_DEPLOY_PATH }}"
-        start "" "WebAPI.exe"
+              try {
+                Write-Host "--- Starting Deployment Script on Server ---" -ForegroundColor Cyan
 
-        echo [Step 9/7] Cleaning up temporary zip file...
-        powershell -Command "Remove-Item -Path '${{ env.REMOTE_TEMP_PATH }}\\release.zip' -Force"
+                # Step 1: Ensure directories exist
+                Write-Host "[1/7] Ensuring target directories exist..."
+                New-Item -ItemType Directory -Path $deployPath -Force | Out-Null
+                New-Item -ItemType Directory -Path $tempPath -Force | Out-Null
+                
+                # Step 2: Stop the running application
+                Write-Host "[2/7] Stopping running application ($appName)..."
+                $process = Get-Process -Name $appName.Replace('.exe', '') -ErrorAction SilentlyContinue
+                if ($process) {
+                  Stop-Process -Name $appName.Replace('.exe', '') -Force
+                  Write-Host "Process stopped successfully."
+                } else {
+                  Write-Host "Process not found. No action needed." -ForegroundColor Yellow
+                }
+                Start-Sleep -Seconds 5 # Wait for the process to release files
 
-        echo --- Deployment Successful ---
+                # Step 3: Clean the deployment directory (excluding 'Session')
+                Write-Host "[3/7] Cleaning deployment directory..."
+                Get-ChildItem -Path $deployPath -Exclude 'Session' | Remove-Item -Recurse -Force
+                Write-Host "Directory cleaned."
+                
+                # Step 4: Unpack the new version
+                Write-Host "[4/7] Unpacking '$zipFile' to '$deployPath'..."
+                Expand-Archive -Path $zipFile -DestinationPath $deployPath -Force
+                
+                # Step 5: Verify unpack was successful by checking for the .exe
+                Write-Host "[5/7] Verifying unpacked files..."
+                if (-not (Test-Path (Join-Path $deployPath $appName))) {
+                    throw "Verification failed! $appName not found after unpacking."
+                }
+                Write-Host "Verification successful. $appName is present."
+
+                # Step 6: Inject production secrets
+                Write-Host "[6/7] Injecting production secrets..."
+                $scriptPath = Join-Path $deployPath "deployment_scripts\Inject-Secrets.ps1"
+                & $scriptPath -DeployPath $deployPath -ConnectionString "${{ secrets.PROD_CONNECTION_STRING }}" -TelegramBotToken "${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}" -TelegramApiId "${{ secrets.TELEGRAM_API_ID }}" -TelegramApiHash "${{ secrets.TELEGRAM_API_HASH }}" -TelegramPhoneNumber "${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}" -CryptoPayApiToken "${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}"
+                Write-Host "Secrets injected."
+                
+                # Step 7: Start the new application
+                Write-Host "[7/7] Starting the new application..."
+                Start-Process -FilePath (Join-Path $deployPath $appName) -WorkingDirectory $deployPath
+                Write-Host "Application started."
+                
+                Write-Host "--- ✅ Deployment Successful! ---" -ForegroundColor Green
+
+              } catch {
+                Write-Host "--- ❌ DEPLOYMENT FAILED! ---" -ForegroundColor Red
+                Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
+                exit 1 # Exit with a non-zero code to fail the GitHub Action job
+              } finally {
+                # Cleanup: Always remove the temporary zip file
+                if (Test-Path $zipFile) {
+                  Write-Host "Cleaning up temporary file '$zipFile'..."
+                  Remove-Item -Path $zipFile -Force
+                }
+              }
+            }

@@ -1,7 +1,7 @@
 # ====================================================================================
-# THE DEFINITIVE WORKFLOW (v.2024-Final-Boss)
-# This workflow uses a "One Task, One Step" philosophy for maximum reliability.
-# Each remote command is simple, explicit, and its output is logged.
+# THE DEFINITIVE WORKFLOW (v.2024-FinalBoss-Corrected)
+# This workflow uses a bootstrapper to run the main deployment script from a
+# temporary location, which then handles the final, clean deployment.
 # ====================================================================================
 
 name: '🚀 [PROD] Deploy ForexTradingBot'
@@ -21,11 +21,10 @@ concurrency:
 env:
   DOTNET_VERSION: '9.0.x'
   PROJECT_PATH: './WebAPI/WebAPI.csproj'
-  REMOTE_DEPLOY_PATH: 'C:\Apps\ForexTradingBot'
   REMOTE_TEMP_PATH: 'C:\Apps\Temp'
   # This path MUST match the location of your script in the repository
-  SCRIPT_PATH_IN_REPO: 'deployment/Deploy-And-Diagnose.ps1'
-  SCRIPT_FILE_NAME: 'Deploy-And-Diagnose.ps1'
+  SCRIPT_PATH_IN_REPO: 'deployment/Deploy-And-Verify.ps1'
+  SCRIPT_FILE_NAME: 'Deploy-And-Verify.ps1'
 
 jobs:
   build:
@@ -62,7 +61,7 @@ jobs:
         with:
           name: deployment-package
 
-      - name: '📤 [STEP 1/6] Upload Unified ZIP to Server'
+      - name: '📤 Upload Unified ZIP to Server'
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.PROD_SERVER_IP }}
@@ -70,45 +69,8 @@ jobs:
           password: ${{ secrets.PROD_SERVER_PASSWORD }}
           source: "release.zip"
           target: "${{ env.REMOTE_TEMP_PATH }}"
-
-      - name: '🛑 [STEP 2/6] Stop Running Application'
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.PROD_SERVER_IP }}
-          username: ${{ secrets.PROD_SERVER_USERNAME }}
-          password: ${{ secrets.PROD_SERVER_PASSWORD }}
-          script: |
-            taskkill /IM WebAPI.exe /F 2>nul || echo "WebAPI process not found, which is normal."
       
-      - name: '🗑️ [STEP 3/6] Clean Deployment Directory'
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.PROD_SERVER_IP }}
-          username: ${{ secrets.PROD_SERVER_USERNAME }}
-          password: ${{ secrets.PROD_SERVER_PASSWORD }}
-          script: |
-            powershell -Command "if (Test-Path '${{ env.REMOTE_DEPLOY_PATH }}') { Get-ChildItem -Path '${{ env.REMOTE_DEPLOY_PATH }}' -Exclude 'Session' | Remove-Item -Recurse -Force -Verbose }"
-            
-      - name: '🤐 [STEP 4/6] Unpack New Version'
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.PROD_SERVER_IP }}
-          username: ${{ secrets.PROD_SERVER_USERNAME }}
-          password: ${{ secrets.PROD_SERVER_PASSWORD }}
-          script: |
-            powershell -Command "Expand-Archive -Path '${{ env.REMOTE_TEMP_PATH }}\release.zip' -DestinationPath '${{ env.REMOTE_DEPLOY_PATH }}' -Force -Verbose"
-            
-      - name: '▶️ [STEP 5/6] Execute Deployment Script'
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.PROD_SERVER_IP }}
-          username: ${{ secrets.PROD_SERVER_USERNAME }}
-          password: ${{ secrets.PROD_SERVER_PASSWORD }}
-          script: |
-            powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${{ env.REMOTE_DEPLOY_PATH }}\${{ env.SCRIPT_FILE_NAME }}" -ConnectionString "${{ secrets.PROD_CONNECTION_STRING }}" -TelegramBotToken "${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}" -TelegramApiId "${{ secrets.TELEGRAM_API_ID }}" -TelegramApiHash "${{ secrets.TELEGRAM_API_HASH }}" -TelegramPhoneNumber "${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}" -CryptoPayApiToken "${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}"
-      
-      - name: '🔍 [STEP 6/6] Final Health Check & Report'
-        if: always() # This step runs NO MATTER WHAT.
+      - name: '▶️ Execute Remote Bootstrapper'
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.PROD_SERVER_IP }}
@@ -116,16 +78,35 @@ jobs:
           password: ${{ secrets.PROD_SERVER_PASSWORD }}
           script: |
             powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
-                $DeployPath = '${{ env.REMOTE_DEPLOY_PATH }}'
+                $TempPath = '${{ env.REMOTE_TEMP_PATH }}'
+                $ZipFile = Join-Path $TempPath 'release.zip'
+                $UnpackPath = Join-Path $TempPath 'unpack'
+                $ScriptFile = Join-Path $UnpackPath '${{ env.SCRIPT_FILE_NAME }}'
+
+                if (Test-Path $UnpackPath) { Remove-Item -Path $UnpackPath -Recurse -Force }
+                Expand-Archive -Path `$ZipFile -DestinationPath `$UnpackPath -Force
+
+                & `$ScriptFile -ConnectionString '${{ secrets.PROD_CONNECTION_STRING }}' -TelegramBotToken '${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}' -TelegramApiId '${{ secrets.TELEGRAM_API_ID }}' -TelegramApiHash '${{ secrets.TELEGRAM_API_HASH }}' -TelegramPhoneNumber '${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}' -CryptoPayApiToken '${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}'
+                
+                Remove-Item -Path `$ZipFile -Force
+            "
+      
+      - name: '🔍 Final Health Check & Report'
+        if: always()
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.PROD_SERVER_IP }}
+          username: ${{ secrets.PROD_SERVER_USERNAME }}
+          password: ${{ secrets.PROD_SERVER_PASSWORD }}
+          script: |
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
+                $DeployPath = 'C:\Apps\ForexTradingBot'
                 $TempPath = '${{ env.REMOTE_TEMP_PATH }}'
                 $CrashLogPath = Join-Path $TempPath 'App-Crash-Log.txt'
                 
                 Write-Host '========================================================'
                 Write-Host '          FINAL DEPLOYMENT HEALTH CHECK REPORT'
                 Write-Host '========================================================'
-
-                # Verification 1: Application Status
-                Write-Host '--- Verifying Application Status ---'
                 $process = Get-Process -Name 'WebAPI' -ErrorAction SilentlyContinue
                 if ($process) {
                     Write-Host '✅✅✅ SUCCESS: WebAPI process is RUNNING!' -ForegroundColor Green
@@ -143,9 +124,13 @@ jobs:
                     } else { Write-Host '🟡 No crash log file found.' }
                 }
                 
-                # Final cleanup of temporary files
-                Write-Host '--- Cleaning up temporary files ---'
-                if (Test-Path (Join-Path $TempPath 'release.zip')) { Remove-Item (Join-Path $TempPath 'release.zip') -Force }
-                if (Test-Path $CrashLogPath) { Remove-Item $CrashLogPath -Force }
+                Write-Host '--- Displaying Latest Deployment Log ---'
+                $DeployLog = Get-ChildItem -Path $TempPath -Filter 'Deployment-Log-*.txt' | Sort-Object CreationTime -Descending | Select-Object -First 1
+                if ($DeployLog) {
+                    Write-Host ('Log File: ' + $DeployLog.Name)
+                    Write-Host '------------------ DEPLOY LOG START ------------------'
+                    Get-Content -Path $DeployLog.FullName
+                    Write-Host '------------------- DEPLOY LOG END -------------------'
+                } else { Write-Host '❌ No deployment script log found.' -ForegroundColor Red }
                 Write-Host '========================================================'
             "

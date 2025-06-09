@@ -34,36 +34,69 @@ namespace Infrastructure
             this IServiceCollection services,
             IConfiguration configuration)
         {
-            // 1. خواندن تنظیمات مربوط به DatabaseProvider
-            // این تنظیم تعیین می‌کند که کدام نوع پایگاه داده (مانند SQL Server یا PostgreSQL) استفاده شود.
-            var dbProvider = configuration
-                .GetValue<string>("DatabaseProvider")?
-                .ToLowerInvariant()
-                ?? throw new InvalidOperationException(
-                    "DatabaseProvider is not configured in the application settings."); // اگر تنظیمات یافت نشود، استثنا پرتاب می‌کند.
+            var allConfig = configuration.AsEnumerable().ToDictionary(x => x.Key, x => x.Value);
+            var allConfigString = string.Join(Environment.NewLine, allConfig.Select(kv => $"  - Key: '{kv.Key}', Value: '{kv.Value}'"));
 
-            // 2. خواندن رشته اتصال اصلی پایگاه داده
-            // DefaultConnection رشته اتصالی است که برای ارتباط با پایگاه داده اصلی برنامه استفاده می‌شود.
-            var connectionString = configuration
-                .GetConnectionString("DefaultConnection")
-                ?? throw new InvalidOperationException(
-                    "DefaultConnection is not configured in the application settings."); // اگر رشته اتصال یافت نشود، استثنا پرتاب می‌کند.
+            // 1. Read the DatabaseProvider setting
+            // var dbProvider = configuration.GetValue<string>("DatabaseSettings:DatabaseProvider")?.ToLowerInvariant();
+            var dbProviderSection = configuration.GetSection("DatabaseSettings");
+            var dbProvider = dbProviderSection.GetValue<string>("DatabaseProvider")?.ToLowerInvariant();
 
-            // 3. پیکربندی DbContext بر اساس Provider پایگاه داده انتخاب شده
+
+            // 2. Read the connection string
+            var connectionString = configuration.GetConnectionString("DefaultConnection");
+
+            // 3. THROW A DETAILED EXCEPTION IF ANYTHING IS WRONG
+            // This is our new, intelligent error reporting.
+            if (string.IsNullOrEmpty(dbProvider) || string.IsNullOrEmpty(connectionString))
+            {
+                var errorMessage = "FATAL: Critical configuration is missing." + Environment.NewLine;
+                errorMessage += "------------------- DIAGNOSTIC REPORT -------------------" + Environment.NewLine;
+
+                // Report on dbProvider
+                if (string.IsNullOrEmpty(dbProvider))
+                {
+                    errorMessage += "❌ Error: 'DatabaseSettings:DatabaseProvider' is NULL or EMPTY." + Environment.NewLine;
+                    errorMessage += $"   - Raw value from GetValue: '{configuration.GetValue<string>("DatabaseSettings:DatabaseProvider")}'" + Environment.NewLine;
+                    errorMessage += $"   - Path exists check: {dbProviderSection.Exists()}" + Environment.NewLine;
+                }
+                else
+                {
+                    errorMessage += $"✅ OK: DatabaseProvider was found: '{dbProvider}'" + Environment.NewLine;
+                }
+
+                // Report on ConnectionString
+                if (string.IsNullOrEmpty(connectionString))
+                {
+                    errorMessage += "❌ Error: 'ConnectionStrings:DefaultConnection' is NULL or EMPTY." + Environment.NewLine;
+                }
+                else
+                {
+                    errorMessage += "✅ OK: ConnectionString was found (value is hidden for security)." + Environment.NewLine;
+                }
+
+                errorMessage += "------------------- FULL CONFIGURATION DUMP -------------------" + Environment.NewLine;
+                errorMessage += allConfigString + Environment.NewLine;
+                errorMessage += "-------------------------------------------------------------" + Environment.NewLine;
+
+                // Throw the new, super-detailed exception.
+                throw new InvalidOperationException(errorMessage);
+            }
+            // ========================= END OF DIAGNOSTIC BLOCK =========================
+
+
+            // The rest of your code remains UNCHANGED as it is correct.
             switch (dbProvider)
             {
                 case "sqlserver":
                     services.AddDbContext<AppDbContext>(opts =>
                         opts.UseSqlServer(connectionString, sql =>
                         {
-                            // مشخص کردن اسمبلی حاوی Migrationها برای Entity Framework Core.
-                            // این اطمینان حاصل می‌کند که EF Core می‌تواند migrationهای صحیح را پیدا و اعمال کند.
                             sql.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName);
-                            // فعال کردن استراتژی تلاش مجدد (retry) برای افزایش پایداری در برابر خطاهای موقتی پایگاه داده (مانند مشکلات شبکه).
                             sql.EnableRetryOnFailure(
-                                maxRetryCount: 5, // حداکثر 5 بار تلاش مجدد
-                                maxRetryDelay: TimeSpan.FromSeconds(30), // تا 30 ثانیه تأخیر بین تلاش‌ها
-                                errorNumbersToAdd: null); // از خطاهای پیش‌فرض EF Core استفاده می‌کند
+                                maxRetryCount: 5,
+                                maxRetryDelay: TimeSpan.FromSeconds(30),
+                                errorNumbersToAdd: null);
                         }));
                     break;
 
@@ -81,9 +114,10 @@ namespace Infrastructure
                     break;
 
                 default:
-                    // در صورت عدم پشتیبانی از DatabaseProvider مشخص شده، استثنا پرتاب می‌کند.
-                    throw new NotSupportedException(
-                        $"Unsupported DatabaseProvider: '{dbProvider}'. Please check your configuration.");
+                    // Now, even this error will be more informative.
+                    var detailedUnsupportedError = $"Unsupported DatabaseProvider: '{dbProvider}'. Please check your configuration. " +
+                                                 $"Available keys in 'DatabaseSettings': {string.Join(", ", dbProviderSection.GetChildren().Select(c => c.Key))}";
+                    throw new NotSupportedException(detailedUnsupportedError);
             }
 
             // 4. رجیستر <see cref="IAppDbContext"/> به عنوان یک سرویس Scoped

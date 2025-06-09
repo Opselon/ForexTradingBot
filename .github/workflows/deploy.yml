@@ -1,7 +1,7 @@
 # ====================================================================================
-# THE DEFINITIVE WORKFLOW (v.2024-Final)
-# This workflow uses a powerful, self-logging script and concludes with
-# a comprehensive Health Check and Report step. This is the final version.
+# THE DEFINITIVE WORKFLOW (v.2024-Final-Boss)
+# This workflow uses a "One Task, One Step" philosophy for maximum reliability.
+# Each remote command is simple, explicit, and its output is logged.
 # ====================================================================================
 
 name: '🚀 [PROD] Deploy ForexTradingBot'
@@ -24,8 +24,8 @@ env:
   REMOTE_DEPLOY_PATH: 'C:\Apps\ForexTradingBot'
   REMOTE_TEMP_PATH: 'C:\Apps\Temp'
   # This path MUST match the location of your script in the repository
-  SCRIPT_PATH_IN_REPO: 'deployment/Deploy-And-Verify.ps1'
-  SCRIPT_FILE_NAME: 'Deploy-And-Verify.ps1'
+  SCRIPT_PATH_IN_REPO: 'deployment/Deploy-And-Diagnose.ps1'
+  SCRIPT_FILE_NAME: 'Deploy-And-Diagnose.ps1'
 
 jobs:
   build:
@@ -52,7 +52,7 @@ jobs:
           retention-days: 1
 
   deploy:
-    name: '🚢 2. Deploy & Diagnose'
+    name: '🚢 2. Deploy & Verify'
     needs: build
     runs-on: ubuntu-latest
     
@@ -62,7 +62,7 @@ jobs:
         with:
           name: deployment-package
 
-      - name: '📤 Upload Unified ZIP to Server'
+      - name: '📤 [STEP 1/6] Upload Unified ZIP to Server'
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.PROD_SERVER_IP }}
@@ -70,30 +70,44 @@ jobs:
           password: ${{ secrets.PROD_SERVER_PASSWORD }}
           source: "release.zip"
           target: "${{ env.REMOTE_TEMP_PATH }}"
-      
-      - name: '▶️ Execute Remote Bootstrapper'
-        id: deploy_step
+
+      - name: '🛑 [STEP 2/6] Stop Running Application'
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.PROD_SERVER_IP }}
           username: ${{ secrets.PROD_SERVER_USERNAME }}
           password: ${{ secrets.PROD_SERVER_PASSWORD }}
           script: |
-            powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
-                $TempPath = '${{ env.REMOTE_TEMP_PATH }}'
-                $ZipFile = Join-Path $TempPath 'release.zip'
-                $UnpackPath = Join-Path $TempPath 'unpack'
-                $ScriptFile = Join-Path $UnpackPath '${{ env.SCRIPT_FILE_NAME }}'
-                if (Test-Path $UnpackPath) { Remove-Item -Path $UnpackPath -Recurse -Force }
-                Expand-Archive -Path `$ZipFile -DestinationPath `$UnpackPath -Force
-                & `$ScriptFile -ConnectionString '${{ secrets.PROD_CONNECTION_STRING }}' -TelegramBotToken '${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}' -TelegramApiId '${{ secrets.TELEGRAM_API_ID }}' -TelegramApiHash '${{ secrets.TELEGRAM_API_HASH }}' -TelegramPhoneNumber '${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}' -CryptoPayApiToken '${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}'
-                Remove-Item -Path `$ZipFile -Force
-            "
-
-      # ==================================================================================
-      # ✅✅✅ THE FINAL HEALTH CHECK AND REPORT STEP ✅✅✅
-      # ==================================================================================
-      - name: '🔍 Final Health Check & Report'
+            taskkill /IM WebAPI.exe /F 2>nul || echo "WebAPI process not found, which is normal."
+      
+      - name: '🗑️ [STEP 3/6] Clean Deployment Directory'
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.PROD_SERVER_IP }}
+          username: ${{ secrets.PROD_SERVER_USERNAME }}
+          password: ${{ secrets.PROD_SERVER_PASSWORD }}
+          script: |
+            powershell -Command "if (Test-Path '${{ env.REMOTE_DEPLOY_PATH }}') { Get-ChildItem -Path '${{ env.REMOTE_DEPLOY_PATH }}' -Exclude 'Session' | Remove-Item -Recurse -Force -Verbose }"
+            
+      - name: '🤐 [STEP 4/6] Unpack New Version'
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.PROD_SERVER_IP }}
+          username: ${{ secrets.PROD_SERVER_USERNAME }}
+          password: ${{ secrets.PROD_SERVER_PASSWORD }}
+          script: |
+            powershell -Command "Expand-Archive -Path '${{ env.REMOTE_TEMP_PATH }}\release.zip' -DestinationPath '${{ env.REMOTE_DEPLOY_PATH }}' -Force -Verbose"
+            
+      - name: '▶️ [STEP 5/6] Execute Deployment Script'
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.PROD_SERVER_IP }}
+          username: ${{ secrets.PROD_SERVER_USERNAME }}
+          password: ${{ secrets.PROD_SERVER_PASSWORD }}
+          script: |
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${{ env.REMOTE_DEPLOY_PATH }}\${{ env.SCRIPT_FILE_NAME }}" -ConnectionString "${{ secrets.PROD_CONNECTION_STRING }}" -TelegramBotToken "${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}" -TelegramApiId "${{ secrets.TELEGRAM_API_ID }}" -TelegramApiHash "${{ secrets.TELEGRAM_API_HASH }}" -TelegramPhoneNumber "${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}" -CryptoPayApiToken "${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}"
+      
+      - name: '🔍 [STEP 6/6] Final Health Check & Report'
         if: always() # This step runs NO MATTER WHAT.
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -104,29 +118,17 @@ jobs:
             powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
                 $DeployPath = '${{ env.REMOTE_DEPLOY_PATH }}'
                 $TempPath = '${{ env.REMOTE_TEMP_PATH }}'
-                $SessionPath = Join-Path $DeployPath 'Session'
-                $ExePath = Join-Path $DeployPath 'WebAPI.exe'
                 $CrashLogPath = Join-Path $TempPath 'App-Crash-Log.txt'
-                $DeployLog = Get-ChildItem -Path $TempPath -Filter 'Deployment-Log-*.txt' | Sort-Object CreationTime -Descending | Select-Object -First 1
-
+                
                 Write-Host '========================================================'
                 Write-Host '          FINAL DEPLOYMENT HEALTH CHECK REPORT'
                 Write-Host '========================================================'
 
-                # --- Verification 1: Critical Files ---
-                Write-Host '--- Verifying Critical File Paths ---'
-                if (Test-Path $ExePath) { Write-Host '✅ WebAPI.exe exists in deployment folder.' -ForegroundColor Green }
-                else { Write-Host '❌ WebAPI.exe NOT FOUND in deployment folder.' -ForegroundColor Red }
-                
-                if (Test-Path $SessionPath) { Write-Host '✅ Session folder exists.' -ForegroundColor Green }
-                else { Write-Host '❌ Session folder NOT FOUND.' -ForegroundColor Red }
-                
-                # --- Verification 2: Application Status ---
+                # Verification 1: Application Status
                 Write-Host '--- Verifying Application Status ---'
                 $process = Get-Process -Name 'WebAPI' -ErrorAction SilentlyContinue
                 if ($process) {
                     Write-Host '✅✅✅ SUCCESS: WebAPI process is RUNNING!' -ForegroundColor Green
-                    Write-Host ('Process Details: ' + (`$process | Format-Table -AutoSize | Out-String))
                 } else {
                     Write-Host '❌❌❌ FAILURE: WebAPI process is NOT RUNNING.' -ForegroundColor Red
                     Write-Host '--- Checking for Crash Log ---'
@@ -137,26 +139,13 @@ jobs:
                             Write-Host '------------------ CRASH LOG START ------------------'
                             $crashContent
                             Write-Host '------------------- CRASH LOG END -------------------'
-                        } else {
-                            Write-Host '🟡 Crash log exists but is empty. App may have exited cleanly but too quickly.'
-                        }
-                    } else {
-                        Write-Host '🟡 No crash log file found. The application may not have started at all.'
-                    }
+                        } else { Write-Host '🟡 Crash log exists but is empty.' }
+                    } else { Write-Host '🟡 No crash log file found.' }
                 }
-
-                # --- Verification 3: Deployment Script Log ---
-                Write-Host '--- Displaying Latest Deployment Log ---'
-                if ($DeployLog) {
-                    Write-Host ('Log File: ' + $DeployLog.Name)
-                    Write-Host '------------------ DEPLOY LOG START ------------------'
-                    Get-Content -Path $DeployLog.FullName
-                    Write-Host '------------------- DEPLOY LOG END -------------------'
-                } else {
-                    Write-Host '❌ No deployment script log found. The main script may not have run.' -ForegroundColor Red
-                }
-
-                Write-Host '========================================================'
-                Write-Host '          HEALTH CHECK COMPLETE'
+                
+                # Final cleanup of temporary files
+                Write-Host '--- Cleaning up temporary files ---'
+                if (Test-Path (Join-Path $TempPath 'release.zip')) { Remove-Item (Join-Path $TempPath 'release.zip') -Force }
+                if (Test-Path $CrashLogPath) { Remove-Item $CrashLogPath -Force }
                 Write-Host '========================================================'
             "

@@ -1,7 +1,7 @@
 # ====================================================================================
-# THE FINAL DIAGNOSTIC WORKFLOW (NO COMMENTS)
-# This workflow runs a self-logging script and reports back the findings.
-# All comments from the sensitive script blocks have been removed to prevent errors.
+# THE FINAL WORKFLOW (v.2024)
+# This workflow uses the most robust method: uploading a powerful, self-logging
+# script and having it report back its findings. This is the definitive solution.
 # ====================================================================================
 
 name: '🚀 [PROD] Deploy ForexTradingBot'
@@ -22,8 +22,9 @@ env:
   DOTNET_VERSION: '9.0.x'
   PROJECT_PATH: './WebAPI/WebAPI.csproj'
   REMOTE_TEMP_PATH: 'C:\Apps\Temp'
-  SCRIPT_PATH_IN_REPO: 'deployment/Deploy-And-Capture.ps1'
-  SCRIPT_FILE_NAME: 'Deploy-And-Capture.ps1'
+  # This path MUST match the location of your script in the repository
+  SCRIPT_PATH_IN_REPO: 'deployment/Deploy-And-Diagnose.ps1'
+  SCRIPT_FILE_NAME: 'Deploy-And-Diagnose.ps1'
 
 jobs:
   build:
@@ -32,17 +33,22 @@ jobs:
     steps:
       - name: '📥 Checkout Repository'
         uses: actions/checkout@v4
+
       - name: '⚙️ Setup .NET SDK'
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
+
       - name: '📦 Publish App'
         run: dotnet publish ${{ env.PROJECT_PATH }} -c Release -r win-x64 -o ./publish --self-contained true
+
       - name: '➕ Include Deploy Script in Publish Folder'
         run: cp ${{ env.SCRIPT_PATH_IN_REPO }} ./publish
+
       - name: '🗜️ Create Unified ZIP Archive'
         run: cd ./publish && zip -r ../release.zip .
-      - name: '📤 Upload Unified Release Artifact'
+      
+      - name: '📤 Upload Single Release Artifact'
         uses: actions/upload-artifact@v4
         with:
           name: deployment-package
@@ -69,29 +75,31 @@ jobs:
           source: "release.zip"
           target: "${{ env.REMOTE_TEMP_PATH }}"
       
-      - name: '▶️ Execute Remote Deployment & Diagnostics'
+      - name: '▶️ Execute Remote Bootstrapper'
         id: deploy_step
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.PROD_SERVER_IP }}
           username: ${{ secrets.PROD_SERVER_USERNAME }}
           password: ${{ secrets.PROD_SERVER_PASSWORD }}
-          # This script block now has NO comments.
+          # This bootstrapper is simple, clean, and has NO comments.
           script: |
             powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
                 $TempPath = '${{ env.REMOTE_TEMP_PATH }}'
                 $ZipFile = Join-Path $TempPath 'release.zip'
-                $UnpackPath = 'C:\Apps\Temp\unpack'
+                $UnpackPath = Join-Path $TempPath 'unpack'
                 $ScriptFile = Join-Path $UnpackPath '${{ env.SCRIPT_FILE_NAME }}'
 
                 if (Test-Path $UnpackPath) { Remove-Item -Path $UnpackPath -Recurse -Force }
                 Expand-Archive -Path `$ZipFile -DestinationPath `$UnpackPath -Force
 
                 & `$ScriptFile -ConnectionString '${{ secrets.PROD_CONNECTION_STRING }}' -TelegramBotToken '${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}' -TelegramApiId '${{ secrets.TELEGRAM_API_ID }}' -TelegramApiHash '${{ secrets.TELEGRAM_API_HASH }}' -TelegramPhoneNumber '${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}' -CryptoPayApiToken '${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}'
+                
+                Remove-Item -Path `$ZipFile -Force
             "
       
-      - name: '🔍 Retrieve and Display Logs from Server'
-        if: always()
+      - name: '🔍 Retrieve and Display ALL Logs from Server'
+        if: always() # This step runs even if the previous one fails
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.PROD_SERVER_IP }}
@@ -99,11 +107,13 @@ jobs:
           password: ${{ secrets.PROD_SERVER_PASSWORD }}
           script: |
             echo "========================================================"
-            echo "          APPLICATION CRASH LOG (`App-Crash-Log.txt`)"
+            echo "          APPLICATION CRASH LOG (App-Crash-Log.txt)"
             echo "========================================================"
             powershell -Command "Get-Content -Path '${{ env.REMOTE_TEMP_PATH }}\App-Crash-Log.txt' -ErrorAction SilentlyContinue"
             
+            echo ""
             echo "========================================================"
-            echo "          DEPLOYMENT SCRIPT LOG (`Deployment-Log-*.txt`)"
+            echo "          DEPLOYMENT SCRIPT LOG (Deployment-Log-*.txt)"
             echo "========================================================"
-            powershell -Command "Get-ChildItem -Path '${{ env.REMOTE_TEMP_PATH }}' -Filter 'Deployment-Log-*.txt' | ForEach-Object { Get-Content -Path $_.FullName }"
+            powershell -Command "Get-ChildItem -Path '${{ env.REMOTE_TEMP_PATH }}' -Filter 'Deployment-Log-*.txt' | Sort-Object CreationTime -Descending | Select-Object -First 1 | ForEach-Object { Get-Content -Path $_.FullName }"
+            

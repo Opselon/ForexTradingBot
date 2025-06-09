@@ -1,7 +1,7 @@
 # ====================================================================================
-# FINAL BULLETPROOF v3: Environment Variable Injection
-# This method bypasses all appsettings.json issues by injecting secrets directly
-# as environment variables, which have the highest priority.
+# FINAL GUARANTEED VERSION: Return to Script Upload Method
+# This method is the only reliable way to bypass all the ssh-action's
+# shell interpretation bugs on Windows.
 # ====================================================================================
 
 name: '🚀 [PROD] Deploy ForexTradingBot'
@@ -23,9 +23,9 @@ env:
   PROJECT_PATH: './WebAPI/WebAPI.csproj'
   REMOTE_DEPLOY_PATH: 'C:\Apps\ForexTradingBot'
   REMOTE_TEMP_PATH: 'C:\Apps\Temp'
+  SCRIPT_FILE_NAME: 'FinalDeploy.ps1' # New name to avoid any caching
 
 jobs:
-  # ... (Job 'build' remains the same) ...
   build:
     name: '✅ 1. Build & Package'
     runs-on: ubuntu-latest
@@ -46,9 +46,6 @@ jobs:
           path: release.zip
           retention-days: 1
 
-  # ====================================================================
-  # JOB 2: Deploy to Server
-  # ====================================================================
   deploy:
     name: '🚢 2. Deploy to Production VPS'
     needs: build
@@ -60,66 +57,82 @@ jobs:
         with:
           name: forex-bot-release-package
 
-      - name: '📤 Upload Release ZIP to Server'
+      - name: '📝 Create Local PowerShell Deployment Script'
+        shell: bash
+        run: |
+          cat << 'EOF' > ${{ env.SCRIPT_FILE_NAME }}
+          # This script will be uploaded to and executed on the remote Windows server.
+          # It has no parameters and defines everything internally for robustness.
+
+          # --- DEFINE ALL VARIABLES INTERNALLY ---
+          $DeployPath     = "${{ env.REMOTE_DEPLOY_PATH }}"
+          $TempPath       = "${{ env.REMOTE_TEMP_PATH }}"
+          
+          $ErrorActionPreference = 'Stop'
+          $appName = "WebAPI"
+          $exeName = "WebAPI.exe"
+          $zipFile = Join-Path $TempPath "release.zip"
+
+          try {
+              Write-Host "--- [1/5] Stopping Service ($appName) ---"
+              $process = Get-Process -Name $appName -ErrorAction SilentlyContinue
+              if ($process) { Stop-Process -Name $appName -Force; Write-Host '✅ Service stopped.' } else { Write-Host '🟡 Service not running.' }
+
+              Write-Host "--- [2/5] Cleaning Directory ($DeployPath) ---"
+              if (-not (Test-Path $DeployPath)) { New-Item -ItemType Directory -Path $DeployPath -Force | Out-Null }
+              Get-ChildItem -Path $DeployPath -Exclude 'Session' | Remove-Item -Recurse -Force
+              Write-Host "✅ Directory cleaned."
+
+              Write-Host "--- [3/5] Unpacking Archive ($zipFile) ---"
+              Expand-Archive -Path $zipFile -DestinationPath $DeployPath -Force
+              Write-Host "✅ Archive unpacked."
+              
+              Write-Host "--- [4/5] Starting Service with Production Environment ---"
+              # Set environment variables for the process to be started.
+              # THIS IS THE MOST RELIABLE WAY.
+              $ProcessInfo = New-Object System.Diagnostics.ProcessStartInfo
+              $ProcessInfo.FileName = Join-Path $DeployPath $exeName
+              $ProcessInfo.WorkingDirectory = $DeployPath
+              $ProcessInfo.EnvironmentVariables['ASPNETCORE_ENVIRONMENT'] = 'Production'
+              $ProcessInfo.EnvironmentVariables['ConnectionStrings__DefaultConnection'] = '${{ secrets.PROD_CONNECTION_STRING }}'
+              $ProcessInfo.EnvironmentVariables['DatabaseSettings__DatabaseProvider'] = 'SqlServer'
+              $ProcessInfo.EnvironmentVariables['TelegramPanel__BotToken'] = '${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}'
+              $ProcessInfo.EnvironmentVariables['TelegramUserApi__ApiId'] = '${{ secrets.TELEGRAM_API_ID }}'
+              $ProcessInfo.EnvironmentVariables['TelegramUserApi__ApiHash'] = '${{ secrets.TELEGRAM_API_HASH }}'
+              $ProcessInfo.EnvironmentVariables['TelegramUserApi__PhoneNumber'] = '${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}'
+              $ProcessInfo.EnvironmentVariables['CryptoPay__ApiToken'] = '${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}'
+              
+              [System.Diagnostics.Process]::Start($ProcessInfo)
+              Write-Host "✅ Service start command issued."
+              
+              Write-Host "--- ✅ DEPLOYMENT SUCCESSFUL ---" -ForegroundColor Green
+
+          } catch {
+              Write-Host "--- ❌ DEPLOYMENT FAILED! ---" -ForegroundColor Red
+              Write-Host "Error: $($_.Exception.ToString())" -ForegroundColor Red
+              exit 1
+          } finally {
+              Write-Host "--- [FINAL CLEANUP] ---"
+              if (Test-Path $zipFile) { Remove-Item -Path $zipFile -Force -ErrorAction SilentlyContinue; Write-Host "✅ Temp archive deleted." }
+          }
+          EOF
+          
+      - name: '📤 Upload Release ZIP and Script File'
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.PROD_SERVER_IP }}
           username: ${{ secrets.PROD_SERVER_USERNAME }}
           password: ${{ secrets.PROD_SERVER_PASSWORD }}
-          source: "release.zip"
+          source: "${{ env.SCRIPT_FILE_NAME }},release.zip"
           target: "${{ env.REMOTE_TEMP_PATH }}"
       
-      - name: '▶️ Execute Remote Deployment'
+      - name: '▶️ Execute and Cleanup'
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.PROD_SERVER_IP }}
           username: ${{ secrets.PROD_SERVER_USERNAME }}
           password: ${{ secrets.PROD_SERVER_PASSWORD }}
+          # A single, clean command to execute the script, then a second to clean up.
           script: |
-            # This script now injects secrets as environment variables before starting the process.
-            # This is the most reliable method.
-            powershell -NoProfile -ExecutionPolicy Bypass -Command "
-            try {
-                $ErrorActionPreference = 'Stop'
-                
-                # --- Step 1: Stop Service ---
-                Write-Host '--- [1/5] Stopping Service ---'
-                $process = Get-Process -Name 'WebAPI' -ErrorAction SilentlyContinue
-                if ($process) { Stop-Process -Name 'WebAPI' -Force; Write-Host 'Service stopped.' } else { Write-Host 'Service not running.' }
-                
-                # --- Step 2: Clean Directory ---
-                Write-Host '--- [2/5] Cleaning Directory ---'
-                Get-ChildItem -Path '${{ env.REMOTE_DEPLOY_PATH }}' -Exclude 'Session' | Remove-Item -Recurse -Force
-                
-                # --- Step 3: Unpack Archive ---
-                Write-Host '--- [3/5] Unpacking Archive ---'
-                Expand-Archive -Path '${{ env.REMOTE_TEMP_PATH }}\release.zip' -DestinationPath '${{ env.REMOTE_DEPLOY_PATH }}' -Force
-                
-                # --- Step 4: Set Environment Variables & Start Service ---
-                Write-Host '--- [4/5] Setting Environment Variables and Starting Service ---'
-                
-                # Set all required configuration values as environment variables.
-                # The format for nested JSON is 'Section__Key'.
-                $env:ASPNETCORE_ENVIRONMENT = 'Production'
-                $env:ConnectionStrings__DefaultConnection = '${{ secrets.PROD_CONNECTION_STRING }}'
-                $env:DatabaseSettings__DatabaseProvider = 'SqlServer'
-                $env:TelegramPanel__BotToken = '${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}'
-                $env:TelegramUserApi__ApiId = '${{ secrets.TELEGRAM_API_ID }}'
-                $env:TelegramUserApi__ApiHash = '${{ secrets.TELEGRAM_API_HASH }}'
-                $env:TelegramUserApi__PhoneNumber = '${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}'
-                $env:CryptoPay__ApiToken = '${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}'
-                
-                # Start the process. It will inherit all environment variables we just set.
-                Start-Process -FilePath '${{ env.REMOTE_DEPLOY_PATH }}\WebAPI.exe' -WorkingDirectory '${{ env.REMOTE_DEPLOY_PATH }}'
-                Write-Host 'Service start command issued.'
-
-                # --- Step 5: Final Cleanup ---
-                Write-Host '--- [5/5] Final Cleanup ---'
-                Remove-Item -Path '${{ env.REMOTE_TEMP_PATH }}\release.zip' -Force
-                
-                Write-Host '--- ✅ DEPLOYMENT SUCCESSFUL ---' -ForegroundColor Green
-            } catch {
-                Write-Host '--- ❌ DEPLOYMENT FAILED! ---' -ForegroundColor Red
-                Write-Host `"$($_.Exception.ToString())`" -ForegroundColor Red
-                exit 1
-            }"
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${{ env.REMOTE_TEMP_PATH }}\${{ env.SCRIPT_FILE_NAME }}"
+            del "${{ env.REMOTE_TEMP_PATH }}\${{ env.SCRIPT_FILE_NAME }}"

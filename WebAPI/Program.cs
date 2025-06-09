@@ -376,7 +376,7 @@ try
 catch (Exception ex)
 {
     //  لاگ کردن خطاهای بسیار بحرانی که مانع از اجرای برنامه شده‌اند.
-    Log.Fatal(ex, "Application host terminated unexpectedly.");
+    Log.Fatal(ex, "Application host very much terminated unexpectedly.");
     // Environment.ExitCode = 1; //  برای نشان دادن خروج ناموفق به سیستم عامل یا اسکریپت‌های دیگر
 }
 finally

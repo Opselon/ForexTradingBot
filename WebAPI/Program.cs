@@ -73,6 +73,12 @@ try
     #endregion
 
     #region Add Core ASP.NET Core Services
+
+    builder.Services.AddWindowsService(options =>
+    {
+        options.ServiceName = "ForexTradingBotAPI";
+    });
+
     // ------------------- ۲. اضافه کردن سرویس‌های پایه ASP.NET Core -------------------
     // فعال کردن پشتیبانی از کنترلرهای API
     builder.Services.AddControllers();

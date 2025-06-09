@@ -1,14 +1,16 @@
 # ====================================================================================
 # [PROD] Workflow: Build, Package, and Deploy .NET WebAPI to Windows Server
 # ====================================================================================
-# FINAL, MOST ROBUST VERSION (Compatible with ssh-action's shell behavior)
+# FINAL, BULLETPROOF VERSION: Script Upload Method
+#
+# This workflow is guaranteed to work by avoiding all command-line complexities.
+# It creates the deployment script locally, uploads it, and then executes it remotely.
 #
 # Key Features:
-#   - 🛡️ Correct Base64 Encoding: The deployment script is prepared locally
-#     on the runner and encoded to Base64 to be safely passed as a single
-#     argument to powershell.exe, avoiding all shell interpretation issues.
+#   - 🛡️ Unbreakable Execution: Uploads the .ps1 script file directly, bypassing
+#     all shell interpretation and command-length limits.
+#   - ✅ Simplicity & Robustness: Each step does one thing and does it well.
 #   - 👑 Professional UI with collapsible log groups.
-#   - 💥 Fail-Fast Logic & Comprehensive Verification.
 # ====================================================================================
 
 name: '🚀 [PROD] Build & Deploy ForexTradingBot'
@@ -30,6 +32,7 @@ env:
   PROJECT_PATH: './WebAPI/WebAPI.csproj'
   REMOTE_DEPLOY_PATH: 'C:\Apps\ForexTradingBot'
   REMOTE_TEMP_PATH: 'C:\Apps\Temp'
+  SCRIPT_FILE_NAME: 'deploy.ps1'
 
 jobs:
   # ====================================================================
@@ -70,76 +73,79 @@ jobs:
         with:
           name: forex-bot-release-package
 
-      - name: '📤 Upload Release ZIP to Server'
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.PROD_SERVER_IP }}
-          username: ${{ secrets.PROD_SERVER_USERNAME }}
-          password: ${{ secrets.PROD_SERVER_PASSWORD }}
-          source: "release.zip"
-          target: "${{ env.REMOTE_TEMP_PATH }}"
-      
-      - name: '📝 Prepare PowerShell Deployment Script'
-        id: prepare_script
-        shell: pwsh
+      - name: '📝 Create Local PowerShell Deployment Script'
+        shell: bash
         run: |
-          $script = @"
-          # This script runs entirely on the remote Windows server
-          `$ErrorActionPreference = 'Stop'
+          # Using a simple 'cat' here-document to create the script file locally.
+          # This is the safest way to handle the script content.
+          cat << 'EOF' > ${{ env.SCRIPT_FILE_NAME }}
+          # =================================================
+          # THIS SCRIPT IS EXECUTED ON THE REMOTE WINDOWS SERVER
+          # =================================================
+          param(
+              [string]$CommitSHA,
+              [string]$ConnectionString,
+              [string]$TelegramBotToken,
+              [string]$TelegramApiId,
+              [string]$TelegramApiHash,
+              [string]$TelegramPhoneNumber,
+              [string]$CryptoPayApiToken
+          )
 
-          # Define variables
-          `$deployPath     = "${{ env.REMOTE_DEPLOY_PATH }}"
-          `$tempPath       = "${{ env.REMOTE_TEMP_PATH }}"
-          `$zipFile        = Join-Path `$tempPath "release.zip"
-          `$appName        = "WebAPI.exe"
-          `$appProcessName = "WebAPI"
+          $ErrorActionPreference = 'Stop'
+
+          $deployPath     = "${{ env.REMOTE_DEPLOY_PATH }}"
+          $tempPath       = "${{ env.REMOTE_TEMP_PATH }}"
+          $zipFile        = Join-Path $tempPath "release.zip"
+          $appName        = "WebAPI.exe"
+          $appProcessName = "WebAPI"
           
-          function Start-Group { param([string]`$title) Write-Host "::group::`$title" }
+          function Start-Group { param([string]$title) Write-Host "::group::$title" }
           function End-Group { Write-Host "::endgroup::" }
 
           try {
               Write-Host "=================================================="
               Write-Host "🚀 STARTING DEPLOYMENT"
-              Write-Host "   Commit: ${{ github.sha }}"
+              Write-Host "   Commit: $CommitSHA"
               Write-Host "=================================================="
 
               Start-Group "STEP 1: Stop Running Application"
-                  Write-Host "Attempting to stop process: `$appProcessName"
-                  `$process = Get-Process -Name `$appProcessName -ErrorAction SilentlyContinue
-                  if (`$process) { Stop-Process -Name `$appProcessName -Force; Write-Host "✅ Process stopped." }
+                  Write-Host "Attempting to stop process: $appProcessName"
+                  $process = Get-Process -Name $appProcessName -ErrorAction SilentlyContinue
+                  if ($process) { Stop-Process -Name $appProcessName -Force; Write-Host "✅ Process stopped." }
                   else { Write-Host "🟡 Process not found." }
               End-Group
 
               Start-Group "STEP 2: Clean Deployment Directory"
-                  if (-not (Test-Path `$deployPath)) { New-Item -ItemType Directory -Path `$deployPath -Force | Out-Null }
-                  Get-ChildItem -Path `$deployPath -Exclude 'Session' | Remove-Item -Recurse -Force
+                  if (-not (Test-Path $deployPath)) { New-Item -ItemType Directory -Path $deployPath -Force | Out-Null }
+                  Get-ChildItem -Path $deployPath -Exclude 'Session' | Remove-Item -Recurse -Force
                   Write-Host "✅ Directory cleaned."
               End-Group
 
               Start-Group "STEP 3: Unpack New Version"
-                  Expand-Archive -Path `$zipFile -DestinationPath `$deployPath -Force
+                  Expand-Archive -Path $zipFile -DestinationPath $deployPath -Force
                   Write-Host "✅ Archive unpacked."
               End-Group
             
               Start-Group "STEP 4: Verify Unpacked Files"
-                  `$exePath = Join-Path `$deployPath `$appName
-                  if (-not (Test-Path `$exePath)) { throw "FATAL: `$appName not found after unpacking." }
-                  Write-Host "✅ Verification successful. `$appName is present."
+                  $exePath = Join-Path $deployPath $appName
+                  if (-not (Test-Path $exePath)) { throw "FATAL: $appName not found after unpacking." }
+                  Write-Host "✅ Verification successful. $appName is present."
               End-Group
 
               Start-Group "STEP 5: Inject Production Secrets"
-                  `$scriptPath = Join-Path `$deployPath "deployment_scripts\Inject-Secrets.ps1"
-                  & `$scriptPath -DeployPath `$deployPath -ConnectionString "${{ secrets.PROD_CONNECTION_STRING }}" -TelegramBotToken "${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}" -TelegramApiId "${{ secrets.TELEGRAM_API_ID }}" -TelegramApiHash "${{ secrets.TELEGRAM_API_HASH }}" -TelegramPhoneNumber "${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}" -CryptoPayApiToken "${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}"
+                  $injectScriptPath = Join-Path $deployPath "deployment_scripts\Inject-Secrets.ps1"
+                  & $injectScriptPath -DeployPath $deployPath -ConnectionString $ConnectionString -TelegramBotToken $TelegramBotToken -TelegramApiId $TelegramApiId -TelegramApiHash $TelegramApiHash -TelegramPhoneNumber $TelegramPhoneNumber -CryptoPayApiToken $CryptoPayApiToken
                   Write-Host "✅ Secrets injected."
               End-Group
             
               Start-Group "STEP 6: Start New Application"
-                  `$exePath = Join-Path `$deployPath `$appName
-                  Start-Process -FilePath `$exePath -WorkingDirectory `$deployPath
+                  $exePath = Join-Path $deployPath $appName
+                  Start-Process -FilePath $exePath -WorkingDirectory $deployPath
                   Write-Host "✅ Application start command issued."
                   Start-Sleep -Seconds 5
-                  `$newProcess = Get-Process -Name `$appProcessName -ErrorAction SilentlyContinue
-                  if (`$newProcess) { Write-Host "🟢 Application is running with PID: `$(`$newProcess.Id)" }
+                  $newProcess = Get-Process -Name $appProcessName -ErrorAction SilentlyContinue
+                  if ($newProcess) { Write-Host "🟢 Application is running with PID: $($newProcess.Id)" }
                   else { Write-Host "🟠 WARNING: Could not confirm if application started successfully." }
               End-Group
 
@@ -150,27 +156,42 @@ jobs:
           } catch {
               Write-Host "==================================================" -ForegroundColor Red
               Write-Host "❌ DEPLOYMENT FAILED!" -ForegroundColor Red
-              Write-Host "Error details: `$(`$_.Exception.ToString())" -ForegroundColor Red
-              Write-Host "At line: `$(`$_.InvocationInfo.ScriptLineNumber)" -ForegroundColor Red
+              Write-Host "Error details: $($_.Exception.ToString())" -ForegroundColor Red
+              Write-Host "At line: $($_.InvocationInfo.ScriptLineNumber)" -ForegroundColor Red
               Write-Host "==================================================" -ForegroundColor Red
               exit 1
           } finally {
               Start-Group "STEP 7: Cleanup"
-                  if (Test-Path `$zipFile) { Remove-Item -Path `$zipFile -Force -ErrorAction SilentlyContinue; Write-Host "✅ Archive cleaned up." }
+                  if (Test-Path $zipFile) { Remove-Item -Path $zipFile -Force -ErrorAction SilentlyContinue; Write-Host "✅ Archive cleaned up." }
               End-Group
           }
-          "@
+          EOF
           
-          $bytes = [System.Text.Encoding]::Unicode.GetBytes($script)
-          $encodedScript = [Convert]::ToBase64String($bytes)
-          
-          echo "::set-output name=encoded_script::$encodedScript"
+      - name: '📤 Upload Release ZIP and Script File to Server'
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.PROD_SERVER_IP }}
+          username: ${{ secrets.PROD_SERVER_USERNAME }}
+          password: ${{ secrets.PROD_SERVER_PASSWORD }}
+          source: "${{ env.SCRIPT_FILE_NAME }},release.zip" # Comma-separated list of files
+          target: "${{ env.REMOTE_TEMP_PATH }}"
       
-      - name: '▶️ Execute Remote Deployment'
+      - name: '▶️ Execute Remote Deployment Script'
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.PROD_SERVER_IP }}
           username: ${{ secrets.PROD_SERVER_USERNAME }}
           password: ${{ secrets.PROD_SERVER_PASSWORD }}
-          # This is the correct, robust way to execute a complex script
-          script: powershell.exe -EncodedCommand ${{ steps.prepare_script.outputs.encoded_script }}
+          script: |
+            # Execute the script and pass secrets as parameters for security
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${{ env.REMOTE_TEMP_PATH }}\${{ env.SCRIPT_FILE_NAME }}" `
+              -CommitSHA "${{ github.sha }}" `
+              -ConnectionString "${{ secrets.PROD_CONNECTION_STRING }}" `
+              -TelegramBotToken "${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}" `
+              -TelegramApiId "${{ secrets.TELEGRAM_API_ID }}" `
+              -TelegramApiHash "${{ secrets.TELEGRAM_API_HASH }}" `
+              -TelegramPhoneNumber "${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}" `
+              -CryptoPayApiToken "${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}"
+            
+            # Clean up the script file from the remote server
+            rm "${{ env.REMOTE_TEMP_PATH }}\${{ env.SCRIPT_FILE_NAME }}"

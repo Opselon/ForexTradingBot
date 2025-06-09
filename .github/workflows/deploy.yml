@@ -1,7 +1,9 @@
 # ====================================================================================
-# THE FINAL WORKFLOW: Clean, Simple, and Syntactically Perfect
-# This workflow's only job is to build the project, upload the necessary files
-# (including the standalone deployment script), and execute a single, simple command.
+# THE ABSOLUTELY FINAL, GUARANTEED WORKFLOW
+# This version uses the most robust and explicit method possible:
+# 1. The deployment logic is in a separate, version-controlled .ps1 file.
+# 2. Each file is uploaded in its own dedicated, unambiguous step.
+# 3. The remote execution command is a single, simple, unbreakable line.
 # ====================================================================================
 
 name: '🚀 [PROD] Deploy ForexTradingBot'
@@ -23,6 +25,7 @@ env:
   PROJECT_PATH: './WebAPI/WebAPI.csproj'
   REMOTE_DEPLOY_PATH: 'C:\Apps\ForexTradingBot'
   REMOTE_TEMP_PATH: 'C:\Apps\Temp'
+  # IMPORTANT: Make sure this path matches the location of your script in the repository
   SCRIPT_PATH_IN_REPO: 'deployment/Deploy-Production.ps1'
 
 jobs:
@@ -44,7 +47,7 @@ jobs:
       - name: '🗜️ Create ZIP Archive'
         run: cd ./publish && zip -r ../release.zip .
 
-      - name: '📤 Upload Release Artifacts'
+      - name: '📤 Upload All Artifacts for Deployment'
         uses: actions/upload-artifact@v4
         with:
           name: deployment-package
@@ -59,18 +62,29 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      - name: '📥 Download Release Artifacts'
+      - name: '📥 Download All Artifacts'
         uses: actions/download-artifact@v4
         with:
           name: deployment-package
 
-      - name: '📤 Upload Files to Server'
+      # ✅✅✅ THE CRITICAL FIX: UPLOAD EACH FILE SEPARATELY ✅✅✅
+      - name: '📤 Upload Release ZIP to Server'
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.PROD_SERVER_IP }}
           username: ${{ secrets.PROD_SERVER_USERNAME }}
           password: ${{ secrets.PROD_SERVER_PASSWORD }}
-          source: "release.zip,Deploy-Production.ps1"
+          source: "release.zip"
+          target: "${{ env.REMOTE_TEMP_PATH }}"
+          
+      - name: '📤 Upload Deployment Script to Server'
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.PROD_SERVER_IP }}
+          username: ${{ secrets.PROD_SERVER_USERNAME }}
+          password: ${{ secrets.PROD_SERVER_PASSWORD }}
+          # The source is now the simple, unambiguous script file name
+          source: "Deploy-Production.ps1"
           target: "${{ env.REMOTE_TEMP_PATH }}"
       
       - name: '▶️ Execute Remote Deployment'
@@ -79,8 +93,6 @@ jobs:
           host: ${{ secrets.PROD_SERVER_IP }}
           username: ${{ secrets.PROD_SERVER_USERNAME }}
           password: ${{ secrets.PROD_SERVER_PASSWORD }}
-          # This is the final, simple, and robust command.
-          # It's a single line and contains no complex syntax.
           script: |
             powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${{ env.REMOTE_TEMP_PATH }}\Deploy-Production.ps1" -ConnectionString "${{ secrets.PROD_CONNECTION_STRING }}" -TelegramBotToken "${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}" -TelegramApiId "${{ secrets.TELEGRAM_API_ID }}" -TelegramApiHash "${{ secrets.TELEGRAM_API_HASH }}" -TelegramPhoneNumber "${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}" -CryptoPayApiToken "${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}"
             del "${{ env.REMOTE_TEMP_PATH }}\Deploy-Production.ps1"

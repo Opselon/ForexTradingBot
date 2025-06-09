@@ -8,79 +8,93 @@ on:
 jobs:
   # JOB 1: Build the application and create a ZIP file
   build:
-    name: '✅ 1. Build & Package Application'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: 'Setup .NET 9 SDK'
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '9.0.x'
-          dotnet-quality: 'preview'
+  name: '✅ 1. Build & Package Application'
+  runs-on: ubuntu-latest
+  steps:
+    - uses: actions/checkout@v4
+    - name: 'Setup .NET 9 SDK'
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '9.0.x'
+        dotnet-quality: 'preview'
 
-      - name: Publish WebAPI Project
-        # This creates a folder named 'publish' with all the files
-        run: dotnet publish ./WebAPI/WebAPI.csproj -c Release -o ./publish
+    # --- THIS IS THE CORRECTED STEP ---
+    - name: Publish WebAPI Project for Windows
+      # We specify the runtime 'win-x64' and make it self-contained
+      # This ensures an .exe file is created
+      run: dotnet publish ./WebAPI/WebAPI.csproj -c Release -o ./publish -r win-x64 --self-contained true
 
-      - name: 'Create ZIP file from publish folder' # ✅ NEW, CORRECTED STEP
-        # This command goes inside the 'publish' folder and zips its contents
-        run: |
-          cd ./publish
-          zip -r ../release.zip .
-      
-      - name: 'Upload Release ZIP as Artifact'
-        uses: actions/upload-artifact@v4
-        with:
-          name: forex-bot-release
-          path: release.zip # Now we are correctly uploading a .zip file
+    - name: 'Create ZIP file from publish folder'
+      run: |
+        cd ./publish
+        zip -r ../release.zip .
+    
+    - name: 'Upload Release ZIP as Artifact'
+      uses: actions/upload-artifact@v4
+      with:
+        name: forex-bot-release
+        path: release.zip
 
   # JOB 2: Deploy the ZIP file to your Windows Server
   deploy:
-    name: '🚢 2. Deploy to Windows VPS'
-    needs: build
-    runs-on: ubuntu-latest
+  name: '🚢 2. Deploy to Windows VPS'
+  needs: build
+  runs-on: ubuntu-latest
 
-    env:
-      REMOTE_DEPLOY_PATH: "C:\\Apps\\ForexTradingBot"
-      REMOTE_TEMP_PATH: "C:\\Apps\\Temp"
+  env:
+    REMOTE_DEPLOY_PATH: "C:\\Apps\\ForexTradingBot"
+    REMOTE_TEMP_PATH: "C:\\Apps\\Temp"
 
-    steps:
-    - name: Download Build Artifact
-      uses: actions/download-artifact@v4
-      with:
-        name: forex-bot-release # This will download release.zip
+  steps:
+  - name: Download Build Artifact
+    uses: actions/download-artifact@v4
+    with:
+      name: forex-bot-release
 
-    - name: 'Upload Release ZIP to Server'
-      uses: appleboy/scp-action@master
-      with:
-        host: ${{ secrets.PROD_SERVER_IP }}
-        username: ${{ secrets.PROD_SERVER_USERNAME }}
-        password: ${{ secrets.PROD_SERVER_PASSWORD }}
-        source: "release.zip" # We are now correctly sending the .zip file
-        target: "${{ env.REMOTE_TEMP_PATH }}"
+  - name: 'Upload Release ZIP to Server'
+    uses: appleboy/scp-action@master
+    with:
+      host: ${{ secrets.PROD_SERVER_IP }}
+      username: ${{ secrets.PROD_SERVER_USERNAME }}
+      password: ${{ secrets.PROD_SERVER_PASSWORD }}
+      source: "release.zip"
+      target: "${{ env.REMOTE_TEMP_PATH }}"
 
-    - name: 'Execute Deployment Script on Server'
-      uses: appleboy/ssh-action@master
-      with:
-        host: ${{ secrets.PROD_SERVER_IP }}
-        username: ${{ secrets.PROD_SERVER_USERNAME }}
-        password: ${{ secrets.PROD_SERVER_PASSWORD }}
-        script: |
-          echo [Step 1/5] Stopping WebAPI.exe process...
-          taskkill /IM WebAPI.exe /F 2>nul || echo No process found.
-          timeout /t 3
+  - name: 'Execute Deployment Script on Server'
+    uses: appleboy/ssh-action@master
+    with:
+      host: ${{ secrets.PROD_SERVER_IP }}
+      username: ${{ secrets.PROD_SERVER_USERNAME }}
+      password: ${{ secrets.PROD_SERVER_PASSWORD }}
+      script: |
+        echo [Step 1/7] Ensuring directories exist...
+        powershell -Command "New-Item -ItemType Directory -Path '${{ env.REMOTE_TEMP_PATH }}' -Force"
+        powershell -Command "New-Item -ItemType Directory -Path '${{ env.REMOTE_DEPLOY_PATH }}' -Force"
+        
+        echo [Step 2/7] Stopping WebAPI.exe process...
+        taskkill /IM WebAPI.exe /F 2>nul || echo 'WebAPI.exe not found or already stopped. Continuing...'
+        timeout /t 3
 
-          echo [Step 2/5] Cleaning deployment directory (preserving Session)...
-          powershell -Command "if (Test-Path '${{ env.REMOTE_DEPLOY_PATH }}') { Get-ChildItem -Path '${{ env.REMOTE_DEPLOY_PATH }}' -Exclude 'Session' | Remove-Item -Recurse -Force }"
-          
-          echo [Step 3/5] Unpacking new application version...
-          powershell -Command "Expand-Archive -Path '${{ env.REMOTE_TEMP_PATH }}\\release.zip' -DestinationPath '${{ env.REMOTE_DEPLOY_PATH }}' -Force"
+        echo [Step 3/7] Cleaning deployment directory (preserving 'Session' folder)...
+        powershell -Command "if (Test-Path '${{ env.REMOTE_DEPLOY_PATH }}') { Get-ChildItem -Path '${{ env.REMOTE_DEPLOY_PATH }}' -Exclude 'Session' | Remove-Item -Recurse -Force }"
+        
+        echo [Step 4/7] Verifying uploaded ZIP file...
+        powershell -Command "Get-ChildItem -Path '${{ env.REMOTE_TEMP_PATH }}' | Select-Object Name, Length"
 
-          echo [Step 4/5] Injecting production secrets...
-          powershell -File "C:\\Apps\\ForexTradingBot\\deployment_scripts\\Inject-Secrets.ps1" -DeployPath "${{ env.REMOTE_DEPLOY_PATH }}" -ConnectionString "${{ secrets.PROD_CONNECTION_STRING }}" -TelegramBotToken "${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}" -TelegramApiId "${{ secrets.TELEGRAM_API_ID }}" -TelegramApiHash "${{ secrets.TELEGRAM_API_HASH }}" -TelegramPhoneNumber "${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}" -CryptoPayApiToken "${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}"
-          
-          echo [Step 5/5] Starting new WebAPI.exe process...
-          cd "${{ env.REMOTE_DEPLOY_PATH }}"
-          start "" "WebAPI.exe"
+        echo [Step 5/7] Unpacking new application version...
+        powershell -Command "Expand-Archive -Path '${{ env.REMOTE_TEMP_PATH }}\\release.zip' -DestinationPath '${{ env.REMOTE_DEPLOY_PATH }}' -Force"
 
-          echo --- Deployment Successful ---
+        echo [Step 6/7] Verifying unpacked files...
+        powershell -Command "Get-ChildItem -Path '${{ env.REMOTE_DEPLOY_PATH }}' | Select-Object Name"
+
+        echo [Step 7/7] Injecting production secrets...
+        powershell -File "${{ env.REMOTE_DEPLOY_PATH }}\\deployment_scripts\\Inject-Secrets.ps1" -DeployPath "${{ env.REMOTE_DEPLOY_PATH }}" -ConnectionString "${{ secrets.PROD_CONNECTION_STRING }}" -TelegramBotToken "${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}" -TelegramApiId "${{ secrets.TELEGRAM_API_ID }}" -TelegramApiHash "${{ secrets.TELEGRAM_API_HASH }}" -TelegramPhoneNumber "${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}" -CryptoPayApiToken "${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}"
+        
+        echo [Step 8/7] Starting new WebAPI.exe process...
+        cd "${{ env.REMOTE_DEPLOY_PATH }}"
+        start "" "WebAPI.exe"
+
+        echo [Step 9/7] Cleaning up temporary zip file...
+        powershell -Command "Remove-Item -Path '${{ env.REMOTE_TEMP_PATH }}\\release.zip' -Force"
+
+        echo --- Deployment Successful ---

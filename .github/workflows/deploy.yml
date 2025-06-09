@@ -1,7 +1,7 @@
 # ====================================================================================
-# FINAL, BULLETPROOF VERSION: Script Upload Method
-# This workflow is guaranteed to work by creating the deployment script locally,
-# uploading it, and then executing it remotely with a very short command.
+# FINAL, SIMPLIFIED & BULLETPROOF VERSION: Script Upload Method
+# This version hardcodes the non-sensitive paths directly into the script
+# to avoid any parameter passing issues with the ssh-action.
 # ====================================================================================
 
 name: '🚀 [PROD] Deploy ForexTradingBot'
@@ -21,14 +21,13 @@ concurrency:
 env:
   DOTNET_VERSION: '9.0.x'
   PROJECT_PATH: './WebAPI/WebAPI.csproj'
+  # We still define paths here for consistency, but they'll be hardcoded in the script.
   REMOTE_DEPLOY_PATH: 'C:\Apps\ForexTradingBot'
   REMOTE_TEMP_PATH: 'C:\Apps\Temp'
-  SCRIPT_FILE_NAME: 'deploy.ps1' # The name of our deployment script
+  SCRIPT_FILE_NAME: 'deploy.ps1'
 
 jobs:
-  # ====================================================================
-  # JOB 1: Build & Package
-  # ====================================================================
+  # ... (Job 'build' remains exactly the same) ...
   build:
     name: '✅ 1. Build & Package'
     runs-on: ubuntu-latest
@@ -50,7 +49,7 @@ jobs:
           retention-days: 1
 
   # ====================================================================
-  # JOB 2: Deploy to Server
+  # JOB 2: Deploy to Server - Corrected Version
   # ====================================================================
   deploy:
     name: '🚢 2. Deploy to Production VPS'
@@ -66,13 +65,10 @@ jobs:
       - name: '📝 Create Local PowerShell Deployment Script'
         shell: bash
         run: |
-          # We create the script file locally on the runner.
-          # It accepts all secrets as parameters for maximum security and flexibility.
           cat << 'EOF' > ${{ env.SCRIPT_FILE_NAME }}
           # This script will be uploaded to and executed on the remote Windows server.
+          # SECRETS are passed as parameters. Paths are defined locally.
           param(
-              [string]$DeployPath,
-              [string]$TempPath,
               [string]$ConnectionString,
               [string]$TelegramBotToken,
               [string]$TelegramApiId,
@@ -80,6 +76,11 @@ jobs:
               [string]$TelegramPhoneNumber,
               [string]$CryptoPayApiToken
           )
+
+          # --- DEFINE PATHS LOCALLY ---
+          $DeployPath     = "C:\Apps\ForexTradingBot"
+          $TempPath       = "C:\Apps\Temp"
+          # --- END OF PATHS ---
 
           $ErrorActionPreference = 'Stop'
           $appName = "WebAPI"
@@ -89,9 +90,7 @@ jobs:
           try {
               Write-Host "--- [1/7] Stopping Service ($appName) ---"
               $process = Get-Process -Name $appName -ErrorAction SilentlyContinue
-              if ($process) { Stop-Process -Name $appName -Force; Write-Host '✅ Service stopped.' }
-              else { Write-Host '🟡 Service not running.' }
-              Start-Sleep -Seconds 3
+              if ($process) { Stop-Process -Name $appName -Force; Write-Host '✅ Service stopped.' } else { Write-Host '🟡 Service not running.' }
 
               Write-Host "--- [2/7] Cleaning Directory ($DeployPath) ---"
               if (-not (Test-Path $DeployPath)) { New-Item -ItemType Directory -Path $DeployPath -Force | Out-Null }
@@ -139,7 +138,7 @@ jobs:
           host: ${{ secrets.PROD_SERVER_IP }}
           username: ${{ secrets.PROD_SERVER_USERNAME }}
           password: ${{ secrets.PROD_SERVER_PASSWORD }}
-          source: "${{ env.SCRIPT_FILE_NAME }},release.zip" # Upload both files
+          source: "${{ env.SCRIPT_FILE_NAME }},release.zip"
           target: "${{ env.REMOTE_TEMP_PATH }}"
       
       - name: '▶️ Execute Remote Deployment Script'
@@ -148,17 +147,8 @@ jobs:
           host: ${{ secrets.PROD_SERVER_IP }}
           username: ${{ secrets.PROD_SERVER_USERNAME }}
           password: ${{ secrets.PROD_SERVER_PASSWORD }}
-          # This is now a very short, clean, and unbreakable command.
+          # The script is now much shorter and more robust.
+          # No backticks needed, which prevents interpretation errors.
           script: |
-            powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${{ env.REMOTE_TEMP_PATH }}\${{ env.SCRIPT_FILE_NAME }}" `
-              -DeployPath "${{ env.REMOTE_DEPLOY_PATH }}" `
-              -TempPath "${{ env.REMOTE_TEMP_PATH }}" `
-              -ConnectionString "${{ secrets.PROD_CONNECTION_STRING }}" `
-              -TelegramBotToken "${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}" `
-              -TelegramApiId "${{ secrets.TELEGRAM_API_ID }}" `
-              -TelegramApiHash "${{ secrets.TELEGRAM_API_HASH }}" `
-              -TelegramPhoneNumber "${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}" `
-              -CryptoPayApiToken "${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}"
-            
-            # Clean up the script file itself after execution
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${{ env.REMOTE_TEMP_PATH }}\${{ env.SCRIPT_FILE_NAME }}" -ConnectionString "${{ secrets.PROD_CONNECTION_STRING }}" -TelegramBotToken "${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}" -TelegramApiId "${{ secrets.TELEGRAM_API_ID }}" -TelegramApiHash "${{ secrets.TELEGRAM_API_HASH }}" -TelegramPhoneNumber "${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}" -CryptoPayApiToken "${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}"
             rm "${{ env.REMOTE_TEMP_PATH }}\${{ env.SCRIPT_FILE_NAME }}"

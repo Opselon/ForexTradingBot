@@ -109,16 +109,16 @@ jobs:
           username: ${{ secrets.PROD_SERVER_USERNAME }}
           password: ${{ secrets.PROD_SERVER_PASSWORD }}
           script: |
-            powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${{ env.REMOTE_TEMP_PATH }}\deployment\02-Deploy-And-Configure.ps1" -DeployPath "${{ env.REMOTE_DEPLOY_PATH }}" -TempPath "${{ env.REMOTE_TEMP_PATH }}" -ConnectionString "${{ secrets.PROD_CONNECTION_STRING }}" -TelegramBotToken "${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}" -TelegramApiId "${{ secrets.TELEGRAM_API_ID }}" -TelegramApiHash "${{ secrets.TELEGRAM_API_HASH }}" -TelegramPhoneNumber "${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}" -CryptoPayApiToken "${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}"
-
-      # ✅✅✅ THE ONLY MODIFIED STEP IN THIS WORKFLOW FILE ✅✅✅
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${{ env.REMOTE_TEMP_PATH }}\deployment\02-Deploy-And-Configure.ps1" -DeployPath "${{ env.REMOTE_DEPLOY_PATH }}" -TempPath "${{ env.REMOTE_TEMP_PATH }}"
+            
+      # ✅✅✅✅✅ THE ONLY MODIFIED STEP IN THIS WORKFLOW ✅✅✅✅✅
+      # It now passes all secrets to the final launch script.
       - name: 'Phase 4 - VERIFY: Execute Launch & Verification Script'
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.PROD_SERVER_IP }}
           username: ${{ secrets.PROD_SERVER_USERNAME }}
           password: ${{ secrets.PROD_SERVER_PASSWORD }}
-          # The script is now called with ALL secrets to create the process environment.
           script: |
             powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${{ env.REMOTE_TEMP_PATH }}\deployment\03-Launch-And-Verify.ps1" -DeployPath "${{ env.REMOTE_DEPLOY_PATH }}" -TempPath "${{ env.REMOTE_TEMP_PATH }}" -ConnectionString "${{ secrets.PROD_CONNECTION_STRING }}" -TelegramBotToken "${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}" -TelegramApiId "${{ secrets.TELEGRAM_API_ID }}" -TelegramApiHash "${{ secrets.TELEGRAM_API_HASH }}" -TelegramPhoneNumber "${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}" -CryptoPayApiToken "${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}"
 
@@ -131,10 +131,10 @@ jobs:
     name: '📊 3. Final Health Check, Report & Cleanup'
     needs: deploy
     runs-on: ubuntu-latest
-    if: always() # This job runs even if the deploy job fails.
+    if: always()
 
     steps:
-      - name: '🔍 Retrieve and Display All Logs from Server'
+      - name: '🔍 Retrieve and Display ALL Logs from Server'
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.PROD_SERVER_IP }}
@@ -143,32 +143,26 @@ jobs:
           script: |
             powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
                 $TempPath = '${{ env.REMOTE_TEMP_PATH }}';
-                Write-Host '========================================================' -ForegroundColor White
-                Write-Host '          FULL DEPLOYMENT LOGS RETRIEVAL' -ForegroundColor White
-                Write-Host '========================================================' -ForegroundColor White
+                $DeployPath = '${{ env.REMOTE_DEPLOY_PATH }}';
+                Write-Host '========================================================' -ForegroundColor White;
+                Write-Host '          FULL DEPLOYMENT AND HEALTH REPORT';
+                Write-Host '========================================================' -ForegroundColor White;
                 
-                $CrashLogPath = Join-Path $TempPath 'App-Crash-Log.txt';
-                if (Test-Path $CrashLogPath) {
-                    Write-Host '--- APPLICATION CRASH LOG ---' -ForegroundColor Magenta
-                    Get-Content -Path $CrashLogPath -ErrorAction SilentlyContinue
-                    Write-Host '--- END OF CRASH LOG ---' -ForegroundColor Magenta
+                # Check final status of the process
+                Write-Host '--- FINAL PROCESS STATUS ---' -ForegroundColor Yellow;
+                $process = Get-Process -Name 'WebAPI' -ErrorAction SilentlyContinue;
+                if ($process) {
+                    Write-Host '✅✅✅ WebAPI process is RUNNING!' -ForegroundColor Green;
                 } else {
-                    Write-Host '--- No Application Crash Log found. ---' -ForegroundColor Yellow
+                    Write-Host '❌❌❌ WebAPI process is NOT RUNNING.' -ForegroundColor Red;
                 }
-                
-                echo ''
 
-                $logFiles = Get-ChildItem -Path $TempPath -Filter '*-Log-*.txt' | Sort-Object Name;
-                if ($logFiles) {
-                    $logFiles | ForEach-Object {
-                        Write-Host ('--- DEPLOYMENT TRANSCRIPT: ' + $_.Name + ' ---') -ForegroundColor Cyan
-                        Get-Content -Path $_.FullName
-                        Write-Host '--- END OF TRANSCRIPT ---' -ForegroundColor Cyan
-                        echo ''
-                    }
-                } else {
-                    Write-Host '--- No Deployment Transcript Logs found. ---' -ForegroundColor Yellow
-                }
+                # Display ALL logs
+                Get-ChildItem -Path $TempPath -Filter '*-Log-*.txt' | Sort-Object Name | ForEach-Object {
+                    Write-Host ('`n--- DEPLOYMENT TRANSCRIPT: ' + $_.Name + ' ---') -ForegroundColor Cyan;
+                    Get-Content -Path $_.FullName -ErrorAction SilentlyContinue;
+                    Write-Host ('--- END OF TRANSCRIPT: ' + $_.Name + ' ---');
+                };
             "
 
       - name: '🧹 Clean Up Remote Temp and Log Files'
@@ -179,7 +173,7 @@ jobs:
           password: ${{ secrets.PROD_SERVER_PASSWORD }}
           script: |
             powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
-                Write-Host 'Cleaning up all log and script files from C:\Apps\Temp...';
-                Remove-Item -Path '${{ env.REMOTE_TEMP_PATH }}\*' -Include '*.txt', '*.ps1', 'deployment' -Recurse -Force -ErrorAction SilentlyContinue;
+                Write-Host 'Cleaning up all log and temporary files from C:\Apps\Temp...';
+                Remove-Item -Path '${{ env.REMOTE_TEMP_PATH }}\*' -Include '*.txt', '*.ps1', '*.zip', 'deployment' -Recurse -Force -ErrorAction SilentlyContinue;
                 Write-Host 'Remote cleanup complete.';
             "

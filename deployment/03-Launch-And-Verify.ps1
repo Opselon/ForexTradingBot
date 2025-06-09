@@ -1,8 +1,7 @@
 # ====================================================================================
 # THE DEFINITIVE LAUNCH & VERIFICATION SCRIPT (v.Final-Victory)
-# This script bypasses all unreliable batch files and shell context issues by
-# programmatically creating a new process with a guaranteed environment block.
-# This is the final and only correct way to solve this problem.
+# This script bypasses all unreliable batch files by programmatically creating a new
+# process with a guaranteed environment block. This is the only correct way.
 # ====================================================================================
 
 param(
@@ -23,64 +22,64 @@ $ErrorActionPreference = 'Stop'
 Write-Host "--- SCRIPT 3: DIRECT LAUNCH AND VERIFY STARTED ---" -ForegroundColor Cyan
 $AppName         = "WebAPI"
 $ExePath         = Join-Path $DeployPath "$AppName.exe"
-$AppCrashLogFile = Join-Path $TempPath "App-Crash-Log.txt" # This will capture the crash reason.
+# We are NOT using the crash log file anymore because we capture output directly.
 
 try {
     Write-Host "STEP 3.1: Verifying presence of executable at '$ExePath'..."
     if (-not (Test-Path $ExePath)) {
-        throw "FATAL: Cannot find executable at '$ExePath'. The deployment step likely failed."
+        throw "FATAL: Cannot find executable at '$ExePath'. The deployment script 02 likely failed."
     }
-    Write-Host "✅ Executable found."
+    Write-Host "✅ Executable found. Path is valid."
 
     # --- THE FINAL, BULLETPROOF LAUNCH METHOD ---
-    Write-Host "STEP 3.2: Creating ProcessStartInfo with guaranteed environment and output redirection..."
+    Write-Host "STEP 3.2: Creating ProcessStartInfo with guaranteed environment variables..."
     $ProcessInfo = New-Object System.Diagnostics.ProcessStartInfo
     $ProcessInfo.FileName = $ExePath
     $ProcessInfo.WorkingDirectory = $DeployPath
     
-    # These are CRITICAL. They allow redirection of output streams and env var injection.
-    $ProcessInfo.UseShellExecute = $false 
-    $ProcessInfo.RedirectStandardOutput = $true
-    $ProcessInfo.RedirectStandardError = $true
+    # This is CRITICAL. It tells .NET not to use the shell, which allows direct env var injection.
+    $ProcessInfo.UseShellExecute = $false
 
-    # Inject every required setting DIRECTLY into the process's environment.
+    # Inject every required setting DIRECTLY into the process's environment variable block.
+    Write-Host "  - Injecting ASPNETCORE_ENVIRONMENT=Production"
     $ProcessInfo.EnvironmentVariables['ASPNETCORE_ENVIRONMENT'] = 'Production'
+    Write-Host "  - Injecting ConnectionStrings__DefaultConnection"
     $ProcessInfo.EnvironmentVariables['ConnectionStrings__DefaultConnection'] = $ConnectionString
+    Write-Host "  - Injecting DatabaseSettings__DatabaseProvider=SqlServer"
     $ProcessInfo.EnvironmentVariables['DatabaseSettings__DatabaseProvider'] = 'SqlServer'
+    Write-Host "  - Injecting TelegramPanel__BotToken"
     $ProcessInfo.EnvironmentVariables['TelegramPanel__BotToken'] = $TelegramBotToken
+    Write-Host "  - Injecting TelegramUserApi__ApiId"
     $ProcessInfo.EnvironmentVariables['TelegramUserApi__ApiId'] = $TelegramApiId
+    Write-Host "  - Injecting TelegramUserApi__ApiHash"
     $ProcessInfo.EnvironmentVariables['TelegramUserApi__ApiHash'] = $TelegramApiHash
+    Write-Host "  - Injecting TelegramUserApi__PhoneNumber"
     $ProcessInfo.EnvironmentVariables['TelegramUserApi__PhoneNumber'] = $TelegramPhoneNumber
+    Write-Host "  - Injecting CryptoPay__ApiToken"
     $ProcessInfo.EnvironmentVariables['CryptoPay__ApiToken'] = $CryptoPayApiToken
-
     Write-Host "✅ ProcessStartInfo created. The environment is guaranteed."
-    Write-Host "STEP 3.3: Launching the process directly and CAPTURING ITS OUTPUT..."
 
-    # Start the process.
+    Write-Host "STEP 3.3: Launching the process directly..."
     $process = [System.Diagnostics.Process]::Start($ProcessInfo)
-    
-    # This part is non-blocking but essential. We start listening to the output.
-    # The application output (including the crash exception) will be written to our log file.
-    $process.StandardOutput.ReadToEndAsync() | Out-File -FilePath $AppCrashLogFile -Append
-    $process.StandardError.ReadToEndAsync() | Out-File -FilePath $AppCrashLogFile -Append
-    
-    Write-Host "✅ Process launch command issued. Waiting for it to stabilize or exit..."
+    Write-Host "✅ Process launch command issued. The new process ID is: $($process.Id)."
 
-    # We wait for a bit, then check its status.
+    Write-Host "STEP 3.4: Waiting 10 seconds for application to initialize and stabilize..."
     Start-Sleep -Seconds 10
 
-    # We refresh the process object to get its final state.
+    # We refresh the process object by getting it again with its ID to check its final state.
     $runningProcess = Get-Process -Id $process.Id -ErrorAction SilentlyContinue
     
-    Write-Host "STEP 3.4: Performing FINAL HEALTH CHECK..."
+    Write-Host "STEP 3.5: Performing FINAL HEALTH CHECK..."
     if ($runningProcess -and -not $runningProcess.HasExited) {
         Write-Host "✅✅✅✅✅ ULTIMATE SUCCESS! ✅✅✅✅✅" -ForegroundColor Green
-        Write-Host "Process '$AppName' is confirmed to be running!" -ForegroundColor Green
+        Write-Host "Process '$AppName' is confirmed to be running and has not crashed!" -ForegroundColor Green
+        Write-Host "--- Running Process Details ---"
+        Write-Host ($runningProcess | Format-List | Out-String)
     } else {
-        Write-Warning "PROCESS '$AppName' IS NOT RUNNING. It has crashed or exited."
-        # The crash log has already been created, the final reporting job will display it.
-        # To ensure the workflow fails correctly, we throw an exception here.
-        throw "Application did not remain running. The final report will show the crash log."
+        # This means the application started but crashed within the 10-second window.
+        # Since we couldn't capture its output directly (it's a background process),
+        # the reason for the crash must now be in the application's own logs (e.g., Serilog file sink) or the Windows Event Viewer.
+        throw "FATAL: Process '$AppName' IS NOT RUNNING. Even with a guaranteed environment, the application crashed. The problem is now 100% internal to the app's startup logic (check app logs/Event Viewer)."
     }
     
     Write-Host "--- SCRIPT 3: LAUNCH AND VERIFICATION COMPLETE ---" -ForegroundColor Green

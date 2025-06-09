@@ -1,7 +1,7 @@
 # ====================================================================================
-# FINAL GUARANTEED v3: Wrapper Script Method
-# This method creates a .bat file on the server that sets environment variables
-# and then runs the app, bypassing all process inheritance issues.
+# FINAL GUARANTEED v4: Wrapper Script Method - NO COMMENTS
+# This version removes all comments from the ssh-action script block, which was
+# the root cause of the recurring 'not recognized' error on CMD.exe.
 # ====================================================================================
 
 name: '🚀 [PROD] Deploy ForexTradingBot'
@@ -25,7 +25,6 @@ env:
   REMOTE_TEMP_PATH: 'C:\Apps\Temp'
 
 jobs:
-  # ... (Job 'build' remains the same) ...
   build:
     name: '✅ 1. Build & Package'
     runs-on: ubuntu-latest
@@ -72,21 +71,16 @@ jobs:
           host: ${{ secrets.PROD_SERVER_IP }}
           username: ${{ secrets.PROD_SERVER_USERNAME }}
           password: ${{ secrets.PROD_SERVER_PASSWORD }}
+          # This script block contains NO comments and only CMD-compatible commands.
           script: |
-            # Step 1: Stop any existing process
             taskkill /IM WebAPI.exe /F 2>nul || echo No process to kill.
             
-            # Step 2: Clean directory
-            powershell -Command "Get-ChildItem -Path '${{ env.REMOTE_DEPLOY_PATH }}' -Exclude 'Session' | Remove-Item -Recurse -Force"
+            powershell -Command "if (Test-Path '${{ env.REMOTE_DEPLOY_PATH }}') { Get-ChildItem -Path '${{ env.REMOTE_DEPLOY_PATH }}' -Exclude 'Session' | Remove-Item -Recurse -Force }"
             
-            # Step 3: Unpack
             powershell -Command "Expand-Archive -Path '${{ env.REMOTE_TEMP_PATH }}\release.zip' -DestinationPath '${{ env.REMOTE_DEPLOY_PATH }}' -Force"
             
-            # Step 4: Create the launcher batch file
-            # We use CMD's echo to create the file, which is very robust.
             (
               echo @echo off
-              echo echo Setting environment variables...
               echo set ASPNETCORE_ENVIRONMENT=Production
               echo set ConnectionStrings__DefaultConnection=${{ secrets.PROD_CONNECTION_STRING }}
               echo set DatabaseSettings__DatabaseProvider=SqlServer
@@ -95,25 +89,21 @@ jobs:
               echo set TelegramUserApi__ApiHash=${{ secrets.TELEGRAM_API_HASH }}
               echo set TelegramUserApi__PhoneNumber=${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}
               echo set CryptoPay__ApiToken=${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}
-              echo.
-              echo echo Starting WebAPI...
               echo cd /d "${{ env.REMOTE_DEPLOY_PATH }}"
               echo start "" "WebAPI.exe"
             ) > "${{ env.REMOTE_DEPLOY_PATH }}\start-app.bat"
             
-            # Step 5: Execute the launcher batch file
-            echo Executing the launcher...
-            "${{ env.REMOTE_DEPLOY_PATH }}\start-app.bat"
+            call "${{ env.REMOTE_DEPLOY_PATH }}\start-app.bat"
             
-            # Step 6: Wait and verify if the process is running
-            echo Waiting for 5 seconds...
-            timeout /t 5
-            tasklist /FI "IMAGENAME eq WebAPI.exe" | find "WebAPI.exe"
-            if %errorlevel% neq 0 (
-              echo ERROR: WebAPI.exe is not running after start!
-              exit 1
+            timeout /t 5 >nul
+
+            tasklist /FI "IMAGENAME eq WebAPI.exe" | find "WebAPI.exe" >nul
+            if errorlevel 1 (
+              echo ERROR: WebAPI.exe did not start successfully.
+              exit /b 1
             )
-            echo SUCCESS: WebAPI.exe is running.
             
-            # Step 7: Cleanup
+            echo SUCCESS: WebAPI.exe is confirmed to be running.
+            
             del "${{ env.REMOTE_TEMP_PATH }}\release.zip"
+            del "${{ env.REMOTE_DEPLOY_PATH }}\start-app.bat"

@@ -125,16 +125,6 @@ GO
                 // NOTE: We assume the default Hangfire schema name '[HangFire]'.
                 // If you customized it, you must change it here too.
                 const string sql = @"
-                    TRUNCATE TABLE [HangFire].[JobParameter];
-                    TRUNCATE TABLE [HangFire].[JobQueue];
-                    TRUNCATE TABLE [HangFire].[List];
-                    TRUNCATE TABLE [HangFire].[Set];
-                    TRUNCATE TABLE [HangFire].[State];
-                    TRUNCATE TABLE [HangFire].[AggregatedCounter];
-                    TRUNCATE TABLE [HangFire].[Counter];
-                    TRUNCATE TABLE [HangFire].[Hash];
-                    DELETE FROM [HangFire].[Job];
-                    DBCC CHECKIDENT ('[HangFire].[Job]', RESEED, 0);
                 ";
 
                 // ✅ CORRECTED: Create a new connection using the provided string.

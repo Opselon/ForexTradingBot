@@ -1,12 +1,14 @@
 # ====================================================================================
 # THE DEFINITIVE LAUNCH & VERIFICATION SCRIPT (v.Final-Victory)
-# This script executes the application DIRECTLY, without any unreliable batch files.
-# It uses robust process creation with full output redirection to capture the crash reason.
+# This script bypasses all unreliable batch files and shell context issues by
+# programmatically creating a new process with a guaranteed environment block.
 # This is the final and only correct way to solve this problem.
 # ====================================================================================
+
 param(
     [string]$DeployPath,
     [string]$TempPath,
+    # These parameters are now passed directly to this script to create the process environment.
     [string]$ConnectionString,
     [string]$TelegramBotToken,
     [string]$TelegramApiId,
@@ -21,7 +23,7 @@ $ErrorActionPreference = 'Stop'
 Write-Host "--- SCRIPT 3: DIRECT LAUNCH AND VERIFY STARTED ---" -ForegroundColor Cyan
 $AppName         = "WebAPI"
 $ExePath         = Join-Path $DeployPath "$AppName.exe"
-$AppCrashLogFile = Join-Path $TempPath "App-Crash-Log.txt"
+$AppCrashLogFile = Join-Path $TempPath "App-Crash-Log.txt" # This will capture the crash reason.
 
 try {
     Write-Host "STEP 3.1: Verifying presence of executable at '$ExePath'..."
@@ -31,12 +33,12 @@ try {
     Write-Host "✅ Executable found."
 
     # --- THE FINAL, BULLETPROOF LAUNCH METHOD ---
-    Write-Host "STEP 3.2: Creating ProcessStartInfo with guaranteed environment and redirection..."
+    Write-Host "STEP 3.2: Creating ProcessStartInfo with guaranteed environment and output redirection..."
     $ProcessInfo = New-Object System.Diagnostics.ProcessStartInfo
     $ProcessInfo.FileName = $ExePath
     $ProcessInfo.WorkingDirectory = $DeployPath
     
-    # This is CRITICAL. It allows redirection of output streams.
+    # These are CRITICAL. They allow redirection of output streams and env var injection.
     $ProcessInfo.UseShellExecute = $false 
     $ProcessInfo.RedirectStandardOutput = $true
     $ProcessInfo.RedirectStandardError = $true
@@ -51,30 +53,34 @@ try {
     $ProcessInfo.EnvironmentVariables['TelegramUserApi__PhoneNumber'] = $TelegramPhoneNumber
     $ProcessInfo.EnvironmentVariables['CryptoPay__ApiToken'] = $CryptoPayApiToken
 
-    Write-Host "✅ ProcessStartInfo created. The environment and output redirection are guaranteed."
-    Write-Host "STEP 3.3: Launching the process directly and waiting for it to exit..."
+    Write-Host "✅ ProcessStartInfo created. The environment is guaranteed."
+    Write-Host "STEP 3.3: Launching the process directly and CAPTURING ITS OUTPUT..."
 
+    # Start the process.
     $process = [System.Diagnostics.Process]::Start($ProcessInfo)
     
-    # Read the output streams and write them to the crash log file.
-    $process.StandardOutput.ReadToEnd() | Out-File -FilePath $AppCrashLogFile -Append
-    $process.StandardError.ReadToEnd() | Out-File -FilePath $AppCrashLogFile -Append
+    # This part is non-blocking but essential. We start listening to the output.
+    # The application output (including the crash exception) will be written to our log file.
+    $process.StandardOutput.ReadToEndAsync() | Out-File -FilePath $AppCrashLogFile -Append
+    $process.StandardError.ReadToEndAsync() | Out-File -FilePath $AppCrashLogFile -Append
     
-    # This is a BLOCKING call. The script will wait here until WebAPI.exe exits.
-    $process.WaitForExit()
-    
-    Write-Host "✅ Application has finished executing (it likely crashed as expected)."
+    Write-Host "✅ Process launch command issued. Waiting for it to stabilize or exit..."
 
-    # --- After the process has exited, we do our final check. ---
-    Write-Host "STEP 3.4: Performing FINAL HEALTH CHECK..."
+    # We wait for a bit, then check its status.
+    Start-Sleep -Seconds 10
+
+    # We refresh the process object to get its final state.
+    $runningProcess = Get-Process -Id $process.Id -ErrorAction SilentlyContinue
     
-    # Check if the exit code was 0 (success). Any other value means a crash.
-    if ($process.ExitCode -eq 0) {
-        Write-Host "✅✅✅ UNEXPECTED SUCCESS: The application ran and exited cleanly (Exit Code 0). This is unusual for a service." -ForegroundColor Green
+    Write-Host "STEP 3.4: Performing FINAL HEALTH CHECK..."
+    if ($runningProcess -and -not $runningProcess.HasExited) {
+        Write-Host "✅✅✅✅✅ ULTIMATE SUCCESS! ✅✅✅✅✅" -ForegroundColor Green
+        Write-Host "Process '$AppName' is confirmed to be running!" -ForegroundColor Green
     } else {
-        # This is the expected path for a crash.
-        Write-Warning "Application exited with a non-zero Exit Code: $($process.ExitCode). This indicates a crash."
-        # The crash log has already been written by this point.
+        Write-Warning "PROCESS '$AppName' IS NOT RUNNING. It has crashed or exited."
+        # The crash log has already been created, the final reporting job will display it.
+        # To ensure the workflow fails correctly, we throw an exception here.
+        throw "Application did not remain running. The final report will show the crash log."
     }
     
     Write-Host "--- SCRIPT 3: LAUNCH AND VERIFICATION COMPLETE ---" -ForegroundColor Green

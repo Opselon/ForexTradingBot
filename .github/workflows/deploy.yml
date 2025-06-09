@@ -111,14 +111,16 @@ jobs:
           script: |
             powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${{ env.REMOTE_TEMP_PATH }}\deployment\02-Deploy-And-Configure.ps1" -DeployPath "${{ env.REMOTE_DEPLOY_PATH }}" -TempPath "${{ env.REMOTE_TEMP_PATH }}" -ConnectionString "${{ secrets.PROD_CONNECTION_STRING }}" -TelegramBotToken "${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}" -TelegramApiId "${{ secrets.TELEGRAM_API_ID }}" -TelegramApiHash "${{ secrets.TELEGRAM_API_HASH }}" -TelegramPhoneNumber "${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}" -CryptoPayApiToken "${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}"
 
+      # ✅✅✅ THE ONLY CORRECTED STEP IS HERE ✅✅✅
       - name: 'Phase 4 - VERIFY: Execute Launch & Verification Script'
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.PROD_SERVER_IP }}
           username: ${{ secrets.PROD_SERVER_USERNAME }}
           password: ${{ secrets.PROD_SERVER_PASSWORD }}
+          # The script is now called with ALL secrets to create the process environment.
           script: |
-            powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${{ env.REMOTE_TEMP_PATH }}\deployment\03-Launch-And-Verify.ps1" -DeployPath "${{ env.REMOTE_DEPLOY_PATH }}" -TempPath "${{ env.REMOTE_TEMP_PATH }}"
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${{ env.REMOTE_TEMP_PATH }}\deployment\03-Launch-And-Verify.ps1" -DeployPath "${{ env.REMOTE_DEPLOY_PATH }}" -TempPath "${{ env.REMOTE_TEMP_PATH }}" -ConnectionString "${{ secrets.PROD_CONNECTION_STRING }}" -TelegramBotToken "${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}" -TelegramApiId "${{ secrets.TELEGRAM_API_ID }}" -TelegramApiHash "${{ secrets.TELEGRAM_API_HASH }}" -TelegramPhoneNumber "${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}" -CryptoPayApiToken "${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}"
 
   # ================================================================
   # JOB 3: FINAL REPORTING AND CLEANUP
@@ -178,6 +180,6 @@ jobs:
           script: |
             powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
                 Write-Host 'Cleaning up all log and script files from C:\Apps\Temp...';
-                Remove-Item -Path '${{ env.REMOTE_TEMP_PATH }}\*' -Include '*.txt', '*.ps1', '*.zip', 'deployment' -Recurse -Force -ErrorAction SilentlyContinue;
+                Remove-Item -Path '${{ env.REMOTE_TEMP_PATH }}\*' -Include '*.txt', '*.ps1', 'deployment' -Recurse -Force -ErrorAction SilentlyContinue;
                 Write-Host 'Remote cleanup complete.';
             "

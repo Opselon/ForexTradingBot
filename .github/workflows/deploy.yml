@@ -96,7 +96,7 @@ jobs:
           username: ${{ secrets.PROD_SERVER_USERNAME }}
           password: ${{ secrets.PROD_SERVER_PASSWORD }}
           script: |
-            powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${{ env.REMOTE_TEMP_PATH }}\deployment\02-Deploy-And-Configure.ps1" -DeployPath "${{ env.REMOTE_DEPLOY_PATH }}" -TempPath "${{ env.REMOTE_TEMP_PATH }}" -ConnectionString "${{ secrets.PROD_CONNECTION_STRING }}" -TelegramBotToken "${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}" -TelegramApiId "${{ secrets.TELEGRAM_API_ID }}" -TelegramApiHash "${{ secrets.TELEGRAM_API_HASH }}" -TelegramPhoneNumber "${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}" -CryptoPayApiToken "${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}"
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${{ env.REMOTE_TEMP_PATH }}\deployment\02-Deploy-And-Configure.ps1" -DeployPath "${{ env.REMOTE_DEPLOY_PATH }}" -TempPath "${{ env.REMOTE_TEMP_PATH }}" -ConnectionString "${{ secrets.TELEGRAM_BOT_TOKEN }}" -TelegramBotToken "${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}" -TelegramApiId "${{ secrets.TELEGRAM_API_ID }}" -TelegramApiHash "${{ secrets.TELEGRAM_API_HASH }}" -TelegramPhoneNumber "${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}" -CryptoPayApiToken "${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}"
   
   # ====================== JOB 3: FINAL REPORTING AND CLEANUP (UNCHANGED) ======================
   report:

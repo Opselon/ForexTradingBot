@@ -1,8 +1,7 @@
 # ====================================================================================
-# THE FINAL, FLAWLESS WORKFLOW: Unified Package Method
-# This workflow is the industry standard. It creates a single, self-contained
-# ZIP file with the app and deploy script, uploads it, and runs it.
-# This eliminates all previous points of failure.
+# THE FINAL DIAGNOSTIC WORKFLOW
+# This workflow's sole purpose is to run a powerful, self-logging script
+# on the server and report back the findings by printing the log files.
 # ====================================================================================
 
 name: '🚀 [PROD] Deploy ForexTradingBot'
@@ -23,9 +22,8 @@ env:
   DOTNET_VERSION: '9.0.x'
   PROJECT_PATH: './WebAPI/WebAPI.csproj'
   REMOTE_TEMP_PATH: 'C:\Apps\Temp'
-  # This path MUST match the location of your script in the repo
-  SCRIPT_PATH_IN_REPO: 'deployment/Deploy-And-Debug.ps1'
-  SCRIPT_FILE_NAME: 'Deploy-And-Debug.ps1' # Just the filename
+  SCRIPT_PATH_IN_REPO: 'deployment/Deploy-And-Capture.ps1'
+  SCRIPT_FILE_NAME: 'Deploy-And-Capture.ps1'
 
 jobs:
   build:
@@ -34,35 +32,30 @@ jobs:
     steps:
       - name: '📥 Checkout Repository'
         uses: actions/checkout@v4
-
       - name: '⚙️ Setup .NET SDK'
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
-
       - name: '📦 Publish App'
         run: dotnet publish ${{ env.PROJECT_PATH }} -c Release -r win-x64 -o ./publish --self-contained true
-
       - name: '➕ Include Deploy Script in Publish Folder'
         run: cp ${{ env.SCRIPT_PATH_IN_REPO }} ./publish
-
       - name: '🗜️ Create Unified ZIP Archive'
         run: cd ./publish && zip -r ../release.zip .
-      
-      - name: '📤 Upload Single Release Artifact'
+      - name: '📤 Upload Unified Release Artifact'
         uses: actions/upload-artifact@v4
         with:
           name: deployment-package
-          path: release.zip # The only file we need
+          path: release.zip
           retention-days: 1
 
   deploy:
-    name: '🚢 2. Deploy to Production VPS'
+    name: '🚢 2. Deploy & Diagnose'
     needs: build
     runs-on: ubuntu-latest
     
     steps:
-      - name: '📥 Download Single Release Artifact'
+      - name: '📥 Download Release Artifact'
         uses: actions/download-artifact@v4
         with:
           name: deployment-package
@@ -73,32 +66,46 @@ jobs:
           host: ${{ secrets.PROD_SERVER_IP }}
           username: ${{ secrets.PROD_SERVER_USERNAME }}
           password: ${{ secrets.PROD_SERVER_PASSWORD }}
-          source: "release.zip" # Upload just one file
+          source: "release.zip"
           target: "${{ env.REMOTE_TEMP_PATH }}"
       
-      - name: '▶️ Execute Remote Deployment Bootstrapper'
+      - name: '▶️ Execute Remote Deployment & Diagnostics'
+        id: deploy_step
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.PROD_SERVER_IP }}
           username: ${{ secrets.PROD_SERVER_USERNAME }}
           password: ${{ secrets.PROD_SERVER_PASSWORD }}
-          # This bootstrapper is simple, clean, and robust.
           script: |
+            # This script is now just a simple bootstrapper. All logic is in the .ps1 file.
             powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
                 $TempPath = '${{ env.REMOTE_TEMP_PATH }}'
                 $ZipFile = Join-Path $TempPath 'release.zip'
-                $UnpackPath = Join-Path $TempPath 'unpack'
+                $UnpackPath = 'C:\Apps\Temp\unpack' # A dedicated temporary unpack location
                 $ScriptFile = Join-Path $UnpackPath '${{ env.SCRIPT_FILE_NAME }}'
 
-                # Clean up old unpack folder if it exists
                 if (Test-Path $UnpackPath) { Remove-Item -Path $UnpackPath -Recurse -Force }
-
-                # Unpack the new release to a clean temporary folder
                 Expand-Archive -Path `$ZipFile -DestinationPath `$UnpackPath -Force
 
-                # Execute the script from the temporary unpack folder
                 & `$ScriptFile -ConnectionString '${{ secrets.PROD_CONNECTION_STRING }}' -TelegramBotToken '${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}' -TelegramApiId '${{ secrets.TELEGRAM_API_ID }}' -TelegramApiHash '${{ secrets.TELEGRAM_API_HASH }}' -TelegramPhoneNumber '${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}' -CryptoPayApiToken '${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}'
-                
-                # Final cleanup of the main release zip
-                Remove-Item -Path `$ZipFile -Force
             "
+      
+      # ✅✅✅ THE MOST IMPORTANT STEP: REPORTING THE FINDINGS ✅✅✅
+      - name: '🔍 Retrieve and Display Logs from Server'
+        if: always() # This step runs even if the previous one fails
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.PROD_SERVER_IP }}
+          username: ${{ secrets.PROD_SERVER_USERNAME }}
+          password: ${{ secrets.PROD_SERVER_PASSWORD }}
+          script: |
+            echo "========================================================"
+            echo "          APPLICATION CRASH LOG (`App-Crash-Log.txt`)"
+            echo "========================================================"
+            powershell -Command "Get-Content -Path '${{ env.REMOTE_TEMP_PATH }}\App-Crash-Log.txt' -ErrorAction SilentlyContinue"
+            
+            echo "========================================================"
+            echo "          DEPLOYMENT SCRIPT LOG (`Deployment-Log-*.txt`)"
+            echo "========================================================"
+            powershell -Command "Get-ChildItem -Path '${{ env.REMOTE_TEMP_PATH }}' -Filter 'Deployment-Log-*.txt' | ForEach-Object { Get-Content -Path $_.FullName }"
+            

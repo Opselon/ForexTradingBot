@@ -1,9 +1,7 @@
 # ====================================================================================
-# THE ABSOLUTELY FINAL, GUARANTEED WORKFLOW
-# This version uses the most robust and explicit method possible:
-# 1. The deployment logic is in a separate, version-controlled .ps1 file.
-# 2. Each file is uploaded in its own dedicated, unambiguous step.
-# 3. The remote execution command is a single, simple, unbreakable line.
+# THE ABSOLUTELY FINAL, CORRECTED AND GUARANTEED WORKFLOW
+# This version fixes the critical file path error in the scp-action, which was
+# the root cause of the "tar: empty archive" failure.
 # ====================================================================================
 
 name: '🚀 [PROD] Deploy ForexTradingBot'
@@ -67,7 +65,6 @@ jobs:
         with:
           name: deployment-package
 
-      # ✅✅✅ THE CRITICAL FIX: UPLOAD EACH FILE SEPARATELY ✅✅✅
       - name: '📤 Upload Release ZIP to Server'
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -83,8 +80,9 @@ jobs:
           host: ${{ secrets.PROD_SERVER_IP }}
           username: ${{ secrets.PROD_SERVER_USERNAME }}
           password: ${{ secrets.PROD_SERVER_PASSWORD }}
-          # The source is now the simple, unambiguous script file name
-          source: "Deploy-Production.ps1"
+          # ✅✅✅ THE CRITICAL FIX IS HERE ✅✅✅
+          # We now use the full, correct path to the script file within the repository.
+          source: "${{ env.SCRIPT_PATH_IN_REPO }}"
           target: "${{ env.REMOTE_TEMP_PATH }}"
       
       - name: '▶️ Execute Remote Deployment'

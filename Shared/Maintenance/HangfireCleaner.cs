@@ -1,6 +1,7 @@
 ﻿// File: Shared/Maintenance/HangfireCleaner.cs
 
 using Dapper;
+using Hangfire;
 using Microsoft.Data.SqlClient; // Use Microsoft's official SQL Server library
 using Microsoft.Extensions.Logging;
 
@@ -111,34 +112,12 @@ GO
 
         public void PurgeCompletedAndFailedJobs(string connectionString)
         {
-            if (string.IsNullOrWhiteSpace(connectionString))
+            var monitoringApi = JobStorage.Current.GetMonitoringApi();
+            var succeeded = monitoringApi.SucceededJobs(0, int.MaxValue);
+
+            foreach (var job in succeeded)
             {
-                _logger.LogError("Hangfire cleanup cannot proceed: Connection string is null or empty.");
-                return;
-            }
-
-            _logger.LogInformation("Starting SQL-based Hangfire cleanup of Succeeded and Failed jobs...");
-
-            try
-            {
-                // SQL commands to efficiently purge data and reset counters.
-                // NOTE: We assume the default Hangfire schema name '[HangFire]'.
-                // If you customized it, you must change it here too.
-                const string sql = @"
-                ";
-
-                // ✅ CORRECTED: Create a new connection using the provided string.
-                using (var dbConnection = new SqlConnection(connectionString))
-                {
-                    dbConnection.Execute(sql);
-                }
-
-                _logger.LogInformation("Hangfire Succeeded, Failed, and other completed job data has been purged successfully.");
-            }
-
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "A critical error occurred during the SQL-based Hangfire job cleanup.");
+                BackgroundJob.Delete(job.Key);
             }
         }
     }

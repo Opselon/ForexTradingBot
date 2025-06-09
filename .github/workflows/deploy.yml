@@ -1,14 +1,13 @@
 # ====================================================================================
 # [PROD] Workflow: Build, Package, and Deploy .NET WebAPI to Windows Server
 # ====================================================================================
-# FINAL, MOST ROBUST VERSION.
+# FINAL, MOST ROBUST VERSION (Pure PowerShell approach)
 #
 # Key Features:
 #   - 👑 Professional UI with collapsible log groups.
-#   - 🛡️ Robust Script Execution: Saves the script to a file on the server before
-#     running it, bypassing all command-line length limitations.
-#   - 💥 Fail-Fast Logic: The remote script stops immediately on any error.
-#   - ✅ Comprehensive Verification and self-healing.
+#   - 🛡️ 100% PowerShell: Avoids all shell-mixing issues by using pure PowerShell
+#     to create and execute the script, which is native to the Windows target.
+#   - 💥 Fail-Fast Logic & Comprehensive Verification.
 #   - 🔄 Concurrency Control.
 # ====================================================================================
 
@@ -31,7 +30,7 @@ env:
   PROJECT_PATH: './WebAPI/WebAPI.csproj'
   REMOTE_DEPLOY_PATH: 'C:\Apps\ForexTradingBot'
   REMOTE_TEMP_PATH: 'C:\Apps\Temp'
-  REMOTE_SCRIPT_NAME: 'deploy-script.ps1' # Name of the temporary script file
+  REMOTE_SCRIPT_NAME: 'deploy-script.ps1'
 
 jobs:
   # ====================================================================
@@ -102,138 +101,18 @@ jobs:
           target: "${{ env.REMOTE_TEMP_PATH }}"
       
       # ==================================================================
-      # THIS IS THE NEW, ROBUST SCRIPT EXECUTION METHOD
+      # THIS IS THE FINAL, PURE POWERSHELL SCRIPT EXECUTION METHOD
       # ==================================================================
-      - name: '▶️ Create, Upload, and Execute Deployment Script'
+      - name: '▶️ Execute Remote Deployment via PowerShell Script'
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.PROD_SERVER_IP }}
           username: ${{ secrets.PROD_SERVER_USERNAME }}
           password: ${{ secrets.PROD_SERVER_PASSWORD }}
           script: |
-            # Step 1: Create the PowerShell script content and save it to a variable.
-            # We use a 'here-string' (@"..."@) in PowerShell for multi-line strings.
-            # Important: We escape PowerShell variables like `$_.Exception.Message` with a backtick (`$)
-            # so they are interpreted on the remote server, not by the GitHub runner.
-            cat << 'EOF' > ${{ env.REMOTE_SCRIPT_NAME }}
-            # =================================================
-            # THIS SCRIPT IS EXECUTED ON THE REMOTE WINDOWS SERVER
-            # =================================================
-            $ErrorActionPreference = 'Stop'
-
-            $deployPath     = "${{ env.REMOTE_DEPLOY_PATH }}"
-            $tempPath       = "${{ env.REMOTE_TEMP_PATH }}"
-            $zipFile        = Join-Path $tempPath "release.zip"
-            $appName        = "WebAPI.exe"
-            $appProcessName = "WebAPI"
-            
-            function Start-Group { param(`$title) Write-Host "::group::`$title" }
-            function End-Group { Write-Host "::endgroup::" }
-
-            try {
-              Write-Host "=================================================="
-              Write-Host "🚀 STARTING DEPLOYMENT"
-              Write-Host "   Server: ${{ secrets.PROD_SERVER_IP }}"
-              Write-Host "   Commit: ${{ github.sha }}"
-              Write-Host "=================================================="
-
-              Start-Group "STEP 1: Stop Running Application"
-                Write-Host "Attempting to stop process: `$appProcessName"
-                `$process = Get-Process -Name `$appProcessName -ErrorAction SilentlyContinue
-                if (`$process) {
-                  Stop-Process -Name `$appProcessName -Force
-                  Write-Host "✅ Process stopped successfully."
-                  Start-Sleep -Seconds 3
-                } else {
-                  Write-Host "🟡 Process not found. No action needed."
-                }
-              End-Group
-
-              Start-Group "STEP 2: Clean Deployment Directory"
-                if (Test-Path `$deployPath) {
-                  Write-Host "Cleaning directory: `$deployPath (preserving 'Session' folder)..."
-                  Get-ChildItem -Path `$deployPath -Exclude 'Session' | Remove-Item -Recurse -Force
-                  Write-Host "✅ Directory cleaned."
-                } else {
-                   Write-Host "🟡 Deployment directory not found, creating it..."
-                   New-Item -ItemType Directory -Path `$deployPath -Force | Out-Null
-                }
-              End-Group
-
-              Start-Group "STEP 3: Unpack New Version"
-                Write-Host "Unpacking '`$zipFile' to '`$deployPath'..."
-                Expand-Archive -Path `$zipFile -DestinationPath `$deployPath -Force
-                Write-Host "✅ Archive unpacked."
-              End-Group
-              
-              Start-Group "STEP 4: Verify Unpacked Files"
-                `$exePath = Join-Path `$deployPath `$appName
-                if (-not (Test-Path `$exePath)) {
-                    throw "FATAL: Verification failed! `$appName not found after unpacking."
-                }
-                Write-Host "✅ Verification successful. `$appName is present."
-                Write-Host "Listing deployed files:"
-                Get-ChildItem -Path `$deployPath | Select-Object Name
-              End-Group
-
-              Start-Group "STEP 5: Inject Production Secrets"
-                `$scriptPath = Join-Path `$deployPath "deployment_scripts\Inject-Secrets.ps1"
-                & `$scriptPath -DeployPath `$deployPath -ConnectionString "${{ secrets.PROD_CONNECTION_STRING }}" -TelegramBotToken "${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}" -TelegramApiId "${{ secrets.TELEGRAM_API_ID }}" -TelegramApiHash "${{ secrets.TELEGRAM_API_HASH }}" -TelegramPhoneNumber "${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}" -CryptoPayApiToken "${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}"
-                Write-Host "✅ Secrets injected."
-              End-Group
-              
-              Start-Group "STEP 6: Start New Application"
-                Write-Host "Starting '`$appName' in the background..."
-                Start-Process -FilePath `$exePath -WorkingDirectory `$deployPath
-                Write-Host "✅ Application start command issued."
-                Start-Sleep -Seconds 5
-                `$newProcess = Get-Process -Name `$appProcessName -ErrorAction SilentlyContinue
-                if (`$newProcess) {
-                  Write-Host "🟢 Application is running with PID: `$(`$newProcess.Id)"
-                } else {
-                  Write-Host "🟠 WARNING: Could not confirm if application started successfully."
-                }
-              End-Group
-
-              Write-Host ""
-              Write-Host "=================================================="
-              Write-Host "✅ DEPLOYMENT SUCCEEDED"
-              Write-Host "==================================================" -ForegroundColor Green
-
-            } catch {
-              Write-Host "=================================================="
-              Write-Host "❌ DEPLOYMENT FAILED!"
-              Write-Host "Error in step: `$(`$_.InvocationInfo.ScriptLineNumber)"
-              Write-Host "Message: `$(`$_.Exception.Message)"
-              Write-Host "==================================================" -ForegroundColor Red
-              exit 1
-            } finally {
-              Start-Group "STEP 7: Cleanup"
-                if (Test-Path `$zipFile) {
-                  Write-Host "Cleaning up temporary file: `$zipFile"
-                  Remove-Item -Path `$zipFile -Force
-                  Write-Host "✅ Cleanup complete."
-                }
-              End-Group
-            }
-            EOF
-
-            # Step 2: Transfer the created script file to the server's temp directory
-            # This is a bit of a hack inside ssh-action, but effective.
-            # We are essentially creating the file locally on the runner and then this action will
-            # implicitly transfer it as part of its execution context. A more explicit scp is better.
-            # Let's try a more robust approach.
-
-      - name: '▶️ Execute Remote Deployment Script'
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.PROD_SERVER_IP }}
-          username: ${{ secrets.PROD_SERVER_USERNAME }}
-          password: ${{ secrets.PROD_SERVER_PASSWORD }}
-          script: |
-            # We will write the script content to a file on the remote server using 'here-document' syntax
-            # This is robust and avoids command length limits.
-            cat << 'EOF' > ${{ env.REMOTE_TEMP_PATH }}\${{ env.REMOTE_SCRIPT_NAME }}
+            # Step 1: Define the entire script content inside a PowerShell 'here-string'.
+            # The 'here-string' (@'...'@) preserves all characters exactly as they are.
+            $scriptBlock = @'
             # --- START OF SCRIPT TO BE EXECUTED ON WINDOWS SERVER ---
             
             # Setting this ensures that if any command fails, the script will stop immediately.
@@ -296,6 +175,7 @@ jobs:
 
                 Start-Group "STEP 5: Inject Production Secrets"
                     $scriptPath = Join-Path $deployPath "deployment_scripts\Inject-Secrets.ps1"
+                    # The & is the PowerShell call operator, used to execute commands or scripts.
                     & $scriptPath -DeployPath $deployPath -ConnectionString "${{ secrets.PROD_CONNECTION_STRING }}" -TelegramBotToken "${{ secrets.PROD_TELEGRAM_BOT_TOKEN }}" -TelegramApiId "${{ secrets.TELEGRAM_API_ID }}" -TelegramApiHash "${{ secrets.TELEGRAM_API_HASH }}" -TelegramPhoneNumber "${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}" -CryptoPayApiToken "${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}"
                     Write-Host "✅ Secrets injected."
                 End-Group
@@ -336,8 +216,15 @@ jobs:
                 End-Group
             }
             # --- END OF SCRIPT ---
-            EOF
-            
-            # Now, execute the script we just created on the server and then clean it up.
-            powershell -NoProfile -ExecutionPolicy Bypass -File ${{ env.REMOTE_TEMP_PATH }}\${{ env.REMOTE_SCRIPT_NAME }}
-            rm ${{ env.REMOTE_TEMP_PATH }}\${{ env.REMOTE_SCRIPT_NAME }}
+            '@
+
+            # Step 2: Write the script block to a file on the remote server.
+            # Using Out-File with -Encoding is the most reliable way.
+            $scriptPath = Join-Path -Path "${{ env.REMOTE_TEMP_PATH }}" -ChildPath "${{ env.REMOTE_SCRIPT_NAME }}"
+            $scriptBlock | Out-File -FilePath $scriptPath -Encoding utf8 -Force
+
+            # Step 3: Execute the script file we just created.
+            powershell -NoProfile -ExecutionPolicy Bypass -File $scriptPath
+
+            # Step 4: Clean up the script file.
+            Remove-Item -Path $scriptPath -Force

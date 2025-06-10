@@ -77,7 +77,7 @@ namespace TelegramPanel.Extensions
 
             // 6. Register State Machine
 
-            services.AddScoped<ITelegramCallbackQueryHandler, AnalysisMenuCallbackHandler>();
+            services.AddScoped<ITelegramCallbackQueryHandler, AnalysisCallbackHandler>();
 
             services.AddScoped<IActualTelegramMessageActions, ActualTelegramMessageActions>(); // << ثبت صحیح برای اجرای واقعی
                                                                                                // سپس ITelegramMessageSender که جاب‌ها را به Hangfire رله می‌کند

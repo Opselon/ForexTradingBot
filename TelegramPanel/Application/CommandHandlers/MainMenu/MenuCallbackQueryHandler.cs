@@ -199,6 +199,10 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
         /// <summary>
         /// Displays the news analysis sub-menu.
         /// </summary>
+          // VVVVVV MODIFIED METHOD VVVVVV
+        /// <summary>
+        /// Displays the news analysis sub-menu.
+        /// </summary>
         private async Task ShowAnalysisMenuAsync(long chatId, int messageIdToEdit, CancellationToken cancellationToken)
         {
             _logger.LogInformation("Showing news analysis menu to ChatID {ChatId}", chatId);
@@ -207,6 +211,11 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
                        "Select a tool to analyze news content from our indexed sources:";
 
             var keyboard = MarkupBuilder.CreateInlineKeyboard(
+                new[]
+                { 
+                    // New "Central Bank Watch" button added
+                    InlineKeyboardButton.WithCallbackData("🏛️ Central Bank Watch", "analysis_cb_watch")
+                },
                 new[]
                 {
                     InlineKeyboardButton.WithCallbackData("🔎 Search by Keywords", "analysis_search_keywords")

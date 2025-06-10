@@ -31,14 +31,29 @@ namespace TelegramPanel.Application.States
         /// <summary>
         /// Provides the instructional message when a user enters this state.
         /// </summary>
-        public Task<string?> GetEntryMessageAsync(long chatId, Update? triggerUpdate = null, CancellationToken cancellationToken = default)
+        /// <param name="chatId">The ID of the chat.</param>
+        /// <param name="triggerUpdate">The Telegram Update that triggered this state (optional).</param>
+        /// <param name="cancellationToken">A cancellation token to observe.</param>
+        /// <returns>A task that represents the asynchronous operation. The task result contains the entry message string, or null if an error occurred.</returns>
+        public async Task<string?> GetEntryMessageAsync(long chatId, Update? triggerUpdate = null, CancellationToken cancellationToken = default)
         {
-            // The message is now constructed here, to be sent by the state machine or the initiating handler.
-            var text = TelegramMessageFormatter.Bold("🔎 Search News by Keyword") + "\n\n" +
-                       "Please enter the keywords you want to search for. You can enter multiple words separated by a space or comma.\n\n" +
-                       "_Example: `inflation interest rates`_";
+            try
+            {
+                var text = TelegramMessageFormatter.Bold("🔎 Search News by Keyword") + "\n\n" +
+                           "Please enter the keywords you want to search for. You can enter multiple words separated by a space or comma.\n\n" +
+                           "_Example: `inflation interest rates`_";
 
-            return Task.FromResult<string?>(text);
+                return await Task.FromResult(text); // Use await for consistency, although not strictly necessary here.
+            }
+            catch (Exception ex)
+            {
+                // Log the exception.  Use your preferred logging mechanism (e.g., Serilog, ILogger, etc.)
+                // Example using Console.WriteLine (for quick illustration, replace with a proper logger):
+                Console.Error.WriteLine($"Error in GetEntryMessageAsync: {ex}");
+
+                // Optionally, you could return a more user-friendly error message.
+                return null;  // Or return a default message.
+            }
         }
 
         /// <summary>

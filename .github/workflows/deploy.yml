@@ -98,7 +98,7 @@ jobs:
     needs: deploy
     runs-on: ubuntu-latest
     outputs:
-      id: ${{ steps.create.outputs.deployment_id }}
+      deployment-id: ${{ needs.create_deployment.outputs.deployment_id }}
     steps:
       - name: Create Deployment
         id: create
@@ -133,7 +133,7 @@ jobs:
         uses: chrnorm/deployment-status@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          deployment-id: ${{ needs.create_deployment.outputs.id }}
+          deployment-id: ${{ needs.create_deployment.outputs.deployment_id }}
           state: success
           log-url: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           description: 'Deployment to production was successful!'
@@ -148,7 +148,7 @@ jobs:
         uses: chrnorm/deployment-status@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          deployment-id: ${{ needs.create_deployment.outputs.id }}
+          deployment-id: ${{ needs.create_deployment.outputs.deployment_id }}
           state: failure
           log-url: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           description: 'Deployment to production failed. Please check logs.'

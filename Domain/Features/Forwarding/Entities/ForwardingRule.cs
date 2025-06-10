@@ -6,12 +6,12 @@ namespace Domain.Features.Forwarding.Entities
 {
     public class ForwardingRule
     {
-        public string RuleName { get; private set; }
+        public string RuleName { get; private set; } = null!;
         public bool IsEnabled { get; private set; }
         public long SourceChannelId { get; private set; }
-        public IReadOnlyList<long> TargetChannelIds { get; private set; }
-        public MessageEditOptions EditOptions { get; private set; } // باید Private setter باشه برای EF Core
-        public MessageFilterOptions FilterOptions { get; private set; } // باید Private setter باشه برای EF Core
+        public IReadOnlyList<long> TargetChannelIds { get; private set; } = null!;
+        public MessageEditOptions EditOptions { get; private set; } = null!;
+        public MessageFilterOptions FilterOptions { get; private set; } = null!;
 
         private ForwardingRule() { } // For EF Core
 

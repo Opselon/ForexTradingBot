@@ -6,9 +6,9 @@ namespace Domain.Features.Forwarding.ValueObjects
     // A single rule for text replacement within a message
     public class TextReplacement // <<<< نام کلاس را به TextReplacement تغییر دادم
     {
-        public string Find { get; private set; }
-        public string ReplaceWith { get; private set; }
-        public bool IsRegex { get; private set; }
+        public string Find { get; private set; } = null!;
+        public string ReplaceWith { get; private set; } = null!;
+        public bool IsRegex { get; private set; } 
         public RegexOptions RegexOptions { get; private set; }
 
         private TextReplacement() { } // For EF Core

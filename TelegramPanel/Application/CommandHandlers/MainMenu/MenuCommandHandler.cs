@@ -42,7 +42,7 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
         /// </summary>
         public static (string text, InlineKeyboardMarkup keyboard) GetMainMenuMarkup()
         {
-            var text = "Main Menu! Please choose an option:";
+            var text = "Welcome to the Main Menu!\nChoose one of the available options:";
             // استفاده از MarkupBuilder
             var keyboard = MarkupBuilder.CreateInlineKeyboard(
                 new[] // ردیف اول

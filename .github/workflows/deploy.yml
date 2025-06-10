@@ -111,15 +111,25 @@ jobs:
           # The service script receives all secrets to configure the service startup arguments.
           script: |
             powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${{ env.REMOTE_TEMP_PATH }}\deployment\04-Register-Service.ps1" -DeployPath "${{ env.REMOTE_DEPLOY_PATH }}" -TempPath "${{ env.REMOTE_TEMP_PATH }}"
-            - name: ✅ Set Deployment Status to Success
-            uses: peter-evans/create-deployment-status@v4
-            with:
-              token: ${{ secrets.GITHUB_TOKEN }}
-              environment: production
-              state: success
-              log-url: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-              description: 'Deployment finished successfully'
-              auto-inactive: true          
+      
+  
+  # This job is now correctly indented to be a sibling of 'register_service'
+  set_deployment_status:
+    name: '✅ Set Deployment Status to Success'
+    needs: register_service
+    runs-on: ubuntu-latest
+    steps:
+      - name: 'Set Deployment Status to Success'
+        uses: peter-evans/create-deployment-status@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          environment: production
+          state: success
+          log-url: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          description: 'Deployment finished successfully'
+          auto-inactive: true
+          
+        
   # ====================== JOB 3: FINAL REPORTING AND CLEANUP (UNCHANGED) ======================
   report:
     name: '📊 3. Final Health Check, Report & Cleanup'
@@ -180,3 +190,4 @@ jobs:
                 Remove-Item -Path '${{ env.REMOTE_TEMP_PATH }}\*' -Include '*.txt', '*.ps1', 'deployment' -Recurse -Force -ErrorAction SilentlyContinue;
                 Write-Host 'Remote cleanup complete.';
             "
+      

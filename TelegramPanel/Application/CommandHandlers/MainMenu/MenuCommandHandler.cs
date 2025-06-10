@@ -25,6 +25,7 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
         public const string SettingsCallbackData = "menu_user_settings";
         public const string MarketAnalysisData = "market_analysis";
         public const string AnalysisCallbackData = "menu_analysis";
+        public const string EconomicCalendarCallbackData = "menu_econ_calendar"; // <<< NEW
         #endregion
 
         #region Constructor
@@ -37,11 +38,6 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
 
         #region Static Menu Markup Generation
 
-        private InlineKeyboardMarkup GetMainMenuKeyboard()
-        {
-            // This now uses the single source of truth from MenuCommandHandler
-            return MenuCommandHandler.GetMainMenuMarkup().keyboard;
-        }
 
         /// <summary>
         /// Generates the text and inline keyboard markup for the main application menu.
@@ -58,7 +54,9 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
                 },
                 new[] // Row 2: NEW Analysis Button
                 {
-                    InlineKeyboardButton.WithCallbackData("🔍 News Analysis", AnalysisCallbackData)
+                    InlineKeyboardButton.WithCallbackData("🔍 News Analysis", AnalysisCallbackData),
+                    InlineKeyboardButton.WithCallbackData("🗓️ Economic Calendar", EconomicCalendarCallbackData)
+
                 },
                 new[] // Row 3: Subscription
                 {

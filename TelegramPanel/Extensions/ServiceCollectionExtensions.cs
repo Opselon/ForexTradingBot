@@ -2,6 +2,8 @@
 using Application.Common.Interfaces; // For INotificationService
 using Application.Features.Forwarding.Interfaces;
 using Application.Features.Forwarding.Services;
+using Application.Interfaces;
+using Application.Services;
 using Domain.Features.Forwarding.Entities;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -10,6 +12,7 @@ using Telegram.Bot;
 using TelegramPanel.Application.CommandHandlers; // For marker types like StartCommandHandler, MenuCommandHandler
 using TelegramPanel.Application.CommandHandlers.Entry;
 using TelegramPanel.Application.CommandHandlers.Features.Analysis;
+using TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar;
 using TelegramPanel.Application.Interfaces;    // For ITelegram...Handler interfaces
 using TelegramPanel.Application.Pipeline;
 using TelegramPanel.Application.Services;
@@ -78,7 +81,8 @@ namespace TelegramPanel.Extensions
             // 6. Register State Machine
 
             services.AddScoped<ITelegramCallbackQueryHandler, AnalysisCallbackHandler>();
-
+            services.AddScoped<IEconomicCalendarService, EconomicCalendarService>();
+            services.AddScoped<ITelegramCallbackQueryHandler, EconomicCalendarCallbackHandler>();
             services.AddScoped<IActualTelegramMessageActions, ActualTelegramMessageActions>(); // << ثبت صحیح برای اجرای واقعی
                                                                                                // سپس ITelegramMessageSender که جاب‌ها را به Hangfire رله می‌کند
             services.AddScoped<ITelegramMessageSender, HangfireRelayTelegramMessageSender>(); // << ثبت صحیح برای انکیو کردن

@@ -417,7 +417,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                 }
 
                 var keyboard = MarkupBuilder.CreateInlineKeyboard(
-                    new[] { InlineKeyboardButton.WithCallbackData("⬅️ Cancel Search", MenuCommandHandler.AnalysisCallbackData) });
+                    new[] { InlineKeyboardButton.WithCallbackData("⬅️ Back to Analysis Menu", MenuCommandHandler.AnalysisCallbackData) });
 
                 await _messageSender.EditMessageTextAsync(chatId, messageId, entryMessage, ParseMode.MarkdownV2, keyboard, cancellationToken);
             }

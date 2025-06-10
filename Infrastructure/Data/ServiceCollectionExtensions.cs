@@ -165,7 +165,7 @@ namespace Infrastructure
             // افزودن یک سرویس میزبانی شده برای مقداردهی اولیه (Initialization) کلاینت API تلگرام در زمان راه‌اندازی برنامه.
             services.AddHostedService<TelegramUserApiInitializationService>();
 
-
+            services.AddHttpClient<IFredApiClient, FredApiClient>();
             services.AddScoped<INewsItemRepository, NewsItemRepository>(); // رجیستر NewsItemRepository
             services.AddScoped<IRssReaderService, RssReaderService>(); // رجیستر RssReaderService
             services.AddSingleton<INotificationJobScheduler, HangfireNotificationJobScheduler>(); // رجیستر NotificationJobScheduler (Singleton برای زمان‌بندی)

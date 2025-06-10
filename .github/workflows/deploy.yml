@@ -154,7 +154,9 @@
     },
     "set_status_success": {
       "name": "✅ Set Deployment to Success",
-      "needs": "register_service",
+      "needs": [
+  "register_service",
+  "create_deployment"],
       "if": "${{ success() }}",
       "runs-on": "ubuntu-latest",
       "steps": [
@@ -173,7 +175,9 @@
     },
     "set_status_failure": {
       "name": "❌ Set Deployment to Failure",
-      "needs": "register_service",
+      "needs": [
+  "register_service",
+  "create_deployment"],
       "if": "${{ failure() }}",
       "runs-on": "ubuntu-latest",
       "steps": [

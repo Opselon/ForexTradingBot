@@ -6,6 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);1591</NoWarn>
+    <UserSecretsId>9a1d9ab6-8382-4eb4-a48e-efd3a3841916</UserSecretsId>
     <!-- این خط را حذف کردم چون در ItemGroup تعریفش میکنیم -->
     <!-- <DocumentationFile>bin\$(Configuration)\$(TargetFramework)\$(AssemblyName).xml</DocumentationFile> -->
   </PropertyGroup>

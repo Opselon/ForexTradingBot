@@ -67,6 +67,23 @@ namespace TelegramPanel.Application.Services
             return _availableStates.FirstOrDefault(s => s.Name.Equals(userConvState.CurrentStateName, StringComparison.OrdinalIgnoreCase));
         }
 
+        public async Task ProcessUpdateInCurrentStateAsync(long userId, Update update, CancellationToken cancellationToken = default)
+        {
+            var currentState = await GetCurrentStateAsync(userId, cancellationToken);
+            if (currentState != null)
+            {
+                _logger.LogDebug("Processing update for UserID {UserId} in state {StateName}", userId, currentState.Name);
+                var nextStateName = await currentState.ProcessUpdateAsync(update, cancellationToken);
+
+                // If the state changes (i.e., returns a new state name or null)
+                if (nextStateName != currentState.Name)
+                {
+                    // This will now correctly call the simplified SetStateAsync
+                    await SetStateAsync(userId, nextStateName, update, cancellationToken);
+                }
+            }
+        }
+
         /// <summary>
         /// Sets the current state for a user, clearing any existing state data and sending an entry message if applicable.
         /// </summary>
@@ -81,52 +98,32 @@ namespace TelegramPanel.Application.Services
 
             if (string.IsNullOrWhiteSpace(stateName))
             {
+                // If the new state name is null/empty, clear the state.
                 await ClearStateAsync(userId, cancellationToken);
                 return;
             }
 
+            // Verify the state exists before setting it.
             var newState = _availableStates.FirstOrDefault(s => s.Name.Equals(stateName, StringComparison.OrdinalIgnoreCase));
             if (newState == null)
             {
-                _logger.LogError("Attempted to set unknown state '{StateName}' for UserID {UserId}", stateName, userId);
+                _logger.LogError("Attempted to set unknown state '{StateName}' for UserID {UserId}. Clearing state as a safeguard.", stateName, userId);
                 await ClearStateAsync(userId, cancellationToken);
                 return;
             }
 
             _logger.LogInformation("Setting state for UserID {UserId} to {StateName}", userId, stateName);
+
+            // Set the new state name and clear any old state data.
             userConvState.CurrentStateName = stateName;
             userConvState.StateData.Clear();
 
+            // Persist the new state.
             await _stateService.SetAsync(userId, userConvState, cancellationToken);
 
-            var entryMessage = await newState.GetEntryMessageAsync(userId, triggerUpdate, cancellationToken);
-            var chatIdForEntry = triggerUpdate?.Message?.Chat?.Id ?? triggerUpdate?.CallbackQuery?.Message?.Chat?.Id;
-            if (!string.IsNullOrWhiteSpace(entryMessage) && chatIdForEntry.HasValue)
-            {
-                await _messageSender.SendTextMessageAsync(chatIdForEntry.Value, entryMessage, cancellationToken: cancellationToken);
-            }
-        }
-
-
-        /// <summary>
-        /// Processes an incoming update using the user's currently active state.
-        /// </summary>
-        /// <param name="userId"></param>
-        /// <param name="update"></param>
-        /// <param name="cancellationToken"></param>
-        /// <returns></returns>
-        public async Task ProcessUpdateInCurrentStateAsync(long userId, Update update, CancellationToken cancellationToken = default)
-        {
-            var currentState = await GetCurrentStateAsync(userId, cancellationToken);
-            if (currentState != null)
-            {
-                _logger.LogDebug("Processing update for UserID {UserId} in state {StateName}", userId, currentState.Name);
-                var nextStateName = await currentState.ProcessUpdateAsync(update, cancellationToken);
-                if (nextStateName != currentState.Name)
-                {
-                    await SetStateAsync(userId, nextStateName, update, cancellationToken);
-                }
-            }
+            // The logic to send the entry message has been REMOVED.
+            // This is now the sole responsibility of the calling handler,
+            // which in this case is InitiateKeywordSearchAsync.
         }
 
         /// <summary>

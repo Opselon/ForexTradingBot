@@ -1,216 +1,237 @@
-name: '🚀 [PROD] Full-Scale Deployment Operation'
-
-on:
-  push:
-    branches: [ master ]
-  workflow_dispatch:
-
-permissions:
-  contents: read
-  deployments: write
-
-concurrency:
-  group: production-deploy
-  cancel-in-progress: true
-
-env:
-  DOTNET_VERSION: '9.0.x'
-  PROJECT_PATH: './WebAPI/WebAPI.csproj'
-  REMOTE_DEPLOY_PATH: 'C:\Apps\ForexTradingBot'
-  REMOTE_TEMP_PATH: 'C:\Apps\Temp'
-  SESSION_FOLDER: 'Session'
-
-jobs:
-  # ====================== JOB 1: BUILD & PACKAGE ======================
-  build:
-    name: '✅ 1. Build & Package'
-    runs-on: ubuntu-latest
-    outputs:
-      release_version: ${{ steps.version.outputs.value }}
-    steps:
-      - name: 'Get Short Commit Hash for Versioning'
-        id: version
-        run: echo "value=$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
-      - name: '📥 Checkout Repository & Scripts'
-        uses: actions/checkout@v4
-      - name: '⚙️ Setup .NET SDK'
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
-      - name: '📦 Publish Application'
-        run: dotnet publish ${{ env.PROJECT_PATH }} -c Release -r win-x64 -o ./publish --self-contained true
-      - name: '🜜️ Create Release ZIP Archive'
-        run: cd ./publish && zip -r ../release.zip .
-      - name: '📤 Upload Artifacts for Deployment Jobs'
-        uses: actions/upload-artifact@v4
-        with:
-          name: deployment-artifacts-${{ steps.version.outputs.value }}
-          path: |
-            release.zip
-            deployment/
-          retention-days: 1
-
-  # ====================== JOB 2: DEPLOYMENT ORCHESTRATION ======================
-  deploy:
-    name: '🚢 2. Execute Deployment on Server'
-    needs: build
-    runs-on: ubuntu-latest
-    
-    steps:
-      - name: 'Phase 1 - UPLOAD: Download Artifacts from Build'
-        uses: actions/download-artifact@v4
-        with:
-          name: deployment-artifacts-${{ needs.build.outputs.release_version }}
-
-      - name: 'Phase 1 - UPLOAD: Verify Downloaded Files on Runner'
-        run: ls -R
-
-      - name: 'Phase 1 - UPLOAD: Transfer All Files to Server Temp'
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.PROD_SERVER_IP }}
-          username: ${{ secrets.PROD_SERVER_USERNAME }}
-          password: ${{ secrets.PROD_SERVER_PASSWORD }}
-          source: "release.zip,deployment"
-          target: "${{ env.REMOTE_TEMP_PATH }}"
-
-      - name: 'Phase 2 - CLEAN: Execute Atomic Cleanup Script (01)'
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.PROD_SERVER_IP }}
-          username: ${{ secrets.PROD_SERVER_USERNAME }}
-          password: ${{ secrets.PROD_SERVER_PASSWORD }}
-          script: |
-            powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${{ env.REMOTE_TEMP_PATH }}\deployment\01-Prepare-And-Clean.ps1" -DeployPath "${{ env.REMOTE_DEPLOY_PATH }}" -TempPath "${{ env.REMOTE_TEMP_PATH }}" -SessionFolderName "${{ env.SESSION_FOLDER }}"
-
-      - name: 'Phase 3 - DEPLOY & LAUNCH: Execute Final Script (02)'
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.PROD_SERVER_IP }}
-          username: ${{ secrets.PROD_SERVER_USERNAME }}
-          password: ${{ secrets.PROD_SERVER_PASSWORD }}
-          script: |
-            powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${{ env.REMOTE_TEMP_PATH }}\deployment\02-Deploy-And-Configure.ps1" -DeployPath "${{ env.REMOTE_DEPLOY_PATH }}" -TempPath "${{ env.REMOTE_TEMP_PATH }}" -ConnectionString "${{ secrets.PROD_CONNECTION_STRING }}" -TelegramBotToken "${{ secrets.TELEGRAM_BOT_TOKEN }}" -TelegramApiId "${{ secrets.TELEGRAM_API_ID }}" -TelegramApiHash "${{ secrets.TELEGRAM_API_HASH }}" -TelegramPhoneNumber "${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}" -CryptoPayApiToken "${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}"
-
-  # ====================== JOB 3: CREATE DEPLOYMENT ======================
-  create_deployment:
-    name: '📦 3. Create GitHub Deployment'
-    needs: deploy
-    runs-on: ubuntu-latest
-    outputs:
-      deployment_id: ${{ steps.create.outputs.deployment_id }}
-    steps:
-      - name: Create Deployment
-        id: create
-        uses: chrnorm/deployment-action@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          ref:         ${{ github.sha }}
-          environment: production
-
-  # ====================== JOB 4: REGISTER & START WINDOWS SERVICE ======================
-  register_service:
-    name: '👑 4. Register & Start Windows Service'
-    needs: create_deployment
-    runs-on: ubuntu-latest
-    steps:
-      - name: 'Execute Service Registration Script (04)'
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.PROD_SERVER_IP }}
-          username: ${{ secrets.PROD_SERVER_USERNAME }}
-          password: ${{ secrets.PROD_SERVER_PASSWORD }}
-          script: |
-            powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${{ env.REMOTE_TEMP_PATH }}\deployment\04-Register-Service.ps1" -DeployPath "${{ env.REMOTE_DEPLOY_PATH }}" -TempPath "${{ env.REMOTE_TEMP_PATH }}"
-
-  # ====================== JOB 5: SET DEPLOYMENT STATUS ======================
-  set_status_success:
-    name: '✅ Set Deployment to Success'
-    needs: register_service
-    if: success()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Set Deployment Status to Success
-        uses: chrnorm/deployment-status@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          deployment-id: ${{ needs.create_deployment.outputs.deployment_id }}
-          state: success
-          log-url: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          description: 'Deployment to production was successful!'
-
-  set_status_failure:
-    name: '❌ Set Deployment to Failure'
-    needs: register_service
-    if: failure()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Set Deployment Status to Failure
-        uses: chrnorm/deployment-status@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          deployment-id: ${{ needs.create_deployment.outputs.deployment_id }}
-          state: failure
-          log-url: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          description: 'Deployment to production failed. Please check logs.'
-
-  # ====================== JOB 6: FINAL REPORTING AND CLEANUP ======================
-  report:
-    name: '📊 6. Final Health Check, Report & Cleanup'
-    needs: deploy
-    runs-on: ubuntu-latest
-    if: always()
-    steps:
-      - name: '🔍 Retrieve and Display ALL Logs from Server'
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.PROD_SERVER_IP }}
-          username: ${{ secrets.PROD_SERVER_USERNAME }}
-          password: ${{ secrets.PROD_SERVER_PASSWORD }}
-          script: |
-            powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
-                $TempPath = '${{ env.REMOTE_TEMP_PATH }}';
-                $DeployPath = '${{ env.REMOTE_DEPLOY_PATH }}';
-                Write-Host '========================================================' -ForegroundColor White;
-                Write-Host '          FULL DEPLOYMENT AND HEALTH REPORT';
-                Write-Host '========================================================' -ForegroundColor White;
-                
-                # Check final status of the process
-                Write-Host '--- FINAL PROCESS STATUS ---' -ForegroundColor Yellow;
-                Start-Sleep -Seconds 5 # Give the process time to potentially crash
-                $process = Get-Process -Name 'WebAPI' -ErrorAction SilentlyContinue;
-                if ($process) {
-                    Write-Host '✅✅✅ SUCCESS: WebAPI process is RUNNING!' -ForegroundColor Green;
-                } else {
-                    Write-Host '❌❌❌ FAILURE: WebAPI process is NOT RUNNING.' -ForegroundColor Red;
-                }
-
-                # Display the crash log regardless
-                $CrashLogPath = Join-Path $TempPath 'App-Crash-Log.txt';
-                if (Test-Path $CrashLogPath) {
-                    Write-Host '`n--- APPLICATION CRASH LOG ---' -ForegroundColor Magenta;
-                    Get-Content -Path $CrashLogPath -ErrorAction SilentlyContinue;
-                } else {
-                    Write-Host '--- No Application Crash Log found. ---';
-                }
-
-                # Display all other logs
-                Get-ChildItem -Path $TempPath -Filter '*-Log-*.txt' | Sort-Object Name | ForEach-Object {
-                    Write-Host ('`n--- DEPLOYMENT TRANSCRIPT: ' + $_.Name + ' ---') -ForegroundColor Cyan;
-                    Get-Content -Path $_.FullName -ErrorAction SilentlyContinue;
-                };
-            "
-      - name: '🧹 Clean Up Remote Temp and Log Files'
-        if: success()
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.PROD_SERVER_IP }}
-          username: ${{ secrets.PROD_SERVER_USERNAME }}
-          password: ${{ secrets.PROD_SERVER_PASSWORD }}
-          script: |
-            powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
-                Write-Host 'Cleaning up all log and temporary files from C:\Apps\Temp...';
-                Remove-Item -Path '${{ env.REMOTE_TEMP_PATH }}\*' -Include '*.txt', '*.ps1', 'deployment' -Recurse -Force -ErrorAction SilentlyContinue;
-                Write-Host 'Remote cleanup complete.';
-            "
-
+{
+  "name": "🚀 [PROD] Full-Scale Deployment Operation",
+  "on": {
+    "push": {
+      "branches": [
+        "master"
+      ]
+    },
+    "workflow_dispatch": {}
+  },
+  "permissions": {
+    "contents": "read",
+    "deployments": "write"
+  },
+  "concurrency": {
+    "group": "production-deploy",
+    "cancel-in-progress": true
+  },
+  "env": {
+    "DOTNET_VERSION": "9.0.x",
+    "PROJECT_PATH": "./WebAPI/WebAPI.csproj",
+    "REMOTE_DEPLOY_PATH": "C:\\Apps\\ForexTradingBot",
+    "REMOTE_TEMP_PATH": "C:\\Apps\\Temp",
+    "SESSION_FOLDER": "Session"
+  },
+  "jobs": {
+    "build": {
+      "name": "✅ 1. Build & Package",
+      "runs-on": "ubuntu-latest",
+      "outputs": {
+        "release_version": "${{ steps.version.outputs.value }}"
+      },
+      "steps": [
+        {
+          "name": "Get Short Commit Hash for Versioning",
+          "id": "version",
+          "run": "echo \"value=$(echo ${{ github.sha }} | cut -c1-7)\" >> $GITHUB_OUTPUT"
+        },
+        {
+          "name": "📥 Checkout Repository & Scripts",
+          "uses": "actions/checkout@v4"
+        },
+        {
+          "name": "⚙️ Setup .NET SDK",
+          "uses": "actions/setup-dotnet@v4",
+          "with": {
+            "dotnet-version": "${{ env.DOTNET_VERSION }}"
+          }
+        },
+        {
+          "name": "📦 Publish Application",
+          "run": "dotnet publish ${{ env.PROJECT_PATH }} -c Release -r win-x64 -o ./publish --self-contained true"
+        },
+        {
+          "name": "🜜️ Create Release ZIP Archive",
+          "run": "cd ./publish && zip -r ../release.zip ."
+        },
+        {
+          "name": "📤 Upload Artifacts for Deployment Jobs",
+          "uses": "actions/upload-artifact@v4",
+          "with": {
+            "name": "deployment-artifacts-${{ steps.version.outputs.value }}",
+            "path": "release.zip\ndeployment/\n",
+            "retention-days": 1
+          }
+        }
+      ]
+    },
+    "deploy": {
+      "name": "🚢 2. Execute Deployment on Server",
+      "needs": [
+        "create_deployment"
+      ],
+      "runs-on": "ubuntu-latest",
+      "steps": [
+        {
+          "name": "Phase 1 - UPLOAD: Download Artifacts from Build",
+          "uses": "actions/download-artifact@v4",
+          "with": {
+            "name": "deployment-artifacts-${{ needs.build.outputs.release_version }}"
+          }
+        },
+        {
+          "name": "Phase 1 - UPLOAD: Verify Downloaded Files on Runner",
+          "run": "ls -R"
+        },
+        {
+          "name": "Phase 1 - UPLOAD: Transfer All Files to Server Temp",
+          "uses": "appleboy/scp-action@v0.1.7",
+          "with": {
+            "host": "${{ secrets.PROD_SERVER_IP }}",
+            "username": "${{ secrets.PROD_SERVER_USERNAME }}",
+            "password": "${{ secrets.PROD_SERVER_PASSWORD }}",
+            "source": "release.zip,deployment",
+            "target": "${{ env.REMOTE_TEMP_PATH }}"
+          }
+        },
+        {
+          "name": "Phase 2 - CLEAN: Execute Atomic Cleanup Script (01)",
+          "uses": "appleboy/ssh-action@v1.0.3",
+          "with": {
+            "host": "${{ secrets.PROD_SERVER_IP }}",
+            "username": "${{ secrets.PROD_SERVER_USERNAME }}",
+            "password": "${{ secrets.PROD_SERVER_PASSWORD }}",
+            "script": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"${{ env.REMOTE_TEMP_PATH }}\\deployment\\01-Prepare-And-Clean.ps1\" -DeployPath \"${{ env.REMOTE_DEPLOY_PATH }}\" -TempPath \"${{ env.REMOTE_TEMP_PATH }}\" -SessionFolderName \"${{ env.SESSION_FOLDER }}\""
+          }
+        },
+        {
+          "name": "Phase 3 - DEPLOY & LAUNCH: Execute Final Script (02)",
+          "uses": "appleboy/ssh-action@v1.0.3",
+          "with": {
+            "host": "${{ secrets.PROD_SERVER_IP }}",
+            "username": "${{ secrets.PROD_SERVER_USERNAME }}",
+            "password": "${{ secrets.PROD_SERVER_PASSWORD }}",
+            "script": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"${{ env.REMOTE_TEMP_PATH }}\\deployment\\02-Deploy-And-Configure.ps1\" -DeployPath \"${{ env.REMOTE_DEPLOY_PATH }}\" -TempPath \"${{ env.REMOTE_TEMP_PATH }}\" -ConnectionString \"${{ secrets.PROD_CONNECTION_STRING }}\" -TelegramBotToken \"${{ secrets.TELEGRAM_BOT_TOKEN }}\" -TelegramApiId \"${{ secrets.TELEGRAM_API_ID }}\" -TelegramApiHash \"${{ secrets.TELEGRAM_API_HASH }}\" -TelegramPhoneNumber \"${{ secrets.PROD_TELEGRAM_PHONE_NUMBER }}\" -CryptoPayApiToken \"${{ secrets.PROD_CRYPTOPAY_API_TOKEN }}\""
+          }
+        }
+      ]
+    },
+    "create_deployment": {
+      "name": "📦 3. Create GitHub Deployment",
+      "needs": [
+        "build"
+      ],
+      "runs-on": "ubuntu-latest",
+      "outputs": {
+        "deployment_id": "${{ steps.create.outputs.deployment_id }}"
+      },
+      "steps": [
+        {
+          "name": "Create Deployment",
+          "id": "create",
+          "uses": "chrnorm/deployment-action@v2",
+          "with": {
+            "token": "${{ secrets.GITHUB_TOKEN }}",
+            "ref": "${{ github.sha }}",
+            "environment": "production"
+          }
+        }
+      ]
+    },
+    "register_service": {
+      "name": "👑 4. Register & Start Windows Service",
+      "needs": [
+        "deploy"
+      ],
+      "runs-on": "ubuntu-latest",
+      "steps": [
+        {
+          "name": "Execute Service Registration Script (04)",
+          "uses": "appleboy/ssh-action@v1.0.3",
+          "with": {
+            "host": "${{ secrets.PROD_SERVER_IP }}",
+            "username": "${{ secrets.PROD_SERVER_USERNAME }}",
+            "password": "${{ secrets.PROD_SERVER_PASSWORD }}",
+            "script": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"${{ env.REMOTE_TEMP_PATH }}\\deployment\\04-Register-Service.ps1\" -DeployPath \"${{ env.REMOTE_DEPLOY_PATH }}\" -TempPath \"${{ env.REMOTE_TEMP_PATH }}\""
+          }
+        }
+      ]
+    },
+    "set_status_success": {
+      "name": "✅ Set Deployment to Success",
+      "needs": [
+        "register_service",
+        "create_deployment"
+      ],
+      "if": "${{ success() }}",
+      "runs-on": "ubuntu-latest",
+      "steps": [
+        {
+          "name": "Set Deployment Status to Success",
+          "uses": "chrnorm/deployment-status@v2",
+          "with": {
+            "token": "${{ secrets.GITHUB_TOKEN }}",
+            "deployment-id": "${{ needs.create_deployment.outputs.deployment_id }}",
+            "state": "success",
+            "log-url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+            "description": "Deployment to production was successful!"
+          }
+        }
+      ]
+    },
+    "set_status_failure": {
+      "name": "❌ Set Deployment to Failure",
+      "needs": [
+        "register_service",
+        "create_deployment"
+      ],
+      "if": "${{ failure() }}",
+      "runs-on": "ubuntu-latest",
+      "steps": [
+        {
+          "name": "Set Deployment Status to Failure",
+          "uses": "chrnorm/deployment-status@v2",
+          "with": {
+            "token": "${{ secrets.GITHUB_TOKEN }}",
+            "deployment-id": "${{ needs.create_deployment.outputs.deployment_id }}",
+            "state": "failure",
+            "log-url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+            "description": "Deployment to production failed. Please check logs."
+          }
+        }
+      ]
+    },
+    "report": {
+      "name": "📊 6. Final Health Check, Report & Cleanup",
+      "needs": [
+        "deploy"
+      ],
+      "if": "${{ always() }}",
+      "runs-on": "ubuntu-latest",
+      "steps": [
+        {
+          "name": "🔍 Retrieve and Display ALL Logs from Server",
+          "uses": "appleboy/ssh-action@v1.0.3",
+          "with": {
+            "host": "${{ secrets.PROD_SERVER_IP }}",
+            "username": "${{ secrets.PROD_SERVER_USERNAME }}",
+            "password": "${{ secrets.PROD_SERVER_PASSWORD }}",
+            "script": "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"\n    $TempPath = '${{ env.REMOTE_TEMP_PATH }}';\n    $DeployPath = '${{ env.REMOTE_DEPLOY_PATH }}';\n    Write-Host '========================================================' -ForegroundColor White;\n    Write-Host '          FULL DEPLOYMENT AND HEALTH REPORT';\n    Write-Host '========================================================' -ForegroundColor White;\n    \n    # Check final status of the process\n    Write-Host '--- FINAL PROCESS STATUS ---' -ForegroundColor Yellow;\n    Start-Sleep -Seconds 5 # Give the process time to potentially crash\n    $process = Get-Process -Name 'WebAPI' -ErrorAction SilentlyContinue;\n    if ($process) {\n        Write-Host '✅✅✅ SUCCESS: WebAPI process is RUNNING!' -ForegroundColor Green;\n    } else {\n        Write-Host '❌❌❌ FAILURE: WebAPI process is NOT RUNNING.' -ForegroundColor Red;\n    }\n\n    # Display the crash log regardless\n    $CrashLogPath = Join-Path $TempPath 'App-Crash-Log.txt';\n    if (Test-Path $CrashLogPath) {\n        Write-Host '`n--- APPLICATION CRASH LOG ---' -ForegroundColor Magenta;\n        Get-Content -Path $CrashLogPath -ErrorAction SilentlyContinue;\n    } else {\n        Write-Host '--- No Application Crash Log found. ---';\n    }\n\n    # Display all other logs\n    Get-ChildItem -Path $TempPath -Filter '*-Log-*.txt' | Sort-Object Name | ForEach-Object {\n        Write-Host ('`n--- DEPLOYMENT TRANSCRIPT: ' + $_.Name + ' ---') -ForegroundColor Cyan;\n        Get-Content -Path $_.FullName -ErrorAction SilentlyContinue;\n    };\n\""
+          }
+        },
+        {
+          "name": "🧹 Clean Up Remote Temp and Log Files",
+          "if": "${{ success() }}",
+          "uses": "appleboy/ssh-action@v1.0.3",
+          "with": {
+            "host": "${{ secrets.PROD_SERVER_IP }}",
+            "username": "${{ secrets.PROD_SERVER_USERNAME }}",
+            "password": "${{ secrets.PROD_SERVER_PASSWORD }}",
+            "script": "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"\n    Write-Host 'Cleaning up all log and temporary files from C:\\Apps\\Temp...';\n    Remove-Item -Path '${{ env.REMOTE_TEMP_PATH }}\\*' -Include '*.txt', '*.ps1', 'deployment' -Recurse -Force -ErrorAction SilentlyContinue;\n    Write-Host 'Remote cleanup complete.';\n\""
+          }
+        }
+      ]
+    }
+  }
+}

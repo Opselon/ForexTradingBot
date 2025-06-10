@@ -1,5 +1,5 @@
 # ====================================================================================
-# THE DEFINITIVE WINDOWS SERVICE MANAGEMENT SCRIPT (v.Final-Victory-Simplified)
+# THE DEFINITIVE WINDOWS SERVICE MANAGEMENT SCRIPT (v.Final-Victory-Robust)
 # This version is simpler because the .NET app is now service-aware.
 # It only needs to create the service pointing to the EXE.
 # ====================================================================================
@@ -15,8 +15,6 @@ Write-Host "--- SCRIPT 4: REGISTER & LAUNCH WINDOWS SERVICE ---" -ForegroundColo
 $ServiceName = "ForexTradingBotAPI"
 $DisplayName = "Forex Trading Bot API Service"
 $ExePath     = Join-Path $DeployPath "WebAPI.exe"
-# The service no longer needs command-line arguments because it will read them
-# from appsettings.Production.json, which is loaded due to ASPNETCORE_ENVIRONMENT.
 
 Write-Host "Verifying presence of executable at '$ExePath'..."
 if (-not (Test-Path $ExePath)) {
@@ -27,14 +25,36 @@ Write-Host "✅ Executable found."
 Write-Host "Stopping and removing existing service '$ServiceName' for a clean install..."
 $service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 if ($service) {
-    Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 15
+    if ($service.Status -ne 'Stopped') {
+        Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 5 # Give it a moment to process the stop command
+    }
+    
     sc.exe delete "$ServiceName"
-    Start-Sleep -Seconds 15
+    
+    # --- START: Robust Wait Loop (THE FIX) ---
+    # This loop replaces the unreliable 'Start-Sleep'. It actively checks until
+    # the service is confirmed to be gone, with a 60-second timeout.
+    Write-Host "Waiting for service '$ServiceName' to be fully removed..."
+    $timeout = 60 # seconds
+    $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($stopwatch.Elapsed.TotalSeconds -lt $timeout) {
+        $serviceCheck = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+        if ($null -eq $serviceCheck) {
+            Write-Host "`n✅ Service fully removed."
+            break # Exit the loop, the service is gone
+        }
+        Write-Host -NoNewline "."
+        Start-Sleep -Seconds 2
+    }
+
+    if ($stopwatch.Elapsed.TotalSeconds -ge $timeout) {
+        throw "FATAL: Timed out after $timeout seconds waiting for service '$ServiceName' to be deleted. It may be stuck. Please check the server."
+    }
+    # --- END: Robust Wait Loop ---
 }
 
 Write-Host "Creating a new, clean Windows Service '$ServiceName'..."
-# The BinaryPathName is now just the path to the executable. No arguments needed.
 New-Service -Name $ServiceName -BinaryPathName "`"$ExePath`"" -DisplayName $DisplayName -StartupType Automatic
 Write-Host "✅ New service created successfully."
 

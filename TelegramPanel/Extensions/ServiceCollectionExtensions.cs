@@ -9,6 +9,7 @@ using Microsoft.Extensions.Options;
 using Telegram.Bot;
 using TelegramPanel.Application.CommandHandlers; // For marker types like StartCommandHandler, MenuCommandHandler
 using TelegramPanel.Application.CommandHandlers.Entry;
+using TelegramPanel.Application.CommandHandlers.Features.Analysis;
 using TelegramPanel.Application.Interfaces;    // For ITelegram...Handler interfaces
 using TelegramPanel.Application.Pipeline;
 using TelegramPanel.Application.Services;
@@ -75,12 +76,15 @@ namespace TelegramPanel.Extensions
                     .AsImplementedInterfaces().WithScopedLifetime());
 
             // 6. Register State Machine
-        
+
+            services.AddScoped<ITelegramCallbackQueryHandler, AnalysisMenuCallbackHandler>();
+
             services.AddScoped<IActualTelegramMessageActions, ActualTelegramMessageActions>(); // << ثبت صحیح برای اجرای واقعی
                                                                                                // سپس ITelegramMessageSender که جاب‌ها را به Hangfire رله می‌کند
             services.AddScoped<ITelegramMessageSender, HangfireRelayTelegramMessageSender>(); // << ثبت صحیح برای انکیو کردن
 
             // Register Forwarding Services
+            services.AddScoped<ITelegramState, NewsSearchState>();
             services.AddScoped<IForwardingJobActions, ForwardingJobActions>();
             services.AddScoped<MessageForwardingService>();
 

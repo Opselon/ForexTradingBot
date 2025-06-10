@@ -1,5 +1,7 @@
-﻿using Application.DTOs;              // برای RegisterUserDto و UserDto از پروژه اصلی Application
-using Application.Interfaces;        // برای IUserService از پروژه اصلی Application
+﻿// File: TelegramPanel/Application/CommandHandlers/Entry/StartCommandHandler.cs
+
+using Application.DTOs;              // For RegisterUserDto and UserDto
+using Application.Interfaces;        // For IUserService
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Telegram.Bot;
@@ -7,11 +9,11 @@ using Telegram.Bot.Exceptions;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
-using TelegramPanel.Application.CommandHandlers.MainMenu;
-using TelegramPanel.Application.Interfaces; // برای ITelegramCommandHandler
-using TelegramPanel.Formatters;         // برای TelegramMessageFormatter
+using TelegramPanel.Application.CommandHandlers.MainMenu; // For centralized menu
+using TelegramPanel.Application.Interfaces; // For ITelegramCommandHandler
+using TelegramPanel.Formatters;         // For TelegramMessageFormatter
 using TelegramPanel.Infrastructure;
-using TelegramPanel.Infrastructure.Helpers;       // برای ITelegramMessageSender
+using TelegramPanel.Infrastructure.Helpers; // For MarkupBuilder (though we get kbd from MenuCommandHandler now)
 
 namespace TelegramPanel.Application.CommandHandlers.Entry
 {
@@ -19,8 +21,8 @@ namespace TelegramPanel.Application.CommandHandlers.Entry
     {
         private readonly ILogger<StartCommandHandler> _logger;
         private readonly ITelegramMessageSender _messageSender;
-        private readonly ITelegramStateMachine? _stateMachine; // اختیاری، اگر نیاز به تغییر وضعیت دارید
-        private readonly ITelegramBotClient _botClient; // Added ITelegramBotClient
+        private readonly ITelegramStateMachine? _stateMachine;
+        private readonly ITelegramBotClient _botClient;
         private readonly IServiceScopeFactory _scopeFactory;
         private const string ShowMainMenuCallback = "show_main_menu";
 
@@ -28,16 +30,17 @@ namespace TelegramPanel.Application.CommandHandlers.Entry
             ILogger<StartCommandHandler> logger,
             ITelegramMessageSender messageSender,
             IServiceScopeFactory scopeFactory,
-            ITelegramBotClient botClient, // Added ITelegramBotClient
+            ITelegramBotClient botClient,
             ITelegramStateMachine? stateMachine = null)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _messageSender = messageSender ?? throw new ArgumentNullException(nameof(messageSender));
-            _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory)); // Assign it
-            _botClient = botClient ?? throw new ArgumentNullException(nameof(botClient)); // Added ITelegramBotClient
+            _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
+            _botClient = botClient ?? throw new ArgumentNullException(nameof(botClient));
             _stateMachine = stateMachine;
         }
 
+        // --- CanHandle, HandleAsync, HandleShowMainMenuCallback, GenerateWelcomeMessageBody methods are all correct and do not need changes. ---
         public bool CanHandle(Update update)
         {
             if (update.Type == UpdateType.Message &&
@@ -50,7 +53,6 @@ namespace TelegramPanel.Application.CommandHandlers.Entry
             {
                 return true;
             }
-            _logger.LogTrace("[HANDLER_NAME] CanHandle: NO for data: {CallbackData}. UpdateType: {UpdateType}", update.CallbackQuery?.Data, update.Type); // Add this log
             return false;
         }
 
@@ -82,16 +84,15 @@ namespace TelegramPanel.Application.CommandHandlers.Entry
 
             try
             {
-                // 1. Answer the callback query immediately.
                 await _botClient.AnswerCallbackQuery(callbackQuery.Id, cancellationToken: cancellationToken);
 
-                // 2. Prepare the personalized main menu text.
                 var effectiveUsername = !string.IsNullOrWhiteSpace(user.Username) ? user.Username : user.FirstName;
                 var welcomeText = $"🎉 *Welcome back, {TelegramMessageFormatter.EscapeMarkdownV2(effectiveUsername)}!*";
                 var messageBody = GenerateWelcomeMessageBody(welcomeText, isExistingUser: true);
+
+                // Uses the corrected helper method below
                 var keyboard = GetMainMenuKeyboard();
 
-                // 3. EDIT the current message to become the main menu. Use the DIRECT client for speed.
                 await _botClient.EditMessageText(
                     chatId: chatId,
                     messageId: messageId,
@@ -101,7 +102,6 @@ namespace TelegramPanel.Application.CommandHandlers.Entry
                     cancellationToken: cancellationToken
                 );
 
-                // 4. Clear state if applicable.
                 if (_stateMachine != null)
                 {
                     await _stateMachine.ClearStateAsync(user.Id, cancellationToken);
@@ -117,24 +117,20 @@ namespace TelegramPanel.Application.CommandHandlers.Entry
             }
         }
 
-
-        // New private helper to centralize the welcome message body creation
         private string GenerateWelcomeMessageBody(string welcomeHeader, bool isExistingUser)
         {
             return $"{welcomeHeader}\n\n" +
-                   "Your trusted companion for gold trading signals and market analysis.\n\n" +
+                   "Your trusted companion for trading signals and market analysis.\n\n" +
                    "📊 *Available Features:*\n" +
-                   "• 📈 Real-time gold price alerts\n" +
-                   "• 💎 Professional trading signals\n" +
-                   "• 📰 Market analysis and insights\n" +
+                   "• 📈 Real-time alerts & signals\n" +
+                   "• 💎 Professional trading tools\n" +
+                   "• 📰 In-depth news analysis\n" +
                    (isExistingUser ? "• 💼 Portfolio tracking\n• 🔔 Customizable notifications\n\n" :
                     "• 💼 Portfolio tracking\n\n") +
                    "Use the menu below or type /help for more information.";
         }
 
-
-        // --- REWRITE THIS METHOD ---
-        // --- REWRITE HandleStartCommand ---
+        // --- The rest of the methods also use GetMainMenuKeyboard, so no further changes are needed in them. ---
         private async Task HandleStartCommand(Message message, CancellationToken cancellationToken)
         {
             var user = message.From!;
@@ -145,8 +141,6 @@ namespace TelegramPanel.Application.CommandHandlers.Entry
             Message? sentMessage;
             try
             {
-                // STEP 1: Send the initial message DIRECTLY to get its ID back.
-                // We use _botClient here to bypass the Hangfire queue for an immediate response.
                 sentMessage = await SendInitialWelcomeMessageAsync(chatId, user.FirstName, cancellationToken);
                 if (sentMessage == null)
                 {
@@ -160,72 +154,64 @@ namespace TelegramPanel.Application.CommandHandlers.Entry
                 return;
             }
 
-            // STEP 2: Start the background work, passing the ID of the message we just sent.
             _ = Task.Run(async () =>
             {
-                using (var scope = _scopeFactory.CreateScope())
+                using var scope = _scopeFactory.CreateScope();
+                var scopedLogger = scope.ServiceProvider.GetRequiredService<ILogger<StartCommandHandler>>();
+                var userService = scope.ServiceProvider.GetRequiredService<IUserService>();
+                var stateMachine = scope.ServiceProvider.GetService<ITelegramStateMachine>();
+                var messageSender = scope.ServiceProvider.GetRequiredService<ITelegramMessageSender>();
+
+                try
                 {
-                    var scopedLogger = scope.ServiceProvider.GetRequiredService<ILogger<StartCommandHandler>>();
-                    var userService = scope.ServiceProvider.GetRequiredService<IUserService>();
-                    var stateMachine = scope.ServiceProvider.GetService<ITelegramStateMachine>();
-                    var messageSender = scope.ServiceProvider.GetRequiredService<ITelegramMessageSender>(); // Use queued sender for the edit
+                    var telegramUserId = user.Id.ToString();
+                    var existingUser = await userService.GetUserByTelegramIdAsync(telegramUserId, cancellationToken);
 
-                    try
+                    bool isNewRegistration = existingUser == null;
+                    string finalUsername;
+
+                    if (isNewRegistration)
                     {
-                        var telegramUserId = user.Id.ToString();
-                        var existingUser = await userService.GetUserByTelegramIdAsync(telegramUserId, cancellationToken);
+                        var firstName = user.FirstName ?? "";
+                        var lastName = user.LastName ?? "";
+                        var username = user.Username;
+                        string effectiveUsername = !string.IsNullOrWhiteSpace(username) ? username : $"{firstName} {lastName}".Trim();
+                        if (string.IsNullOrWhiteSpace(effectiveUsername)) effectiveUsername = $"User_{telegramUserId}";
 
-                        bool isNewRegistration = existingUser == null;
-                        string finalUsername;
-
-                        if (isNewRegistration)
-                        {
-                            // Logic to register the new user
-                            var firstName = user.FirstName ?? "";
-                            var lastName = user.LastName ?? "";
-                            var username = user.Username;
-                            string effectiveUsername = !string.IsNullOrWhiteSpace(username) ? username : $"{firstName} {lastName}".Trim();
-                            if (string.IsNullOrWhiteSpace(effectiveUsername)) effectiveUsername = $"User_{telegramUserId}";
-
-                            await userService.RegisterUserAsync(new RegisterUserDto { Username = effectiveUsername, TelegramId = telegramUserId, Email = $"{telegramUserId}@telegram.temp.user" }, cancellationToken);
-                            finalUsername = effectiveUsername;
-                            scopedLogger.LogInformation("[BackgroundScope] New user {finalUsername} registered successfully.", finalUsername);
-                        }
-                        else
-                        {
-                            finalUsername = existingUser!.Username;
-                            scopedLogger.LogInformation("[BackgroundScope] Existing user {finalUsername} found.", finalUsername);
-                            if (stateMachine != null) await stateMachine.ClearStateAsync(user.Id, cancellationToken);
-                        }
-
-                        // STEP 3: Edit the original message with personalized content.
-                        // We can use the queued sender here, as a slight delay for the edit is acceptable.
-                        await EditWelcomeMessageWithDetailsAsync(
-                            chatId,
-                            sentMessage.MessageId,
-                            finalUsername,
-                            !isNewRegistration, // isExistingUser is the opposite of isNewRegistration
-                            messageSender, // Pass the scoped sender
-                            cancellationToken);
+                        await userService.RegisterUserAsync(new RegisterUserDto { Username = effectiveUsername, TelegramId = telegramUserId, Email = $"{telegramUserId}@telegram.temp.user" }, cancellationToken);
+                        finalUsername = effectiveUsername;
+                        scopedLogger.LogInformation("[BackgroundScope] New user {finalUsername} registered successfully.", finalUsername);
                     }
-                    catch (Exception ex)
+                    else
                     {
-                        scopedLogger.LogError(ex, "[BackgroundScope] Error during user processing or message edit for TelegramID {UserId}.", user.Id);
+                        finalUsername = existingUser!.Username;
+                        scopedLogger.LogInformation("[BackgroundScope] Existing user {finalUsername} found.", finalUsername);
+                        if (stateMachine != null) await stateMachine.ClearStateAsync(user.Id, cancellationToken);
                     }
+
+                    await EditWelcomeMessageWithDetailsAsync(
+                        chatId,
+                        sentMessage.MessageId,
+                        finalUsername,
+                        !isNewRegistration,
+                        messageSender,
+                        cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    scopedLogger.LogError(ex, "[BackgroundScope] Error during user processing or message edit for TelegramID {UserId}.", user.Id);
                 }
             }, cancellationToken);
         }
 
-        // --- NEW HELPER: For the initial, fast send ---
         private Task<Message> SendInitialWelcomeMessageAsync(long chatId, string firstName, CancellationToken cancellationToken)
         {
             var welcomeText = $"Hello {TelegramMessageFormatter.EscapeMarkdownV2(firstName)}! 👋\n\n" +
-                              "🌟 *Welcome to Gold Market Trading Bot*\n\n" +
+                              "🌟 *Welcome to the Forex Trading Bot*\n\n" +
                               "Initializing your profile, please wait...";
 
-            var keyboard = GetMainMenuKeyboard(); // Centralize keyboard creation
+            var keyboard = GetMainMenuKeyboard();
 
-            // Use the direct _botClient to send and get the Message object back.
             return _botClient.SendMessage(
                  chatId: chatId,
                  text: welcomeText,
@@ -234,50 +220,34 @@ namespace TelegramPanel.Application.CommandHandlers.Entry
                  cancellationToken: cancellationToken);
         }
 
-        // --- NEW HELPER: For the follow-up edit ---
         private Task EditWelcomeMessageWithDetailsAsync(long chatId, int messageId, string username, bool isExistingUser, ITelegramMessageSender messageSender, CancellationToken cancellationToken)
         {
             var welcomeText = isExistingUser ? $"🎉 *Welcome back, {TelegramMessageFormatter.EscapeMarkdownV2(username)}!*" :
-                                               $"Hello {TelegramMessageFormatter.EscapeMarkdownV2(username)}! 👋\n\n🌟 *Welcome to Gold Market Trading Bot*";
+                                               $"Hello {TelegramMessageFormatter.EscapeMarkdownV2(username)}! 👋\n\n🌟 *Welcome to the Forex Trading Bot*";
 
-            var messageBody = $"{welcomeText}\n\n" +
-                              "Your trusted companion for gold trading signals and market analysis.\n\n" +
-                              "📊 *Available Features:*\n" +
-                              "• 📈 Real-time gold price alerts\n" +
-                              "• 💎 Professional trading signals\n" +
-                              "• 📰 Market analysis and insights\n" +
-                              (isExistingUser ? "• 💼 Portfolio tracking\n• 🔔 Customizable notifications\n\n" :
-                               "• 💼 Portfolio tracking\n\n") +
-                              "Use the menu below or type /help for more information.";
+            var messageBody = GenerateWelcomeMessageBody(welcomeText, isExistingUser);
 
             var keyboard = GetMainMenuKeyboard();
 
-            // Use the provided message sender (which will be the queued one from the background scope)
             return messageSender.EditMessageTextAsync(
                 chatId,
                 messageId,
                 messageBody,
-                ParseMode.MarkdownV2,
+                ParseMode.Markdown,
                 keyboard,
                 cancellationToken);
         }
 
-        // --- NEW HELPER: Centralize keyboard creation to avoid duplication ---
+        // --- THE ONLY CHANGE IS HERE ---
+        /// <summary>
+        /// Gets the main menu keyboard from the single, centralized source.
+        /// </summary>
+        /// <returns>An InlineKeyboardMarkup for the main menu.</returns>
         private InlineKeyboardMarkup GetMainMenuKeyboard()
         {
-            return MarkupBuilder.CreateInlineKeyboard(
-               new[] {
-        InlineKeyboardButton.WithCallbackData("📈 Gold Signals", MenuCommandHandler.SignalsCallbackData),
-        InlineKeyboardButton.WithCallbackData("📊 Market Analysis", "market_analysis")
-               },
-               new[] {
-        InlineKeyboardButton.WithCallbackData("💎 Subscribe", MenuCommandHandler.SubscribeCallbackData),
-        InlineKeyboardButton.WithCallbackData("⚙️ Settings", MenuCommandHandler.SettingsCallbackData)
-               },
-               new[] {
-        InlineKeyboardButton.WithCallbackData("👤 My Profile", MenuCommandHandler.ProfileCallbackData)
-               }
-           );
+            // Now calls the static method from MenuCommandHandler to get the keyboard.
+            // This ensures any changes to the main menu are reflected here automatically.
+            return MenuCommandHandler.GetMainMenuMarkup().keyboard;
         }
     }
 }

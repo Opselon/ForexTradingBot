@@ -99,6 +99,7 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
                 callbackData.Equals(MenuCommandHandler.ProfileCallbackData, StringComparison.Ordinal) || // "menu_my_profile"
                 callbackData.Equals(MenuCommandHandler.SubscribeCallbackData, StringComparison.Ordinal) || // "menu_subscribe_plans"
                 callbackData.Equals(MenuCommandHandler.SettingsCallbackData, StringComparison.Ordinal) || // "menu_user_settings"
+                 callbackData.Equals(MenuCommandHandler.AnalysisCallbackData, StringComparison.Ordinal) || // <<< NEW: Handle analysis button
                 callbackData.StartsWith("select_plan_", StringComparison.Ordinal) ||
                 callbackData.StartsWith("pay_", StringComparison.Ordinal) ||
                 callbackData.Equals(BackToMainMenuFromProfile, StringComparison.Ordinal) ||
@@ -168,6 +169,9 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
                             case MenuCommandHandler.SettingsCallbackData:
                                 await HandleSettingsAsync(chatId, userId, messageId, cancellationToken);
                                 break;
+                            case MenuCommandHandler.AnalysisCallbackData:
+                                await ShowAnalysisMenuAsync(chatId, messageId, cancellationToken);
+                                break;
                             case BackToMainMenuGeneral:
                                 _logger.LogInformation("User requested to go back to main menu.");
                                 await ShowMainMenuAndClearStateAsync(chatId, userId, messageId, cancellationToken);
@@ -191,6 +195,34 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
 
         #endregion
 
+        // VVVVVV NEW METHOD VVVVVV
+        /// <summary>
+        /// Displays the news analysis sub-menu.
+        /// </summary>
+        private async Task ShowAnalysisMenuAsync(long chatId, int messageIdToEdit, CancellationToken cancellationToken)
+        {
+            _logger.LogInformation("Showing news analysis menu to ChatID {ChatId}", chatId);
+
+            var text = TelegramMessageFormatter.Bold("🔍 News Analysis Tools") + "\n\n" +
+                       "Select a tool to analyze news content from our indexed sources:";
+
+            var keyboard = MarkupBuilder.CreateInlineKeyboard(
+                new[]
+                {
+                    InlineKeyboardButton.WithCallbackData("🔎 Search by Keywords", "analysis_search_keywords")
+                },
+                // new[] 
+                // { 
+                //    InlineKeyboardButton.WithCallbackData("📚 Search by Source", "analysis_search_source") // Future feature
+                // },
+                new[]
+                {
+                    InlineKeyboardButton.WithCallbackData("⬅️ Back to Main Menu", BackToMainMenuGeneral)
+                }
+            );
+
+            await EditMessageOrSendNewAsync(chatId, messageIdToEdit, text, keyboard, ParseMode.Markdown, cancellationToken);
+        }
 
         private async Task HandlePlanSelectionAsync(long chatId, long telegramUserId, int messageIdToEdit, string callbackData, CancellationToken cancellationToken)
         {
@@ -423,24 +455,7 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
             await EditMessageOrSendNewAsync(chatId, messageIdToEdit, sb.ToString(), backKeyboard, ParseMode.MarkdownV2, cancellationToken);
         }
 
-        private async Task HandleSubscribeAsync(long chatId, long telegramUserId, int messageIdToEdit, CancellationToken cancellationToken)
-        {
-            _logger.LogInformation("User {TelegramUserId} requested subscription plans.", telegramUserId);
 
-            var plansText = TelegramMessageFormatter.Bold("💎 Subscription Plans:\n\n") +
-                            "▫️ *Free Tier*: Access to basic signals and features.\n" +
-                            "▫️ *Premium Tier* (Monthly): Full access to all signals, advanced analytics, and priority updates.\n" +
-                            "▫️ *Premium Tier* (Quarterly): Same as monthly premium with a discount.\n\n" +
-                            "Please select a plan to learn more or subscribe:";
-
-            var plansKeyboard = MarkupBuilder.CreateInlineKeyboard(
-      new[] { InlineKeyboardButton.WithCallbackData("🌟 Premium Monthly", "subscribe_premium_1m") },
-      new[] { InlineKeyboardButton.WithCallbackData("✨ Premium Quarterly", "subscribe_premium_3m") },
-      new[] { InlineKeyboardButton.WithCallbackData("⬅️ Back to Main Menu", BackToMainMenuGeneral) }
-  );
-
-            await EditMessageOrSendNewAsync(chatId, messageIdToEdit, plansText, plansKeyboard, ParseMode.Markdown, cancellationToken);
-        }
 
         /// <summary>
         /// Handles the "Settings" button callback from the main menu.

@@ -24,7 +24,7 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
         public const string SubscribeCallbackData = "menu_subscribe_plans";
         public const string SettingsCallbackData = "menu_user_settings";
         public const string MarketAnalysisData = "market_analysis";
-
+        public const string AnalysisCallbackData = "menu_analysis";
         #endregion
 
         #region Constructor
@@ -37,31 +37,42 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
 
         #region Static Menu Markup Generation
 
+        private InlineKeyboardMarkup GetMainMenuKeyboard()
+        {
+            // This now uses the single source of truth from MenuCommandHandler
+            return MenuCommandHandler.GetMainMenuMarkup().keyboard;
+        }
+
         /// <summary>
         /// Generates the text and inline keyboard markup for the main application menu.
         /// </summary>
         public static (string text, InlineKeyboardMarkup keyboard) GetMainMenuMarkup()
         {
             var text = "Welcome to the Main Menu!\nChoose one of the available options:";
-            // استفاده از MarkupBuilder
+
             var keyboard = MarkupBuilder.CreateInlineKeyboard(
-                new[] // ردیف اول
+                new[] // Row 1: Core Features
                 {
-            InlineKeyboardButton.WithCallbackData("📈 View Signals", SignalsCallbackData),
-            InlineKeyboardButton.WithCallbackData("📊 Market Analysis", MarketAnalysisData)
+                    InlineKeyboardButton.WithCallbackData("📈 View Signals", SignalsCallbackData),
+                    InlineKeyboardButton.WithCallbackData("📊 Market Analysis", MarketAnalysisData)
                 },
-                new[] // ردیف دوم
+                new[] // Row 2: NEW Analysis Button
                 {
-            InlineKeyboardButton.WithCallbackData("💎 Subscribe / Plans", SubscribeCallbackData)
+                    InlineKeyboardButton.WithCallbackData("🔍 News Analysis", AnalysisCallbackData)
                 },
-                new[] // ردیف سوم
+                new[] // Row 3: Subscription
                 {
-            InlineKeyboardButton.WithCallbackData("⚙️ Settings", SettingsCallbackData),
-            InlineKeyboardButton.WithCallbackData("👤 My Profile", ProfileCallbackData)
+                    InlineKeyboardButton.WithCallbackData("💎 Subscribe / Plans", SubscribeCallbackData)
+                },
+                new[] // Row 4: Account Management
+                {
+                    InlineKeyboardButton.WithCallbackData("⚙️ Settings", SettingsCallbackData),
+                    InlineKeyboardButton.WithCallbackData("👤 My Profile", ProfileCallbackData)
                 }
             );
             return (text, keyboard);
         }
+
         #endregion
 
         #region ITelegramCommandHandler Implementation

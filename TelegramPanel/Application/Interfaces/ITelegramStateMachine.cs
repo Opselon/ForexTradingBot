@@ -31,5 +31,12 @@ namespace TelegramPanel.Application.Interfaces
         /// Clears any active conversation state for a user.
         /// </summary>
         Task ClearStateAsync(long userId, CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Gets a state implementation by its unique name.
+        /// </summary>
+        /// <param name="stateName">The name of the state to retrieve.</param>
+        /// <returns>The ITelegramState implementation or null if not found.</returns>
+        ITelegramState? GetState(string stateName); // <<< NEW METHOD
     }
 }

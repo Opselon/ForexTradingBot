@@ -119,6 +119,9 @@ jobs:
     name: '✅ Set Deployment Status to Success'
     needs: register_service
     runs-on: ubuntu-latest
+    # Add explicit permissions to this job to ensure they are applied.
+    permissions:
+      deployments: write
     steps:
       - name: 'Set Deployment Status to Success'
         uses: peter-evans/create-deployment-status@v6

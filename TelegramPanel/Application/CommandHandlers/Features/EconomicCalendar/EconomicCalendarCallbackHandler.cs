@@ -50,8 +50,9 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
         /// Determines if this handler can process the callback query.
         /// </summary>
         public bool CanHandle(Update update) =>
-            update.CallbackQuery?.Data?.StartsWith(ReleasesCallbackPrefix) == true ||
-            update.CallbackQuery?.Data == SearchSeriesCallback;
+           update.CallbackQuery?.Data?.StartsWith(ReleasesCallbackPrefix) == true ||
+           update.CallbackQuery?.Data == SearchSeriesCallback ||
+           update.CallbackQuery?.Data == MenuCommandHandler.BackToMainMenuGeneral;
 
         /// <summary>
         /// Asynchronously handles the incoming callback query by routing it to the appropriate method.
@@ -78,6 +79,20 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
                 else if (data.StartsWith(ReleasesCallbackPrefix))
                 {
                     await HandleReleasesViewAsync(callbackQuery, cancellationToken);
+                }
+                else if (data == MenuCommandHandler.AnalysisCallbackData) // Assuming you have Main Menu
+                {
+                    _logger.LogInformation("Back to Menu button pressed from FredSearch. UserID: {UserId}", update.CallbackQuery.From.Id);
+                    // Clear any user state if necessary.
+                    await _stateMachine.ClearStateAsync(update.CallbackQuery.From.Id, cancellationToken);
+
+                    // Set the state to the main menu:
+                    await _stateMachine.SetStateAsync(update.CallbackQuery.From.Id, "MainMenuState", update, cancellationToken);  // Replace "MainMenuState" with the actual state name.
+
+                    // Send Main Menu
+                    // (Assuming you have a method like this)
+                    // await SendMainMenu(update.CallbackQuery.Message.Chat.Id, cancellationToken); // Send the menu
+                    return; // Important:  Exit the handler here
                 }
             }
             catch (Exception ex)

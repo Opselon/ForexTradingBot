@@ -1,4 +1,5 @@
 ﻿// File: TelegramPanel/Application/States/FredSearchState.cs
+using Application.DTOs.Fred;
 using Application.Interfaces;
 using Microsoft.Extensions.Logging;
 using System.Text;
@@ -9,6 +10,7 @@ using TelegramPanel.Application.CommandHandlers.MainMenu;
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Formatters;
 using TelegramPanel.Infrastructure;
+using TelegramPanel.Infrastructure.Helpers;
 
 namespace TelegramPanel.Application.States
 {
@@ -29,7 +31,6 @@ namespace TelegramPanel.Application.States
             _messageSender = messageSender;
             _calendarService = calendarService;
         }
-
         public Task<string?> GetEntryMessageAsync(long chatId, Update? triggerUpdate = null, CancellationToken cancellationToken = default)
         {
             try
@@ -58,76 +59,82 @@ namespace TelegramPanel.Application.States
 
         public async Task<string?> ProcessUpdateAsync(Update update, CancellationToken cancellationToken = default)
         {
+            long? chatId = update.Message?.Chat.Id ?? update.CallbackQuery?.Message?.Chat.Id;
+
+            if (update.Type != UpdateType.Message || string.IsNullOrWhiteSpace(update.Message?.Text))
+            {
+                if (chatId.HasValue)
+                {
+                    _logger.LogWarning("Invalid update type received in FredSearchState for ChatID {ChatId}. Expected text message.", chatId.Value);
+                    await _messageSender.SendTextMessageAsync(chatId.Value, "Invalid input. Please send your search as a text message.", cancellationToken: cancellationToken);
+                }
+                return Name;
+            }
+
+            // FIX: Use the 'chatId' variable declared at the top of the method.
+            var message = update.Message;
+            var userId = message.From!.Id;
+            var searchText = message.Text.Trim();
+
+            if (searchText.Equals("/cancel", StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogInformation("User {UserId} cancelled FRED search.", userId);
+                await _messageSender.SendTextMessageAsync(chatId.Value, "Search cancelled.", cancellationToken: cancellationToken);
+                return null;
+            }
+
             try
             {
-                if (update.Type != UpdateType.Message || string.IsNullOrWhiteSpace(update.Message?.Text))
-                {
-                    _logger.LogWarning("🚫 Invalid input (not a text message or empty) from user {UserId}", update.Message?.From?.Id);
-                    await _messageSender.SendTextMessageAsync(update.Message.Chat.Id, "🚫 Invalid input! Please send your search as a text message. ✍️", cancellationToken: cancellationToken);
-                    return Name; // Stay in state.
-                }
-
-                var message = update.Message;
-                var searchText = message.Text.Trim();
-                _logger.LogInformation("User {UserId} is searching FRED for: '{SearchText}'", message.From.Id, searchText);
-                await _messageSender.SendTextMessageAsync(message.Chat.Id, $"🔍 Searching for *{searchText}*... ⏳", ParseMode.Markdown, cancellationToken: cancellationToken);
+                _logger.LogInformation("User {UserId} is searching FRED for: '{SearchText}'", userId, searchText);
+                await _messageSender.SendTextMessageAsync(chatId.Value, $"⏳ Searching FRED for data series matching *{TelegramMessageFormatter.EscapeMarkdownV2(searchText)}*...", ParseMode.MarkdownV2, cancellationToken: cancellationToken);
 
                 var result = await _calendarService.SearchSeriesAsync(searchText, cancellationToken);
 
-                // Defensive Programming - Check for null result.
-                if (result == null)
+                if (!result.Succeeded || result.Data == null || !result.Data.Any())
                 {
-                    _logger.LogError("SearchSeriesAsync returned null for search term: '{SearchText}' for user {UserId}", searchText, message.From.Id);
-                    await _messageSender.SendTextMessageAsync(message.Chat.Id, $"❌ Oops! Something went wrong during the search for *{searchText}*. Please try again. 🔄", ParseMode.Markdown, cancellationToken: cancellationToken);
-                    return Name; // Stay in state.
+                    var notFoundText = $"❌ No data series found for *{TelegramMessageFormatter.EscapeMarkdownV2(searchText)}*.\n\nPlease try a different search term or use `/cancel` to exit.";
+                    await _messageSender.SendTextMessageAsync(chatId.Value, notFoundText, ParseMode.MarkdownV2, cancellationToken: cancellationToken);
+                    return Name;
                 }
 
-                if (!result.Succeeded || !result.Data.Any())
-                {
-                    _logger.LogInformation("No data series found for '{SearchText}' for user {UserId}", searchText, message.From.Id);
-                    await _messageSender.SendTextMessageAsync(message.Chat.Id, $"😔 No data series found for *{searchText}*. Try another term! 🤓", ParseMode.Markdown, cancellationToken: cancellationToken);
-                    return null; // Exit state.
-                }
+                var (responseText, responseKeyboard) = BuildResponseMessage(searchText, result.Data);
 
-                var sb = new StringBuilder();
-                sb.AppendLine($"✅ *Top results for '{searchText}':* 🎉");
-
-                foreach (var series in result.Data.OrderByDescending(s => s.Popularity).Take(5))
-                {
-                    // Defensive programming: Check for null series item
-                    if (series == null)
-                    {
-                        _logger.LogWarning("Null series item found in search results for '{SearchText}' for user {UserId}. Skipping.", searchText, message.From.Id);
-                        continue; // Skip to the next series.
-                    }
-
-                    sb.AppendLine("`------------------------------`");
-                    sb.AppendLine($"📈 *{TelegramMessageFormatter.EscapeMarkdownV2(series.Title)}*");
-                    sb.AppendLine($"`🆔 ID:` {series.Id} | `📊 Freq:` {series.FrequencyShort} | `📏 Units:` {series.UnitsShort}");
-                    sb.AppendLine($"🗓️ *Last Updated:* {TelegramMessageFormatter.EscapeMarkdownV2(series.LastUpdated)}");
-                    if (!string.IsNullOrWhiteSpace(series.Notes))
-                    {
-                        // Defensive programming: Ensure Notes isn't too long.  Limits length.
-                        // Escape markdown in the notes *and* add the elipsis
-                        var notesToShow = series.Notes.Length <= 150 ? TelegramMessageFormatter.EscapeMarkdownV2(series.Notes) : TelegramMessageFormatter.EscapeMarkdownV2(series.Notes.Substring(0, 150)) + "...";
-                        sb.AppendLine($"📝 *Notes:* _{notesToShow}_");
-                    }
-                }
-
-                // Add "Back to Menu" button
-                var keyboard = new InlineKeyboardMarkup(new[] {
-                    InlineKeyboardButton.WithCallbackData("🔙 Back to Menu", MenuCommandHandler.EconomicCalendarCallbackData) // More expressive emoji
-                });
-
-                await _messageSender.SendTextMessageAsync(message.Chat.Id, sb.ToString(), ParseMode.MarkdownV2, keyboard, cancellationToken: cancellationToken);
-                return null; // Exit state after showing results
+                await _messageSender.SendTextMessageAsync(chatId.Value, responseText, ParseMode.MarkdownV2, responseKeyboard, cancellationToken);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error processing keyword search for user {UserId}, search term: '{SearchText}'", update.Message?.From?.Id, update.Message?.Text);
-                await _messageSender.SendTextMessageAsync(update.Message.Chat.Id, "🚨 Uh oh! There was an error processing your search. Please try again later. 🙏", cancellationToken: cancellationToken);
-                return Name; // Stay in state (or potentially transition to an error state).
+                _logger.LogError(ex, "A critical error occurred during FRED search for user {UserId} with search text '{SearchText}'", userId, searchText);
+                await _messageSender.SendTextMessageAsync(chatId.Value, "🚨 An unexpected error occurred. The operation has been cancelled. Please try again later.", cancellationToken: cancellationToken);
             }
+
+            return null;
         }
+
+        /// <summary>
+        /// A private helper to build the formatted results message.
+        /// </summary>
+        private (string, InlineKeyboardMarkup?) BuildResponseMessage(string searchText, List<FredSeriesDto> seriesList)
+        {
+            var singleMessageSb = new StringBuilder();
+            singleMessageSb.AppendLine($"✅ Found *{seriesList.Count}* results for `{TelegramMessageFormatter.EscapeMarkdownV2(searchText)}`:");
+
+            foreach (var series in seriesList.OrderByDescending(s => s.Popularity).Take(5))
+            {
+                singleMessageSb.AppendLine();
+                singleMessageSb.AppendLine($"📈 *{TelegramMessageFormatter.EscapeMarkdownV2(series.Title)}*");
+                singleMessageSb.AppendLine($"`ID:` [{series.Id}](https://fred.stlouisfed.org/series/{series.Id}) `| Freq: {series.FrequencyShort} | Units: {series.UnitsShort}`");
+            }
+
+            var finalKeyboard = MarkupBuilder.CreateInlineKeyboard(
+                new[]
+                {
+                    InlineKeyboardButton.WithCallbackData("⬅️ New Search", "econ_search_series"),
+                    InlineKeyboardButton.WithCallbackData("🗓️ Back to Calendar", "menu_econ_calendar")
+                }
+            );
+
+            return (singleMessageSb.ToString(), finalKeyboard);
+        }
+        
     }
 }

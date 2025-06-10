@@ -241,36 +241,20 @@ namespace TelegramPanel.Infrastructure
                 _logger.LogDebug("Polling received update. Attempting to write to the processing channel.");
                 try
                 {
-                    // ✅ این تغییر باعث می‌شود HandleUpdateAsync فوراً برگردد
-                    // و Thread Polling را بلاک نکند.
-                    // توجه: این یک "Anti-Pattern" در async/await برای I/O-bound operations است،
-                    // اما به درخواست صریح شما برای "عدم بلاک شدن این لایه" و با فرض
-                    // اینکه TelegramUpdateChannel اکنون از FullMode.DropOldest استفاده می‌کند،
-                    // سربار کمتری ایجاد می‌کند و وظیفه را به Thread Pool منتقل می‌کند.
-                    _ = Task.Run(async () =>
-                    {
-                        try
-                        {
-                            await _updateChannel.WriteAsync(update, cancellationToken).ConfigureAwait(false);
-                            _logger.LogDebug("Update successfully written to channel from polling (via Task.Run).");
-                        }
-                        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                        {
-                            _logger.LogInformation("Write to update channel (via Task.Run) was canceled for an update (polling cancellation requested).");
-                        }
-                        catch (System.Threading.Channels.ChannelClosedException ex)
-                        {
-                            _logger.LogError(ex, "Failed to write update to channel (via Task.Run) because the channel is closed. This might occur during application shutdown.");
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogError(ex, "An unexpected error occurred while writing update from polling to the processing channel (via Task.Run).");
-                        }
-                    });
+                    await _updateChannel.WriteAsync(update, cancellationToken).ConfigureAwait(false);
+                    _logger.LogDebug("Update successfully written to channel from polling.");
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    _logger.LogInformation("Write to update channel was canceled for an update (polling cancellation requested).");
+                }
+                catch (System.Threading.Channels.ChannelClosedException ex)
+                {
+                    _logger.LogError(ex, "Failed to write update to channel because the channel is closed. This might occur during application shutdown.");
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Failed to initiate Task.Run for writing update {UpdateId} to channel from polling.", update.Id);
+                    _logger.LogError(ex, "An unexpected error occurred while writing update from polling to the processing channel.");
                 }
             }
         }

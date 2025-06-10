@@ -26,6 +26,7 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
         public const string MarketAnalysisData = "market_analysis";
         public const string AnalysisCallbackData = "menu_analysis";
         public const string EconomicCalendarCallbackData = "menu_econ_calendar"; // <<< NEW
+        public const string BackToMainMenuGeneral = "back_to_main_menu"; //  Add this
         #endregion
 
         #region Constructor

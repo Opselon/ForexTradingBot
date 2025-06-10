@@ -37,6 +37,7 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
         private readonly AsyncRetryPolicy _internalServiceRetryPolicy; // سیاست Polly برای سرویس‌های داخلی/DB
         private readonly AsyncRetryPolicy _externalApiRetryPolicy;    // سیاست Polly برای فراخوانی‌های API خارجی
         private readonly IMemoryCache _memoryCache; // ✅ INJECT THE MEMORY CACHE
+        private readonly IEnumerable<ITelegramCallbackQueryHandler> _callbackHandlers;
         #endregion
 
         #region Constructor
@@ -104,21 +105,13 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
         /// <param name="cancellationToken">توکن برای لغو عملیات.</param>
         public async Task ProcessUpdateAsync(Update update, CancellationToken cancellationToken = default)
         {
-            var userId = update.Message?.From?.Id ?? update.CallbackQuery?.From?.Id;
-            // اطلاعات آپدیت و UserID در Log Scope ای که توسط UpdateQueueConsumerService ایجاد شده، قابل دسترس خواهد بود.
-            // ✅ مهم: این متد (ProcessUpdateAsync) از قبل روی یک Thread Pool Thread در حال اجرا است.
-            // نیازی به Task.Run اضافی در اینجا نیست.
             _logger.LogInformation("Beginning pipeline processing for update ID: {UpdateId}.", update.Id);
 
-            // تعریف نقطه پایانی (داخلی‌ترین بخش) پایپ‌لاین.
-            // این delegate زمانی اجرا می‌شود که آپدیت از تمام Middleware ها عبور کرده باشد.
-            // وظیفه آن مسیریابی آپدیت پردازش‌شده به ماشین وضعیت یا Command Handler مناسب است.
             TelegramPipelineDelegate finalHandlerAction = async (processedUpdate, ct) =>
             {
                 await RouteToHandlerOrStateMachineAsync(processedUpdate, ct);
             };
 
-            // ساخت پایپ‌لاین Middleware ها با استفاده از Aggregate.
             var pipeline = _middlewares.Aggregate(
                 finalHandlerAction,
                 (nextMiddlewareInChain, currentMiddleware) =>
@@ -127,21 +120,16 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
 
             try
             {
-                // اجرای کل پایپ‌لاین با آپدیت ورودی.
-                // این فراخوانی، اجرای اولین Middleware در زنجیره را آغاز می‌کند.
-                // ✅ این 'await' بلاک‌کننده نیست. در حین انتظار برای عملیات I/O (در Middlewareها یا Handlerها)،
-                // Thread به ThreadPool بازگردانده می‌شود.
                 await pipeline(update, cancellationToken);
                 _logger.LogInformation("Pipeline processing completed successfully for update ID: {UpdateId}.", update.Id);
             }
             catch (Exception ex)
             {
-                // این catch block برای خطاهایی است که در طول اجرای پایپ‌لاین (توسط Middleware ها یا Handler ها) مدیریت نشده و به اینجا رسیده‌اند.
                 _logger.LogError(ex, "An unhandled exception escaped the Telegram update processing pipeline for update ID: {UpdateId}.", update.Id);
-                // تلاش برای ارسال پیام خطای عمومی به کاربر.
                 await HandleProcessingErrorAsync(update, ex, cancellationToken);
             }
         }
+
 
         #endregion
 
@@ -153,6 +141,17 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
         /// </summary>
         /// <param name="update">آپدیت پردازش شده توسط پایپ‌لاین Middleware.</param>
         /// <param name="cancellationToken">توکن برای لغو عملیات.</param>
+        // This method goes inside your UpdateProcessingService.cs
+
+        /// <summary>
+        /// Routes an update to the correct handler based on a defined priority,
+        /// wrapping key interactions with a Polly retry policy for resilience.
+        /// Priority Order:
+        /// 1. Specific Command Handlers (e.g., /start, /cancel)
+        /// 2. Specific Callback Query Handlers (for button clicks)
+        /// 3. Active State Machine (if the user is in a conversation)
+        /// 4. Fallback for unknown updates.
+        /// </summary>
         private async Task RouteToHandlerOrStateMachineAsync(Update update, CancellationToken cancellationToken)
         {
             var userId = update.Message?.From?.Id ?? update.CallbackQuery?.From?.Id;
@@ -162,29 +161,65 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
                 return;
             }
 
-            // اطلاعات برای Context مربوط به Polly.
             var pollyContext = new Polly.Context($"RouteToHandler_{update.Id}", new Dictionary<string, object>
-            {
-                { "UpdateId", update.Id },
-                { "TelegramUserId", userId.Value }
-            });
+    {
+        { "UpdateId", update.Id },
+        { "TelegramUserId", userId.Value }
+    });
 
-            // Priority 1: Check and process with the State Machine
+            // =========================================================================
+            // FIX: THE ROUTING LOGIC IS REORDERED HERE
+            // =========================================================================
+
+            // --- Priority 1: Check for a specific Command or Callback Handler ---
+            bool handledByTypeSpecificHandler = false;
+
+            // Check for Commands (e.g., /start, /cancel)
+            if (update.Type == UpdateType.Message && update.Message?.Text?.StartsWith('/') == true)
+            {
+                ITelegramCommandHandler? commandHandler = _commandHandlers.FirstOrDefault(h => h.CanHandle(update));
+                if (commandHandler != null)
+                {
+                    _logger.LogInformation("Routing UpdateID {UpdateId} to CommandHandler: {HandlerName}", update.Id, commandHandler.GetType().Name);
+                    await commandHandler.HandleAsync(update, cancellationToken);
+                    handledByTypeSpecificHandler = true;
+                }
+            }
+            // Check for Callback Queries (Button Clicks)
+            else if (update.Type == UpdateType.CallbackQuery)
+            {
+                ITelegramCallbackQueryHandler? callbackHandler = _callbackQueryHandlers.FirstOrDefault(h => h.CanHandle(update));
+                if (callbackHandler != null)
+                {
+                    _logger.LogInformation("Routing UpdateID {UpdateId} to CallbackQueryHandler: {HandlerName} for data '{CallbackData}'",
+                        update.Id, callbackHandler.GetType().Name, update.CallbackQuery!.Data);
+                    await callbackHandler.HandleAsync(update, cancellationToken);
+                    handledByTypeSpecificHandler = true;
+                }
+            }
+
+            // If a specific handler was found and executed, we are done.
+            if (handledByTypeSpecificHandler)
+            {
+                return;
+            }
+
+            // --- Priority 2: If no specific handler was found, THEN check the State Machine ---
+            _logger.LogDebug("No specific handler found. Checking for active state for UserID {UserId}.", userId.Value);
+
             ITelegramState? currentState = null;
             try
             {
-                // ✅ اعمال سیاست تلاش مجدد بر روی GetCurrentStateAsync
                 await _internalServiceRetryPolicy.ExecuteAsync(async (context, ct) =>
                 {
-                    // این فراخوانی باید خودش async باشد و Thread را بلاک نکند.
                     currentState = await _stateMachine.GetCurrentStateAsync(userId.Value, ct);
                 }, pollyContext, cancellationToken);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error retrieving current state for UserID {UserId} while processing Update ID: {UpdateId} after retries.", userId.Value, update.Id);
-                await HandleProcessingErrorAsync(update, ex, cancellationToken); // Notify user of the error
-                return; // Cannot proceed reliably if state retrieval fails.
+                await HandleProcessingErrorAsync(update, ex, cancellationToken);
+                return;
             }
 
             if (currentState != null)
@@ -193,10 +228,8 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
                     userId.Value, currentState.Name, update.Id);
                 try
                 {
-                    // ✅ اعمال سیاست تلاش مجدد بر روی ProcessUpdateInCurrentStateAsync
                     await _internalServiceRetryPolicy.ExecuteAsync(async (context, ct) =>
                     {
-                        // این فراخوانی نیز باید خودش async باشد و Thread را بلاک نکند.
                         await _stateMachine.ProcessUpdateInCurrentStateAsync(userId.Value, update, ct);
                     }, pollyContext, cancellationToken);
                 }
@@ -204,120 +237,33 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
                 {
                     _logger.LogError(ex, "Error processing UpdateID {UpdateId} in state '{StateName}' for UserID {UserId} after retries.",
                         update.Id, currentState.Name, userId.Value);
-                    await HandleProcessingErrorAsync(update, ex, cancellationToken); // Notify user of the error
-                                                                                     // Clear the user's state on error to prevent getting stuck in a faulty state.
+                    await HandleProcessingErrorAsync(update, ex, cancellationToken);
+
                     try
                     {
-                        // ✅ اعمال سیاست تلاش مجدد بر روی ClearStateAsync
+                        _logger.LogWarning("Attempting to clear faulty state '{StateName}' for UserID {UserId}.", currentState.Name, userId.Value);
                         await _internalServiceRetryPolicy.ExecuteAsync(async (context, ct) =>
                         {
-                            // این فراخوانی نیز باید خودش async باشد و Thread را بلاک نکند.
                             await _stateMachine.ClearStateAsync(userId.Value, ct);
-                        }, pollyContext, CancellationToken.None); // CancellationToken.None برای اطمینان از پاکسازی وضعیت
+                        }, pollyContext, CancellationToken.None);
+                        _logger.LogInformation("State cleared for UserID {UserId} due to processing error.", userId.Value);
                     }
                     catch (Exception clearEx)
                     {
-                        _logger.LogError(clearEx, "Critical: Failed to clear state for UserID {UserId} after processing error in state '{StateName}'.", userId.Value, currentState.Name);
+                        _logger.LogError(clearEx, "CRITICAL: Failed to clear state for UserID {UserId} after processing error in state '{StateName}'.", userId.Value, currentState.Name);
                     }
-                    _logger.LogInformation("State cleared for UserID {UserId} due to processing error in state '{StateName}'.", userId.Value, currentState.Name);
                 }
-                return; // If the state machine was active, it's considered to have handled (or attempted to handle) the update.
+                return;
             }
 
-            // Priority 2: If not in a specific state, route based on UpdateType
-            _logger.LogDebug("No active state for UserID {UserId}. Routing UpdateID {UpdateId} by type: {UpdateType}", userId.Value, update.Id, update.Type);
+            // --- Fallback: No handler or state found ---
+            var contentPartial = (update.Message?.Text ?? update.CallbackQuery?.Data ?? update.InlineQuery?.Query ?? "N/A");
+            if (contentPartial.Length > 50) contentPartial = contentPartial.Substring(0, 50) + "...";
 
-            bool handledByTypeSpecificHandler = false;
-
-            if (update.Type == UpdateType.Message && update.Message != null)
-            {
-                ITelegramCommandHandler? commandHandler = null;
-                try
-                {
-                    // Find the first command handler that can process this message update.
-                    commandHandler = _commandHandlers.FirstOrDefault(h => h.CanHandle(update));
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error occurred while trying to find a suitable ITelegramCommandHandler for UpdateID {UpdateId}.", update.Id);
-                    await HandleProcessingErrorAsync(update, ex, cancellationToken);
-                    return;
-                }
-
-                if (commandHandler != null)
-                {
-                    _logger.LogInformation("Routing UpdateID {UpdateId} (Type: Message) to ITelegramCommandHandler: {HandlerName}", update.Id, commandHandler.GetType().Name);
-                    try
-                    {
-                        // ✅ مهم: HandleAsync خود Handler باید async باشد و Thread را بلاک نکند.
-                        await commandHandler.HandleAsync(update, cancellationToken);
-                        handledByTypeSpecificHandler = true;
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Error executing ITelegramCommandHandler {HandlerName} for UpdateID {UpdateId}.", commandHandler.GetType().Name, update.Id);
-                        await HandleProcessingErrorAsync(update, ex, cancellationToken);
-                    }
-                }
-            }
-            else if (update.Type == UpdateType.CallbackQuery && update.CallbackQuery != null)
-            {
-                ITelegramCallbackQueryHandler? callbackHandler = null;
-                try
-                {
-                    _logger.LogDebug("Searching for ITelegramCallbackQueryHandler for CBQ Data: '{CBQData}'. Available handlers: {HandlerCount}",
-                        update.CallbackQuery.Data, _callbackQueryHandlers.Count());
-
-                    foreach (var h_instance in _callbackQueryHandlers)
-                    {
-                        bool canItHandle = h_instance.CanHandle(update);
-                        _logger.LogTrace("Checking ITelegramCallbackQueryHandler: {HandlerType}. CanHandle for '{CBQData}'? -> {CanHandleResult}",
-                            h_instance.GetType().FullName, update.CallbackQuery.Data, canItHandle);
-                        if (canItHandle)
-                        {
-                            callbackHandler = h_instance;
-                            break;
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error finding ITelegramCallbackQueryHandler for UpdateID {UpdateId}, CBQData: {CBQData}", update.Id, update.CallbackQuery.Data);
-                    await HandleProcessingErrorAsync(update, ex, cancellationToken);
-                    return;
-                }
-
-                if (callbackHandler != null)
-                {
-                    _logger.LogInformation("Routing UpdateID {UpdateId} (Type: CallbackQuery, Data: '{CBQData}') to ITelegramCallbackQueryHandler: {HandlerName}",
-                        update.Id, update.CallbackQuery.Data, callbackHandler.GetType().Name);
-                    try
-                    {
-                        // ✅ مهم: HandleAsync خود Handler باید async باشد و Thread را بلاک نکند.
-                        await callbackHandler.HandleAsync(update, cancellationToken);
-                        handledByTypeSpecificHandler = true;
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Error executing ITelegramCallbackQueryHandler {HandlerName} for UpdateID {UpdateId}, CBQData: {CBQData}",
-                            callbackHandler.GetType().Name, update.Id, update.CallbackQuery.Data);
-                        await HandleProcessingErrorAsync(update, ex, cancellationToken);
-                    }
-                }
-            }
-            // Add other UpdateType handlers (e.g., EditedMessage, Poll, etc.) here if needed.
-
-            if (!handledByTypeSpecificHandler)
-            {
-                string contentPartial = (update.Message?.Text ?? update.CallbackQuery?.Data ?? update.InlineQuery?.Query ?? "N/A");
-                if (contentPartial.Length > 50) contentPartial = contentPartial.Substring(0, 50) + "...";
-
-                _logger.LogWarning("No suitable specific handler (Command or CallbackQuery) or active state found for Update ID: {UpdateId}. UpdateType: {UpdateType}. Content(partial): '{Content}'. Routing to unknown/unmatched handler.",
-                    update.Id, update.Type, contentPartial);
-                await HandleUnknownOrUnmatchedUpdateAsync(update, cancellationToken);
-            }
+            _logger.LogWarning("No suitable specific handler or active state found for Update ID: {UpdateId}. UpdateType: {UpdateType}. Content(partial): '{Content}'. Routing to unknown/unmatched handler.",
+                update.Id, update.Type, contentPartial);
+            await HandleUnknownOrUnmatchedUpdateAsync(update, cancellationToken);
         }
-
         /// <summary>
         /// Handles updates that were not managed by any Command Handler or active state.
         /// It sends a default message to the user which self-destructs after a few seconds.

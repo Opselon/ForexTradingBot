@@ -1,8 +1,3 @@
-# ====================================================================================
-# THE DEFINITIVE WINDOWS SERVICE MANAGEMENT SCRIPT (v.Final-Victory-Simplified)
-# This version is simpler because the .NET app is now service-aware.
-# It only needs to create the service pointing to the EXE.
-# ====================================================================================
 param(
     [string]$DeployPath,
     [string]$TempPath
@@ -15,8 +10,6 @@ Write-Host "--- SCRIPT 4: REGISTER & LAUNCH WINDOWS SERVICE ---" -ForegroundColo
 $ServiceName = "ForexTradingBotAPI"
 $DisplayName = "Forex Trading Bot API Service"
 $ExePath     = Join-Path $DeployPath "WebAPI.exe"
-# The service no longer needs command-line arguments because it will read them
-# from appsettings.Production.json, which is loaded due to ASPNETCORE_ENVIRONMENT.
 
 Write-Host "Verifying presence of executable at '$ExePath'..."
 if (-not (Test-Path $ExePath)) {
@@ -28,13 +21,28 @@ Write-Host "Stopping and removing existing service '$ServiceName' for a clean in
 $service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 if ($service) {
     Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 5
-    sc.exe delete "$ServiceName"
-    Start-Sleep -Seconds 5
+    sc.exe delete $ServiceName
+
+    # حلقهٔ صبر تا وقتی سرویس از لیست پاک شود
+    $maxWait = 60     # حداکثر ۶۰ ثانیه انتظار
+    $waited  = 0
+    while ($true) {
+        Start-Sleep -Seconds 2
+        $waited += 2
+        try {
+            Get-Service -Name $ServiceName -ErrorAction Stop | Out-Null
+            Write-Host "… سرویس هنوز حذف نشده، منتظر می‌مانیم ($waited / $maxWait)…"
+            if ($waited -ge $maxWait) {
+                throw "FATAL: سرویس پس از $maxWait ثانیه هنوز حذف نشده."
+            }
+        } catch {
+            Write-Host "✅ سرویس با موفقیت حذف شد."
+            break
+        }
+    }
 }
 
 Write-Host "Creating a new, clean Windows Service '$ServiceName'..."
-# The BinaryPathName is now just the path to the executable. No arguments needed.
 New-Service -Name $ServiceName -BinaryPathName "`"$ExePath`"" -DisplayName $DisplayName -StartupType Automatic
 Write-Host "✅ New service created successfully."
 

@@ -115,23 +115,35 @@ jobs:
       
   
   # This job is now correctly indented to be a sibling of 'register_service'
-  set_deployment_status:
-    name: '✅ Set Deployment Status to Success'
-    needs: register_service
+  set_status_success:
+    name: ✅ Set Deployment to Success
     runs-on: ubuntu-latest
-    # Add explicit permissions to this job to ensure they are applied.
-    permissions:
-      deployments: write
+    needs: register_service
+    if: success()
     steps:
-      - name: 'Set Deployment Status to Success'
-        uses: peter-evans/create-deployment-status@v6
+      - name: Set Deployment Status to Success
+        uses: chrnorm/deployment-status@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          environment: production
+          deployment-id: ${{ needs.register_service.outputs.deployment_id }}
           state: success
           log-url: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          description: 'Deployment finished successfully'
-          auto-inactive: true
+          description: 'Deployment to production was successful!'
+
+  set_status_failure:
+    name: ❌ Set Deployment to Failure
+    runs-on: ubuntu-latest
+    needs: register_service
+    if: failure()
+    steps:
+      - name: Set Deployment Status to Failure
+        uses: chrnorm/deployment-status@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          deployment-id: ${{ needs.register_service.outputs.deployment_id }}
+          state: failure
+          log-url: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          description: 'Deployment to production failed. Please check logs.'
           
         
   # ====================== JOB 3: FINAL REPORTING AND CLEANUP (UNCHANGED) ======================

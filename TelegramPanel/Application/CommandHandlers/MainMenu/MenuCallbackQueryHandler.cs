@@ -211,6 +211,11 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
                        "Select a tool to analyze news content from our indexed sources:";
 
             var keyboard = MarkupBuilder.CreateInlineKeyboard(
+                 new[]
+                {
+                    // VVVVVV NEW BUTTON VVVVVV
+                    InlineKeyboardButton.WithCallbackData("📊 Market Sentiment", "analysis_sentiment")
+                },
                 new[]
                 { 
                     // New "Central Bank Watch" button added

@@ -1,5 +1,6 @@
 ﻿// File: TelegramPanel/Application/CommandHandlers/Features/Analysis/AnalysisCallbackHandler.cs
 using Application.Common.Interfaces;
+using Domain.Entities;
 using Microsoft.Extensions.Logging;
 using System.Text;
 using Telegram.Bot.Types;
@@ -21,10 +22,13 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
         private readonly INewsItemRepository _newsRepository;
 
         // Callbacks this handler is responsible for
+        private const string SentimentAnalysisCallback = "analysis_sentiment"; 
+        private const string SelectSentimentCurrencyPrefix = "sentiment_curr_";
         private const string CbWatchPrefix = "analysis_cb_watch";
         private const string SearchKeywordsCallback = "analysis_search_keywords";
         private const string ShowCbNewsPrefix = "cb_news_"; // e.g., cb_news_FED
-
+        private static readonly List<string> BullishKeywords = new() { "strong", "hike", "beats", "optimistic", "hawkish", "robust", "upgrade", "rally", "surges" };
+        private static readonly List<string> BearishKeywords = new() { "weak", "cut", "misses", "pessimistic", "dovish", "recession", "slump", "downgrade", "plunges", "fears" };
         private static readonly Dictionary<string, (string Name, string[] Keywords)> CentralBankKeywords = new()
         {
             { "FED", ("Federal Reserve (USA)", new[] { "Federal Reserve", "Fed", "FOMC", "Jerome Powell", "rate hike", "rate cut", "monetary policy" }) },
@@ -45,41 +49,337 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
             _newsRepository = newsRepository;
         }
 
+        /// <summary>
+        /// Determines whether this handler can handle a given Telegram Update.
+        /// </summary>
+        /// <param name="update">The Telegram Update to check.</param>
+        /// <returns>True if the handler can handle the update; otherwise, false.</returns>
         public bool CanHandle(Update update)
         {
-            if (update.Type != UpdateType.CallbackQuery || update.CallbackQuery?.Data == null)
-                return false;
+            try
+            {
+                if (update.Type != UpdateType.CallbackQuery || update.CallbackQuery?.Data == null)
+                    return false;
 
-            var data = update.CallbackQuery.Data;
-            return data.StartsWith(CbWatchPrefix) ||
-                   data.StartsWith(SearchKeywordsCallback) ||
-                   data.StartsWith(ShowCbNewsPrefix);
+                var data = update.CallbackQuery.Data;
+                return data.StartsWith(CbWatchPrefix) ||
+                       data.StartsWith(SearchKeywordsCallback) ||
+                       data.StartsWith(ShowCbNewsPrefix) ||
+                       data.StartsWith(SentimentAnalysisCallback) ||
+                       data.StartsWith(SelectSentimentCurrencyPrefix);
+            }
+            catch (Exception ex)
+            {
+                // Log the exception. Use your preferred logging mechanism.
+                Console.Error.WriteLine($"Error in CanHandle: {ex}");  // Replace with proper logging.
+
+                // You might also want to consider:
+                // 1. Returning false to prevent the handler from incorrectly handling the update.
+                // 2. Re-throwing the exception if it's critical and you want to crash the application (use with caution).
+                return false; // Or, rethrow;  decision depends on the application's requirements.
+            }
         }
 
         public async Task HandleAsync(Update update, CancellationToken cancellationToken = default)
         {
-            var callbackQuery = update.CallbackQuery!;
-            await _messageSender.AnswerCallbackQueryAsync(callbackQuery.Id, cancellationToken: cancellationToken);
+            try
+            {
+                var callbackQuery = update.CallbackQuery!; // Assuming non-null, but good to review.
+                await _messageSender.AnswerCallbackQueryAsync(callbackQuery.Id, cancellationToken: cancellationToken);
 
-            var data = callbackQuery.Data!;
-            var chatId = callbackQuery.Message!.Chat.Id;
-            var messageId = callbackQuery.Message.MessageId;
+                var data = callbackQuery.Data!; // Assuming non-null, but good to review.
+                var chatId = callbackQuery.Message!.Chat.Id; // Assuming non-null, but good to review.
+                var messageId = callbackQuery.Message.MessageId; // Assuming non-null, but good to review.
 
-            if (data.StartsWith(CbWatchPrefix))
-            {
-                await ShowCentralBankSelectionMenuAsync(chatId, messageId, cancellationToken);
+                if (data.StartsWith(SentimentAnalysisCallback))
+                {
+                    await ShowSentimentCurrencySelectionMenuAsync(chatId, messageId, cancellationToken);
+                }
+                else if (data.StartsWith(SelectSentimentCurrencyPrefix))
+                {
+                    var currencyCode = data.Substring(SelectSentimentCurrencyPrefix.Length);
+                    await HandleSentimentCurrencySelectionAsync(chatId, messageId, currencyCode, cancellationToken);
+                }
+                if (data.StartsWith(CbWatchPrefix))
+                {
+                    await ShowCentralBankSelectionMenuAsync(chatId, messageId, cancellationToken);
+                }
+                else if (data.StartsWith(SearchKeywordsCallback))
+                {
+                    await InitiateKeywordSearchAsync(chatId, messageId, callbackQuery.From.Id, update, cancellationToken);
+                }
+                else if (data.StartsWith(ShowCbNewsPrefix))
+                {
+                    var bankCode = data.Substring(ShowCbNewsPrefix.Length);
+                    await ShowCentralBankNewsAsync(chatId, messageId, bankCode, cancellationToken);
+                }
             }
-            else if (data.StartsWith(SearchKeywordsCallback))
+            catch (Exception ex)
             {
-                await InitiateKeywordSearchAsync(chatId, messageId, callbackQuery.From.Id, update, cancellationToken);
-            }
-            else if (data.StartsWith(ShowCbNewsPrefix))
-            {
-                var bankCode = data.Substring(ShowCbNewsPrefix.Length);
-                await ShowCentralBankNewsAsync(chatId, messageId, bankCode, cancellationToken);
+                // Log the exception.  Use your preferred logging mechanism.
+                Console.Error.WriteLine($"Error in HandleAsync: {ex}");  // Replace with proper logging.
+
+                // Consider handling the error more gracefully, potentially:
+                // 1. Sending an error message to the user:
+                //    await _messageSender.SendTextMessageAsync(chatId, "An error occurred while processing your request.  Please try again later.", cancellationToken: cancellationToken);
+
+                // 2.  Potentially, depending on the exception and context:
+                //     -  Resetting the bot's state.
+                //     -  Taking other corrective actions.
             }
         }
 
+        private async Task ShowSentimentCurrencySelectionMenuAsync(long chatId, int messageId, CancellationToken cancellationToken)
+        {
+            try
+            {
+                _logger.LogInformation("Showing currency selection menu for sentiment analysis to ChatID {ChatId}", chatId);
+
+                var text = "📊 *Market Sentiment*\n\nPlease select a currency to analyze the sentiment of its recent news coverage.";
+
+                // Consider handling CentralBankKeywords being null or empty.  Log a warning if so.
+                if (CentralBankKeywords == null || CentralBankKeywords.Count == 0)
+                {
+                    _logger.LogWarning("CentralBankKeywords is null or empty.  Cannot show currency selection menu.");
+                    // Optionally, send an error message to the user, or take other corrective action.
+                    await _messageSender.SendTextMessageAsync(chatId, "An error occurred: Currency data unavailable. Please try again later.", cancellationToken: cancellationToken);
+                    return; // Exit the method, since there's nothing to display.
+                }
+
+                var buttons = CentralBankKeywords.Select(kvp =>
+                    InlineKeyboardButton.WithCallbackData($"{(kvp.Key == "USD" ? "🇺🇸" : kvp.Key == "EUR" ? "🇪🇺" : kvp.Key == "GBP" ? "🇬🇧" : "🇯🇵")} {kvp.Value.Name}", $"{SelectSentimentCurrencyPrefix}{kvp.Key}")
+                ).ToList();
+
+                // Handle buttons being empty.
+                if (buttons.Count == 0)
+                {
+                    _logger.LogWarning("No currency buttons generated.  CentralBankKeywords may be empty or improperly formatted.");
+                    await _messageSender.SendTextMessageAsync(chatId, "An error occurred: No currencies available. Please try again later.", cancellationToken: cancellationToken);
+                    return; // Exit the method.
+                }
+
+                var keyboardRows = new List<List<InlineKeyboardButton>>();
+                for (int i = 0; i < buttons.Count; i += 2)
+                {
+                    keyboardRows.Add(buttons.Skip(i).Take(2).ToList());
+                }
+
+                //Handle keyboardRows being null. It is unlikely, but good to be robust.
+                if (keyboardRows == null)
+                {
+                    _logger.LogWarning("keyboardRows is null");
+                    await _messageSender.SendTextMessageAsync(chatId, "An error occurred: could not create the currency buttons", cancellationToken: cancellationToken);
+                    return;
+                }
+
+                keyboardRows.Add(new List<InlineKeyboardButton> { InlineKeyboardButton.WithCallbackData("⬅️ Back to Analysis Menu", MenuCommandHandler.AnalysisCallbackData) });
+
+                var keyboard = new InlineKeyboardMarkup(keyboardRows);
+
+                await _messageSender.EditMessageTextAsync(chatId, messageId, text, ParseMode.Markdown, keyboard, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error in ShowSentimentCurrencySelectionMenuAsync for ChatID {ChatId}", chatId); // Use LogError for errors
+                                                                                                                      // Consider sending an error message to the user.
+                await _messageSender.SendTextMessageAsync(chatId, "An error occurred while displaying the currency selection menu. Please try again later.", cancellationToken: cancellationToken);
+                // Consider additional error handling, like retrying, or potentially resetting bot state.
+            }
+        }
+
+        private async Task HandleSentimentCurrencySelectionAsync(long chatId, int messageId, string currencyCode, CancellationToken cancellationToken)
+        {
+            try
+            {
+                // Input Validation -  Check for invalid currencyCode *first*.
+                if (string.IsNullOrEmpty(currencyCode))
+                {
+                    _logger.LogWarning("Currency code is null or empty in HandleSentimentCurrencySelectionAsync for ChatID {ChatId}", chatId);
+                    await _messageSender.SendTextMessageAsync(chatId, "Invalid currency code.  Please select a currency again.", cancellationToken: cancellationToken);
+                    return;
+                }
+
+                if (!CentralBankKeywords.TryGetValue(currencyCode, out var currencyInfo))
+                {
+                    _logger.LogWarning("Currency code {CurrencyCode} not found in CentralBankKeywords for ChatID {ChatId}", currencyCode, chatId);
+                    await _messageSender.SendTextMessageAsync(chatId, "Invalid currency selection. Please try again.", cancellationToken: cancellationToken);
+                    return;
+                }
+
+                await _messageSender.EditMessageTextAsync(chatId, messageId, $"⏳ Analyzing sentiment for the *{currencyInfo.Name}*...", ParseMode.Markdown, cancellationToken: cancellationToken);
+
+                var (sentimentText, topPositive, topNegative, positiveScore, negativeScore) = await PerformSentimentAnalysisAsync(currencyInfo.Keywords, cancellationToken);
+
+                // Handle null results from PerformSentimentAnalysisAsync (defensive programming)
+                if (sentimentText == null && topPositive == null && topNegative == null && positiveScore == 0 && negativeScore == 0) // or however the failure is represented.
+                {
+                    _logger.LogError("Sentiment analysis returned null results for {CurrencyCode} for ChatID {ChatId}", currencyCode, chatId);
+                    await _messageSender.SendTextMessageAsync(chatId, $"Sentiment analysis failed for {currencyInfo.Name}. Please try again.", cancellationToken: cancellationToken);
+                    return;
+                }
+
+                var message = FormatSentimentMessage(currencyInfo.Name, sentimentText, topPositive, topNegative, positiveScore, negativeScore);
+                var keyboard = MarkupBuilder.CreateInlineKeyboard(new[] {
+                InlineKeyboardButton.WithCallbackData("⬅️ Back to Currency Selection", SentimentAnalysisCallback)
+            });
+
+                await _messageSender.EditMessageTextAsync(chatId, messageId, message, ParseMode.MarkdownV2, keyboard, cancellationToken: cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error in HandleSentimentCurrencySelectionAsync for ChatID {ChatId}, CurrencyCode: {CurrencyCode}", chatId, currencyCode);
+                await _messageSender.SendTextMessageAsync(chatId, "An error occurred while processing the sentiment analysis. Please try again later.", cancellationToken: cancellationToken);
+                // Consider more advanced error handling (retries, etc.)
+            }
+        }
+
+        private async Task<(string? Sentiment, List<NewsItem>? TopPositive, List<NewsItem>? TopNegative, int PositiveScore, int NegativeScore)> PerformSentimentAnalysisAsync(string[] currencyKeywords, CancellationToken cancellationToken)
+        {
+            try
+            {
+                // Input validation - currencyKeywords check
+                if (currencyKeywords == null || currencyKeywords.Length == 0)
+                {
+                    _logger.LogWarning("Currency keywords array is null or empty in PerformSentimentAnalysisAsync.");
+                    // It's important to return a sensible value to indicate an issue.
+                    return (null, null, null, 0, 0); // Indicate failure.
+                }
+
+                var (newsItems, _) = await _newsRepository.SearchNewsAsync(currencyKeywords, DateTime.UtcNow.AddDays(-3), DateTime.UtcNow, 1, 100, cancellationToken: cancellationToken);
+
+                // Handle null or empty newsItems from the repository.
+                if (newsItems == null)
+                {
+                    _logger.LogWarning("News items are null from _newsRepository.SearchNewsAsync.");
+                    return (null, null, null, 0, 0); // Indicate failure.
+                }
+                if (newsItems.Count == 0)
+                {
+                    _logger.LogInformation("No news items found for the given keywords."); // Log this as information rather than an error.
+                    return ("Not enough data", null, null, 0, 0); // Or return a specific "not enough data" result.
+                }
+
+
+                int positiveScore = 0;
+                int negativeScore = 0;
+                var positiveArticles = new List<(NewsItem, int)>();
+                var negativeArticles = new List<(NewsItem, int)>();
+
+                foreach (var item in newsItems)
+                {
+                    // Defensive programming - check if item is null.
+                    if (item == null)
+                    {
+                        _logger.LogWarning("NewsItem is null within the newsItems list. Skipping.");
+                        continue; // Skip the current item and continue with the loop.
+                    }
+
+                    // Defensive programming: check for null Title or Summary
+                    string content = ($"{item.Title ?? ""} {item.Summary ?? ""}".ToLowerInvariant()).Trim(); // Use null-coalescing and trim.
+
+                    // Additional defensive programming - content can be empty.
+                    if (string.IsNullOrWhiteSpace(content))
+                    {
+                        _logger.LogInformation("Empty content found for a NewsItem. Skipping.");
+                        continue; // Skip to the next item
+                    }
+
+
+                    int currentPositive = BullishKeywords.Count(k => content.Contains(k));
+                    int currentNegative = BearishKeywords.Count(k => content.Contains(k));
+
+                    if (currentPositive > 0)
+                    {
+                        positiveScore += currentPositive;
+                        positiveArticles.Add((item, currentPositive));
+                    }
+                    if (currentNegative > 0)
+                    {
+                        negativeScore += currentNegative;
+                        negativeArticles.Add((item, currentNegative));
+                    }
+                }
+
+                string sentiment;
+                if (positiveScore > negativeScore * 1.5) sentiment = "Bullish 🟢";
+                else if (negativeScore > positiveScore * 1.5) sentiment = "Bearish 🔴";
+                else if (positiveScore > 0 || negativeScore > 0) sentiment = "Neutral/Mixed ⚪️";
+                else sentiment = "Not enough data"; // Modified to be clearer.
+
+                var topPositive = positiveArticles.OrderByDescending(a => a.Item2).Take(2).Select(a => a.Item1).ToList();
+                var topNegative = negativeArticles.OrderByDescending(a => a.Item2).Take(2).Select(a => a.Item1).ToList();
+
+                return (sentiment, topPositive, topNegative, positiveScore, negativeScore);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error in PerformSentimentAnalysisAsync with keywords: {Keywords}", string.Join(",", currencyKeywords)); // Log the keywords too.
+                                                                                                                                              // It is crucial to handle the exception and return a sensible result.
+                                                                                                                                              // You have a few choices, depending on how you want the calling method to behave:
+                                                                                                                                              // 1. Return a default/error value:
+                return (null, null, null, 0, 0); // Most common: Indicate a failure.
+
+                // 2. Re-throw the exception (use with caution, only if the error is truly unrecoverable at this level):
+                // throw; // Re-throw the exception.  Use if the calling method cannot proceed.
+
+                // 3.  Handle the exception and return the result, using a default value for each return variable
+            }
+        }
+
+        private string FormatSentimentMessage(string currencyName, string? sentiment, List<NewsItem>? topPositive, List<NewsItem>? topNegative, int positiveScore, int negativeScore)
+        {
+            try
+            {
+                var sb = new StringBuilder();
+
+                // Handle null sentiment
+                sentiment ??= "No Sentiment Available"; // Provide a default value if sentiment is null
+
+                sb.AppendLine(TelegramMessageFormatter.Bold($"Sentiment for {currencyName}: {sentiment}"));
+                sb.AppendLine($"`Score: [Positive: {positiveScore}] [Negative: {negativeScore}]`");
+                sb.AppendLine();
+
+                if (topPositive != null && topPositive.Any()) // Check for null and empty
+                {
+                    sb.AppendLine(TelegramMessageFormatter.Bold("Key Positive News:"));
+                    foreach (var item in topPositive)
+                    {
+                        // Defensive programming: Check for null item
+                        if (item == null)
+                        {
+                            _logger.LogWarning("Null NewsItem encountered in topPositive. Skipping.");
+                            continue; // Skip the null item.
+                        }
+                        sb.AppendLine($"▫️ {TelegramMessageFormatter.EscapeMarkdownV2(item.Title)} [↗]({item.Link})");
+                    }
+                    sb.AppendLine();
+                }
+
+                if (topNegative != null && topNegative.Any()) // Check for null and empty
+                {
+                    sb.AppendLine(TelegramMessageFormatter.Bold("Key Negative News:"));
+                    foreach (var item in topNegative)
+                    {
+                        // Defensive programming: Check for null item
+                        if (item == null)
+                        {
+                            _logger.LogWarning("Null NewsItem encountered in topNegative. Skipping.");
+                            continue; // Skip the null item.
+                        }
+                        sb.AppendLine($"▪️ {TelegramMessageFormatter.EscapeMarkdownV2(item.Title)} [↘]({item.Link})");
+                    }
+                }
+
+                sb.AppendLine("_Analysis based on keyword frequency in news from the last 3 days._");
+                return sb.ToString();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error formatting sentiment message for {CurrencyName}", currencyName);
+                // In case of an error during formatting, return a default/error message
+                return $"Error formatting sentiment message for {currencyName}."; // Or a more user-friendly error.
+            }
+        }
 
         /// <summary>
         /// Initiates the keyword search state for the user, setting the appropriate state and sending an entry message.
@@ -92,20 +392,43 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
         /// <returns></returns>
         private async Task InitiateKeywordSearchAsync(long chatId, int messageId, long userId, Update triggerUpdate, CancellationToken cancellationToken)
         {
-            _logger.LogInformation("User {UserId} initiated news search by keyword.", userId);
+            try
+            {
+                _logger.LogInformation("User {UserId} initiated news search by keyword.", userId);
 
-            var stateName = "WaitingForNewsKeywords";
-            await _stateMachine.SetStateAsync(userId, stateName, triggerUpdate, cancellationToken);
+                var stateName = "WaitingForNewsKeywords";
+                await _stateMachine.SetStateAsync(userId, stateName, triggerUpdate, cancellationToken);
 
-            var state = _stateMachine.GetState(stateName);
-            if (state == null) return;
+                var state = _stateMachine.GetState(stateName);
 
-            var entryMessage = await state.GetEntryMessageAsync(chatId, triggerUpdate, cancellationToken);
+                // Defensive programming: check for null state
+                if (state == null)
+                {
+                    _logger.LogWarning("State is null after setting the state to {StateName} for user {UserId}", stateName, userId);
+                    await _messageSender.SendTextMessageAsync(chatId, "An error occurred while initiating the keyword search. Please try again.", cancellationToken: cancellationToken);
+                    return;
+                }
 
-            var keyboard = MarkupBuilder.CreateInlineKeyboard(
-                new[] { InlineKeyboardButton.WithCallbackData("⬅️ Cancel Search", MenuCallbackQueryHandler.BackToMainMenuGeneral) });
+                var entryMessage = await state.GetEntryMessageAsync(chatId, triggerUpdate, cancellationToken);
 
-            await _messageSender.EditMessageTextAsync(chatId, messageId, entryMessage!, ParseMode.MarkdownV2, keyboard, cancellationToken);
+                // Defensive programming: Check for null entryMessage (and handle).
+                if (entryMessage == null)
+                {
+                    _logger.LogError("GetEntryMessageAsync returned null for user {UserId} in state {StateName}.", userId, stateName);
+                    await _messageSender.SendTextMessageAsync(chatId, "An error occurred while retrieving the search instructions. Please try again.", cancellationToken: cancellationToken);
+                    return;
+                }
+
+                var keyboard = MarkupBuilder.CreateInlineKeyboard(
+                    new[] { InlineKeyboardButton.WithCallbackData("⬅️ Cancel Search", MenuCallbackQueryHandler.BackToMainMenuGeneral) });
+
+                await _messageSender.EditMessageTextAsync(chatId, messageId, entryMessage, ParseMode.MarkdownV2, keyboard, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error initiating keyword search for user {UserId}", userId);
+                await _messageSender.SendTextMessageAsync(chatId, "An error occurred while initiating the keyword search. Please try again later.", cancellationToken: cancellationToken);
+            }
         }
 
         /// <summary>
@@ -115,35 +438,63 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
         /// <param name="messageId"></param>
         /// <param name="cancellationToken"></param>
         /// <returns></returns>
-        private Task ShowCentralBankSelectionMenuAsync(long chatId, int messageId, CancellationToken cancellationToken)
+        private async Task ShowCentralBankSelectionMenuAsync(long chatId, int messageId, CancellationToken cancellationToken)
         {
-            _logger.LogInformation("Showing Central Bank selection menu to ChatID {ChatId}", chatId);
-
-            var text = "🏛️ *Central Bank Watch*\n\nSelect a central bank to view the latest related news and announcements.";
-
-            var buttons = CentralBankKeywords.Select(kvp =>
-                InlineKeyboardButton.WithCallbackData($"🏦 {kvp.Value.Name}", $"{ShowCbNewsPrefix}{kvp.Key}")
-            ).ToList();
-
-            // VVVVVV FIX IS HERE VVVVVV
-            // Ensure all rows are of the same concrete type: List<InlineKeyboardButton>
-            var keyboardRows = new List<List<InlineKeyboardButton>>(); // Changed to List<List<...>> for type safety
-            for (int i = 0; i < buttons.Count; i += 2)
+            try
             {
-                // We use .ToList() to convert the LINQ result to a List.
-                keyboardRows.Add(buttons.Skip(i).Take(2).ToList());
-            }
+                _logger.LogInformation("Showing Central Bank selection menu to ChatID {ChatId}", chatId);
 
-            // We explicitly create a new List for the final row.
-            keyboardRows.Add(new List<InlineKeyboardButton>
+                var text = "🏛️ *Central Bank Watch*\n\nSelect a central bank to view the latest related news and announcements.";
+
+                // Input Validation - Check if CentralBankKeywords is null or empty
+                if (CentralBankKeywords == null || CentralBankKeywords.Count == 0)
+                {
+                    _logger.LogWarning("CentralBankKeywords is null or empty. Cannot show Central Bank menu.");
+                    await _messageSender.SendTextMessageAsync(chatId, "An error occurred: Central Bank data unavailable. Please try again later.", cancellationToken: cancellationToken);
+                    return; // Exit the method.
+                }
+
+                var buttons = CentralBankKeywords.Select(kvp =>
+                    InlineKeyboardButton.WithCallbackData($"🏦 {kvp.Value.Name}", $"{ShowCbNewsPrefix}{kvp.Key}")
+                ).ToList();
+
+                // Handle buttons being empty.
+                if (buttons.Count == 0)
+                {
+                    _logger.LogWarning("No Central Bank buttons generated. CentralBankKeywords may be improperly formatted.");
+                    await _messageSender.SendTextMessageAsync(chatId, "An error occurred: No central banks available. Please try again later.", cancellationToken: cancellationToken);
+                    return; // Exit the method.
+                }
+
+                // Ensure all rows are of the same concrete type: List<InlineKeyboardButton>
+                var keyboardRows = new List<List<InlineKeyboardButton>>(); // Changed to List<List<...>> for type safety
+                for (int i = 0; i < buttons.Count; i += 2)
+                {
+                    keyboardRows.Add(buttons.Skip(i).Take(2).ToList());
+                }
+
+                // The code *already* correctly uses a List<InlineKeyboardButton> for each row. The fix was to ensure type safety in the original.  Adding input validation
+                if (keyboardRows == null)
+                {
+                    _logger.LogWarning("keyboardRows is null");
+                    await _messageSender.SendTextMessageAsync(chatId, "An error occurred: could not create the bank buttons", cancellationToken: cancellationToken);
+                    return;
+                }
+
+                keyboardRows.Add(new List<InlineKeyboardButton>
             {
                 InlineKeyboardButton.WithCallbackData("⬅️ Back to Analysis Menu", MenuCommandHandler.AnalysisCallbackData)
             });
-            // ^^^^^^ FIX IS HERE ^^^^^^
 
-            var keyboard = new InlineKeyboardMarkup(keyboardRows);
+                var keyboard = new InlineKeyboardMarkup(keyboardRows);
 
-            return _messageSender.EditMessageTextAsync(chatId, messageId, text, ParseMode.Markdown, keyboard, cancellationToken);
+                await _messageSender.EditMessageTextAsync(chatId, messageId, text, ParseMode.Markdown, keyboard, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error in ShowCentralBankSelectionMenuAsync for ChatID {ChatId}", chatId); // Use LogError for errors
+                await _messageSender.SendTextMessageAsync(chatId, "An error occurred while displaying the Central Bank menu. Please try again later.", cancellationToken: cancellationToken);
+            }
         }
 
         /// <summary>

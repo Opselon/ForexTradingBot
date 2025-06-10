@@ -13,6 +13,7 @@ on:
 
 permissions:
   contents: read
+  deployments: write
 
 concurrency:
   group: production-deploy
@@ -120,7 +121,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: 'Set Deployment Status to Success'
-        uses: peter-evans/create-deployment-status@v4
+        uses: peter-evans/create-deployment-status@v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           environment: production

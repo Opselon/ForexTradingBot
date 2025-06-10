@@ -1,96 +1,56 @@
+# ====================================================================================
+# THE DEFINITIVE WINDOWS SERVICE MANAGEMENT SCRIPT (v.Final-Victory-Simplified)
+# This version is simpler because the .NET app is now service-aware.
+# It only needs to create the service pointing to the EXE.
+# ====================================================================================
 param(
     [string]$DeployPath,
     [string]$TempPath
 )
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Setup Logging & Error Policy
-# ──────────────────────────────────────────────────────────────────────────────
-$ScriptLogFile         = Join-Path $TempPath "04-Service-Log-$(Get-Date -Format yyyyMMdd-HHmmss).txt"
+$ScriptLogFile = Join-Path $TempPath "04-Service-Log-$(Get-Date -f yyyyMMdd-HHmmss).txt"
 Start-Transcript -Path $ScriptLogFile -Append
 $ErrorActionPreference = 'Stop'
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Variables
-# ──────────────────────────────────────────────────────────────────────────────
-$ServiceName  = 'ForexTradingBotAPI'
-$DisplayName  = 'Forex Trading Bot API Service'
-$ExePath      = Join-Path $DeployPath 'WebAPI.exe'
-$maxDeleteSec = 30
-$maxStartSec  = 15
+Write-Host "--- SCRIPT 4: REGISTER & LAUNCH WINDOWS SERVICE ---" -ForegroundColor Cyan
+$ServiceName = "ForexTradingBotAPI"
+$DisplayName = "Forex Trading Bot API Service"
+$ExePath     = Join-Path $DeployPath "WebAPI.exe"
+# The service no longer needs command-line arguments because it will read them
+# from appsettings.Production.json, which is loaded due to ASPNETCORE_ENVIRONMENT.
 
-# ──────────────────────────────────────────────────────────────────────────────
-function Write-Step {
-    param($msg) ; Write-Host "`n=== $msg ===" -ForegroundColor Cyan
-}
-
-# ──────────────────────────────────────────────────────────────────────────────
-# 1) Verify EXE
-# ──────────────────────────────────────────────────────────────────────────────
-Write-Step 'VERIFY EXECUTABLE'
+Write-Host "Verifying presence of executable at '$ExePath'..."
 if (-not (Test-Path $ExePath)) {
-    throw "FATAL: Executable not found at: $ExePath"
+    throw "FATAL: Cannot find executable at '$ExePath'."
 }
-Write-Host "✅ Found: $ExePath"
+Write-Host "✅ Executable found."
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 2) Stop & Delete Existing Service
-# ──────────────────────────────────────────────────────────────────────────────
-Write-Step "STOP & DELETE SERVICE [$ServiceName]"
-if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
+Write-Host "Stopping and removing existing service '$ServiceName' for a clean install..."
+$service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+if ($service) {
     Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
-
-    # Issue Delete
-    sc.exe delete $ServiceName | Out-Null
-
-    # Wait until service is gone or timeout
-    try {
-        Wait-Service -Name $ServiceName -Timeout $maxDeleteSec -ErrorAction Stop
-        throw "FATAL: Service still exists after $maxDeleteSec seconds."
-    } catch {
-        # On “service not found” or timeout, catch filter:
-        if ($_.Exception -is [System.Management.Automation.TimeoutException]) {
-            throw $_
-        }
-        Write-Host "✅ Service removed within $maxDeleteSec seconds."
-    }
-} else {
-    Write-Host "ℹ️  No existing service to remove."
+    Start-Sleep -Seconds 10
+    sc.exe delete "$ServiceName"
+    Start-Sleep -Seconds 10
 }
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 3) Create New Service
-# ──────────────────────────────────────────────────────────────────────────────
-Write-Step "CREATE SERVICE [$ServiceName]"
-New-Service `
-    -Name         $ServiceName `
-    -BinaryPathName "`"$ExePath`"" `
-    -DisplayName  $DisplayName `
-    -StartupType  Automatic
-Write-Host "✅ Service created."
+Write-Host "Creating a new, clean Windows Service '$ServiceName'..."
+# The BinaryPathName is now just the path to the executable. No arguments needed.
+New-Service -Name $ServiceName -BinaryPathName "`"$ExePath`"" -DisplayName $DisplayName -StartupType Automatic
+Write-Host "✅ New service created successfully."
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 4) Configure Recovery
-# ──────────────────────────────────────────────────────────────────────────────
-Write-Step 'CONFIGURE RECOVERY OPTIONS'
-sc.exe failure $ServiceName reset=86400 actions=restart/60000 | Out-Null
-Write-Host "✅ Recovery configured."
+Write-Host "Configuring service for automatic restart on failure..."
+sc.exe failure $ServiceName reset= 86400 actions= restart/60000
+Write-Host "✅ Service failure actions configured."
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 5) Start & Verify Running
-# ──────────────────────────────────────────────────────────────────────────────
-Write-Step 'START SERVICE'
-Start-Service -Name $ServiceName
+Write-Host "Starting the service '$ServiceName'..."
+Start-Service -Name $ServiceName -Verbose
 
-Write-Host "Waiting up to $maxStartSec seconds for status=Running..."
-if (-not (Wait-Service -Name $ServiceName -Timeout $maxStartSec)) {
-    $status = (Get-Service -Name $ServiceName).Status
-    throw "FATAL: Service did not reach 'Running' within $maxStartSec seconds (status: $status)."
+Write-Host "Waiting 15 seconds and performing final status check..."
+Start-Sleep -Seconds 15
+$finalService = Get-Service -Name $ServiceName
+if ($finalService.Status -ne 'Running') {
+    throw "FATAL: Service '$ServiceName' is in state '$($finalService.Status)'. Check Windows Event Viewer."
 }
 
-Write-Host "✅✅✅ SERVICE IS RUNNING ✅✅✅" -ForegroundColor Green
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Done
-# ──────────────────────────────────────────────────────────────────────────────
+Write-Host "✅✅✅✅✅✅✅✅✅ VICTORY! The Windows Service is RUNNING! ✅✅✅✅✅✅✅✅✅" -ForegroundColor Green
 Stop-Transcript

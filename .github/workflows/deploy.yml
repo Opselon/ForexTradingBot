@@ -68,9 +68,7 @@
     },
     "deploy": {
       "name": "🚢 2. Execute Deployment on Server",
-      "needs": [
-        "create_deployment"
-      ],
+      "needs": "build",
       "runs-on": "ubuntu-latest",
       "steps": [
         {
@@ -119,9 +117,7 @@
     },
     "create_deployment": {
       "name": "📦 3. Create GitHub Deployment",
-      "needs": [
-        "build"
-      ],
+      "needs": "deploy",
       "runs-on": "ubuntu-latest",
       "outputs": {
         "deployment_id": "${{ steps.create.outputs.deployment_id }}"
@@ -141,9 +137,7 @@
     },
     "register_service": {
       "name": "👑 4. Register & Start Windows Service",
-      "needs": [
-        "deploy"
-      ],
+      "needs": "create_deployment",
       "runs-on": "ubuntu-latest",
       "steps": [
         {
@@ -160,10 +154,7 @@
     },
     "set_status_success": {
       "name": "✅ Set Deployment to Success",
-      "needs": [
-        "register_service",
-        "create_deployment"
-      ],
+      "needs": "register_service",
       "if": "${{ success() }}",
       "runs-on": "ubuntu-latest",
       "steps": [
@@ -182,10 +173,7 @@
     },
     "set_status_failure": {
       "name": "❌ Set Deployment to Failure",
-      "needs": [
-        "register_service",
-        "create_deployment"
-      ],
+      "needs": "register_service",
       "if": "${{ failure() }}",
       "runs-on": "ubuntu-latest",
       "steps": [
@@ -204,9 +192,7 @@
     },
     "report": {
       "name": "📊 6. Final Health Check, Report & Cleanup",
-      "needs": [
-        "deploy"
-      ],
+      "needs": "deploy",
       "if": "${{ always() }}",
       "runs-on": "ubuntu-latest",
       "steps": [

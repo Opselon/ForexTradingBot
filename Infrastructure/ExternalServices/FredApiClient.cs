@@ -28,6 +28,29 @@ namespace Infrastructure.ExternalServices
             _httpClient.BaseAddress = new Uri("https://api.stlouisfed.org/fred/");
         }
 
+        public async Task<Result<FredReleaseTablesResponseDto>> GetReleaseTablesAsync(int releaseId, int? elementId = null, CancellationToken cancellationToken = default)
+        {
+            var requestUri = $"release/tables?release_id={releaseId}&api_key={_apiKey}&file_type=json";
+            if (elementId.HasValue)
+            {
+                requestUri += $"&element_id={elementId.Value}";
+            }
+
+            try
+            {
+                var response = await _httpClient.GetFromJsonAsync<FredReleaseTablesResponseDto>(requestUri, cancellationToken);
+                if (response == null)
+                {
+                    return Result<FredReleaseTablesResponseDto>.Failure("Failed to deserialize release tables response from FRED API.");
+                }
+                return Result<FredReleaseTablesResponseDto>.Success(response);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error fetching release tables from FRED API for ReleaseID {ReleaseId}", releaseId);
+                return Result<FredReleaseTablesResponseDto>.Failure($"An error occurred: {ex.Message}");
+            }
+        }
 
         public async Task<Result<FredSeriesSearchResponseDto>> SearchEconomicSeriesAsync(string searchText, int limit = 10, CancellationToken cancellationToken = default)
         {

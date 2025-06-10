@@ -25,7 +25,12 @@ namespace Application.Services
             return Result<List<FredSeriesDto>>.Failure(result.Errors);
         }
 
-
+        public async Task<Result<FredReleaseTablesResponseDto>> GetReleaseTableTreeAsync(int releaseId, int? elementId, CancellationToken cancellationToken = default)
+        {
+            // This service method currently acts as a simple pass-through.
+            // It could be enhanced later with caching logic for specific release trees.
+            return await _fredApiClient.GetReleaseTablesAsync(releaseId, elementId, cancellationToken);
+        }
 
         public async Task<Result<List<FredReleaseDto>>> GetReleasesAsync(int pageNumber, int pageSize, CancellationToken cancellationToken = default)
         {

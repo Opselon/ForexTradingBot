@@ -24,7 +24,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
         private const int PageSize = 7;
         private const string ReleasesCallbackPrefix = "menu_econ_calendar";
         private const string SearchSeriesCallback = "econ_search_series";
-
+        private const string ExploreReleasePrefix = "econ_explore"; 
         private readonly ILogger<EconomicCalendarCallbackHandler> _logger;
         private readonly ITelegramMessageSender _messageSender;
         private readonly IEconomicCalendarService _calendarService;
@@ -50,9 +50,82 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
         /// Determines if this handler can process the callback query.
         /// </summary>
         public bool CanHandle(Update update) =>
+
            update.CallbackQuery?.Data?.StartsWith(ReleasesCallbackPrefix) == true ||
            update.CallbackQuery?.Data == SearchSeriesCallback ||
+
            update.CallbackQuery?.Data == MenuCommandHandler.BackToMainMenuGeneral;
+           
+
+
+        private async Task HandleExploreReleaseAsync(CallbackQuery callbackQuery, CancellationToken cancellationToken)
+        {
+            var chatId = callbackQuery.Message!.Chat.Id;
+            var messageId = callbackQuery.Message.MessageId;
+
+            // Callback data format: "econ_explore:{releaseId}:{elementId}:{parentName}"
+            var parts = callbackQuery.Data!.Split(':', 4);
+            if (!int.TryParse(parts[1], out int releaseId) || !int.TryParse(parts[2], out int elementId)) return;
+
+            string parentName = parts.Length > 3 ? parts[3] : "Root";
+
+            await _messageSender.EditMessageTextAsync(chatId, messageId, "Loading data tree...", cancellationToken: cancellationToken);
+
+            var result = await _calendarService.GetReleaseTableTreeAsync(releaseId, elementId == 0 ? null : elementId, cancellationToken);
+
+            if (!result.Succeeded || !result.Data.Elements.Any())
+            {
+                await _messageSender.EditMessageTextAsync(chatId, messageId, "❌ No data tables found for this release.", cancellationToken: cancellationToken);
+                return;
+            }
+
+            var sb = new StringBuilder();
+            var keyboardRows = new List<List<InlineKeyboardButton>>();
+
+            var currentElement = result.Data.Elements.First(); // The API returns the parent as the first element
+
+            sb.AppendLine("🗓️ *Release Explorer*");
+            sb.AppendLine($"`Path: {TelegramMessageFormatter.EscapeMarkdownV2(parentName)} > {TelegramMessageFormatter.EscapeMarkdownV2(currentElement.Name)}`");
+            sb.AppendLine();
+            sb.AppendLine("Select a category or data series below:");
+
+            foreach (var child in currentElement.Children)
+            {
+                // If it's a data series, show a different button
+                if (child.Type == "series" && !string.IsNullOrWhiteSpace(child.SeriesId))
+                {
+                    var buttonText = $"📈 {child.Name}";
+                    keyboardRows.Add(new List<InlineKeyboardButton> {
+                    InlineKeyboardButton.WithCallbackData(buttonText, $"series_details:{child.SeriesId}") // To be handled by another handler
+                });
+                }
+                // If it's a group with more children, allow further drilling
+                else if (child.Type == "group" && child.Children.Any())
+                {
+                    var buttonText = $"📂 {child.Name}";
+                    keyboardRows.Add(new List<InlineKeyboardButton> {
+                    InlineKeyboardButton.WithCallbackData(buttonText, $"{ExploreReleasePrefix}:{child.ReleaseId}:{child.ElementId}:{currentElement.Name}")
+                });
+                }
+            }
+
+            // Add "Back" button
+            if (currentElement.ParentId != 0)
+            {
+                keyboardRows.Add(new List<InlineKeyboardButton> {
+                InlineKeyboardButton.WithCallbackData("⬅️ Back", $"{ExploreReleasePrefix}:{currentElement.ReleaseId}:{currentElement.ParentId}:{parentName}")
+            });
+            }
+            else
+            {
+                keyboardRows.Add(new List<InlineKeyboardButton> {
+                InlineKeyboardButton.WithCallbackData("⬅️ Back to All Releases", $"{ReleasesCallbackPrefix}:1")
+            });
+            }
+
+            await _messageSender.EditMessageTextAsync(chatId, messageId, sb.ToString(), ParseMode.MarkdownV2, new InlineKeyboardMarkup(keyboardRows), cancellationToken);
+        }
+
 
         /// <summary>
         /// Asynchronously handles the incoming callback query by routing it to the appropriate method.
@@ -80,6 +153,10 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
                 {
                     await HandleReleasesViewAsync(callbackQuery, cancellationToken);
                 }
+                else if (data.StartsWith(ExploreReleasePrefix))
+                {
+                    await HandleExploreReleaseAsync(callbackQuery, cancellationToken);
+                }
                 else if (data == MenuCommandHandler.AnalysisCallbackData) // Assuming you have Main Menu
                 {
                     _logger.LogInformation("Back to Menu button pressed from FredSearch. UserID: {UserId}", update.CallbackQuery.From.Id);
@@ -94,6 +171,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
                     // await SendMainMenu(update.CallbackQuery.Message.Chat.Id, cancellationToken); // Send the menu
                     return; // Important:  Exit the handler here
                 }
+
             }
             catch (Exception ex)
             {
@@ -110,18 +188,8 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
 
         #region Private Handler Methods
 
-        /// <summary>
-        /// Handles the request to view the list of economic releases with pagination.
-        /// </summary>
-        /// <summary>
-        /// Handles the request to view the list of economic releases with pagination.
-        /// </summary>
-        /// <summary>
-        /// Handles the request to view the list of economic releases with pagination.
-        /// </summary>
-        /// <summary>
-        /// Handles the request to view the list of economic releases with pagination.
-        /// </summary>
+
+
         /// <summary>
         /// Handles the request to view the list of economic releases with pagination.
         /// </summary>
@@ -207,7 +275,16 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
                 cancellationToken);
         }
 
-        // VVVVVV MODIFIED METHOD VVVVVV
+
+
+
+
+
+
+
+
+
+
         /// <summary>
         /// Handles the request to initiate a search for an economic data series.
         /// </summary>
@@ -217,34 +294,28 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
             var messageId = callbackQuery.Message.MessageId;
             var userId = callbackQuery.From.Id;
 
-            // FIX: Manually construct an Update object to pass context to the state machine.
-            var triggerUpdate = new Update { Id = 0, CallbackQuery = callbackQuery };
+            var parts = callbackQuery.Data!.Split(new[] { ':' }, 2);
+            string? prefilledSearch = parts.Length > 1 ? parts[1] : null;
 
+            var triggerUpdate = new Update { Id = 0, CallbackQuery = callbackQuery };
             const string stateName = "WaitingForFredSearch";
             await _stateMachine.SetStateAsync(userId, stateName, triggerUpdate, cancellationToken);
 
             var newState = _stateMachine.GetState(stateName);
-            if (newState == null)
-            {
-                _logger.LogError("Could not retrieve state object for '{StateName}'.", stateName);
-                await _messageSender.EditMessageTextAsync(chatId, messageId, "An internal error occurred. Please try again.", cancellationToken: cancellationToken);
-                return;
-            }
+            var entryMessage = await newState!.GetEntryMessageAsync(chatId, triggerUpdate, cancellationToken);
 
-            var entryMessage = await newState.GetEntryMessageAsync(chatId, triggerUpdate, cancellationToken);
-            if (string.IsNullOrWhiteSpace(entryMessage))
+            if (!string.IsNullOrWhiteSpace(prefilledSearch))
             {
-                _logger.LogError("State '{StateName}' returned a null or empty entry message.", stateName);
-                await _messageSender.EditMessageTextAsync(chatId, messageId, "An internal error occurred. Please try again.", cancellationToken: cancellationToken);
-                return;
+                entryMessage += $"\n\n*Suggested search:* `{TelegramMessageFormatter.EscapeMarkdownV2(prefilledSearch)}`";
             }
 
             var searchKeyboard = MarkupBuilder.CreateInlineKeyboard(
-                new[] { InlineKeyboardButton.WithCallbackData("⬅️ Back to Calendar", ReleasesCallbackPrefix) }
+                new[] { InlineKeyboardButton.WithCallbackData("⬅️ Back to Calendar", $"{ReleasesCallbackPrefix}:1") }
             );
 
-            await _messageSender.EditMessageTextAsync(chatId, messageId, entryMessage, ParseMode.MarkdownV2, searchKeyboard, cancellationToken);
+            await _messageSender.EditMessageTextAsync(chatId, messageId, entryMessage!, ParseMode.MarkdownV2, searchKeyboard, cancellationToken);
         }
+
         #endregion
 
         #region UI Generation

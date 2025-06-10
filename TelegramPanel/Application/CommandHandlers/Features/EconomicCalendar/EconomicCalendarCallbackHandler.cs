@@ -113,6 +113,18 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
         /// <summary>
         /// Handles the request to view the list of economic releases with pagination.
         /// </summary>
+        /// <summary>
+        /// Handles the request to view the list of economic releases with pagination.
+        /// </summary>
+        /// <summary>
+        /// Handles the request to view the list of economic releases with pagination.
+        /// </summary>
+        /// <summary>
+        /// Handles the request to view the list of economic releases with pagination.
+        /// </summary>
+        /// <summary>
+        /// Handles the request to view the list of economic releases with pagination.
+        /// </summary>
         private async Task HandleReleasesViewAsync(CallbackQuery callbackQuery, CancellationToken cancellationToken)
         {
             var chatId = callbackQuery.Message!.Chat.Id;
@@ -122,28 +134,66 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
             var parts = callbackQuery.Data!.Split(':');
             int page = parts.Length > 1 && int.TryParse(parts[1], out int p) ? p : 1;
 
-            await _messageSender.EditMessageTextAsync(chatId, messageId, "⏳ Fetching economic calendar...", cancellationToken: cancellationToken);
+            await _messageSender.EditMessageTextAsync(chatId, messageId, "🗓️ Loading Economic Releases... ⏳", cancellationToken: cancellationToken); // Improved loading message
 
             var result = await _calendarService.GetReleasesAsync(page, PageSize, cancellationToken);
 
             if (!result.Succeeded || result.Data == null || !result.Data.Any())
             {
                 var errorKeyboard = GetPaginationKeyboard(page, false);
-                await _messageSender.EditMessageTextAsync(chatId, messageId, "❌ Could not retrieve economic releases at this time.", replyMarkup: errorKeyboard, cancellationToken: cancellationToken);
+                await _messageSender.EditMessageTextAsync(chatId, messageId, "❌ Could not retrieve economic releases at this time. 😔", replyMarkup: errorKeyboard, cancellationToken: cancellationToken);
                 return;
             }
 
             var sb = new StringBuilder();
-            sb.AppendLine("🗓️ *Recent & Upcoming Economic Releases*");
+            sb.AppendLine("🗓️ *Upcoming Economic Releases* 📅 - *Key Indicators for Forex Trading:*"); // Changed text and added emoji and context.
+            sb.AppendLine("*Impact Levels: 🔴 High | 🟠 Medium | 🟢 Low*");
             sb.AppendLine("`-----------------------------------`");
 
+            // Improved Loop & Emoji Logic
+            int counter = 1 + (page - 1) * PageSize; // Start from the correct number for pagination
             foreach (var release in result.Data)
             {
-                sb.AppendLine($"\n*{TelegramMessageFormatter.EscapeMarkdownV2(release.Name)}*");
+                // Numeric Emoji logic (supports up to 100)
+                string emoji = "";
+                if (counter <= 10)
+                {
+                    emoji = $"{counter}\u20E3";  // 1-10
+                }
+                else
+                {
+                    string counterString = counter.ToString();
+                    if (counterString.Length == 2)
+                    {
+                        emoji = $"{counterString[0]}\u20E3{counterString[1]}\u20E3";
+                    }
+                    else if (counterString.Length == 3)
+                    {
+                        emoji = $"{counterString[0]}\u20E3{counterString[1]}\u20E3{counterString[2]}\u20E3";
+                    }
+                    else
+                    {
+                        emoji = counter.ToString() + ".";
+                    }
+                }
+
+                // Determine Impact Level and Emoji
+                string impactEmoji = "🟢"; // Default: Low
+                if (release.Name.Contains("H.", StringComparison.OrdinalIgnoreCase)) // Check by the names.
+                {
+                    impactEmoji = "🔴";  // High
+                }
+                else if (release.Name.Contains("M.", StringComparison.OrdinalIgnoreCase))
+                {
+                    impactEmoji = "🟠";  // Medium
+                }
+
+                sb.AppendLine($"\n{emoji} {TelegramMessageFormatter.EscapeMarkdownV2(release.Name)} {impactEmoji}");  // Added emoji and enhanced formatting
                 if (!string.IsNullOrWhiteSpace(release.Link))
                 {
-                    sb.AppendLine($"[Official Source]({release.Link})");
+                    sb.AppendLine($"🔗 [Official Source]({release.Link})");  // More engaging link
                 }
+                counter++;
             }
 
             var releasesKeyboard = GetPaginationKeyboard(page, result.Data.Count == PageSize);

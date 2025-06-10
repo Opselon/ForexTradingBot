@@ -16,5 +16,6 @@ namespace Application.DTOs.Fred
 
         [JsonPropertyName("link")]
         public string? Link { get; set; }
+
     }
 }

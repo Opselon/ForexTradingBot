@@ -28,9 +28,9 @@ Write-Host "Stopping and removing existing service '$ServiceName' for a clean in
 $service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 if ($service) {
     Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 10
+    Start-Sleep -Seconds 15
     sc.exe delete "$ServiceName"
-    Start-Sleep -Seconds 10
+    Start-Sleep -Seconds 15
 }
 
 Write-Host "Creating a new, clean Windows Service '$ServiceName'..."

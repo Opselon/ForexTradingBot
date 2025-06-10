@@ -98,13 +98,14 @@ jobs:
     needs: deploy
     runs-on: ubuntu-latest
     outputs:
-      deployment-id: ${{ needs.create_deployment.outputs.deployment_id }}
+      deployment_id: ${{ steps.create.outputs.deployment_id }}
     steps:
       - name: Create Deployment
         id: create
         uses: chrnorm/deployment-action@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          ref:         ${{ github.sha }}
           environment: production
 
   # ====================== JOB 4: REGISTER & START WINDOWS SERVICE ======================

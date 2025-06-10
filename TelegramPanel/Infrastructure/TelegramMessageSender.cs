@@ -24,6 +24,10 @@ namespace TelegramPanel.Infrastructure
         Task EditMessageTextInTelegramAsync(long chatId, int messageId, string text, ParseMode? parseMode, InlineKeyboardMarkup? replyMarkup, CancellationToken cancellationToken);
         Task AnswerCallbackQueryToTelegramAsync(string callbackQueryId, string? text, bool showAlert, string? url, int cacheTime, CancellationToken cancellationToken);
         Task SendPhotoToTelegramAsync(long chatId, string photoUrlOrFileId, string? caption, ParseMode? parseMode, ReplyMarkup? replyMarkup, CancellationToken cancellationToken);
+        Task DeleteMessageAsync(
+            long chatId,
+            int messageId,
+            CancellationToken cancellationToken = default);
     }
 
     // =========================================================================
@@ -32,6 +36,7 @@ namespace TelegramPanel.Infrastructure
     // =========================================================================
     public class ActualTelegramMessageActions : IActualTelegramMessageActions
     {
+        private readonly INotificationJobScheduler _jobScheduler;
         private readonly ITelegramBotClient _botClient;
         private readonly ILogger<ActualTelegramMessageActions> _logger;
         private const ParseMode DefaultParseMode = ParseMode.Markdown;
@@ -43,8 +48,10 @@ namespace TelegramPanel.Infrastructure
             ITelegramBotClient botClient,
             ILogger<ActualTelegramMessageActions> logger,
             IUserRepository userRepository,
+            INotificationJobScheduler jobScheduler,
             IAppDbContext context)
         {
+            _jobScheduler = jobScheduler ?? throw new ArgumentNullException(nameof(jobScheduler));
             _botClient = botClient ?? throw new ArgumentNullException(nameof(botClient));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _userRepository = userRepository ?? throw new ArgumentNullException(nameof(userRepository));
@@ -142,6 +149,15 @@ namespace TelegramPanel.Infrastructure
                 _logger.LogError(ex, "Hangfire Job: Failed to copy message to ChatID {TargetChatId} after retries.", targetChatId);
                 throw; // Re-throw to let Hangfire handle the failure.
             }
+        }
+
+        public Task DeleteMessageAsync(long chatId, int messageId, CancellationToken cancellationToken = default)
+        {
+            _logger.LogDebug("Enqueueing DeleteMessageAsync for ChatID {ChatId}, MsgID {MessageId}", chatId, messageId);
+            _jobScheduler.Enqueue<IActualTelegramMessageActions>(
+                sender => sender.DeleteMessageAsync(chatId, messageId, CancellationToken.None)
+            );
+            return Task.CompletedTask;
         }
 
         public async Task SendTextMessageToTelegramAsync(
@@ -452,6 +468,11 @@ namespace TelegramPanel.Infrastructure
             string? url = null,
             int cacheTime = 0,
             CancellationToken cancellationToken = default);
+
+        Task DeleteMessageAsync(
+          long chatId,
+          int messageId,
+          CancellationToken cancellationToken = default);
     }
 
     // =========================================================================
@@ -468,6 +489,15 @@ namespace TelegramPanel.Infrastructure
         {
             _jobScheduler = jobScheduler ?? throw new ArgumentNullException(nameof(jobScheduler));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        }
+
+        public Task DeleteMessageAsync(long chatId, int messageId, CancellationToken cancellationToken = default)
+        {
+            _logger.LogDebug("Enqueueing DeleteMessageAsync for ChatID {ChatId}, MsgID {MessageId}", chatId, messageId);
+            _jobScheduler.Enqueue<IActualTelegramMessageActions>(
+                sender => sender.DeleteMessageAsync(chatId, messageId, CancellationToken.None)
+            );
+            return Task.CompletedTask;
         }
 
         public Task SendTextMessageAsync(long chatId, string text, ParseMode? parseMode = ParseMode.Markdown, ReplyMarkup? replyMarkup = null, CancellationToken cancellationToken = default, LinkPreviewOptions? linkPreviewOptions = null)

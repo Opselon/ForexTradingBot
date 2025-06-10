@@ -39,7 +39,7 @@ namespace TelegramPanel.Application.States.Admin
             if (message.Text?.Trim().Equals("/cancel", StringComparison.OrdinalIgnoreCase) == true)
             {
                 await _messageSender.SendTextMessageAsync(adminId, "Broadcast cancelled.", cancellationToken: cancellationToken);
-          
+
                 return null; // Returning null exits the state machine.
             }
 
@@ -58,7 +58,7 @@ namespace TelegramPanel.Application.States.Admin
                 _broadcastScheduler.EnqueueBroadcastMessage(userChatId, message.Chat.Id, message.MessageId);
             }
 
-     
+
 
             var confirmationText = $"✅ Broadcast has been successfully enqueued for delivery to *{userChatIds.Count}* users.";
             await _messageSender.SendTextMessageAsync(adminId, confirmationText, ParseMode.Markdown, cancellationToken: cancellationToken);

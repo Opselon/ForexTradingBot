@@ -28,6 +28,33 @@ namespace Infrastructure.ExternalServices
             _httpClient.BaseAddress = new Uri("https://api.stlouisfed.org/fred/");
         }
 
+
+        public async Task<Result<FredSeriesSearchResponseDto>> SearchEconomicSeriesAsync(string searchText, int limit = 10, CancellationToken cancellationToken = default)
+        {
+            var encodedSearchText = System.Net.WebUtility.UrlEncode(searchText);
+            var requestUri = $"series/search?api_key={_apiKey}&search_text={encodedSearchText}&file_type=json&limit={limit}";
+
+            try
+            {
+                var response = await _httpClient.GetFromJsonAsync<FredSeriesSearchResponseDto>(requestUri, cancellationToken);
+                if (response == null)
+                {
+                    return Result<FredSeriesSearchResponseDto>.Failure("Failed to deserialize series search response from FRED API.");
+                }
+                return Result<FredSeriesSearchResponseDto>.Success(response);
+            }
+            catch (HttpRequestException ex)
+            {
+                _logger.LogError(ex, "HTTP request to FRED series search failed with status {StatusCode}. Search: '{SearchText}'", ex.StatusCode, searchText);
+                return Result<FredSeriesSearchResponseDto>.Failure($"API request failed: {ex.StatusCode}.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error searching for economic series on FRED API. Search: '{SearchText}'", searchText);
+                return Result<FredSeriesSearchResponseDto>.Failure($"An error occurred while searching for data: {ex.Message}");
+            }
+        }
+
         public async Task<Result<FredReleasesResponseDto>> GetEconomicReleasesAsync(int limit = 50, int offset = 0, CancellationToken cancellationToken = default)
         {
             // Now that _apiKey is guaranteed to exist, we can build the URI simply.

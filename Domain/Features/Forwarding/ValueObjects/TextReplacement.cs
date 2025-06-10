@@ -8,7 +8,7 @@ namespace Domain.Features.Forwarding.ValueObjects
     {
         public string Find { get; private set; } = null!;
         public string ReplaceWith { get; private set; } = null!;
-        public bool IsRegex { get; private set; } 
+        public bool IsRegex { get; private set; }
         public RegexOptions RegexOptions { get; private set; }
 
         private TextReplacement() { } // For EF Core

@@ -15,6 +15,18 @@ namespace Application.Services
             _fredApiClient = fredApiClient;
         }
 
+        public async Task<Result<List<FredSeriesDto>>> SearchSeriesAsync(string searchText, CancellationToken cancellationToken = default)
+        {
+            var result = await _fredApiClient.SearchEconomicSeriesAsync(searchText, 10, cancellationToken); // Limit to 10 results for a clean UI
+            if (result.Succeeded)
+            {
+                return Result<List<FredSeriesDto>>.Success(result.Data!.Series);
+            }
+            return Result<List<FredSeriesDto>>.Failure(result.Errors);
+        }
+
+
+
         public async Task<Result<List<FredReleaseDto>>> GetReleasesAsync(int pageNumber, int pageSize, CancellationToken cancellationToken = default)
         {
             int offset = (pageNumber - 1) * pageSize;

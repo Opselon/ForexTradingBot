@@ -226,7 +226,7 @@ try
     // ------------------- ۵. پیکربندی Hangfire برای اجرای کارهای پس‌زمینه -------------------
 
 
-    
+
     builder.Services.AddHangfire(config => config
         .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
         .UseSimpleAssemblyNameTypeSerializer()
@@ -428,6 +428,6 @@ finally
 
     Log.Information("--------------------------------------------------");
     Log.Information("Application Shutting Down...");
-    Log.CloseAndFlush(); 
+    Log.CloseAndFlush();
     Log.Information("--------------------------------------------------");
 }

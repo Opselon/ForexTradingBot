@@ -17,6 +17,11 @@
 
 ---
 
+### 🚀 Get Started Now!
+
+*   **Live Bot:** [https://t.me/trade_ai_helper_bot](https://t.me/trade_ai_helper_bot) ✨
+*   *Just click the link to open the bot in Telegram and start trading!*
+
 ## 📖 Table of Contents 📚
 
 *   [🚀 Project Overview: Precision Trading with ForexSignalBot](#-project-overview-precision-trading-with-forexsignalbot)

@@ -100,7 +100,7 @@ namespace TelegramPanel.Extensions
 
             // REMOVE explicit registration if covered by scan:
             // services.AddScoped<ITelegramCallbackQueryHandler, FundamentalAnalysisCallbackHandler>(); // This is now redundant if scan works
-
+            services.AddScoped<ITelegramState, FredSearchState>();
             // ------------------- 6. Register State Machine & States -------------------
             services.AddSingleton<IUserConversationStateService, InMemoryUserConversationStateService>();
             services.AddScoped<ITelegramStateMachine, TelegramStateMachine>();

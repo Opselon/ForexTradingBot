@@ -3,61 +3,94 @@ param(
     [string]$TempPath
 )
 
-$ScriptLogFile = Join-Path $TempPath "04-Service-Log-$(Get-Date -f yyyyMMdd-HHmmss).txt"
+# ──────────────────────────────────────────────────────────────────────────────
+# Setup Logging & Error Policy
+# ──────────────────────────────────────────────────────────────────────────────
+$ScriptLogFile         = Join-Path $TempPath "04-Service-Log-$(Get-Date -Format yyyyMMdd-HHmmss).txt"
 Start-Transcript -Path $ScriptLogFile -Append
 $ErrorActionPreference = 'Stop'
 
-Write-Host "--- SCRIPT 4: REGISTER & LAUNCH WINDOWS SERVICE ---"
+# ──────────────────────────────────────────────────────────────────────────────
+# Variables
+# ──────────────────────────────────────────────────────────────────────────────
+$ServiceName  = 'ForexTradingBotAPI'
+$DisplayName  = 'Forex Trading Bot API Service'
+$ExePath      = Join-Path $DeployPath 'WebAPI.exe'
+$maxDeleteSec = 30
+$maxStartSec  = 15
 
-$ServiceName  = "ForexTradingBotAPI"
-$DisplayName  = "Forex Trading Bot API Service"
-$ExePath      = Join-Path $DeployPath "WebAPI.exe"
-
-# 1. Verify EXE exists
-Write-Host "Verifying presence of executable at '$ExePath'..."
-if (-not (Test-Path $ExePath)) {
-    throw "FATAL: Cannot find executable at '$ExePath'."
+# ──────────────────────────────────────────────────────────────────────────────
+function Write-Step {
+    param($msg) ; Write-Host "`n=== $msg ===" -ForegroundColor Cyan
 }
-Write-Host "✅ Executable found."
 
-# 2. Stop & delete any existing service
-Write-Host "Stopping and removing existing service '$ServiceName' for a clean install..."
+# ──────────────────────────────────────────────────────────────────────────────
+# 1) Verify EXE
+# ──────────────────────────────────────────────────────────────────────────────
+Write-Step 'VERIFY EXECUTABLE'
+if (-not (Test-Path $ExePath)) {
+    throw "FATAL: Executable not found at: $ExePath"
+}
+Write-Host "✅ Found: $ExePath"
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 2) Stop & Delete Existing Service
+# ──────────────────────────────────────────────────────────────────────────────
+Write-Step "STOP & DELETE SERVICE [$ServiceName]"
 if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
-    Stop-Service  -Name $ServiceName -Force -ErrorAction SilentlyContinue
+    Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
+
+    # Issue Delete
     sc.exe delete $ServiceName | Out-Null
 
-    # Wait up to 60s for deletion to complete
+    # Wait until service is gone or timeout
     try {
-        Write-Host "Waiting for service to be fully removed..."
-        Wait-Service -Name $ServiceName -Timeout 60 -ErrorAction Stop
-        throw "This should never happen—service still exists after deletion."
+        Wait-Service -Name $ServiceName -Timeout $maxDeleteSec -ErrorAction Stop
+        throw "FATAL: Service still exists after $maxDeleteSec seconds."
     } catch {
-        Write-Host "✅ Service successfully removed."
+        # On “service not found” or timeout, catch filter:
+        if ($_.Exception -is [System.Management.Automation.TimeoutException]) {
+            throw $_
+        }
+        Write-Host "✅ Service removed within $maxDeleteSec seconds."
     }
+} else {
+    Write-Host "ℹ️  No existing service to remove."
 }
 
-# 3. Create the new service
-Write-Host "Creating a new, clean Windows Service '$ServiceName'..."
+# ──────────────────────────────────────────────────────────────────────────────
+# 3) Create New Service
+# ──────────────────────────────────────────────────────────────────────────────
+Write-Step "CREATE SERVICE [$ServiceName]"
 New-Service `
     -Name         $ServiceName `
     -BinaryPathName "`"$ExePath`"" `
     -DisplayName  $DisplayName `
     -StartupType  Automatic
-Write-Host "✅ New service created."
+Write-Host "✅ Service created."
 
-# 4. Configure automatic restart on failure
-Write-Host "Configuring service recovery options..."
+# ──────────────────────────────────────────────────────────────────────────────
+# 4) Configure Recovery
+# ──────────────────────────────────────────────────────────────────────────────
+Write-Step 'CONFIGURE RECOVERY OPTIONS'
 sc.exe failure $ServiceName reset=86400 actions=restart/60000 | Out-Null
-Write-Host "✅ Recovery options set."
+Write-Host "✅ Recovery configured."
 
-# 5. Start and verify
-Write-Host "Starting the service '$ServiceName'..."
+# ──────────────────────────────────────────────────────────────────────────────
+# 5) Start & Verify Running
+# ──────────────────────────────────────────────────────────────────────────────
+Write-Step 'START SERVICE'
 Start-Service -Name $ServiceName
 
-Write-Host "Waiting for service to reach 'Running' state (15s timeout)..."
-if (-not (Wait-Service -Name $ServiceName -Timeout 15)) {
-    throw "FATAL: Service '$ServiceName' failed to start within 15 seconds."
+Write-Host "Waiting up to $maxStartSec seconds for status=Running..."
+if (-not (Wait-Service -Name $ServiceName -Timeout $maxStartSec)) {
+    $status = (Get-Service -Name $ServiceName).Status
+    throw "FATAL: Service did not reach 'Running' within $maxStartSec seconds (status: $status)."
 }
 
-Write-Host "✅✅✅ VICTORY! The Windows Service is RUNNING! ✅✅✅" -ForegroundColor Green
+Write-Host "✅✅✅ SERVICE IS RUNNING ✅✅✅" -ForegroundColor Green
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Done
+# ──────────────────────────────────────────────────────────────────────────────
 Stop-Transcript

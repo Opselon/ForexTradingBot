@@ -46,19 +46,35 @@ namespace TelegramPanel.Extensions
                 }
                 return new TelegramBotClient(settings.BotToken);
             });
+
+            // 3. Register ITelegramMessageSender
+            services.AddScoped<ITelegramCallbackQueryHandler, CryptoCallbackHandler>();
+
+            // 4. Register ITelegramUpdateChannel and related services
             services.AddSingleton<ITelegramUpdateChannel, TelegramUpdateChannel>();
+
+            //  5. Register ITelegramUpdateProcessor and related services
             services.AddScoped<ITelegramUpdateProcessor, UpdateProcessingService>();
+
+            // 6. Register ITelegramUpdateJobService for Hangfire
             services.AddScoped<IDirectMessageSender, DirectTelegramMessageSender>();
-            // 3. Register Core TelegramPanel Services
+
+            // 7. Register ITelegramUpdateJobService for Hangfire
             services.AddSingleton<ITelegramUpdateChannel, TelegramUpdateChannel>();
+
+            // 8. Register ITelegramUpdateJobService for Hangfire
             services.AddScoped<IMarketDataService, MarketDataService>();
 
+            // 9. Register ITelegramUpdateJobService for Hangfire
             services.AddScoped<ITelegramMiddleware, LoggingMiddleware>();
-            services.AddScoped<ITelegramMiddleware, AuthenticationMiddleware>();
-            // This is the main sender that application code uses to queue jobs
 
+            // 10. Register ITelegramMiddleware for authentication
+            services.AddScoped<ITelegramMiddleware, AuthenticationMiddleware>();
+
+            // 11. Register ITelegramMiddleware for rate limiting
             services.AddScoped<IBroadcastScheduler, BroadcastScheduler>();
 
+            // 12. Register ITelegramMiddleware for broadcast scheduling
             services.AddTransient<IBotCommandSetupService, BotCommandSetupService>();
 
 
@@ -70,6 +86,8 @@ namespace TelegramPanel.Extensions
             // If not, you'll need separate scans per assembly.
 
             // 5. Register ALL ITelegramCommandHandler implementations from the assembly
+
+            // This will scan the assembly of StartCommandHandler
             services.Scan(scan => scan
                 .FromAssemblyOf<StartCommandHandler>() // A marker from your TelegramPanel.Application assembly
                 .AddClasses(classes => classes.AssignableTo<ITelegramCommandHandler>())
@@ -81,9 +99,16 @@ namespace TelegramPanel.Extensions
 
             // 6. Register State Machine
 
+            // ------------------- 6. Register State Machine & States -------------------
             services.AddScoped<ITelegramCallbackQueryHandler, AnalysisCallbackHandler>();
+
+            // Register Analysis Services
             services.AddScoped<IEconomicCalendarService, EconomicCalendarService>();
+
+            // Register Economic Calendar Handlers
             services.AddScoped<ITelegramCallbackQueryHandler, EconomicCalendarCallbackHandler>();
+
+            // Register CoinGecko Handlers
             services.AddScoped<IActualTelegramMessageActions, ActualTelegramMessageActions>(); // << ثبت صحیح برای اجرای واقعی
                                                                                                // سپس ITelegramMessageSender که جاب‌ها را به Hangfire رله می‌کند
             services.AddScoped<ITelegramMessageSender, HangfireRelayTelegramMessageSender>(); // << ثبت صحیح برای انکیو کردن
@@ -113,7 +138,7 @@ namespace TelegramPanel.Extensions
 
             // ------------------- 7. Register INotificationService Implementation -------------------
             services.AddScoped<INotificationService, TelegramNotificationService>();
-            services.AddScoped<ITelegramCallbackQueryHandler, CoinGeckoCallbackHandler>();
+            services.AddScoped<ITelegramCallbackQueryHandler, CryptoCallbackHandler>();
             // ------------------- 8. Register Hosted Services -------------------
             services.AddHostedService<TelegramBotService>();
             services.AddHostedService<UpdateQueueConsumerService>();

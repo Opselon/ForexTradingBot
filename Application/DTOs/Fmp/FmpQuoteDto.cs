@@ -3,15 +3,14 @@
 // -----------------
 using System.Text.Json.Serialization;
 
-namespace Application.DTOs.FinancialModelingPrep
+namespace Application.DTOs.Fmp
 {
     /// <summary>
-    /// Data Transfer Object (DTO) to represent the quote information for a cryptocurrency,
-    /// as returned by the Financial Modeling Prep API. This class is used for deserializing
-    /// the JSON response from endpoints like /api/v3/quotes/crypto.
-    /// It's designed to be independent of the domain model, focusing solely on the data contract with the external API.
+    /// Data Transfer Object (DTO) to represent the quote information for a cryptocurrency
+    /// or stock as returned by the Financial Modeling Prep (FMP) API.
+    /// This is kept separate from other API DTOs.
     /// </summary>
-    public class CryptoQuoteDto
+    public class FmpQuoteDto
     {
         [JsonPropertyName("symbol")]
         public string Symbol { get; set; } = string.Empty;
@@ -54,27 +53,6 @@ namespace Application.DTOs.FinancialModelingPrep
 
         [JsonPropertyName("avgVolume")]
         public long? AvgVolume { get; set; }
-
-        [JsonPropertyName("exchange")]
-        public string? Exchange { get; set; }
-
-        [JsonPropertyName("open")]
-        public decimal? Open { get; set; }
-
-        [JsonPropertyName("previousClose")]
-        public decimal? PreviousClose { get; set; }
-
-        [JsonPropertyName("eps")]
-        public decimal? Eps { get; set; }
-
-        [JsonPropertyName("pe")]
-        public decimal? Pe { get; set; }
-
-        [JsonPropertyName("earningsAnnouncement")]
-        public string? EarningsAnnouncement { get; set; }
-
-        [JsonPropertyName("sharesOutstanding")]
-        public long? SharesOutstanding { get; set; }
 
         [JsonPropertyName("timestamp")]
         public long? Timestamp { get; set; }

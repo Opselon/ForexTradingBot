@@ -24,9 +24,9 @@ namespace TelegramPanel.Application.CommandHandlers.Features.CoinGecko
     /// <summary>
     /// Handles all callback queries for the paginated CoinGecko cryptocurrency market list with an enhanced UI.
     /// </summary>
-    public class CoinGeckoCallbackHandler : ITelegramCallbackQueryHandler
+    public class CryptoCallbackHandler : ITelegramCallbackQueryHandler
     {
-        private readonly ILogger<CoinGeckoCallbackHandler> _logger;
+        private readonly ILogger<CryptoCallbackHandler> _logger;
         private readonly ITelegramMessageSender _messageSender;
         private readonly ICoinGeckoService _coinGeckoService;
 
@@ -41,8 +41,8 @@ namespace TelegramPanel.Application.CommandHandlers.Features.CoinGecko
             { "xrp", "🔵" }, { "usdc", "💲" }, { "doge", "🐕" }, { "ada", "🟪" }, { "trx", "🔴" },
         };
 
-        public CoinGeckoCallbackHandler(
-            ILogger<CoinGeckoCallbackHandler> logger,
+        public CryptoCallbackHandler(
+            ILogger<CryptoCallbackHandler> logger,
             ITelegramMessageSender messageSender,
             ICoinGeckoService coinGeckoService)
         {

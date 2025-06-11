@@ -46,8 +46,9 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
 
 
         /// <summary>
-        /// Generates the text and inline keyboard markup for the main application menu.
+        /// Generates the main menu markup with buttons for various features.
         /// </summary>
+        /// <returns></returns>
         public static (string text, InlineKeyboardMarkup keyboard) GetMainMenuMarkup()
         {
             var text = "Welcome to the Main Menu!\nChoose one of the available options:";
@@ -66,7 +67,7 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
                 },
                  new[] // Row 3: Crypto Details (NEW)
                 {
-                   InlineKeyboardButton.WithCallbackData("🪙 Crypto Prices", $"{CoinGeckoCallbackHandler.CallbackPrefix}_list_1")
+                   InlineKeyboardButton.WithCallbackData("🪙 Crypto Prices", $"{CryptoCallbackHandler.CallbackPrefix}_list_1")
                 },
                 new[] // Row 3: Subscription
                 {

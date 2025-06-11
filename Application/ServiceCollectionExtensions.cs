@@ -4,6 +4,8 @@
 using Application.Common.Interfaces;       // برای اینترفیس‌های عمومی مانند IAppDbContext, INotificationService, و تمام اینترفیس‌های Repository
 using Application.Features.CoinGecko.Interfaces;
 using Application.Features.CoinGecko.Services;
+using Application.Features.Fmp.Interfaces;
+using Application.Features.Fmp.Services;
 using Application.Interface;                // ✅ Namespace اصلی برای پیاده‌سازی‌های سرویس (UserService, SignalService, و غیره)
 using Application.Interfaces;              // ✅ Namespace اصلی برای اینترفیس‌های سرویس (IUserService, ISignalService, و غیره)
 using Application.Services;
@@ -80,6 +82,8 @@ namespace Application // ✅ Namespace ریشه پروژه Application
             // طول عمر Scoped معمولاً برای سرویس‌هایی که با DbContext (که Scoped است) کار می‌کنند یا وضعیت درخواست را نگه می‌دارند، مناسب است.
             // Transient برای سرویس‌های سبک و بدون state.
             // Singleton برای سرویس‌هایی که در طول عمر برنامه فقط یک نمونه از آن‌ها کافی است و thread-safe هستند.
+            services.AddScoped<IFmpService, FmpService>();
+
 
             // سرویس مدیریت کاربران
             services.AddScoped<IUserService, UserService>();

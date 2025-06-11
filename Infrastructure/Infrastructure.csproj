@@ -10,10 +10,13 @@
   <ItemGroup>
     <Compile Remove="Data\NewFolder\**" />
     <Compile Remove="ExternalServices\NewFolder\**" />
+    <Compile Remove="Services\NewFolder\**" />
     <EmbeddedResource Remove="Data\NewFolder\**" />
     <EmbeddedResource Remove="ExternalServices\NewFolder\**" />
+    <EmbeddedResource Remove="Services\NewFolder\**" />
     <None Remove="Data\NewFolder\**" />
     <None Remove="ExternalServices\NewFolder\**" />
+    <None Remove="Services\NewFolder\**" />
   </ItemGroup>
 
   <ItemGroup>

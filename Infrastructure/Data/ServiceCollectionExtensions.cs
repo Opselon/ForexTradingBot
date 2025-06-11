@@ -10,6 +10,7 @@ using Infrastructure.Persistence.Repositories; // پیاده‌سازی Reposito
 using Infrastructure.Services;            // پیاده‌سازی سرویس‌های داخلی Infrastructure
 using Infrastructure.Services.Caching;
 using Infrastructure.Services.CoinGecko;
+using Infrastructure.Services.Fmp;
 using Microsoft.EntityFrameworkCore;      // Entity Framework Core
 using Microsoft.Extensions.Configuration; // برای خواندن تنظیمات از فایل پیکربندی
 using Microsoft.Extensions.DependencyInjection;
@@ -171,9 +172,15 @@ namespace Infrastructure
                 // .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = true, AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate })
                 // .AddPolicyHandler(GetRetryPolicy()); //  مثال: افزودن سیاست تلاش مجدد با Polly
                 ;
+
+
             // Register the CoinGecko API client with the retry policy
-            services.AddHttpClient<ICoinGeckoApiClient, CoinGeckoApiClient>()
-                .AddPolicyHandler(retryPolicy);
+            services.AddHttpClient<ICoinGeckoApiClient, CoinGeckoApiClient>().AddPolicyHandler(retryPolicy);
+
+            // Register the FMP API client with the retry policy
+            services.AddHttpClient<IFmpApiClient, FmpApiClient>().AddPolicyHandler(retryPolicy);
+
+
             // 5. رجیستر کردن Repositoryها و سایر سرویس‌های دامنه/کاربردی
             // هر Repository مسئول تعامل با یک موجودیت خاص در پایگاه داده است.
             // به عنوان Singleton ثبت شده تا در طول عمر برنامه فقط یک نمونه از آن وجود داشته باشد

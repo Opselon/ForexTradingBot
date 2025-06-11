@@ -13,10 +13,12 @@ namespace Application.Common.Interfaces
     public interface IFmpApiClient
     {
         /// <summary>
-        /// Asynchronously fetches a list of quotes for all available cryptocurrencies from FMP.
+        /// Asynchronously fetches a full quote for a single cryptocurrency from FMP.
         /// </summary>
+        /// <param name="fmpSymbol">The FMP-formatted symbol (e.g., "BTCUSD").</param>
         /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
-        /// <returns>A Result containing a list of FmpQuoteDto objects on success.</returns>
-        Task<Result<List<FmpQuoteDto>>> GetCryptoQuotesAsync(CancellationToken cancellationToken);
+        /// <returns>A Result containing the full FmpQuoteDto on success.</returns>
+        Task<Result<FmpQuoteDto>> GetFullCryptoQuoteAsync(string fmpSymbol, CancellationToken cancellationToken);
+        Task<Result<List<FmpQuoteDto>>> GetFullCryptoQuoteListAsync(CancellationToken cancellationToken);
     }
 }

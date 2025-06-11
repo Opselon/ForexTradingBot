@@ -22,9 +22,9 @@ namespace TelegramPanel.Application.States.Admin
             _messageSender = messageSender;
         }
 
-        public Task<string> GetEntryMessageAsync(long userId, Update? triggerUpdate, CancellationToken ct)
+        public Task<string?> GetEntryMessageAsync(long userId, Update? triggerUpdate, CancellationToken ct)
         {
-            return Task.FromResult("👨‍💻 *Execute Raw SQL Query*\n\n⚠️ *WARNING:* This is a dangerous, direct interface to the database. Use with extreme caution. Only `SELECT` statements are recommended.\n\nSend the full SQL query to execute, or /cancel to abort.");
+            return Task.FromResult<string?>("👨‍💻 *Execute Raw SQL Query*\n\n⚠️ *WARNING:* This is a dangerous, direct interface to the database. Use with extreme caution. Only `SELECT` statements are recommended.\n\nSend the full SQL query to execute, or /cancel to abort.");
         }
 
         public async Task<string?> ProcessUpdateAsync(Update update, CancellationToken cancellationToken)

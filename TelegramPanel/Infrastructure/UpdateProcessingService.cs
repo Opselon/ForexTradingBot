@@ -30,33 +30,35 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
         private readonly AsyncRetryPolicy _internalServiceRetryPolicy; // سیاست Polly برای سرویس‌های داخلی/DB
         private readonly AsyncRetryPolicy _externalApiRetryPolicy;    // سیاست Polly برای فراخوانی‌های API خارجی
         private readonly IMemoryCache _memoryCache; // ✅ INJECT THE MEMORY CACHE
-        private readonly IEnumerable<ITelegramCallbackQueryHandler> _callbackHandlers;
         #endregion
 
         #region Constructor
 
         public UpdateProcessingService(
-            ILogger<UpdateProcessingService> logger,
-            IServiceProvider serviceProvider,
-            IEnumerable<ITelegramMiddleware> middlewares,
-            IEnumerable<ITelegramCommandHandler> commandHandlers,
-            IEnumerable<ITelegramCallbackQueryHandler> callbackQueryHandlers,
-            ITelegramStateMachine stateMachine,
-            ITelegramMessageSender messageSender,
-            IDirectMessageSender directMessageSender,
-            IMemoryCache memoryCache)
+        ILogger<UpdateProcessingService> logger,
+        IServiceProvider serviceProvider,
+        IEnumerable<ITelegramMiddleware> middlewares,
+        IEnumerable<ITelegramCommandHandler> commandHandlers,
+        IEnumerable<ITelegramCallbackQueryHandler> callbackQueryHandlers,
+        ITelegramStateMachine stateMachine,
+        ITelegramMessageSender messageSender,
+        IDirectMessageSender directMessageSender,
+        IMemoryCache memoryCache,
+        IEnumerable<ITelegramCallbackQueryHandler> callbackHandlers) // Add callbackHandlers to constructor
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
-            // Middleware ها را Reverse کرده و به عنوان ReadOnlyList ذخیره می‌کند تا پایپ‌لاین به درستی ساخته شود.
             _middlewares = middlewares?.Reverse().ToList().AsReadOnly() ?? throw new ArgumentNullException(nameof(middlewares));
             _commandHandlers = commandHandlers ?? throw new ArgumentNullException(nameof(commandHandlers));
             _callbackQueryHandlers = callbackQueryHandlers ?? throw new ArgumentNullException(nameof(callbackQueryHandlers));
             _stateMachine = stateMachine ?? throw new ArgumentNullException(nameof(stateMachine));
             _messageSender = messageSender ?? throw new ArgumentNullException(nameof(messageSender));
+            _directMessageSender = directMessageSender ?? throw new ArgumentNullException(nameof(directMessageSender));
+            _memoryCache = memoryCache ?? throw new ArgumentNullException(nameof(memoryCache));
+       
 
-            // تعریف _internalServiceRetryPolicy برای عملیات‌های داخلی (مانند دسترسی به DB از طریق StateMachine)
-            _internalServiceRetryPolicy = Policy
+        // تعریف _internalServiceRetryPolicy برای عملیات‌های داخلی (مانند دسترسی به DB از طریق StateMachine)
+        _internalServiceRetryPolicy = Policy
                 .Handle<Exception>(ex => ex is not (OperationCanceledException or TaskCanceledException))
                 .WaitAndRetryAsync(
                     retryCount: 3,

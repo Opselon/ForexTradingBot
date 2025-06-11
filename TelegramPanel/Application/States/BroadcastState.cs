@@ -17,9 +17,9 @@ namespace TelegramPanel.Application.States
         public BroadcastState(ITelegramMessageSender ms, IBroadcastScheduler bs, IAdminService ads)
         { _messageSender = ms; _broadcastScheduler = bs; _adminService = ads; }
 
-        public Task<string> GetEntryMessageAsync(long userId, Update? triggerUpdate, CancellationToken ct)
+        public Task<string?> GetEntryMessageAsync(long userId, Update? triggerUpdate, CancellationToken ct)
         {
-            return Task.FromResult("📝 *Broadcast Message:*\nPlease send the message you wish to broadcast. Type /cancel to abort.");
+            return Task.FromResult<string?>("📝 *Broadcast Message:*\nPlease send the message you wish to broadcast. Type /cancel to abort.");
         }
 
         // In the BroadcastState class...

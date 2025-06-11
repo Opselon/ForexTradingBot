@@ -1,13 +1,15 @@
 ﻿// File: TelegramPanel/Application/CommandHandlers/MenuCommandHandler.cs
 #region Usings
+using Application.Common.Interfaces;
 using Microsoft.Extensions.Logging;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
-using TelegramPanel.Application.CommandHandlers.Features.CoinGecko;
+using TelegramPanel.Application.CommandHandlers.Features.Crypto;
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Infrastructure;
 using TelegramPanel.Infrastructure.Helper;
+using static TelegramPanel.Application.CommandHandlers.Features.Crypto.CryptoCallbackHandler;
 #endregion
 
 namespace TelegramPanel.Application.CommandHandlers.MainMenu
@@ -30,13 +32,17 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
         public const string CryptoCallbackData = "menu_crypto_details"; // Kept for the old FMP feature if you ever enable it
         public const string CoingeckoCallbackData = "menu_coingecko_trending"; // Using the constant from the handler itself
         public const string BackToMainMenuGeneral = "back_to_main_menu";
+        private readonly IMemoryCacheService<UiCacheEntry> _uiCache; // <-- NEW
 
+        private const string MainMenuCacheKey = "MainMenu_v1";
         #endregion
 
         #region Constructor
-        public MenuCommandHandler(ILogger<MenuCommandHandler> logger, ITelegramMessageSender messageSender)
+        public MenuCommandHandler(ILogger<MenuCommandHandler> logger, ITelegramMessageSender messageSender, IMemoryCacheService<UiCacheEntry> uiCache)
         {
+
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _uiCache = uiCache ?? throw new ArgumentNullException(nameof(uiCache)); // <-- NEW
             _messageSender = messageSender ?? throw new ArgumentNullException(nameof(messageSender));
         }
         #endregion
@@ -66,7 +72,8 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
                 },
                  new[] // Row 3: Crypto Details (NEW)
                 {
-                   InlineKeyboardButton.WithCallbackData("🪙 Crypto Prices", $"{CryptoCallbackHandler.CallbackPrefix}_list_1")  },
+                  InlineKeyboardButton.WithCallbackData("🪙 Crypto Prices", $"{CryptoCallbackHandler.CallbackPrefix}_list_1")
+        },
                 new[] // Row 3: Subscription
                 {
                     InlineKeyboardButton.WithCallbackData("💎 Subscribe / Plans", SubscribeCallbackData)
@@ -98,8 +105,10 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
         /// <returns>A Task representing the asynchronous operation.</returns>
         public async Task HandleAsync(Update update, CancellationToken cancellationToken = default)
         {
+
             // This logic correctly handles the /menu command by sending the menu.
             var message = update.Message; // This is now guaranteed to be from a Message update based on CanHandle.
+
 
             // Basic null check, though CanHandle should prevent this.
             if (message == null)
@@ -108,6 +117,19 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
                 _logger.LogWarning("MenuCommand: Message is null in UpdateID {UpdateId}, despite CanHandle passing.", update.Id);
                 return; // Exit early if message is unexpectedly null.
             }
+            // Check if the message is a command and if it matches /menu
+            if (!_uiCache.TryGetValue(MainMenuCacheKey, out var cachedMenu))
+            {
+                _logger.LogInformation("Main menu cache MISS. Generating and caching menu.");
+                var (text, keyboard) = GetMainMenuMarkup();
+                cachedMenu = new UiCacheEntry(text, keyboard);
+                _uiCache.Set(MainMenuCacheKey, cachedMenu, TimeSpan.FromHours(5)); // Cache for 5 hours
+            }
+            else
+            {
+                _logger.LogInformation("Main menu cache HIT. Serving from cache.");
+            }
+
 
             var chatId = message.Chat.Id;
             var userId = message.From?.Id; // For logging purposes
@@ -116,6 +138,8 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
 
             try
             {
+
+
                 // Use the static GetMainMenuMarkup method to get the message content and keyboard.
                 // Ensure GetMainMenuMarkup is implemented to return both text and inline keyboard.
                 var (text, inlineKeyboard) = GetMainMenuMarkup();

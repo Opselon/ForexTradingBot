@@ -3,6 +3,7 @@
 // using های مربوط به پروژه Application شما
 using Application.Common.Interfaces;       // برای اینترفیس‌های عمومی مانند IAppDbContext, INotificationService, و تمام اینترفیس‌های Repository
 using Application.Features.Crypto.Interfaces;
+using Application.Features.Crypto.Services;
 using Application.Features.Fmp.Interfaces;
 using Application.Features.Fmp.Services;
 using Application.Interfaces;              // ✅ Namespace اصلی برای اینترفیس‌های سرویس (IUserService, ISignalService, و غیره)
@@ -87,7 +88,7 @@ namespace Application // ✅ Namespace ریشه پروژه Application
             // سرویس مدیریت کاربران
             _ = services.AddScoped<IUserService, UserService>();
             // Comment: Registers UserService for handling user-related business logic.
-
+            _ = services.AddSingleton<ICryptoSymbolMapper, CryptoSymbolMapper>();
             // سرویس مدیریت سیگنال‌ها
             _ = services.AddScoped<ISignalService, SignalService>();
             // Comment: Registers SignalService for handling signal-related business logic.
@@ -107,6 +108,7 @@ namespace Application // ✅ Namespace ریشه پروژه Application
             _ = services.AddScoped<ICoinGeckoService, CoinGeckoService>();
             // Comment: Registers PaymentConfirmationService for processing successful payment confirmations.
 
+            _ = services.AddScoped<ICryptoDataOrchestrator, CryptoDataOrchestrator>();
             // سرویس مدیریت دسته‌بندی سیگنال‌ها (اگر منطق خاصی فراتر از CRUD Repository دارد)
             // services.AddScoped<ISignalCategoryService, SignalCategoryService>();
             // Comment: Example: Registers SignalCategoryService if there's business logic beyond repository.

@@ -22,10 +22,10 @@ namespace TelegramPanel.Application.States.Admin
             _adminService = adminService;
         }
 
-        public Task<string> GetEntryMessageAsync(long userId, Update? triggerUpdate, CancellationToken cancellationToken)
+        public Task<string?> GetEntryMessageAsync(long userId, Update? triggerUpdate, CancellationToken cancellationToken)
         {
             _logger.LogInformation("Admin {AdminId} entered user lookup state.", userId);
-            return Task.FromResult("🔎 *User Lookup*\n\nPlease send the numerical Telegram ID of the user you wish to find, or type /cancel to abort.");
+            return Task.FromResult<string?>("🔎 *User Lookup*\n\nPlease send the numerical Telegram ID of the user you wish to find, or type /cancel to abort.");
         }
 
         public async Task<string?> ProcessUpdateAsync(Update update, CancellationToken cancellationToken = default)

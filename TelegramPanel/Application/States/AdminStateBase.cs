@@ -14,9 +14,9 @@ namespace TelegramPanel.Application.States
             Logger = logger;
         }
 
-        public virtual Task<string> GetEntryMessageAsync(long userId, Update? triggerUpdate = null, CancellationToken cancellationToken = default)
+        public virtual Task<string?> GetEntryMessageAsync(long userId, Update? triggerUpdate = null, CancellationToken cancellationToken = default)
         {
-            return Task.FromResult(string.Empty);
+            return Task.FromResult<string?>(string.Empty);
         }
 
         public abstract Task<string?> ProcessUpdateAsync(Update update, CancellationToken cancellationToken = default);

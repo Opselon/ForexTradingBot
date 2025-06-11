@@ -28,8 +28,6 @@ namespace TelegramPanel.Infrastructure.Services
         private static readonly Dictionary<string, (decimal Price, DateTime Timestamp)> _previousPriceStaticCache = [];
         private static readonly object _staticCacheLock = new object();
         private const int StaleCacheFallbackDurationHours_Static = 6;
-        private const int StaticPreviousPriceCacheMaxAgeHours_Default = 30;
-        private readonly MarketDataSettings _marketDataSettingsOptions; // Add this field
 
         public MarketDataService(
             ILogger<MarketDataService> logger,
@@ -40,7 +38,6 @@ namespace TelegramPanel.Infrastructure.Services
             _logger = logger;
             _httpClientFactory = httpClientFactory;
             _currencySettings = currencySettingsOptions.Value ?? new CurrencyInfoSettings { Currencies = new Dictionary<string, CurrencyDetails>(StringComparer.OrdinalIgnoreCase) };
-            _marketDataSettingsOptions = marketDataSettingsOptions.Value ?? new MarketDataSettings(); // Get the value
         }
 
         public async Task<MarketData> GetMarketDataAsync(string symbol, bool forceRefresh = false, CancellationToken cancellationToken = default)

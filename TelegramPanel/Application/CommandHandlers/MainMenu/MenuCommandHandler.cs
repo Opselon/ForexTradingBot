@@ -1,6 +1,7 @@
 ﻿// File: TelegramPanel/Application/CommandHandlers/MenuCommandHandler.cs
 #region Usings
 using Microsoft.Extensions.Logging;
+using System;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
@@ -83,32 +84,75 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
                    update.Message?.Text?.Trim().Equals("/menu", StringComparison.OrdinalIgnoreCase) == true;
         }
 
+        /// <summary>
+        /// Handles the request to view the main menu triggered by a message (e.g., /menu command).
+        /// </summary>
+        /// <param name="update">The update containing the message.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>A Task representing the asynchronous operation.</returns>
         public async Task HandleAsync(Update update, CancellationToken cancellationToken = default)
         {
             // This logic correctly handles the /menu command by sending the menu.
-            var message = update.Message; // This is now guaranteed to be from a Message update.
-            if (message == null) // Should not happen if CanHandle is correct, but good practice.
+            var message = update.Message; // This is now guaranteed to be from a Message update based on CanHandle.
+
+            // Basic null check, though CanHandle should prevent this.
+            if (message == null)
             {
+                // Log a warning as this indicates a potential issue in CanHandle logic or update structure.
                 _logger.LogWarning("MenuCommand: Message is null in UpdateID {UpdateId}, despite CanHandle passing.", update.Id);
-                return;
+                return; // Exit early if message is unexpectedly null.
             }
 
             var chatId = message.Chat.Id;
-            var userId = message.From?.Id; // For logging
+            var userId = message.From?.Id; // For logging purposes
 
             _logger.LogInformation("Handling /menu command for ChatID {ChatId}, UserID {UserId}", chatId, userId);
 
-            // Use the static GetMainMenuMarkup method
-            var (text, inlineKeyboard) = GetMainMenuMarkup(); //  اطمینان حاصل کنید که GetMainMenuMarkup اصلاح شده است
+            try
+            {
+                // Use the static GetMainMenuMarkup method to get the message content and keyboard.
+                // Ensure GetMainMenuMarkup is implemented to return both text and inline keyboard.
+                var (text, inlineKeyboard) = GetMainMenuMarkup();
 
-            await _messageSender.SendTextMessageAsync(
-                chatId: chatId,
-                text: text, // Use the text from GetMainMenuMarkup
-                parseMode: ParseMode.MarkdownV2, // Assuming text might have Markdown
-                replyMarkup: inlineKeyboard,
-                cancellationToken: cancellationToken);
+                // Send the main menu message to the user.
+                // This call is a potential point of failure (Telegram API communication).
+                await _messageSender.SendTextMessageAsync(
+                    chatId: chatId,
+                    text: text, // Use the text from GetMainMenuMarkup
+                    parseMode: ParseMode.MarkdownV2, // Assuming text might have Markdown. Ensure text is properly escaped for MarkdownV2 if needed.
+                    replyMarkup: inlineKeyboard,
+                    cancellationToken: cancellationToken);
 
-            _logger.LogDebug("Main menu sent to ChatID {ChatId} via /menu command.", chatId);
+                _logger.LogDebug("Main menu sent successfully to ChatID {ChatId} via /menu command.", chatId);
+            }
+            catch (OperationCanceledException ex) when (cancellationToken.IsCancellationRequested)
+            {
+                // Handle cancellation specifically.
+                // This might happen if the bot is shutting down.
+                _logger.LogInformation(ex, "Sending main menu to ChatID {ChatId} was cancelled.", chatId);
+                // No need to send an error message here as the operation was cancelled externally.
+            }
+            catch (Exception ex)
+            {
+                // Catch any other unexpected exceptions during the process (e.g., Telegram API errors).
+                // Log the error details.
+                _logger.LogError(ex, "An unexpected error occurred while sending the main menu to ChatID {ChatId}, UserID {UserId}", chatId, userId);
+
+                // Optionally, attempt to send a fallback error message to the user.
+                // This SendTextMessageAsync might also fail, so a nested try-catch or a robust SendMessage wrapper is advisable if this is critical.
+                // try
+                // {
+                //     await _messageSender.SendTextMessageAsync(
+                //         chatId: chatId,
+                //         text: "An unexpected error occurred while trying to show the menu. Please try again later.",
+                //         cancellationToken: cancellationToken);
+                // }
+                // catch (Exception sendErrorEx)
+                // {
+                //     // Log if sending the error message also fails.
+                //     _logger.LogError(sendErrorEx, "Failed to send fallback error message to ChatID {ChatId} after menu command failure.", chatId);
+                // }
+            }
         }
         #endregion
 

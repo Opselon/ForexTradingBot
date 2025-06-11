@@ -40,84 +40,218 @@ namespace Application.Services
             _logger = logger;
         }
 
+        /// <summary>
+        /// Asynchronously creates a new cryptocurrency payment invoice via the CryptoPay API
+        /// for a specific user and plan. Handles user existence check and integrates with
+        /// the transaction repository to log pending payments. Handles potential API and data access errors.
+        /// </summary>
+        /// <param name="userId">The ID of the user initiating the payment.</param>
+        /// <param name="planId">The ID of the subscription plan.</param>
+        /// <param name="selectedCryptoAsset">The selected cryptocurrency asset (e.g., "USDT").</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>A Result object containing the created invoice DTO on success, or errors on failure.</returns>
         public async Task<Result<CryptoPayInvoiceDto>> CreateCryptoPaymentInvoiceAsync(
             Guid userId, Guid planId, string selectedCryptoAsset, CancellationToken cancellationToken = default)
         {
+            // Input validation (basic checks)
+            if (userId == Guid.Empty || planId == Guid.Empty || string.IsNullOrWhiteSpace(selectedCryptoAsset))
+            {
+                _logger.LogWarning("Attempted to create invoice with invalid input. UserID: {UserId}, PlanID: {PlanId}, Asset: {Asset}",
+                    userId, planId, selectedCryptoAsset);
+                return Result<CryptoPayInvoiceDto>.Failure("Invalid input provided for invoice creation.");
+            }
+
             _logger.LogInformation("Attempting to create CryptoPay invoice for UserID: {UserId}, PlanID: {PlanId}, Asset: {Asset}",
                 userId, planId, selectedCryptoAsset);
 
-            var user = await _userRepository.GetByIdAsync(userId, cancellationToken);
-            if (user == null)
+            try
             {
-                _logger.LogWarning("User not found for UserID: {UserId} during invoice creation.", userId);
-                return Result<CryptoPayInvoiceDto>.Failure("User not found.");
-            }
-
-            //  دریافت اطلاعات پلن (قیمت و ...) از PlanRepository یا یک منبع دیگر
-            //  فرض می‌کنیم قیمت پلن 10 USDT است و یک ماه اعتبار دارد.
-            //  این بخش باید با سیستم مدیریت پلن‌های شما جایگزین شود.
-            decimal planPrice = 125.0m; //  به عنوان مثال
-            string planDescription = $"Subscription to Premium Plan (1 Month) for {user.Username}";
-            string internalOrderId = $"SUB-{planId}-{userId}-{DateTime.UtcNow.Ticks}"; // یک شناسه سفارش داخلی
-
-            var invoiceRequest = new CreateCryptoPayInvoiceRequestDto
-            {
-                Asset = selectedCryptoAsset, // "USDT", "TON", "BTC" و ...
-                Amount = planPrice.ToString("F2"), // فرمت با دو رقم اعشار
-                Description = planDescription,
-                Payload = JsonSerializer.Serialize(new { UserId = userId, PlanId = planId, OrderId = internalOrderId }), // داده‌های سفارشی برای Webhook
-                PaidBtnName = "callback",
-                PaidBtnUrl = $"https://t.me/YourBotUsername?start={internalOrderId}",
-                ExpiresInSeconds = 3600 // فاکتور برای ۱ ساعت معتبر است (مثال)
-            };
-
-            var invoiceResult = await _cryptoPayApiClient.CreateInvoiceAsync(invoiceRequest, cancellationToken);
-
-            if (invoiceResult.Succeeded && invoiceResult.Data != null)
-            {
-                _logger.LogInformation("CryptoPay invoice created successfully. InvoiceID: {InvoiceId}, BotPayUrl: {PayUrl}",
-                    invoiceResult.Data.InvoiceId, invoiceResult.Data.BotInvoiceUrl);
-
-                // می‌توانید یک رکورد اولیه برای تراکنش یا سفارش در سیستم خودتان با وضعیت "PendingPayment" ایجاد کنید.
-                // و InvoiceId کریپتو پی را در آن ذخیره کنید.
-                var pendingTransaction = new Transaction
+                // Fetch the user to ensure they exist and get details for description. Potential database interaction.
+                var user = await _userRepository.GetByIdAsync(userId, cancellationToken);
+                if (user == null)
                 {
-                    Id = Guid.NewGuid(),
-                    UserId = userId,
-                    Amount = planPrice,
-                    Type = Domain.Enums.TransactionType.SubscriptionPayment, // یا یک نوع PendingPayment جدید
-                    Description = $"Pending CryptoPay payment for {planDescription}. Invoice ID: {invoiceResult.Data.InvoiceId}",
-                    PaymentGatewayInvoiceId = invoiceResult.Data.InvoiceId.ToString(), // فیلد جدید برای شناسه فاکتور درگاه
-                    Status = "Pending", // فیلد جدید برای وضعیت تراکنش
-                    Timestamp = DateTime.UtcNow
+                    _logger.LogWarning("User not found for UserID: {UserId} during invoice creation.", userId);
+                    return Result<CryptoPayInvoiceDto>.Failure("User not found."); // Functional failure: user does not exist
+                }
 
+                // --- Business Logic: Get Plan Details ---
+                // This part should retrieve the actual price and duration from your PlanRepository or configuration.
+                // Example placeholder:
+                // var plan = await _planRepository.GetByIdAsync(planId, cancellationToken); // Potential DB call
+                // if (plan == null)
+                // {
+                //     _logger.LogWarning("Plan not found for PlanID: {PlanId} during invoice creation for UserID: {UserId}.", planId, userId);
+                //     return Result<CryptoPayInvoiceDto>.Failure("Subscription plan not found."); // Functional failure: plan does not exist
+                // }
+                decimal planPrice = 125.0m; // Placeholder - replace with actual plan price
+                string planDescription = $"Subscription to Premium Plan (1 Month) for {user.Username}"; // Placeholder - replace with actual plan description
+                                                                                                        // ----------------------------------------
+
+                string internalOrderId = $"SUB-{planId}-{userId}-{DateTime.UtcNow.Ticks}"; // Unique internal order ID
+
+                // Prepare the invoice creation request payload. Potential serialization error point.
+                var invoiceRequest = new CreateCryptoPayInvoiceRequestDto
+                {
+                    Asset = selectedCryptoAsset,
+                    Amount = planPrice.ToString("F2"), // Format to 2 decimal places
+                    Description = planDescription,
+                    Payload = JsonSerializer.Serialize(new { UserId = userId, PlanId = planId, OrderId = internalOrderId }), // Custom data for Webhook
+                    PaidBtnName = "callback", // Or "open_bot", "subscribe", "buy" etc.
+                    PaidBtnUrl = $"https://t.me/YourBotUsername?start={internalOrderId}", // URL for the button after payment
+                    ExpiresInSeconds = 3600 // Invoice valid for 1 hour (example)
                 };
-                await _transactionRepository.AddAsync(pendingTransaction, cancellationToken);
-                await _context.SaveChangesAsync(cancellationToken); // ذخیره تراکنش معلق
+
+                // Call the CryptoPay API to create the invoice. **CRITICAL point of failure (Network/API).**
+                var invoiceResult = await _cryptoPayApiClient.CreateInvoiceAsync(invoiceRequest, cancellationToken);
+
+                // Handle the functional result from the CryptoPay API client.
+                if (invoiceResult.Succeeded && invoiceResult.Data != null)
+                {
+                    _logger.LogInformation("CryptoPay invoice created successfully. InvoiceID: {InvoiceId}, BotPayUrl: {PayUrl}, InternalOrderID: {InternalOrderId}",
+                        invoiceResult.Data.InvoiceId, invoiceResult.Data.BotInvoiceUrl, internalOrderId);
+
+                    // Create a pending transaction record in your system.
+                    var pendingTransaction = new Transaction
+                    {
+                        Id = Guid.NewGuid(),
+                        UserId = userId,
+                        Amount = planPrice, // Store in your base currency if applicable
+                        Type = Domain.Enums.TransactionType.SubscriptionPayment, // Or a specific PendingPayment type
+                        Description = $"Pending CryptoPay payment for {planDescription}. Invoice ID: {invoiceResult.Data.InvoiceId}",
+                        PaymentGatewayInvoiceId = invoiceResult.Data.InvoiceId.ToString(),
+                        Status = "Pending", // Custom status field
+                        Timestamp = DateTime.UtcNow,
+                        // Add other relevant fields like PlanId, CryptoAsset, etc.
+                    };
+
+                    // Add the pending transaction to the repository and save changes. **Potential database interaction/failure.**
+                    await _transactionRepository.AddAsync(pendingTransaction, cancellationToken);
+                    await _context.SaveChangesAsync(cancellationToken); // Save the pending transaction record
+                    _logger.LogDebug("Pending transaction logged for invoice {InvoiceId} with ID {TransactionId}.", invoiceResult.Data.InvoiceId, pendingTransaction.Id);
+
+                    // Return the successful result received from the API client.
+                    return invoiceResult;
+                }
+                else
+                {
+                    // CryptoPay API client reported a functional error (e.g., invalid asset).
+                    _logger.LogError("CryptoPay API reported functional error while creating invoice for UserID: {UserId}. Errors: {Errors}",
+                        userId, string.Join(", ", invoiceResult.Errors ?? new List<string> { "No specific errors reported by API client." }));
+
+                    // Return the failure result with errors from the API client.
+                    return Result<CryptoPayInvoiceDto>.Failure(invoiceResult.Errors ?? new List<string> { "Failed to create payment invoice." });
+                }
             }
-            else
+            catch (OperationCanceledException ex) when (cancellationToken.IsCancellationRequested)
             {
-                _logger.LogError("Failed to create CryptoPay invoice for UserID: {UserId}. Errors: {Errors}",
-                    userId, string.Join(", ", invoiceResult.Errors));
+                // Handle cancellation specifically.
+                _logger.LogInformation(ex, "CryptoPay invoice creation for UserID {UserId} was cancelled.", userId);
+                throw; // Re-throw cancellation.
             }
-            return invoiceResult;
+            // Catch specific exceptions if needed (e.g., JsonException for serialization errors, DbException for DB errors).
+            // catch (JsonException jsonEx)
+            // {
+            //     _logger.LogError(jsonEx, "JSON serialization error during CryptoPay invoice creation for UserID {UserId}.", userId);
+            //     return Result<CryptoPayInvoiceDto>.Failure($"Internal error: Failed to prepare invoice data. ({jsonEx.Message})");
+            // }
+            // catch (HttpRequestException httpEx) // Catch network errors before API responds
+            // {
+            //     _logger.LogError(httpEx, "Network error calling CryptoPay API for UserID {UserId}.", userId);
+            //     return Result<CryptoPayInvoiceDto>.Failure($"Could not communicate with payment gateway. Please try again later. ({httpEx.Message})");
+            // }
+            // catch (DbException dbEx) // Catch database errors during transaction logging
+            // {
+            //     _logger.LogError(dbEx, "Database error while logging pending transaction for UserID {UserId}.", userId);
+            //     // Note: Invoice might have been created successfully in CryptoPay, but logging failed.
+            //     // This requires a more complex compensation/logging strategy if critical.
+            //     return Result<CryptoPayInvoiceDto>.Failure($"Payment initiated but failed to record transaction. Please contact support.");
+            // }
+            catch (Exception ex)
+            {
+                // Catch any other unexpected technical exceptions (e.g., errors within _cryptoPayApiClient not converted to Result, other DB errors).
+                // Log the critical technical error.
+                _logger.LogError(ex, "An unexpected error occurred during CryptoPay invoice creation process for UserID {UserId}.", userId);
+
+                // Return a generic failure result for unhandled technical errors.
+                return Result<CryptoPayInvoiceDto>.Failure($"An unexpected error occurred while creating payment invoice. Please try again later.");
+                // Optionally include ex.Message for logging but not usually in the user-facing message.
+                // return Result<CryptoPayInvoiceDto>.Failure($"An unexpected error occurred: {ex.Message}");
+            }
         }
 
+
+        /// <summary>
+        /// Asynchronously checks the status of a specific CryptoPay invoice by its ID.
+        /// Handles potential API errors during status retrieval.
+        /// </summary>
+        /// <param name="invoiceId">The ID of the invoice to check.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>A Result object containing the invoice DTO if found and status retrieved, or errors on failure.</returns>
         public async Task<Result<CryptoPayInvoiceDto>> CheckInvoiceStatusAsync(long invoiceId, CancellationToken cancellationToken = default)
         {
-            _logger.LogInformation("Checking status for CryptoPay InvoiceID: {InvoiceId}", invoiceId);
-            // برای بررسی وضعیت، معمولاً از getInvoices با invoice_ids استفاده می‌شود
-            var request = new GetCryptoPayInvoicesRequestDto { InvoiceIds = invoiceId.ToString() };
-            var result = await _cryptoPayApiClient.GetInvoicesAsync(request, cancellationToken);
-
-            if (result.Succeeded && result.Data != null && result.Data.Any())
+            // Basic validation (optional - invoiceId > 0 is usually implied by long type, but good practice)
+            if (invoiceId <= 0)
             {
-                var invoice = result.Data.First();
-                _logger.LogInformation("Status for CryptoPay InvoiceID {InvoiceId} is {Status}", invoiceId, invoice.Status);
-                return Result<CryptoPayInvoiceDto>.Success(invoice);
+                _logger.LogWarning("Attempted to check status for invalid InvoiceID: {InvoiceId}", invoiceId);
+                return Result<CryptoPayInvoiceDto>.Failure("Invalid invoice ID.");
             }
-            _logger.LogWarning("Could not retrieve status or invoice not found for CryptoPay InvoiceID {InvoiceId}. Errors: {Errors}", invoiceId, string.Join(", ", result.Errors));
-            return Result<CryptoPayInvoiceDto>.Failure(result.Errors.Any() ? result.Errors : new List<string> { "Invoice not found or failed to retrieve status." });
+
+            _logger.LogInformation("Checking status for CryptoPay InvoiceID: {InvoiceId}", invoiceId);
+
+            try
+            {
+                // Prepare the request to get invoice(s) by ID.
+                var request = new GetCryptoPayInvoicesRequestDto { InvoiceIds = invoiceId.ToString() };
+
+                // Call the CryptoPay API to get invoice information. **CRITICAL point of failure (Network/API/Parsing).**
+                var result = await _cryptoPayApiClient.GetInvoicesAsync(request, cancellationToken);
+
+                // Handle the functional result from the CryptoPay API client.
+                if (result.Succeeded && result.Data != null && result.Data.Any())
+                {
+                    // If successful and data found, return the first invoice (should be the one requested).
+                    var invoice = result.Data.First();
+                    _logger.LogInformation("Status for CryptoPay InvoiceID {InvoiceId} is {Status}", invoiceId, invoice.Status);
+                    return Result<CryptoPayInvoiceDto>.Success(invoice);
+                }
+                else
+                {
+                    // CryptoPay API client reported a functional error or invoice not found/data is empty.
+                    _logger.LogWarning("Could not retrieve status or invoice not found for CryptoPay InvoiceID {InvoiceId}. Errors: {Errors}",
+                        invoiceId, string.Join(", ", result.Errors ?? new List<string> { "No specific errors reported by API client." }));
+
+                    // Return a failure result with errors from the API client or a default message.
+                    return Result<CryptoPayInvoiceDto>.Failure(result.Errors.Any() ? result.Errors : new List<string> { "Invoice not found or failed to retrieve status." });
+                }
+            }
+            catch (OperationCanceledException ex) when (cancellationToken.IsCancellationRequested)
+            {
+                // Handle cancellation specifically.
+                _logger.LogInformation(ex, "CryptoPay invoice status check for InvoiceID {InvoiceId} was cancelled.", invoiceId);
+                throw; // Re-throw cancellation.
+            }
+            // Catch specific exceptions if needed (e.g., JsonException for parsing errors, HttpRequestException for network errors).
+            // catch (JsonException jsonEx)
+            // {
+            //     _logger.LogError(jsonEx, "JSON parsing error during CryptoPay invoice status check for InvoiceID {InvoiceId}.", invoiceId);
+            //     return Result<CryptoPayInvoiceDto>.Failure($"Internal error: Failed to parse invoice data. ({jsonEx.Message})");
+            // }
+            // catch (HttpRequestException httpEx) // Catch network errors before API responds
+            // {
+            //     _logger.LogError(httpEx, "Network error calling CryptoPay API for InvoiceID {InvoiceId}.", invoiceId);
+            //     return Result<CryptoPayInvoiceDto>.Failure($"Could not communicate with payment gateway to check status. Please try again. ({httpEx.Message})");
+            // }
+            catch (Exception ex)
+            {
+                // Catch any other unexpected technical exceptions (e.g., errors within _cryptoPayApiClient not converted to Result, other unexpected issues).
+                // Log the critical technical error.
+                _logger.LogError(ex, "An unexpected error occurred during CryptoPay invoice status check process for InvoiceID {InvoiceId}.", invoiceId);
+
+                // Return a generic failure result for unhandled technical errors.
+                return Result<CryptoPayInvoiceDto>.Failure($"An unexpected error occurred while checking invoice status. Please try again later.");
+                // Optionally include ex.Message for logging but not usually in the user-facing message.
+                // return Result<CryptoPayInvoiceDto>.Failure($"An unexpected error occurred: {ex.Message}");
+            }
         }
     }
 }

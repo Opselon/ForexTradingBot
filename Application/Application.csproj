@@ -8,6 +8,24 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="Common\Interfaces\NewFolder\**" />
+    <Compile Remove="DTOs\NewFolder\**" />
+    <Compile Remove="Features\Crypto\Services\NewFolder\**" />
+    <Compile Remove="Features\NewFolder\**" />
+    <Compile Remove="Services\NewFolder\**" />
+    <EmbeddedResource Remove="Common\Interfaces\NewFolder\**" />
+    <EmbeddedResource Remove="DTOs\NewFolder\**" />
+    <EmbeddedResource Remove="Features\Crypto\Services\NewFolder\**" />
+    <EmbeddedResource Remove="Features\NewFolder\**" />
+    <EmbeddedResource Remove="Services\NewFolder\**" />
+    <None Remove="Common\Interfaces\NewFolder\**" />
+    <None Remove="DTOs\NewFolder\**" />
+    <None Remove="Features\Crypto\Services\NewFolder\**" />
+    <None Remove="Features\NewFolder\**" />
+    <None Remove="Services\NewFolder\**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="AutoMapper" Version="14.0.0" />
     <PackageReference Include="FluentSpecification.Abstractions" Version="1.3.0" />
     <PackageReference Include="FluentValidation.DependencyInjectionExtensions" Version="12.0.0" />
@@ -21,6 +39,11 @@
   <ItemGroup>
     <ProjectReference Include="..\Domain\Domain.csproj" />
     <ProjectReference Include="..\Shared\Shared.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include="Common\Interfaces\FinancialModelingPrep\" />
+    <Folder Include="Services\FinancialModelingPrep\" />
   </ItemGroup>
 
 </Project>

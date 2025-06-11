@@ -608,6 +608,8 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                 await _messageSender.SendTextMessageAsync(chatId, "An error occurred while displaying the Central Bank menu. Please try again later.", cancellationToken: cancellationToken);
             }
         }
+
+
         /// <summary>
         /// Handles the request to show recent news for a selected central bank.
         /// Fetches news from the repository, formats it, and updates the message.
@@ -757,4 +759,4 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
             }
         }
     }
-    }
+}

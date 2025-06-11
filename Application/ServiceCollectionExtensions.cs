@@ -2,6 +2,8 @@
 // using های استاندارد .NET و NuGet Packages
 // using های مربوط به پروژه Application شما
 using Application.Common.Interfaces;       // برای اینترفیس‌های عمومی مانند IAppDbContext, INotificationService, و تمام اینترفیس‌های Repository
+using Application.Features.CoinGecko.Interfaces;
+using Application.Features.CoinGecko.Services;
 using Application.Interface;                // ✅ Namespace اصلی برای پیاده‌سازی‌های سرویس (UserService, SignalService, و غیره)
 using Application.Interfaces;              // ✅ Namespace اصلی برای اینترفیس‌های سرویس (IUserService, ISignalService, و غیره)
 using Application.Services;
@@ -97,6 +99,9 @@ namespace Application // ✅ Namespace ریشه پروژه Application
 
             // سرویس مدیریت تاییدیه پرداخت‌ها (پس از دریافت Webhook از درگاه)
             services.AddScoped<IPaymentConfirmationService, PaymentConfirmationService>();
+
+            // Add new Crypto Service
+            services.AddScoped<ICoinGeckoService, CoinGeckoService>();
             // Comment: Registers PaymentConfirmationService for processing successful payment confirmations.
 
             // سرویس مدیریت دسته‌بندی سیگنال‌ها (اگر منطق خاصی فراتر از CRUD Repository دارد)
@@ -114,6 +119,8 @@ namespace Application // ✅ Namespace ریشه پروژه Application
 
             // سرویس عمومی نوتیفیکیشن (پیاده‌سازی Dummy)
             services.AddScoped<INotificationService, DummyNotificationService>();
+            // Register the new, functional CoinGecko service
+            services.AddScoped<ICoinGeckoService, CoinGeckoService>();
             // Comment: Registers a dummy implementation for INotificationService.
             // The actual implementation (e.g., TelegramNotificationService) should be registered
             // in the respective presentation layer (TelegramPanel) to override this.

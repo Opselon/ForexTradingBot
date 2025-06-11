@@ -5,6 +5,7 @@ using System;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
+using TelegramPanel.Application.CommandHandlers.Features.CoinGecko;
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Infrastructure;
 using TelegramPanel.Infrastructure.Helpers;
@@ -27,7 +28,9 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
         public const string MarketAnalysisData = "market_analysis";
         public const string AnalysisCallbackData = "menu_analysis";
         public const string EconomicCalendarCallbackData = "menu_econ_calendar"; // <<< NEW
-        public const string BackToMainMenuGeneral = "back_to_main_menu"; //  Add this
+        public const string CryptoCallbackData = "menu_crypto_details"; // Kept for the old FMP feature if you ever enable it
+        public const string CoingeckoCallbackData = "menu_coingecko_trending"; // Using the constant from the handler itself
+        public const string BackToMainMenuGeneral = "back_to_main_menu";
 
         #endregion
 
@@ -60,6 +63,10 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
                     InlineKeyboardButton.WithCallbackData("🔍 News Analysis", AnalysisCallbackData),
                     InlineKeyboardButton.WithCallbackData("🗓️ Economic Calendar", EconomicCalendarCallbackData)
 
+                },
+                 new[] // Row 3: Crypto Details (NEW)
+                {
+                   InlineKeyboardButton.WithCallbackData("🪙 Crypto Prices", $"{CoinGeckoCallbackHandler.CallbackPrefix}_list_1")
                 },
                 new[] // Row 3: Subscription
                 {

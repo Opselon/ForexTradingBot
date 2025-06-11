@@ -135,6 +135,6 @@ namespace TelegramPanel.Application.States
 
             return (singleMessageSb.ToString(), finalKeyboard);
         }
-        
+
     }
 }

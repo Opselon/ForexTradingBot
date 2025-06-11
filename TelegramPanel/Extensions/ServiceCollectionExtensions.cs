@@ -12,6 +12,7 @@ using Telegram.Bot;
 using TelegramPanel.Application.CommandHandlers; // For marker types like StartCommandHandler, MenuCommandHandler
 using TelegramPanel.Application.CommandHandlers.Entry;
 using TelegramPanel.Application.CommandHandlers.Features.Analysis;
+using TelegramPanel.Application.CommandHandlers.Features.CoinGecko;
 using TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar;
 using TelegramPanel.Application.Interfaces;    // For ITelegram...Handler interfaces
 using TelegramPanel.Application.Pipeline;
@@ -112,10 +113,13 @@ namespace TelegramPanel.Extensions
 
             // ------------------- 7. Register INotificationService Implementation -------------------
             services.AddScoped<INotificationService, TelegramNotificationService>();
-
+            services.AddScoped<ITelegramCallbackQueryHandler, CoinGeckoCallbackHandler>();
             // ------------------- 8. Register Hosted Services -------------------
             services.AddHostedService<TelegramBotService>();
             services.AddHostedService<UpdateQueueConsumerService>();
+
+            // Register the new CryptoCallbackHandler
+                
 
             return services;
         }

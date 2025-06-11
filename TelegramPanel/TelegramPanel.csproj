@@ -33,6 +33,7 @@
 
   <ItemGroup>
     <Folder Include="Application\CommandHandlers\Account\" />
+    <Folder Include="Application\CommandHandlers\Features\Crypto\" />
     <Folder Include="Application\Commands\" />
     <Folder Include="Auth\" />
     <Folder Include="Polling\" />

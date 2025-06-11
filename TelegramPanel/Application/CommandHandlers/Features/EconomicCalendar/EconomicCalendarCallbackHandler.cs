@@ -25,7 +25,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
         private const int PageSize = 7;
         private const string ReleasesCallbackPrefix = "menu_econ_calendar";
         private const string SearchSeriesCallback = "econ_search_series";
-        private const string ExploreReleasePrefix = "econ_explore"; 
+        private const string ExploreReleasePrefix = "econ_explore";
         private readonly ILogger<EconomicCalendarCallbackHandler> _logger;
         private readonly ITelegramMessageSender _messageSender;
         private readonly IEconomicCalendarService _calendarService;
@@ -56,7 +56,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
            update.CallbackQuery?.Data == SearchSeriesCallback ||
 
            update.CallbackQuery?.Data == MenuCommandHandler.BackToMainMenuGeneral;
-           
+
 
 
         private async Task HandleExploreReleaseAsync(CallbackQuery callbackQuery, CancellationToken cancellationToken)
@@ -471,8 +471,8 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
             }
             catch (Exception ex)
             {
-        
-                 _logger.LogError(ex, "Failed to handle search series initiation for user {UserId}", userId);
+
+                _logger.LogError(ex, "Failed to handle search series initiation for user {UserId}", userId);
             }
         }
 

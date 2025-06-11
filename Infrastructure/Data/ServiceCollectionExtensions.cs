@@ -3,17 +3,18 @@ using Application.Common.Interfaces;      // اینترفیس‌های Repositor
 using Application.Interfaces;             // اینترفیس‌های سرویس‌های کاربردی (لایه Application)
 using Application.Services;               // پیاده‌سازی سرویس‌ها (لایه Application)
 using Hangfire;                           // برای مدیریت وظایف پس‌زمینه
-using Hangfire.SqlServer;                 // برای استفاده از SQL Server به عنوان ذخیره‌ساز Hangfire
 using Infrastructure.Data;                // AppDbContext (لایه Infrastructure)
 using Infrastructure.ExternalServices;    // سرویس‌های خارجی (لایه Infrastructure)
 using Infrastructure.Hangfire;            // پیاده‌سازی سرویس‌های Hangfire (لایه Infrastructure)
 using Infrastructure.Persistence.Repositories; // پیاده‌سازی Repositoryها (لایه Infrastructure)
 using Infrastructure.Services;            // پیاده‌سازی سرویس‌های داخلی Infrastructure
+using Infrastructure.Services.Caching;
+using Infrastructure.Services.CoinGecko;
 using Microsoft.EntityFrameworkCore;      // Entity Framework Core
 using Microsoft.Extensions.Configuration; // برای خواندن تنظیمات از فایل پیکربندی
-using Microsoft.Extensions.DependencyInjection; // برای افزودن سرویس‌ها به کانتینر DI
-using System.Net.Http; // برای DecompressionMethods در صورت فعال کردن
-using System.Net; // برای DecompressionMethods در صورت فعال کردن
+using Microsoft.Extensions.DependencyInjection;
+using Polly;
+using Polly.Extensions.Http; // برای افزودن سرویس‌ها به کانتینر DI
 
 namespace Infrastructure
 {
@@ -34,6 +35,21 @@ namespace Infrastructure
             this IServiceCollection services,
             IConfiguration configuration)
         {
+            services.AddMemoryCache();
+            services.AddSingleton(typeof(IMemoryCacheService<>), typeof(MemoryCacheService<>));
+
+            var retryPolicy = HttpPolicyExtensions
+               .HandleTransientHttpError() // Handles HttpRequestException, 5xx, and 408
+               .OrResult(msg => msg.StatusCode == System.Net.HttpStatusCode.TooManyRequests) // Also handle 429
+               .WaitAndRetryAsync(3, retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)), // Exponential backoff: 2, 4, 8 seconds
+                   onRetry: (outcome, timespan, retryAttempt, context) =>
+                   {
+                       // Log the retry attempt. This is great for diagnostics.
+                       // You would need to inject ILogger into this scope or use a static logger.
+                       Console.WriteLine($"--> Polly: Retrying API request... Delaying for {timespan.TotalSeconds}s, then making retry {retryAttempt}");
+                   });
+
+
             var allConfig = configuration.AsEnumerable().ToDictionary(x => x.Key, x => x.Value);
             var allConfigString = string.Join(Environment.NewLine, allConfig.Select(kv => $"  - Key: '{kv.Key}', Value: '{kv.Value}'"));
 
@@ -155,7 +171,9 @@ namespace Infrastructure
                 // .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = true, AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate })
                 // .AddPolicyHandler(GetRetryPolicy()); //  مثال: افزودن سیاست تلاش مجدد با Polly
                 ;
-
+            // Register the CoinGecko API client with the retry policy
+            services.AddHttpClient<ICoinGeckoApiClient, CoinGeckoApiClient>()
+                .AddPolicyHandler(retryPolicy);
             // 5. رجیستر کردن Repositoryها و سایر سرویس‌های دامنه/کاربردی
             // هر Repository مسئول تعامل با یک موجودیت خاص در پایگاه داده است.
             // به عنوان Singleton ثبت شده تا در طول عمر برنامه فقط یک نمونه از آن وجود داشته باشد
@@ -164,7 +182,6 @@ namespace Infrastructure
             services.AddSingleton<TelegramUserApiClient>();
             // افزودن یک سرویس میزبانی شده برای مقداردهی اولیه (Initialization) کلاینت API تلگرام در زمان راه‌اندازی برنامه.
             services.AddHostedService<TelegramUserApiInitializationService>();
-
             services.AddHttpClient<IFredApiClient, FredApiClient>();
             services.AddScoped<INewsItemRepository, NewsItemRepository>(); // رجیستر NewsItemRepository
             services.AddScoped<IRssReaderService, RssReaderService>(); // رجیستر RssReaderService

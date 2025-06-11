@@ -9,7 +9,7 @@ using Microsoft.EntityFrameworkCore; // For EF Core specific methods
 using Microsoft.Extensions.Logging; // Added for logging capabilities
 #endregion
 
-namespace Infrastructure.Persistence.Repositories
+namespace Infrastructure.Repositories
 {
     /// <summary>
     /// Implements IRssSourceRepository providing data access methods for RssSource entities
@@ -137,7 +137,7 @@ namespace Infrastructure.Persistence.Repositories
             subscription.UpdatedAt = now; // Assuming UpdatedAt property exists
 
 
-            await _context.Subscriptions.AddAsync(subscription, cancellationToken);
+            _ = await _context.Subscriptions.AddAsync(subscription, cancellationToken);
             // SaveChangesAsync is expected to be called by a Unit of Work or service layer.
         }
 
@@ -170,7 +170,7 @@ namespace Infrastructure.Persistence.Repositories
             if (entry.State == EntityState.Detached)
             {
                 _logger.LogTrace("SubscriptionRepository: Attaching detached subscription entity (ID: {SubscriptionId}) for update.", subscription.Id);
-                _context.Subscriptions.Attach(subscription);
+                _ = _context.Subscriptions.Attach(subscription);
             }
             entry.State = EntityState.Modified;
 
@@ -189,7 +189,7 @@ namespace Infrastructure.Persistence.Repositories
             }
             _logger.LogInformation("SubscriptionRepository: Marking subscription for deletion. ID: {SubscriptionId}, UserID: {UserId}",
                                    subscription.Id, subscription.UserId);
-            _context.Subscriptions.Remove(subscription);
+            _ = _context.Subscriptions.Remove(subscription);
             return Task.CompletedTask;
             // SaveChangesAsync is expected to be called by a Unit of Work or service layer.
         }
@@ -210,7 +210,7 @@ namespace Infrastructure.Persistence.Repositories
                 return false;
             }
 
-            _context.Subscriptions.Remove(subscriptionToDelete);
+            _ = _context.Subscriptions.Remove(subscriptionToDelete);
             _logger.LogInformation("SubscriptionRepository: Subscription ID {SubscriptionId} marked for deletion.", id);
             // Actual deletion occurs on SaveChangesAsync by Unit of Work/Service.
             return true;

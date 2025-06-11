@@ -107,13 +107,13 @@ namespace Domain.Features.Forwarding.ValueObjects
             int? minMessageLength,
             int? maxMessageLength)
         {
-            AllowedMessageTypes = allowedMessageTypes ?? new List<string>();
-            AllowedMimeTypes = allowedMimeTypes ?? new List<string>();
+            AllowedMessageTypes = allowedMessageTypes ?? [];
+            AllowedMimeTypes = allowedMimeTypes ?? [];
             ContainsText = containsText;
             ContainsTextIsRegex = containsTextIsRegex;
             ContainsTextRegexOptions = containsTextRegexOptions;
-            AllowedSenderUserIds = allowedSenderUserIds ?? new List<long>();
-            BlockedSenderUserIds = blockedSenderUserIds ?? new List<long>();
+            AllowedSenderUserIds = allowedSenderUserIds ?? [];
+            BlockedSenderUserIds = blockedSenderUserIds ?? [];
             IgnoreEditedMessages = ignoreEditedMessages;
             IgnoreServiceMessages = ignoreServiceMessages;
             MinMessageLength = minMessageLength;

@@ -1,7 +1,7 @@
 ﻿// File: Shared/Exceptions/RepositoryException.cs
 using System.Runtime.Serialization; // Required for [Serializable]
 
-namespace Shared.Exceptions
+namespace Shared.Extensions
 {
     /// <summary>
     /// Represents an exception that occurs during data access operations within a repository.
@@ -30,8 +30,8 @@ namespace Shared.Exceptions
     /// <para>
     /// **When NOT to use this exception:**
     /// <list type="bullet">
-    /// <item>For business logic validation failures (use specific validation exceptions or result patterns like <see cref="Shared.Results.Result"/>).</item>
-    /// <item>For application-level configuration errors (use <see cref="System.InvalidOperationException"/> or custom configuration exceptions).</item>
+    /// <item>For business logic validation failures (use specific validation exceptions or result patterns like <see cref="Results.Result"/>).</item>
+    /// <item>For application-level configuration errors (use <see cref="InvalidOperationException"/> or custom configuration exceptions).</item>
     /// <item>For concurrency conflicts that are explicitly handled by an ORM (e.g., <see cref="Microsoft.EntityFrameworkCore.DbUpdateConcurrencyException"/>
     /// if still using EF Core in some parts), unless you choose to abstract all concurrency as a <see cref="RepositoryException"/> with a specific message.</item>
     /// </list>

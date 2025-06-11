@@ -42,17 +42,11 @@ namespace TelegramPanel.Application.CommandHandlers.Entry
         // --- CanHandle, HandleAsync, HandleShowMainMenuCallback, GenerateWelcomeMessageBody methods are all correct and do not need changes. ---
         public bool CanHandle(Update update)
         {
-            if (update.Type == UpdateType.Message &&
-                update.Message?.Text?.Trim().Equals("/start", StringComparison.OrdinalIgnoreCase) == true)
-            {
-                return true;
-            }
-            if (update.Type == UpdateType.CallbackQuery &&
-                update.CallbackQuery?.Data == ShowMainMenuCallback)
-            {
-                return true;
-            }
-            return false;
+            return update.Type == UpdateType.Message &&
+                update.Message?.Text?.Trim().Equals("/start", StringComparison.OrdinalIgnoreCase) == true
+                ? true
+                : update.Type == UpdateType.CallbackQuery &&
+                update.CallbackQuery?.Data == ShowMainMenuCallback;
         }
 
         public async Task HandleAsync(Update update, CancellationToken cancellationToken = default)
@@ -92,7 +86,7 @@ namespace TelegramPanel.Application.CommandHandlers.Entry
                 // Uses the corrected helper method below
                 var keyboard = GetMainMenuKeyboard();
 
-                await _botClient.EditMessageText(
+                _ = await _botClient.EditMessageText(
                     chatId: chatId,
                     messageId: messageId,
                     text: messageBody,
@@ -175,9 +169,12 @@ namespace TelegramPanel.Application.CommandHandlers.Entry
                         var lastName = user.LastName ?? "";
                         var username = user.Username;
                         string effectiveUsername = !string.IsNullOrWhiteSpace(username) ? username : $"{firstName} {lastName}".Trim();
-                        if (string.IsNullOrWhiteSpace(effectiveUsername)) effectiveUsername = $"User_{telegramUserId}";
+                        if (string.IsNullOrWhiteSpace(effectiveUsername))
+                        {
+                            effectiveUsername = $"User_{telegramUserId}";
+                        }
 
-                        await userService.RegisterUserAsync(new RegisterUserDto { Username = effectiveUsername, TelegramId = telegramUserId, Email = $"{telegramUserId}@telegram.temp.user" }, cancellationToken);
+                        _ = await userService.RegisterUserAsync(new RegisterUserDto { Username = effectiveUsername, TelegramId = telegramUserId, Email = $"{telegramUserId}@telegram.temp.user" }, cancellationToken);
                         finalUsername = effectiveUsername;
                         scopedLogger.LogInformation("[BackgroundScope] New user {finalUsername} registered successfully.", finalUsername);
                     }
@@ -185,7 +182,10 @@ namespace TelegramPanel.Application.CommandHandlers.Entry
                     {
                         finalUsername = existingUser!.Username;
                         scopedLogger.LogInformation("[BackgroundScope] Existing user {finalUsername} found.", finalUsername);
-                        if (stateMachine != null) await stateMachine.ClearStateAsync(user.Id, cancellationToken);
+                        if (stateMachine != null)
+                        {
+                            await stateMachine.ClearStateAsync(user.Id, cancellationToken);
+                        }
                     }
 
                     await EditWelcomeMessageWithDetailsAsync(

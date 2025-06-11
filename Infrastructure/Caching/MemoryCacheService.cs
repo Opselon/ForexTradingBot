@@ -4,7 +4,7 @@
 using Application.Common.Interfaces;
 using Microsoft.Extensions.Caching.Memory;
 
-namespace Infrastructure.Services.Caching
+namespace Infrastructure.Caching
 {
     /// <summary>
     /// Implements the IMemoryCacheService using the built-in .NET IMemoryCache.
@@ -30,7 +30,7 @@ namespace Infrastructure.Services.Caching
             {
                 AbsoluteExpirationRelativeToNow = absoluteExpirationRelativeToNow
             };
-            _memoryCache.Set(key, value, cacheEntryOptions);
+            _ = _memoryCache.Set(key, value, cacheEntryOptions);
         }
     }
 }

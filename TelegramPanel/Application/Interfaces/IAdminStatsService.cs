@@ -10,7 +10,7 @@ public interface IAdminStatsService
     Task<(int UserCount, int NewsItemCount)> GetDashboardStatsAsync(CancellationToken cancellationToken = default);
 }
 
-namespace Infrastructure.Services
+namespace TelegramPanel.Application.Interfaces
 {
     public class AdminStatsService : IAdminStatsService
     {

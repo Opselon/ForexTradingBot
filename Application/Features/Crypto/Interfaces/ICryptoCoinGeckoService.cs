@@ -4,7 +4,7 @@
 using Application.DTOs.CoinGecko;
 using Shared.Results;
 
-namespace Application.Features.CoinGecko.Interfaces
+namespace Application.Features.Crypto.Interfaces
 {
     /// <summary>
     /// Defines the application service contract for handling business logic related to

@@ -352,7 +352,7 @@ namespace Application.Services // ✅ Namespace صحیح برای پیاده‌�
                 await _tokenWalletRepository.AddAsync(user.TokenWallet, cancellationToken);
 
                 // Step 4: Save all changes in a single transaction. **CRITICAL point of failure.**
-                await _context.SaveChangesAsync(cancellationToken);
+                _ = await _context.SaveChangesAsync(cancellationToken);
                 _logger.LogInformation("User {Username} (ID: {UserId}) and their TokenWallet (ID: {TokenWalletId}) registered and saved successfully.",
                     user.Username, user.Id, user.TokenWallet.Id);
 
@@ -459,14 +459,14 @@ namespace Application.Services // ✅ Namespace صحیح برای پیاده‌�
 
                 // Apply updates from DTO to entity using AutoMapper. Potential mapping error point.
                 // Assuming AutoMapper configuration handles mapping only non-null/non-default values from DTO.
-                _mapper.Map(updateDto, user);
+                _ = _mapper.Map(updateDto, user);
 
                 // Update 'UpdatedAt' timestamp.
                 user.UpdatedAt = DateTime.UtcNow;
 
                 // Save changes to the database. **CRITICAL point of failure (Database/Concurrency/Constraints).**
                 // EF Core tracks the changes to the 'user' entity automatically.
-                await _context.SaveChangesAsync(cancellationToken);
+                _ = await _context.SaveChangesAsync(cancellationToken);
                 _logger.LogInformation("User with ID {UserId} updated successfully.", userId);
             }
             catch (InvalidOperationException) // Catch specific business rule exceptions (User not found, Duplicate email)
@@ -547,7 +547,7 @@ namespace Application.Services // ✅ Namespace صحیح برای پیاده‌�
                 await _userRepository.DeleteAsync(user, cancellationToken); // Assuming this marks the entity as Deleted
 
                 // Save changes to the database. **CRITICAL point of failure (Database/Constraints).**
-                await _context.SaveChangesAsync(cancellationToken);
+                _ = await _context.SaveChangesAsync(cancellationToken);
 
                 _logger.LogInformation("User with ID {UserId} deleted successfully.", id);
             }

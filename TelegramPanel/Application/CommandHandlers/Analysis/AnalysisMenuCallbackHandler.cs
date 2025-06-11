@@ -6,9 +6,9 @@ using Telegram.Bot.Types.ReplyMarkups;
 using TelegramPanel.Application.CommandHandlers.MainMenu;
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Infrastructure;
-using TelegramPanel.Infrastructure.Helpers;
+using TelegramPanel.Infrastructure.Helper;
 
-namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
+namespace TelegramPanel.Application.CommandHandlers.Analysis
 {
     public class AnalysisMenuCallbackHandler : ITelegramCallbackQueryHandler
     {

@@ -54,8 +54,8 @@ namespace Infrastructure.Services
         private System.Threading.Timer? _cacheCleanupTimer;
         // Internal caches used by WTelegramClient's update handler to populate main caches.
         // These remain Dictionary<long, ...> as WTelegramClient's CollectUsersChats populates these.
-        private readonly Dictionary<long, TL.User> _internalWtcUserCache = new();
-        private readonly Dictionary<long, TL.ChatBase> _internalWtcChatCache = new();
+        private readonly Dictionary<long, TL.User> _internalWtcUserCache = [];
+        private readonly Dictionary<long, TL.ChatBase> _internalWtcChatCache = [];
         private readonly string _sessionPath; // Explicit session file path for custom loader/saver
 
         // LEVEL 10: New Private Fields for Channel
@@ -90,7 +90,7 @@ namespace Infrastructure.Services
             if (!string.IsNullOrEmpty(sessionDir) && !Directory.Exists(sessionDir))
             {
                 _logger.LogInformation("Creating session directory: {SessionDirectory}", sessionDir);
-                Directory.CreateDirectory(sessionDir);
+                _ = Directory.CreateDirectory(sessionDir);
             }
 
             // Configure WTelegramClient's internal logging to use Microsoft.Extensions.Logging.
@@ -106,11 +106,13 @@ namespace Infrastructure.Services
                     _ => Microsoft.Extensions.Logging.LogLevel.None,
                 };
                 if (msLevel != Microsoft.Extensions.Logging.LogLevel.None)
+                {
                     _logger.Log(msLevel, "[WTelegram] {Message}", message);
+                }
             };
 
             // Define custom session loader delegate for WTelegramClient.
-            Func<byte[]> startSessionLoader = () =>
+            byte[]? startSessionLoader()
             {
                 _logger.LogTrace("Custom session loader: Attempting to load session from {SessionPath}...", _sessionPath);
                 if (!File.Exists(_sessionPath))
@@ -139,10 +141,10 @@ namespace Infrastructure.Services
                     }
                     return null; // Return null to signal WTelegramClient to start a new session (triggers relogin).
                 }
-            };
+            }
 
             // Define custom session saver delegate for WTelegramClient.
-            Action<byte[]> saveSessionAction = bytes =>
+            void saveSessionAction(byte[] bytes)
             {
                 _logger.LogTrace("Custom session saver: Attempting to save {BytesLength} bytes to {SessionPath}...", bytes.Length, _sessionPath);
                 try
@@ -157,7 +159,7 @@ namespace Infrastructure.Services
                 {
                     _logger.LogError(ex, "Custom session saver: Error writing to session file {SessionPath}. Data might not be persisted.", _sessionPath);
                 }
-            };
+            }
 
             _client = new WTelegram.Client(ConfigProvider, startSessionLoader(), saveSessionAction);
 
@@ -192,7 +194,7 @@ namespace Infrastructure.Services
                         .Handle<HttpRequestException>()
                         .Handle<RpcException>(rpcEx =>
                         {
-                            if (rpcEx.Code >= 500 && rpcEx.Code < 600)
+                            if (rpcEx.Code is >= 500 and < 600)
                             {
                                 _logger.LogWarning(rpcEx, "Polly: Retrying RPC error {RpcCode} ({RpcMessage}) as it's a server-side error.", rpcEx.Code, rpcEx.Message);
                                 return true;
@@ -256,7 +258,10 @@ namespace Infrastructure.Services
         // Place these methods directly inside TelegramUserApiClient
         private void StartUpdateChannelPipeline()
         {
-            if (_updateChannel != null) return; // Ambiguity fix already applied via 'using Channel = ...' alias
+            if (_updateChannel != null)
+            {
+                return; // Ambiguity fix already applied via 'using Channel = ...' alias
+            }
 
             // Use the 'Channel' alias from the using directive
             _updateChannel = System.Threading.Channels.Channel.CreateUnbounded<TL.Update>(new UnboundedChannelOptions
@@ -318,7 +323,10 @@ namespace Infrastructure.Services
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private string GetUpdateContentForLogging(object? obj, int maxLength = 100)
         {
-            if (obj == null) return "null";
+            if (obj == null)
+            {
+                return "null";
+            }
 
             if (_logger.IsEnabled(LogLevel.Debug) || _logger.IsEnabled(LogLevel.Trace))
             {
@@ -427,17 +435,47 @@ namespace Infrastructure.Services
         {
             if (sourceFlags is TL.UpdateShortMessage.Flags usmFlags)
             {
-                if (usmFlags.HasFlag(TL.UpdateShortMessage.Flags.out_)) messageFlags |= TL.Message.Flags.out_;
-                if (usmFlags.HasFlag(TL.UpdateShortMessage.Flags.mentioned)) messageFlags |= TL.Message.Flags.mentioned;
-                if (usmFlags.HasFlag(TL.UpdateShortMessage.Flags.silent)) messageFlags |= TL.Message.Flags.silent;
-                if (usmFlags.HasFlag(TL.UpdateShortMessage.Flags.media_unread)) messageFlags |= TL.Message.Flags.media_unread;
+                if (usmFlags.HasFlag(TL.UpdateShortMessage.Flags.out_))
+                {
+                    messageFlags |= TL.Message.Flags.out_;
+                }
+
+                if (usmFlags.HasFlag(TL.UpdateShortMessage.Flags.mentioned))
+                {
+                    messageFlags |= TL.Message.Flags.mentioned;
+                }
+
+                if (usmFlags.HasFlag(TL.UpdateShortMessage.Flags.silent))
+                {
+                    messageFlags |= TL.Message.Flags.silent;
+                }
+
+                if (usmFlags.HasFlag(TL.UpdateShortMessage.Flags.media_unread))
+                {
+                    messageFlags |= TL.Message.Flags.media_unread;
+                }
             }
             else if (sourceFlags is TL.UpdateShortChatMessage.Flags uscmFlags)
             {
-                if (uscmFlags.HasFlag(TL.UpdateShortChatMessage.Flags.out_)) messageFlags |= TL.Message.Flags.out_;
-                if (uscmFlags.HasFlag(TL.UpdateShortChatMessage.Flags.mentioned)) messageFlags |= TL.Message.Flags.mentioned;
-                if (uscmFlags.HasFlag(TL.UpdateShortChatMessage.Flags.silent)) messageFlags |= TL.Message.Flags.silent;
-                if (uscmFlags.HasFlag(TL.UpdateShortChatMessage.Flags.media_unread)) messageFlags |= TL.Message.Flags.media_unread;
+                if (uscmFlags.HasFlag(TL.UpdateShortChatMessage.Flags.out_))
+                {
+                    messageFlags |= TL.Message.Flags.out_;
+                }
+
+                if (uscmFlags.HasFlag(TL.UpdateShortChatMessage.Flags.mentioned))
+                {
+                    messageFlags |= TL.Message.Flags.mentioned;
+                }
+
+                if (uscmFlags.HasFlag(TL.UpdateShortChatMessage.Flags.silent))
+                {
+                    messageFlags |= TL.Message.Flags.silent;
+                }
+
+                if (uscmFlags.HasFlag(TL.UpdateShortChatMessage.Flags.media_unread))
+                {
+                    messageFlags |= TL.Message.Flags.media_unread;
+                }
             }
         }
 
@@ -623,7 +661,7 @@ namespace Infrastructure.Services
             // Only the LogTrace call is now conditional.
             foreach (var userEntry in _internalWtcUserCache)
             {
-                _userCacheWithExpiry.AddOrUpdate(userEntry.Key,
+                _ = _userCacheWithExpiry.AddOrUpdate(userEntry.Key,
                                                 (userEntry.Value, expiryTime),
                                                 (key, existingVal) => (userEntry.Value, expiryTime)); // Always update value and expiry
                 if (_logger.IsEnabled(LogLevel.Trace))
@@ -633,7 +671,7 @@ namespace Infrastructure.Services
             }
             foreach (var chatEntry in _internalWtcChatCache)
             {
-                _chatCacheWithExpiry.AddOrUpdate(chatEntry.Key,
+                _ = _chatCacheWithExpiry.AddOrUpdate(chatEntry.Key,
                                                 (chatEntry.Value, expiryTime),
                                                 (key, existingVal) => (chatEntry.Value, expiryTime)); // Always update value and expiry
                 if (_logger.IsEnabled(LogLevel.Trace))
@@ -757,8 +795,7 @@ namespace Infrastructure.Services
         /// </summary>
         private string TruncateString(string? str, int maxLength)
         {
-            if (string.IsNullOrEmpty(str)) return "[null_or_empty]";
-            return str.Length <= maxLength ? str : str.Substring(0, maxLength) + "...";
+            return string.IsNullOrEmpty(str) ? "[null_or_empty]" : str.Length <= maxLength ? str : str.Substring(0, maxLength) + "...";
         }
         #endregion
 
@@ -859,7 +896,7 @@ namespace Infrastructure.Services
                 // Level 3: Ensure the semaphore is always released.
                 try
                 {
-                    _connectionLock.Release();
+                    _ = _connectionLock.Release();
                     _logger.LogDebug("ConnectAndLoginAsync: Connection lock released.");
                 }
                 catch (ObjectDisposedException ode)
@@ -912,7 +949,10 @@ namespace Infrastructure.Services
                 dialogs.CollectUsersChats(_internalWtcUserCache, _internalWtcChatCache);
 
                 if (_logger.IsEnabled(LogLevel.Debug))
+                {
                     _logger.LogDebug("RefreshDialogsAndCachesAsync: Populating user cache from dialogs. Found {UserCacheCount} users.", _internalWtcUserCache.Count);
+                }
+
                 int usersTransferred = 0;
                 foreach (var userEntry in _internalWtcUserCache)
                 {
@@ -922,7 +962,10 @@ namespace Infrastructure.Services
                 _logger.LogInformation("RefreshDialogsAndCachesAsync: Successfully transferred {UsersTransferredCount} users to expiry cache.", usersTransferred);
 
                 if (_logger.IsEnabled(LogLevel.Debug))
+                {
                     _logger.LogDebug("RefreshDialogsAndCachesAsync: Populating chat cache from dialogs. Found {ChatCacheCount} chats.", _internalWtcChatCache.Count);
+                }
+
                 int chatsTransferred = 0;
                 foreach (var chatEntry in _internalWtcChatCache)
                 {
@@ -1076,7 +1119,7 @@ namespace Infrastructure.Services
                 }
 
                 // Level 5: Cache the fetched messages with defined options.
-                _messageCache.Set(cacheKey, messages, _cacheOptions);
+                _ = _messageCache.Set(cacheKey, messages, _cacheOptions);
 
                 return messages;
             }
@@ -1204,7 +1247,7 @@ namespace Infrastructure.Services
 
                 long random_id = WTelegram.Helpers.RandomLong();
                 InputReplyTo? inputReplyTo = replyToMsgId.HasValue
-                    ? new InputReplyToMessage { reply_to_msg_id = (int)replyToMsgId.Value }
+                    ? new InputReplyToMessage { reply_to_msg_id = replyToMsgId.Value }
                     : null;
 
                 UpdatesBase updatesBase;
@@ -1370,7 +1413,7 @@ namespace Infrastructure.Services
                 _logger.LogDebug("SendMediaGroupAsync: Acquired send lock with key: {LockKey} for Peer (Type: {PeerType}, LoggedID: {PeerId})",
                     lockKey, peerTypeForLog, peerIdForLog);
 
-                int replyToMsgIdInt = replyToMsgId.HasValue ? (int)replyToMsgId.Value : 0;
+                int replyToMsgIdInt = replyToMsgId.HasValue ? replyToMsgId.Value : 0;
 
                 // Level 4: Resilience Pipeline Execution for sending media group.
                 TL.Message[] sentMessages = await _resiliencePipeline.ExecuteAsync(async (context, token) =>
@@ -1686,12 +1729,16 @@ namespace Infrastructure.Services
                     if (resolvedUsernameResponse?.users != null)
                     {
                         foreach (var uEntry in resolvedUsernameResponse.users)
+                        {
                             _userCacheWithExpiry[uEntry.Key] = (uEntry.Value, DateTime.UtcNow.Add(_cacheExpiration));
+                        }
                     }
                     if (resolvedUsernameResponse?.chats != null)
                     {
                         foreach (var cEntry in resolvedUsernameResponse.chats)
+                        {
                             _chatCacheWithExpiry[cEntry.Key] = (cEntry.Value, DateTime.UtcNow.Add(_cacheExpiration));
+                        }
                     }
 
                     if (resolvedUsernameResponse?.peer != null)
@@ -1740,7 +1787,9 @@ namespace Infrastructure.Services
                 if (channelsResponse?.chats != null)
                 {
                     foreach (var cEntry in channelsResponse.chats)
+                    {
                         _chatCacheWithExpiry[cEntry.Key] = (cEntry.Value, DateTime.UtcNow.Add(_cacheExpiration));
+                    }
                 }
 
                 if (channelsResponse?.chats != null && channelsResponse.chats.TryGetValue(PeerToChannelId(peerId), out var chatFromApi) && chatFromApi is TL.Channel telegramChannel)
@@ -1775,7 +1824,9 @@ namespace Infrastructure.Services
                     if (chatsResponse?.chats != null)
                     {
                         foreach (var cEntry in chatsResponse.chats)
+                        {
                             _chatCacheWithExpiry[cEntry.Key] = (cEntry.Value, DateTime.UtcNow.Add(_cacheExpiration));
+                        }
                     }
 
                     if (chatsResponse?.chats != null && chatsResponse.chats.TryGetValue(peerId, out var chatFromApi) && chatFromApi is Chat telegramChat)
@@ -1934,8 +1985,15 @@ namespace Infrastructure.Services
             private class DisposableAction : IDisposable
             {
                 private readonly Action _action;
-                public DisposableAction(Action action) => _action = action;
-                public void Dispose() => _action();
+                public DisposableAction(Action action)
+                {
+                    _action = action;
+                }
+
+                public void Dispose()
+                {
+                    _action();
+                }
             }
         }
         #endregion
@@ -1946,10 +2004,26 @@ namespace Infrastructure.Services
         /// </summary>
         private long GetPeerIdForLog(InputPeer? peer)
         {
-            if (peer is InputPeerUser ipu) return ipu.user_id;
-            if (peer is InputPeerChat ipc) return ipc.chat_id;
-            if (peer is InputPeerChannel ipch) return ipch.channel_id;
-            if (peer is InputPeerSelf) return -1; // Special ID for self.
+            if (peer is InputPeerUser ipu)
+            {
+                return ipu.user_id;
+            }
+
+            if (peer is InputPeerChat ipc)
+            {
+                return ipc.chat_id;
+            }
+
+            if (peer is InputPeerChannel ipch)
+            {
+                return ipch.channel_id;
+            }
+
+            if (peer is InputPeerSelf)
+            {
+                return -1; // Special ID for self.
+            }
+
             return 0; // Default or unknown.
         }
 

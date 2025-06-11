@@ -2,7 +2,7 @@
 using Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 
-namespace Infrastructure.Persistence.Repositories
+namespace Infrastructure.Repositories
 {
     /// <summary>
     /// پیاده‌سازی Repository برای موجودیت کیف پول توکن (TokenWallet).
@@ -32,14 +32,21 @@ namespace Infrastructure.Persistence.Repositories
 
         public async Task AddAsync(TokenWallet tokenWallet, CancellationToken cancellationToken = default)
         {
-            if (tokenWallet == null) throw new ArgumentNullException(nameof(tokenWallet));
-            await _context.TokenWallets.AddAsync(tokenWallet, cancellationToken);
+            if (tokenWallet == null)
+            {
+                throw new ArgumentNullException(nameof(tokenWallet));
+            }
+
+            _ = await _context.TokenWallets.AddAsync(tokenWallet, cancellationToken);
             // SaveChangesAsync در Unit of Work / Service
         }
 
         public Task UpdateAsync(TokenWallet tokenWallet, CancellationToken cancellationToken = default)
         {
-            if (tokenWallet == null) throw new ArgumentNullException(nameof(tokenWallet));
+            if (tokenWallet == null)
+            {
+                throw new ArgumentNullException(nameof(tokenWallet));
+            }
 
             // اطمینان از اینکه UpdatedAt به‌روز می‌شود
             tokenWallet.UpdatedAt = DateTime.UtcNow;
@@ -71,7 +78,7 @@ namespace Infrastructure.Persistence.Repositories
             wallet.Balance += amount;
             wallet.UpdatedAt = DateTime.UtcNow;
 
-            _context.TokenWallets.Update(wallet); // یا .Entry(wallet).State = EntityState.Modified;
+            _ = _context.TokenWallets.Update(wallet); // یا .Entry(wallet).State = EntityState.Modified;
             // SaveChangesAsync باید در Unit of Work / Service فراخوانی شود.
             // نتیجه نهایی موفقیت، پس از SaveChangesAsync مشخص می‌شود.
             // برای این متد، بهتر است خود SaveChangesAsync را فراخوانی کنیم و نتیجه را برگردانیم
@@ -105,7 +112,7 @@ namespace Infrastructure.Persistence.Repositories
             wallet.Balance -= amount;
             wallet.UpdatedAt = DateTime.UtcNow;
 
-            _context.TokenWallets.Update(wallet);
+            _ = _context.TokenWallets.Update(wallet);
             return true; // آماده برای ذخیره
         }
     }

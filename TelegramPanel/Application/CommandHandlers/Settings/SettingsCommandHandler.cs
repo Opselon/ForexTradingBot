@@ -13,7 +13,7 @@ using TelegramPanel.Application.CommandHandlers.MainMenu;
 using TelegramPanel.Application.Interfaces; // برای ITelegramCommandHandler
 using TelegramPanel.Formatters;           // برای TelegramMessageFormatter (ابزار فرمت‌بندی متن)
 using TelegramPanel.Infrastructure;
-using TelegramPanel.Infrastructure.Helpers;       // برای ITelegramMessageSender (سرویس ارسال پیام)
+using TelegramPanel.Infrastructure.Helper;
 #endregion
 
 namespace TelegramPanel.Application.CommandHandlers.Settings
@@ -176,5 +176,6 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
             return (text, keyboard);
         }
         #endregion
+
     }
 }

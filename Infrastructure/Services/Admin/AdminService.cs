@@ -9,7 +9,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System.Text;
 
-namespace Infrastructure.Services
+namespace Infrastructure.Services.Admin
 {
     public class AdminService : IAdminService
     {
@@ -39,8 +39,14 @@ namespace Infrastructure.Services
             var userChatIds = new List<long>();
             foreach (var idStr in idsAsString)
             {
-                if (long.TryParse(idStr, out var id)) userChatIds.Add(id);
-                else _logger.LogWarning("Could not parse TelegramId '{IdString}' to long.", idStr);
+                if (long.TryParse(idStr, out var id))
+                {
+                    userChatIds.Add(id);
+                }
+                else
+                {
+                    _logger.LogWarning("Could not parse TelegramId '{IdString}' to long.", idStr);
+                }
             }
             return userChatIds;
         }
@@ -70,23 +76,23 @@ namespace Infrastructure.Services
 
                     if (!data.Any())
                     {
-                        response.AppendLine($"-- Result Set {resultSetIndex} (No Rows) --\n");
+                        _ = response.AppendLine($"-- Result Set {resultSetIndex} (No Rows) --\n");
                         resultSetIndex++;
                         continue;
                     }
 
-                    response.AppendLine($"-- Result Set {resultSetIndex} ({data.Count} Rows) --");
+                    _ = response.AppendLine($"-- Result Set {resultSetIndex} ({data.Count} Rows) --");
                     // Get headers from the first row (which is an IDictionary<string, object>)
                     var headers = ((IDictionary<string, object>)data.First()).Keys;
-                    response.AppendLine("`" + string.Join(" | ", headers) + "`");
+                    _ = response.AppendLine("`" + string.Join(" | ", headers) + "`");
 
                     foreach (var row in data)
                     {
                         var rowDict = (IDictionary<string, object>)row;
                         var values = rowDict.Values.Select(v => v?.ToString() ?? "NULL");
-                        response.AppendLine("`" + string.Join(" | ", values) + "`");
+                        _ = response.AppendLine("`" + string.Join(" | ", values) + "`");
                     }
-                    response.AppendLine();
+                    _ = response.AppendLine();
                     resultSetIndex++;
                 }
                 return response.ToString();
@@ -116,12 +122,17 @@ namespace Infrastructure.Services
             using var multi = await connection.QueryMultipleAsync(sql, new { TelegramIdStr = telegramId.ToString() });
 
             var user = await multi.ReadSingleOrDefaultAsync<User>();
-            if (user == null) return null;
+            if (user == null)
+            {
+                return null;
+            }
 
-            var userDetail = new AdminUserDetailDto { /* Map all user properties... */ };
-            userDetail.UserId = user.Id;
-            userDetail.Username = user.Username;
-            userDetail.TelegramId = long.Parse(user.TelegramId);
+            var userDetail = new AdminUserDetailDto
+            {
+                UserId = user.Id,
+                Username = user.Username,
+                TelegramId = long.Parse(user.TelegramId)
+            };
             // ... etc.
 
             var walletInfo = await multi.ReadSingleOrDefaultAsync();

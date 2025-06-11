@@ -7,7 +7,7 @@ namespace Infrastructure.Settings
         public string RuleName { get; set; } = "DefaultRule";
         public bool IsEnabled { get; set; } = true;
         public long SourceChannelId { get; set; }
-        public List<long> TargetChannelIds { get; set; } = new List<long>();
+        public List<long> TargetChannelIds { get; set; } = [];
         public MessageEditOptions EditOptions { get; set; } = new MessageEditOptions();
         public MessageFilterOptions FilterOptions { get; set; } = new MessageFilterOptions();
     }

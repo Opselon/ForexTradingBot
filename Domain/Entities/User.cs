@@ -53,9 +53,9 @@ namespace Domain.Entities
 
         #region Navigation Properties
         public TokenWallet TokenWallet { get; set; } = null!;
-        public List<Subscription> Subscriptions { get; set; } = new();
-        public List<Transaction> Transactions { get; set; } = new();
-        public ICollection<UserSignalPreference> Preferences { get; set; } = new List<UserSignalPreference>();
+        public List<Subscription> Subscriptions { get; set; } = [];
+        public List<Transaction> Transactions { get; set; } = [];
+        public ICollection<UserSignalPreference> Preferences { get; set; } = [];
         #endregion
 
         #region Constructors
@@ -63,9 +63,9 @@ namespace Domain.Entities
         {
             Id = Guid.NewGuid();
             CreatedAt = DateTime.UtcNow;
-            Subscriptions = new List<Subscription>();
-            Transactions = new List<Transaction>();
-            Preferences = new List<UserSignalPreference>();
+            Subscriptions = [];
+            Transactions = [];
+            Preferences = [];
             EnableGeneralNotifications = true;
             EnableVipSignalNotifications = false; // پیش‌فرض برای کاربر جدید
             EnableRssNewsNotifications = true;

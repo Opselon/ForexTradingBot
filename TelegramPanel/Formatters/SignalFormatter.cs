@@ -12,20 +12,20 @@ namespace TelegramPanel.Formatters
 
             //  از ایموجی‌ها و فرمت‌بندی حرفه‌ای استفاده کنید
             string typeEmoji = signal.Type.Equals("Buy", StringComparison.OrdinalIgnoreCase) ? "🟢" : "🔴";
-            sb.AppendLine($"{typeEmoji} *{signal.Symbol}* - {signal.Type.ToUpper()} Signal"); // استفاده از MarkdownV2
+            _ = sb.AppendLine($"{typeEmoji} *{signal.Symbol}* - {signal.Type.ToUpper()} Signal"); // استفاده از MarkdownV2
 
             if (signal.Category != null)
             {
-                sb.AppendLine($"Category: _{signal.Category.Name}_");
+                _ = sb.AppendLine($"Category: _{signal.Category.Name}_");
             }
 
-            sb.AppendLine($"Entry Price: `{signal.EntryPrice:F4}`"); // F4 برای نمایش با 4 رقم اعشار
-            sb.AppendLine($"Stop Loss: `{signal.StopLoss:F4}`");
-            sb.AppendLine($"Take Profit: `{signal.TakeProfit:F4}`");
+            _ = sb.AppendLine($"Entry Price: `{signal.EntryPrice:F4}`"); // F4 برای نمایش با 4 رقم اعشار
+            _ = sb.AppendLine($"Stop Loss: `{signal.StopLoss:F4}`");
+            _ = sb.AppendLine($"Take Profit: `{signal.TakeProfit:F4}`");
 
             if (!string.IsNullOrWhiteSpace(signal.Source))
             {
-                sb.AppendLine($"Source: {signal.Source}");
+                _ = sb.AppendLine($"Source: {signal.Source}");
             }
 
             //  مثال برای لینک چارت (باید URL واقعی را جایگزین کنید)
@@ -38,18 +38,18 @@ namespace TelegramPanel.Formatters
 
             if (signal.Analyses != null && signal.Analyses.Any())
             {
-                sb.AppendLine("\n*Analysis:*");
+                _ = sb.AppendLine("\n*Analysis:*");
                 foreach (var analysis in signal.Analyses.Take(1)) // نمایش اولین تحلیل به عنوان مثال
                 {
-                    sb.AppendLine($"- _{analysis.AnalystName}_: {analysis.Notes.Substring(0, Math.Min(analysis.Notes.Length, 100))}...");
+                    _ = sb.AppendLine($"- _{analysis.AnalystName}_: {analysis.Notes.Substring(0, Math.Min(analysis.Notes.Length, 100))}...");
                 }
             }
             else
             {
-                sb.AppendLine("\n_This signal is based on automated analysis or direct feed._");
+                _ = sb.AppendLine("\n_This signal is based on automated analysis or direct feed._");
             }
 
-            sb.AppendLine($"\nPosted: {signal.CreatedAt:yyyy-MM-dd HH:mm} UTC");
+            _ = sb.AppendLine($"\nPosted: {signal.CreatedAt:yyyy-MM-dd HH:mm} UTC");
 
             //  فراموش نکنید که کاراکترهای خاص MarkdownV2 را escape کنید اگر از آن استفاده می‌کنید
             //  مثلاً با یک متد کمکی:

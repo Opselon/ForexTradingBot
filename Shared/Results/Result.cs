@@ -88,7 +88,7 @@ namespace Shared.Results
         /// <returns>A new <see cref="Result{T}"/> instance representing a failed operation.</returns>
         public static Result<T> Failure(IEnumerable<string> errors, string? failureMessage = null)
         {
-            var errorList = errors?.ToList() ?? new List<string>();
+            var errorList = errors?.ToList() ?? [];
             var consolidatedMessage = failureMessage ?? (errorList.Any() ? errorList.First() : "Operation failed."); // Use first error if available
             return new Result<T>(false, default, errorList, null, consolidatedMessage);
         }
@@ -169,7 +169,7 @@ namespace Shared.Results
         /// <returns>A new <see cref="Result"/> instance representing a failed operation.</returns>
         public static Result Failure(IEnumerable<string> errors, string? failureMessage = null)
         {
-            var errorList = errors?.ToList() ?? new List<string>();
+            var errorList = errors?.ToList() ?? [];
             var consolidatedMessage = failureMessage ?? (errorList.Any() ? errorList.First() : "Operation failed.");
             return new Result(false, errorList, null, consolidatedMessage);
         }

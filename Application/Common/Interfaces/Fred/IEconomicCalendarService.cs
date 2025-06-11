@@ -2,7 +2,7 @@
 using Application.DTOs.Fred;
 using Shared.Results;
 
-namespace Application.Interfaces
+namespace Application.Common.Interfaces.Fred
 {
     public interface IEconomicCalendarService
     {

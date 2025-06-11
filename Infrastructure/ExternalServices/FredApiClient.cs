@@ -1,5 +1,5 @@
 ﻿// File: Infrastructure/ExternalServices/FredApiClient.cs
-using Application.Common.Interfaces;
+using Application.Common.Interfaces.Fred;
 using Application.DTOs.Fred;
 using Microsoft.Extensions.Logging;
 using Shared.Results;
@@ -38,11 +38,9 @@ namespace Infrastructure.ExternalServices
             try
             {
                 var response = await _httpClient.GetFromJsonAsync<FredReleaseTablesResponseDto>(requestUri, cancellationToken);
-                if (response == null)
-                {
-                    return Result<FredReleaseTablesResponseDto>.Failure("Failed to deserialize release tables response from FRED API.");
-                }
-                return Result<FredReleaseTablesResponseDto>.Success(response);
+                return response == null
+                    ? Result<FredReleaseTablesResponseDto>.Failure("Failed to deserialize release tables response from FRED API.")
+                    : Result<FredReleaseTablesResponseDto>.Success(response);
             }
             catch (Exception ex)
             {
@@ -59,11 +57,9 @@ namespace Infrastructure.ExternalServices
             try
             {
                 var response = await _httpClient.GetFromJsonAsync<FredSeriesSearchResponseDto>(requestUri, cancellationToken);
-                if (response == null)
-                {
-                    return Result<FredSeriesSearchResponseDto>.Failure("Failed to deserialize series search response from FRED API.");
-                }
-                return Result<FredSeriesSearchResponseDto>.Success(response);
+                return response == null
+                    ? Result<FredSeriesSearchResponseDto>.Failure("Failed to deserialize series search response from FRED API.")
+                    : Result<FredSeriesSearchResponseDto>.Success(response);
             }
             catch (HttpRequestException ex)
             {
@@ -85,11 +81,9 @@ namespace Infrastructure.ExternalServices
             try
             {
                 var response = await _httpClient.GetFromJsonAsync<FredReleasesResponseDto>(requestUri, cancellationToken);
-                if (response == null)
-                {
-                    return Result<FredReleasesResponseDto>.Failure("Failed to deserialize response from FRED API.");
-                }
-                return Result<FredReleasesResponseDto>.Success(response);
+                return response == null
+                    ? Result<FredReleasesResponseDto>.Failure("Failed to deserialize response from FRED API.")
+                    : Result<FredReleasesResponseDto>.Success(response);
             }
             catch (Exception ex)
             {

@@ -1,15 +1,18 @@
 ﻿// File: Infrastructure\DependencyInjection.cs // نام فایل ممکن است ServiceCollectionExtensions.cs یا DependencyInjection.cs باشد
 using Application.Common.Interfaces;      // اینترفیس‌های Repository و IAppDbContext (لایه Application)
+using Application.Common.Interfaces.CoinGeckoApiClient;
+using Application.Common.Interfaces.Fred;
+using Application.Features.Crypto.Services.CoinGecko;
 using Application.Interfaces;             // اینترفیس‌های سرویس‌های کاربردی (لایه Application)
 using Application.Services;               // پیاده‌سازی سرویس‌ها (لایه Application)
 using Hangfire;                           // برای مدیریت وظایف پس‌زمینه
-using Infrastructure.Data;                // AppDbContext (لایه Infrastructure)
+using Infrastructure.Caching;
 using Infrastructure.ExternalServices;    // سرویس‌های خارجی (لایه Infrastructure)
 using Infrastructure.Hangfire;            // پیاده‌سازی سرویس‌های Hangfire (لایه Infrastructure)
-using Infrastructure.Persistence.Repositories; // پیاده‌سازی Repositoryها (لایه Infrastructure)
+using Infrastructure.Persistence.Configurations;
+using Infrastructure.Repositories;
 using Infrastructure.Services;            // پیاده‌سازی سرویس‌های داخلی Infrastructure
-using Infrastructure.Services.Caching;
-using Infrastructure.Services.CoinGecko;
+using Infrastructure.Services.Admin;
 using Infrastructure.Services.Fmp;
 using Microsoft.EntityFrameworkCore;      // Entity Framework Core
 using Microsoft.Extensions.Configuration; // برای خواندن تنظیمات از فایل پیکربندی
@@ -17,7 +20,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Polly;
 using Polly.Extensions.Http; // برای افزودن سرویس‌ها به کانتینر DI
 
-namespace Infrastructure
+namespace Infrastructure.Data
 {
     /// <summary>
     /// کلاس کمکی استاتیک برای افزودن سرویس‌های لایه Infrastructure (زیرساخت) به کانتینر تزریق وابستگی (DI).
@@ -36,8 +39,8 @@ namespace Infrastructure
             this IServiceCollection services,
             IConfiguration configuration)
         {
-            services.AddMemoryCache();
-            services.AddSingleton(typeof(IMemoryCacheService<>), typeof(MemoryCacheService<>));
+            _ = services.AddMemoryCache();
+            _ = services.AddSingleton(typeof(IMemoryCacheService<>), typeof(MemoryCacheService<>));
 
             var retryPolicy = HttpPolicyExtensions
                .HandleTransientHttpError() // Handles HttpRequestException, 5xx, and 408
@@ -106,11 +109,11 @@ namespace Infrastructure
             switch (dbProvider)
             {
                 case "sqlserver":
-                    services.AddDbContext<AppDbContext>(opts =>
+                    _ = services.AddDbContext<AppDbContext>(opts =>
                         opts.UseSqlServer(connectionString, sql =>
                         {
-                            sql.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName);
-                            sql.EnableRetryOnFailure(
+                            _ = sql.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName);
+                            _ = sql.EnableRetryOnFailure(
                                 maxRetryCount: 5,
                                 maxRetryDelay: TimeSpan.FromSeconds(30),
                                 errorNumbersToAdd: null);
@@ -119,11 +122,11 @@ namespace Infrastructure
 
                 case "postgres":
                 case "postgresql":
-                    services.AddDbContext<AppDbContext>(opts =>
+                    _ = services.AddDbContext<AppDbContext>(opts =>
                         opts.UseNpgsql(connectionString, npgsql =>
                         {
-                            npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName);
-                            npgsql.EnableRetryOnFailure(
+                            _ = npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName);
+                            _ = npgsql.EnableRetryOnFailure(
                                 maxRetryCount: 5,
                                 maxRetryDelay: TimeSpan.FromSeconds(30),
                                 errorCodesToAdd: null);
@@ -140,12 +143,12 @@ namespace Infrastructure
             // 4. رجیستر <see cref="IAppDbContext"/> به عنوان یک سرویس Scoped
             // این امکان را فراهم می‌کند که <see cref="AppDbContext"/> از طریق اینترفیس در لایه Application تزریق شود،
             // که برای تست‌پذیری و جداسازی دغدغه‌ها (Separation of Concerns) مفید است.
-            services.AddScoped<IAppDbContext>(
+            _ = services.AddScoped<IAppDbContext>(
                 sp => sp.GetRequiredService<AppDbContext>());
 
             // افزودن سرویس‌های Hangfire برای مدیریت و پردازش وظایف پس‌زمینه.
             // Hangfire به برنامه اجازه می‌دهد تا وظایف را خارج از چرخه درخواست اصلی انجام دهد (مثلاً ارسال ایمیل، پردازش فایل).
-            services.AddHangfire(config => config
+            _ = services.AddHangfire(config => config
                 .SetDataCompatibilityLevel(CompatibilityLevel.Version_180) // تنظیم سطح سازگاری داده
                 .UseSimpleAssemblyNameTypeSerializer() // استفاده از سریالایزر ساده برای نام اسمبلی‌ها
                 .UseRecommendedSerializerSettings() // استفاده از تنظیمات سریالایزر توصیه شده
@@ -153,17 +156,17 @@ namespace Infrastructure
 
             // افزودن سرور پردازش Hangfire به عنوان یک سرویس میزبانی شده (IHostedService).
             // این سرور مسئول اجرای وظایف زمان‌بندی شده Hangfire است.
-            services.AddHangfireServer();
+            _ = services.AddHangfireServer();
 
 
             // رجیستر کردن سرویس‌های ارتباط با APIهای خارجی با استفاده از IHttpClientFactory.
             // IHttpClientFactory به مدیریت بهینه نمونه‌های HttpClient کمک می‌کند (مثل مدیریت Pool و Lifetime).
-            services.AddHttpClient<ICryptoPayApiClient, CryptoPayApiClient>(); // برای ارتباط با CryptoPay API
-            services.AddScoped<IRssFetchingCoordinatorService, RssFetchingCoordinatorService>(); // هماهنگ کننده برای خواندن RSS
+            _ = services.AddHttpClient<ICryptoPayApiClient, CryptoPayApiClient>(); // برای ارتباط با CryptoPay API
+            _ = services.AddScoped<IRssFetchingCoordinatorService, RssFetchingCoordinatorService>(); // هماهنگ کننده برای خواندن RSS
 
             // رجیستر کردن یک HttpClient نام‌گذاری شده برای سرویس <see cref="RssReaderService"/>.
             // این رویکرد امکان پیکربندی خاص برای HttpClient‌های مختلف را فراهم می‌کند.
-            services.AddHttpClient(RssReaderService.HttpClientNamedClient, client =>
+            _ = services.AddHttpClient(RssReaderService.HttpClientNamedClient, client =>
             {
                 client.DefaultRequestHeaders.UserAgent.ParseAdd(RssReaderService.DefaultUserAgent); // تنظیم User-Agent پیش‌فرض برای درخواست‌ها
                 client.Timeout = TimeSpan.FromSeconds(RssReaderService.DefaultHttpClientTimeoutSeconds); // تنظیم مهلت زمانی (timeout) برای درخواست‌های HTTP
@@ -175,35 +178,35 @@ namespace Infrastructure
 
 
             // Register the CoinGecko API client with the retry policy
-            services.AddHttpClient<ICoinGeckoApiClient, CoinGeckoApiClient>().AddPolicyHandler(retryPolicy);
+            _ = services.AddHttpClient<ICoinGeckoApiClient, CoinGeckoApiClient>().AddPolicyHandler(retryPolicy);
 
             // Register the FMP API client with the retry policy
-            services.AddHttpClient<IFmpApiClient, FmpApiClient>().AddPolicyHandler(retryPolicy);
+            _ = services.AddHttpClient<IFmpApiClient, FmpApiClient>().AddPolicyHandler(retryPolicy);
 
 
             // 5. رجیستر کردن Repositoryها و سایر سرویس‌های دامنه/کاربردی
             // هر Repository مسئول تعامل با یک موجودیت خاص در پایگاه داده است.
             // به عنوان Singleton ثبت شده تا در طول عمر برنامه فقط یک نمونه از آن وجود داشته باشد
-            services.AddSingleton<ITelegramUserApiClient, TelegramUserApiClient>();
+            _ = services.AddSingleton<ITelegramUserApiClient, TelegramUserApiClient>();
             // یک نمونه از TelegramUserApiClient را به تنهایی نیز رجیستر می‌کند (ممکن است برای Scenario خاصی لازم باشد)
-            services.AddSingleton<TelegramUserApiClient>();
+            _ = services.AddSingleton<TelegramUserApiClient>();
             // افزودن یک سرویس میزبانی شده برای مقداردهی اولیه (Initialization) کلاینت API تلگرام در زمان راه‌اندازی برنامه.
-            services.AddHostedService<TelegramUserApiInitializationService>();
-            services.AddHttpClient<IFredApiClient, FredApiClient>();
-            services.AddScoped<INewsItemRepository, NewsItemRepository>(); // رجیستر NewsItemRepository
-            services.AddScoped<IRssReaderService, RssReaderService>(); // رجیستر RssReaderService
-            services.AddSingleton<INotificationJobScheduler, HangfireNotificationJobScheduler>(); // رجیستر NotificationJobScheduler (Singleton برای زمان‌بندی)
-            services.AddScoped<INotificationDispatchService, NotificationDispatchService>(); // رجیستر NotificationDispatchService (برای ارسال اعلان‌ها)
-            services.AddScoped<IUserRepository, UserRepository>(); // رجیستر UserRepository
-            services.AddScoped<ITokenWalletRepository, TokenWalletRepository>(); // رجیستر TokenWalletRepository
-            services.AddScoped<ISubscriptionRepository, SubscriptionRepository>(); // رجیستر SubscriptionRepository
-            services.AddScoped<ISignalRepository, SignalRepository>(); // رجیستر SignalRepository
-            services.AddScoped<ISignalCategoryRepository, SignalCategoryRepository>(); // رجیستر SignalCategoryRepository
-            services.AddScoped<IRssSourceRepository, RssSourceRepository>(); // رجیستر RssSourceRepository
-            services.AddScoped<IUserSignalPreferenceRepository, UserSignalPreferenceRepository>(); // رجیستر UserSignalPreferenceRepository
-            services.AddScoped<ISignalAnalysisRepository, SignalAnalysisRepository>(); // رجیستر SignalAnalysisRepository
-            services.AddScoped<ITransactionRepository, TransactionRepository>(); // رجیستر TransactionRepository
-            services.AddScoped<IAdminService, AdminService>();
+            _ = services.AddHostedService<TelegramUserApiInitializationService>();
+            _ = services.AddHttpClient<IFredApiClient, FredApiClient>();
+            _ = services.AddScoped<INewsItemRepository, NewsItemRepository>(); // رجیستر NewsItemRepository
+            _ = services.AddScoped<IRssReaderService, RssReaderService>(); // رجیستر RssReaderService
+            _ = services.AddSingleton<INotificationJobScheduler, HangfireNotificationJobScheduler>(); // رجیستر NotificationJobScheduler (Singleton برای زمان‌بندی)
+            _ = services.AddScoped<INotificationDispatchService, NotificationDispatchService>(); // رجیستر NotificationDispatchService (برای ارسال اعلان‌ها)
+            _ = services.AddScoped<IUserRepository, UserRepository>(); // رجیستر UserRepository
+            _ = services.AddScoped<ITokenWalletRepository, TokenWalletRepository>(); // رجیستر TokenWalletRepository
+            _ = services.AddScoped<ISubscriptionRepository, SubscriptionRepository>(); // رجیستر SubscriptionRepository
+            _ = services.AddScoped<ISignalRepository, SignalRepository>(); // رجیستر SignalRepository
+            _ = services.AddScoped<ISignalCategoryRepository, SignalCategoryRepository>(); // رجیستر SignalCategoryRepository
+            _ = services.AddScoped<IRssSourceRepository, RssSourceRepository>(); // رجیستر RssSourceRepository
+            _ = services.AddScoped<IUserSignalPreferenceRepository, UserSignalPreferenceRepository>(); // رجیستر UserSignalPreferenceRepository
+            _ = services.AddScoped<ISignalAnalysisRepository, SignalAnalysisRepository>(); // رجیستر SignalAnalysisRepository
+            _ = services.AddScoped<ITransactionRepository, TransactionRepository>(); // رجیستر TransactionRepository
+            _ = services.AddScoped<IAdminService, AdminService>();
 
 
             // بازگرداندن IServiceCollection به‌روزرسانی شده برای فعال کردن زنجیره‌ای کردن متدها در Program.cs

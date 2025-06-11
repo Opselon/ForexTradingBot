@@ -96,7 +96,7 @@ namespace Infrastructure.Services
             /// <summary>
             /// Gets the list of media items collected for this group, each with its caption and entities.
             /// </summary>
-            public List<InputMediaWithCaption> Items { get; } = new List<InputMediaWithCaption>();
+            public List<InputMediaWithCaption> Items { get; } = [];
 
             /// <summary>
             /// Gets or sets the <see cref="CancellationTokenSource"/> used to manage the timeout
@@ -292,14 +292,15 @@ namespace Infrastructure.Services
                             InputMedia? singlePreparedMedia = CreateInputMedia(messageToProcess.media);
                             if (singlePreparedMedia != null)
                             {
-                                singleMediaList = new List<InputMediaWithCaption> // Encapsulate single media in a list
-                                {
+                                singleMediaList =
+                                // Encapsulate single media in a list
+                                [
                                     new InputMediaWithCaption {
                                         Media = singlePreparedMedia,
                                         Caption = messageToProcess.message,
                                         Entities = messageToProcess.entities?.ToArray()
                                     }
-                                };
+                                ];
                             }
                             else
                             {
@@ -449,7 +450,7 @@ namespace Infrastructure.Services
             // Use the Polly retry policy to make the enqueue operation itself robust.
             // _backgroundJobClient.Enqueue is generally very fast and non-blocking,
             // but this adds a layer of resilience if Hangfire's storage is temporarily unavailable.
-            _enqueueRetryPolicy.Execute(() =>
+            _ = _enqueueRetryPolicy.Execute(() =>
             {
                 // BackgroundJob.Enqueue immediately adds the job to the database queue with minimal overhead.
                 // Hangfire takes over from here (worker picks it up, retries if fails).
@@ -477,7 +478,11 @@ namespace Infrastructure.Services
         /// <returns>The truncated string or an indicator for null/empty input.</returns>
         private string TruncateString(string? str, int maxLength)
         {
-            if (string.IsNullOrEmpty(str)) return "[null_or_empty]";
+            if (string.IsNullOrEmpty(str))
+            {
+                return "[null_or_empty]";
+            }
+
             return str.Length <= maxLength ? str : str[..maxLength] + "..."; // Using C# 8.0 range operator for brevity
         }
 

@@ -46,7 +46,7 @@ namespace Application.Services
             signal.PublishedAt = DateTime.UtcNow;
 
             await _signalRepository.AddAsync(signal, cancellationToken);
-            await _context.SaveChangesAsync(cancellationToken);
+            _ = await _context.SaveChangesAsync(cancellationToken);
 
             _logger.LogInformation("Signal with ID {SignalId} created successfully for symbol {Symbol}", signal.Id, signal.Symbol);
 
@@ -110,11 +110,11 @@ namespace Application.Services
                 }
             }
 
-            _mapper.Map(updateSignalDto, signal); // AutoMapper فیلدهای غیر null از DTO را به موجودیت مپ می‌کند
+            _ = _mapper.Map(updateSignalDto, signal); // AutoMapper فیلدهای غیر null از DTO را به موجودیت مپ می‌کند
             // signal.UpdatedAt = DateTime.UtcNow; // اگر فیلد UpdatedAt در Signal دارید
 
             await _signalRepository.UpdateAsync(signal, cancellationToken); // یا _context.Entry(signal).State = Modified
-            await _context.SaveChangesAsync(cancellationToken);
+            _ = await _context.SaveChangesAsync(cancellationToken);
             _logger.LogInformation("Signal with ID {SignalId} updated successfully.", signalId);
         }
 
@@ -129,7 +129,7 @@ namespace Application.Services
             }
 
             await _signalRepository.DeleteAsync(signal, cancellationToken);
-            await _context.SaveChangesAsync(cancellationToken);
+            _ = await _context.SaveChangesAsync(cancellationToken);
             _logger.LogInformation("Signal with ID {SignalId} deleted successfully.", signalId);
         }
     }

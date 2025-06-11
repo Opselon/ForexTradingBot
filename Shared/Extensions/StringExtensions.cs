@@ -57,11 +57,9 @@ namespace Shared.Extensions
         /// <exception cref="OverflowException"><paramref name="value"/> is outside the range of the underlying type of <typeparamref name="T"/>.</exception>
         public static T ToEnum<T>(this string value, bool ignoreCase = true) where T : struct, Enum
         {
-            if (value.IsNullOrWhiteSpace())
-            {
-                throw new ArgumentException("Value cannot be null or whitespace for enum conversion.", nameof(value));
-            }
-            return (T)Enum.Parse(typeof(T), value, ignoreCase);
+            return value.IsNullOrWhiteSpace()
+                ? throw new ArgumentException("Value cannot be null or whitespace for enum conversion.", nameof(value))
+                : (T)Enum.Parse(typeof(T), value, ignoreCase);
         }
 
         /// <summary>
@@ -99,19 +97,20 @@ namespace Shared.Extensions
         /// <returns>A 64-character hexadecimal string representing the SHA256 hash of the input, or an empty string if input is null/empty.</returns>
         public static string ToSha256(this string? value)
         {
-            if (value.IsNullOrEmpty()) return string.Empty;
-
-            using (var sha256 = SHA256.Create())
+            if (value.IsNullOrEmpty())
             {
-                byte[] bytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(value));
-                StringBuilder builder = new StringBuilder();
-                for (int i = 0; i < bytes.Length; i++)
-                {
-                    // "x2" formats the byte as a two-digit hexadecimal number
-                    builder.Append(bytes[i].ToString("x2"));
-                }
-                return builder.ToString();
+                return string.Empty;
             }
+
+            using var sha256 = SHA256.Create();
+            byte[] bytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(value));
+            StringBuilder builder = new StringBuilder();
+            for (int i = 0; i < bytes.Length; i++)
+            {
+                // "x2" formats the byte as a two-digit hexadecimal number
+                _ = builder.Append(bytes[i].ToString("x2"));
+            }
+            return builder.ToString();
         }
 
         /// <summary>
@@ -124,7 +123,9 @@ namespace Shared.Extensions
         public static string ToTitleCase(this string? value)
         {
             if (value.IsNullOrWhiteSpace())
+            {
                 return value;
+            }
             // It's often recommended to convert to lower first for consistency across cultures
             // and then apply TitleCase. Use InvariantCulture for lower if the input source is invariant.
             // CurrentCulture is fine if this is for display to the user.
@@ -141,7 +142,10 @@ namespace Shared.Extensions
         /// <returns>The input string with HTML tags removed, or an empty string if the input was null or empty.</returns>
         public static string StripHtml(this string? value)
         {
-            if (value.IsNullOrEmpty()) return string.Empty;
+            if (value.IsNullOrEmpty())
+            {
+                return string.Empty;
+            }
             // This regex is generally safe for stripping basic tags but can fail for complex/malformed HTML
             return Regex.Replace(value, "<.*?>", string.Empty);
         }
@@ -163,14 +167,21 @@ namespace Shared.Extensions
         public static string Truncate(this string? value, int maxLength, string truncationSuffix = "...")
         {
             if (value.IsNullOrEmpty() || value.Length <= maxLength)
+            {
                 return value ?? string.Empty; // Return empty string for null input if not truncated
+            }
 
             if (maxLength <= truncationSuffix.Length)
+            {
                 return truncationSuffix;
+            }
 
             // Ensure we don't try to take a substring with negative length
             int substringLength = maxLength - truncationSuffix.Length;
-            if (substringLength < 0) substringLength = 0; // Defensive check
+            if (substringLength < 0)
+            {
+                substringLength = 0; // Defensive check
+            }
 
             return value.Substring(0, substringLength) + truncationSuffix;
         }

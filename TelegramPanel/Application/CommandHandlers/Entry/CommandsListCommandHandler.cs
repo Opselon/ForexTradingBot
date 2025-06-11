@@ -7,7 +7,7 @@ using TelegramPanel.Application.CommandHandlers.MainMenu;
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Formatters;
 using TelegramPanel.Infrastructure;
-using TelegramPanel.Infrastructure.Helpers;
+using TelegramPanel.Infrastructure.Helper;
 
 namespace TelegramPanel.Application.CommandHandlers.Entry
 {
@@ -33,7 +33,10 @@ namespace TelegramPanel.Application.CommandHandlers.Entry
         public async Task HandleAsync(Update update, CancellationToken cancellationToken = default)
         {
             var message = update.Message;
-            if (message == null) return;
+            if (message == null)
+            {
+                return;
+            }
 
             var chatId = message.Chat.Id;
             _logger.LogInformation("Handling /commands command for ChatID {ChatId}", chatId);
@@ -41,40 +44,40 @@ namespace TelegramPanel.Application.CommandHandlers.Entry
             var commandsText = new StringBuilder();
 
             // Header
-            commandsText.AppendLine(TelegramMessageFormatter.Bold("📋 Available Commands"));
-            commandsText.AppendLine();
+            _ = commandsText.AppendLine(TelegramMessageFormatter.Bold("📋 Available Commands"));
+            _ = commandsText.AppendLine();
 
             // Basic Commands
-            commandsText.AppendLine(TelegramMessageFormatter.Bold("🔹 Basic Commands"));
-            commandsText.AppendLine($"`/start` - Start the bot and register");
-            commandsText.AppendLine($"`/help` - Show help information");
-            commandsText.AppendLine($"`/menu` - Open the main menu");
-            commandsText.AppendLine($"`/commands` - Show this commands list");
-            commandsText.AppendLine();
+            _ = commandsText.AppendLine(TelegramMessageFormatter.Bold("🔹 Basic Commands"));
+            _ = commandsText.AppendLine($"`/start` - Start the bot and register");
+            _ = commandsText.AppendLine($"`/help` - Show help information");
+            _ = commandsText.AppendLine($"`/menu` - Open the main menu");
+            _ = commandsText.AppendLine($"`/commands` - Show this commands list");
+            _ = commandsText.AppendLine();
 
             // Trading Commands
-            commandsText.AppendLine(TelegramMessageFormatter.Bold("📊 Trading Commands"));
-            commandsText.AppendLine($"`/signals` - View available trading signals");
-            commandsText.AppendLine($"`/analysis` - Get market analysis");
-            commandsText.AppendLine($"`/portfolio` - View your trading portfolio");
-            commandsText.AppendLine();
+            _ = commandsText.AppendLine(TelegramMessageFormatter.Bold("📊 Trading Commands"));
+            _ = commandsText.AppendLine($"`/signals` - View available trading signals");
+            _ = commandsText.AppendLine($"`/analysis` - Get market analysis");
+            _ = commandsText.AppendLine($"`/portfolio` - View your trading portfolio");
+            _ = commandsText.AppendLine();
 
             // Account Commands
-            commandsText.AppendLine(TelegramMessageFormatter.Bold("👤 Account Commands"));
-            commandsText.AppendLine($"`/profile` - View your profile");
-            commandsText.AppendLine($"`/subscribe` - View subscription plans");
-            commandsText.AppendLine($"`/settings` - Configure your preferences");
-            commandsText.AppendLine();
+            _ = commandsText.AppendLine(TelegramMessageFormatter.Bold("👤 Account Commands"));
+            _ = commandsText.AppendLine($"`/profile` - View your profile");
+            _ = commandsText.AppendLine($"`/subscribe` - View subscription plans");
+            _ = commandsText.AppendLine($"`/settings` - Configure your preferences");
+            _ = commandsText.AppendLine();
 
             // Support Commands
-            commandsText.AppendLine(TelegramMessageFormatter.Bold("💬 Support Commands"));
-            commandsText.AppendLine($"`/contact` - Contact support");
-            commandsText.AppendLine($"`/feedback` - Send feedback");
-            commandsText.AppendLine($"`/faq` - View frequently asked questions");
-            commandsText.AppendLine();
+            _ = commandsText.AppendLine(TelegramMessageFormatter.Bold("💬 Support Commands"));
+            _ = commandsText.AppendLine($"`/contact` - Contact support");
+            _ = commandsText.AppendLine($"`/feedback` - Send feedback");
+            _ = commandsText.AppendLine($"`/faq` - View frequently asked questions");
+            _ = commandsText.AppendLine();
 
             // Footer
-            commandsText.AppendLine(TelegramMessageFormatter.Italic("Tip: Use /help for detailed information about each command"));
+            _ = commandsText.AppendLine(TelegramMessageFormatter.Italic("Tip: Use /help for detailed information about each command"));
 
             // Create inline keyboard for quick access to main features
             var keyboard = MarkupBuilder.CreateInlineKeyboard(

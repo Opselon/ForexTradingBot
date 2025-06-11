@@ -3,16 +3,11 @@
 // -----------------
 using Application.DTOs.CoinGecko;
 using Application.DTOs.Fmp;
-using Application.Features.CoinGecko.Interfaces;
+using Application.Features.Crypto.Interfaces;
 using Application.Features.Fmp.Interfaces;
 using Microsoft.Extensions.Logging;
-using System;
-using System.Collections.Generic;
 using System.Globalization;
-using System.Linq;
 using System.Text;
-using System.Threading;
-using System.Threading.Tasks;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
@@ -20,9 +15,9 @@ using TelegramPanel.Application.CommandHandlers.MainMenu;
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Formatters;
 using TelegramPanel.Infrastructure;
-using TelegramPanel.Infrastructure.Helpers;
+using TelegramPanel.Infrastructure.Helper;
 
-namespace TelegramPanel.Application.CommandHandlers.Features.Crypto
+namespace TelegramPanel.Application.CommandHandlers.Features.CoinGecko
 {
     public class CryptoCallbackHandler : ITelegramCallbackQueryHandler
     {
@@ -54,12 +49,18 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Crypto
             _fmpService = fmpService;
         }
 
-        public bool CanHandle(Update update) => update.CallbackQuery?.Data?.StartsWith(CallbackPrefix) == true;
+        public bool CanHandle(Update update)
+        {
+            return update.CallbackQuery?.Data?.StartsWith(CallbackPrefix) == true;
+        }
 
         public async Task HandleAsync(Update update, CancellationToken cancellationToken)
         {
             var callbackQuery = update.CallbackQuery;
-            if (callbackQuery?.Message == null || callbackQuery.Data == null) return;
+            if (callbackQuery?.Message == null || callbackQuery.Data == null)
+            {
+                return;
+            }
 
             try
             {
@@ -148,33 +149,33 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Crypto
             };
             if (page > 1)
             {
-                errorKeyboardRows.Add(new List<InlineKeyboardButton> { InlineKeyboardButton.WithCallbackData("⬅️ Previous Page", $"{CallbackPrefix}_{ListAction}_{page - 1}") });
+                errorKeyboardRows.Add([InlineKeyboardButton.WithCallbackData("⬅️ Previous Page", $"{CallbackPrefix}_{ListAction}_{page - 1}")]);
             }
-            errorKeyboardRows.Add(new List<InlineKeyboardButton> { InlineKeyboardButton.WithCallbackData("🏠 Main Menu", MenuCallbackQueryHandler.BackToMainMenuGeneral) });
+            errorKeyboardRows.Add([InlineKeyboardButton.WithCallbackData("🏠 Main Menu", MenuCallbackQueryHandler.BackToMainMenuGeneral)]);
             await _messageSender.EditMessageTextAsync(chatId, messageId, errorText, replyMarkup: new InlineKeyboardMarkup(errorKeyboardRows), cancellationToken: cancellationToken);
         }
 
         private async Task DisplayFmpList(long chatId, int messageId, List<FmpQuoteDto> coins)
         {
             var sb = new StringBuilder();
-            sb.AppendLine("🪙 *Crypto Markets Dashboard* `(Source: FMP)`");
-            sb.AppendLine("`----------------------------------`");
+            _ = sb.AppendLine("🪙 *Crypto Markets Dashboard* `(Source: FMP)`");
+            _ = sb.AppendLine("`----------------------------------`");
 
             var culture = CultureInfo.InvariantCulture;
 
             foreach (var coin in coins)
             {
                 string emoji = CoinEmojis.TryGetValue(coin.Symbol.Replace("USD", "").ToLower(), out var e) ? e : "🔸";
-                string priceFormat = (coin.Price.HasValue && coin.Price < 0.01m && coin.Price > 0) ? "N8" : "N4";
+                string priceFormat = coin.Price.HasValue && coin.Price < 0.01m && coin.Price > 0 ? "N8" : "N4";
                 string price = coin.Price?.ToString(priceFormat, culture) ?? "N/A";
                 string changeEmoji = (coin.ChangesPercentage ?? 0) >= 0 ? "📈" : "📉";
                 string change = $"{coin.ChangesPercentage:F2}%";
 
-                sb.AppendLine($"{emoji} *{TelegramMessageFormatter.EscapeMarkdownV2(coin.Name ?? coin.Symbol)}* `({coin.Symbol.ToUpper()})`");
-                sb.AppendLine($"  Price: `{price}` USD {changeEmoji} `{change}`");
-                sb.AppendLine();
+                _ = sb.AppendLine($"{emoji} *{TelegramMessageFormatter.EscapeMarkdownV2(coin.Name ?? coin.Symbol)}* `({coin.Symbol.ToUpper()})`");
+                _ = sb.AppendLine($"  Price: `{price}` USD {changeEmoji} `{change}`");
+                _ = sb.AppendLine();
             }
-            sb.AppendLine("Details view is available from our primary data source.");
+            _ = sb.AppendLine("Details view is available from our primary data source.");
 
             var keyboard = new InlineKeyboardMarkup(new[]
             {
@@ -188,24 +189,24 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Crypto
         private async Task DisplayCoinGeckoList(long chatId, int messageId, int page, List<CoinMarketDto> coins)
         {
             var sb = new StringBuilder();
-            sb.AppendLine($"🪙 *Crypto Markets Dashboard* `(Page {page})`");
-            sb.AppendLine("`----------------------------------`");
+            _ = sb.AppendLine($"🪙 *Crypto Markets Dashboard* `(Page {page})`");
+            _ = sb.AppendLine("`----------------------------------`");
 
             var culture = CultureInfo.InvariantCulture;
 
             foreach (var coin in coins)
             {
                 string emoji = CoinEmojis.TryGetValue(coin.Symbol.ToLower(), out var e) ? e : "🔹";
-                string priceFormat = (coin.CurrentPrice.HasValue && coin.CurrentPrice < 0.01 && coin.CurrentPrice > 0) ? "N8" : "N4";
+                string priceFormat = coin.CurrentPrice.HasValue && coin.CurrentPrice < 0.01 && coin.CurrentPrice > 0 ? "N8" : "N4";
                 string price = coin.CurrentPrice?.ToString(priceFormat, culture) ?? "N/A";
                 string changeEmoji = (coin.PriceChangePercentage24h ?? 0) >= 0 ? "📈" : "📉";
                 string change = $"{coin.PriceChangePercentage24h:F2}%";
 
-                sb.AppendLine($"{emoji} *{TelegramMessageFormatter.EscapeMarkdownV2(coin.Name)}* `({coin.Symbol.ToUpper()})`");
-                sb.AppendLine($"  Price: `{price}` USD {changeEmoji} `{change}`");
-                sb.AppendLine();
+                _ = sb.AppendLine($"{emoji} *{TelegramMessageFormatter.EscapeMarkdownV2(coin.Name)}* `({coin.Symbol.ToUpper()})`");
+                _ = sb.AppendLine($"  Price: `{price}` USD {changeEmoji} `{change}`");
+                _ = sb.AppendLine();
             }
-            sb.AppendLine("Select a coin below for full details.");
+            _ = sb.AppendLine("Select a coin below for full details.");
 
             var keyboardRows = new List<List<InlineKeyboardButton>>();
             var buttonRow = new List<InlineKeyboardButton>();
@@ -215,17 +216,31 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Crypto
                 if (buttonRow.Count == 5)
                 {
                     keyboardRows.Add(buttonRow);
-                    buttonRow = new List<InlineKeyboardButton>();
+                    buttonRow = [];
                 }
             }
-            if (buttonRow.Any()) keyboardRows.Add(buttonRow);
+            if (buttonRow.Any())
+            {
+                keyboardRows.Add(buttonRow);
+            }
 
             var paginationRow = new List<InlineKeyboardButton>();
-            if (page > 1) paginationRow.Add(InlineKeyboardButton.WithCallbackData("⬅️ Prev", $"{CallbackPrefix}_{ListAction}_{page - 1}"));
-            if (coins.Count == CoinsPerPage) paginationRow.Add(InlineKeyboardButton.WithCallbackData("Next ➡️", $"{CallbackPrefix}_{ListAction}_{page + 1}"));
-            if (paginationRow.Any()) keyboardRows.Add(paginationRow);
+            if (page > 1)
+            {
+                paginationRow.Add(InlineKeyboardButton.WithCallbackData("⬅️ Prev", $"{CallbackPrefix}_{ListAction}_{page - 1}"));
+            }
 
-            keyboardRows.Add(new List<InlineKeyboardButton> { InlineKeyboardButton.WithCallbackData("🏠 Main Menu", MenuCallbackQueryHandler.BackToMainMenuGeneral) });
+            if (coins.Count == CoinsPerPage)
+            {
+                paginationRow.Add(InlineKeyboardButton.WithCallbackData("Next ➡️", $"{CallbackPrefix}_{ListAction}_{page + 1}"));
+            }
+
+            if (paginationRow.Any())
+            {
+                keyboardRows.Add(paginationRow);
+            }
+
+            keyboardRows.Add([InlineKeyboardButton.WithCallbackData("🏠 Main Menu", MenuCallbackQueryHandler.BackToMainMenuGeneral)]);
 
             await _messageSender.EditMessageTextAsync(chatId, messageId, sb.ToString(), ParseMode.MarkdownV2, new InlineKeyboardMarkup(keyboardRows));
         }

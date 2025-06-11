@@ -9,16 +9,16 @@ namespace Infrastructure.Persistence.Configurations
     {
         public void Configure(EntityTypeBuilder<SignalCategory> builder)
         {
-            builder.ToTable("SignalCategories");
-            builder.HasKey(sc => sc.Id);
+            _ = builder.ToTable("SignalCategories");
+            _ = builder.HasKey(sc => sc.Id);
 
-            builder.Property(sc => sc.Name)
+            _ = builder.Property(sc => sc.Name)
                 .IsRequired()
                 .HasMaxLength(100);
-            builder.HasIndex(sc => sc.Name)
+            _ = builder.HasIndex(sc => sc.Name)
                 .IsUnique(); // Category names should be unique
 
-            builder.Property(sc => sc.Description).HasMaxLength(500); // Optional description
+            _ = builder.Property(sc => sc.Description).HasMaxLength(500); // Optional description
 
             // Relationship: SignalCategory 1-* Signals (Signal has the FK to Category)
             // This side of the relationship is typically configured by the 'Signal' entity's configuration

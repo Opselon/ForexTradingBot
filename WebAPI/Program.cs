@@ -4,16 +4,17 @@
 // Using های استاندارد .NET و NuGet Packages
 // Using های مربوط به پروژه‌های شما
 using Application;                          // برای متد توسعه‌دهنده AddApplicationServices
+using Application.Common.Interfaces;
 using Application.Features.Forwarding.Extensions;
-using Application.Interfaces; // برای IRssFetchingCoordinatorService (جهت زمان‌بندی Job در Hangfire)
 // using Application.Interfaces;          // معمولاً اینترفیس‌های Application مستقیماً اینجا نیاز نیستند مگر برای موارد خاص
 // using Application.Services;            // و نه پیاده‌سازی‌های آن
 using BackgroundTasks;                    // برای متد توسعه‌دهنده AddBackgroundTasksServices (اگر تعریف کرده‌اید)
 using Hangfire;                             // برای پیکربندی‌های Hangfire مانند CompatibilityLevel, RecurringJob, Cron
 using Hangfire.Dashboard;                   // برای DashboardOptions, IDashboardAuthorizationFilter
 using Hangfire.SqlServer;
+using Infrastructure.Data;
+
 // using Hangfire.SqlServer;              // اگر از SQL Server برای Hangfire استفاده می‌کنید
-using Infrastructure;                     // برای متد توسعه‌دهنده AddInfrastructureServices
 // using WebAPI.Filters; //  Namespace برای HangfireNoAuthFilter (اگر در این مسیر است و استفاده می‌کنید)
 using Infrastructure.Features.Forwarding.Extensions;
 using Infrastructure.Services;
@@ -23,7 +24,7 @@ using Shared.Helpers;
 using Shared.Maintenance;
 using Shared.Settings;                    // برای CryptoPaySettings (از پروژه Shared)
 using TelegramPanel.Extensions;
-using TelegramPanel.Infrastructure;
+using TelegramPanel.Infrastructure.Services;
 using WebAPI.Extensions;
 #endregion
 
@@ -43,12 +44,12 @@ try
     Log.Information("--------------------------------------------------");
 
     var builder = WebApplication.CreateBuilder(args);
-    builder.WebHost.UseKestrel();
+    _ = builder.WebHost.UseKestrel();
 
     #region Configure Serilog Logging
     // ------------------- ۱. پیکربندی Serilog با تنظیمات از appsettings.json -------------------
     // این بخش Serilog را به عنوان سیستم لاگینگ اصلی برنامه تنظیم می‌کند.
-    builder.Host.UseSerilog((context, services, loggerConfiguration) => loggerConfiguration
+    _ = builder.Host.UseSerilog((context, services, loggerConfiguration) => loggerConfiguration
        .ReadFrom.Configuration(context.Configuration)
        .ReadFrom.Services(services)
        .Enrich.FromLogContext()
@@ -69,23 +70,23 @@ try
 
     #region Add Core ASP.NET Core Services
 
-    builder.Services.AddWindowsService(options =>
+    _ = builder.Services.AddWindowsService(options =>
     {
         options.ServiceName = "ForexTradingBotAPI";
     });
 
     // ------------------- ۲. اضافه کردن سرویس‌های پایه ASP.NET Core -------------------
     // فعال کردن پشتیبانی از کنترلرهای API
-    builder.Services.AddControllers();
+    _ = builder.Services.AddControllers();
     // فعال کردن API Explorer برای تولید مستندات Swagger/OpenAPI
-    builder.Services.AddEndpointsApiExplorer();
+    _ = builder.Services.AddEndpointsApiExplorer();
 
     // Add CORS
-    builder.Services.AddCors(options =>
+    _ = builder.Services.AddCors(options =>
     {
         options.AddDefaultPolicy(builder =>
         {
-            builder.WithOrigins("http://localhost:3000", "http://localhost:4200")
+            _ = builder.WithOrigins("http://localhost:3000", "http://localhost:4200")
                    .AllowAnyMethod()
                    .AllowAnyHeader()
                    .AllowCredentials();
@@ -93,7 +94,7 @@ try
     });
     var environment = builder.Environment;
     // پیکربندی Swagger/OpenAPI برای مستندسازی API
-    builder.Services.AddSwaggerGen(options =>
+    _ = builder.Services.AddSwaggerGen(options =>
     {
         options.SwaggerDoc("v1", new OpenApiInfo
         {
@@ -155,16 +156,16 @@ try
     // ------------------- ۳. پیکربندی Options (خواندن تنظیمات از appsettings.json) -------------------
     // مپ کردن بخش "TelegramSettings" از appsettings.json به کلاس Domain.Settings.TelegramSettings
     // این کلاس می‌تواند شامل تنظیمات عمومی تلگرام مانند AdminUserId باشد.
-    builder.Services.Configure<Domain.Settings.TelegramSettings>(builder.Configuration.GetSection("TelegramSettings"));
+    _ = builder.Services.Configure<Domain.Settings.TelegramSettings>(builder.Configuration.GetSection("TelegramSettings"));
     // Configure TelegramUserApiSettings
-    builder.Services.Configure<Infrastructure.Settings.TelegramUserApiSettings>(builder.Configuration.GetSection("TelegramUserApi"));
-    builder.Services.AddSingleton<Application.Common.Interfaces.ITelegramUserApiClient, Infrastructure.Services.TelegramUserApiClient>();
-    builder.Services.AddHostedService<Infrastructure.Services.TelegramUserApiInitializationService>();
+    _ = builder.Services.Configure<Infrastructure.Settings.TelegramUserApiSettings>(builder.Configuration.GetSection("TelegramUserApi"));
+    _ = builder.Services.AddSingleton<Application.Common.Interfaces.ITelegramUserApiClient, Infrastructure.Services.TelegramUserApiClient>();
+    _ = builder.Services.AddHostedService<Infrastructure.Services.TelegramUserApiInitializationService>();
     // مپ کردن بخش CryptoPaySettings.SectionName (که "CryptoPay" است) از appsettings.json به کلاس Shared.Settings.CryptoPaySettings
-    builder.Services.Configure<CryptoPaySettings>(builder.Configuration.GetSection(CryptoPaySettings.SectionName));
+    _ = builder.Services.Configure<CryptoPaySettings>(builder.Configuration.GetSection(CryptoPaySettings.SectionName));
 
 
-    builder.Services.AddMemoryCache();
+    _ = builder.Services.AddMemoryCache();
 
 
     // TelegramPanelSettings در متد AddTelegramPanelServices پیکربندی می‌شود.
@@ -178,28 +179,28 @@ try
     // این متدها باید در فایل‌های DependencyInjection.cs (یا ServiceCollectionExtensions.cs) هر لایه تعریف شده باشند.
     // ترتیب فراخوانی: ابتدا لایه‌های پایه (Application, Infrastructure)، سپس لایه‌های Presentation یا خاص (TelegramPanel, BackgroundTasks).
 
-    builder.Services.AddApplicationServices();
+    _ = builder.Services.AddApplicationServices();
     Log.Information("Application services registered.");
 
-    builder.Services.AddInfrastructureServices(builder.Configuration);
+    _ = builder.Services.AddInfrastructureServices(builder.Configuration);
     Log.Information("Infrastructure services registered.");
 
-    builder.Services.AddForwardingInfrastructure();
+    _ = builder.Services.AddForwardingInfrastructure();
     Log.Information("Forwarding infrastructure services registered.");
 
-    builder.Services.AddTelegramPanelServices(builder.Configuration);
+    _ = builder.Services.AddTelegramPanelServices(builder.Configuration);
     Log.Information("Telegram panel services registered.");
 
-    builder.Services.AddBackgroundTasksServices();
+    _ = builder.Services.AddBackgroundTasksServices();
     Log.Information("Background tasks services registered.");
 
-    builder.Services.AddForwardingServices();
+    _ = builder.Services.AddForwardingServices();
     Log.Information("Forwarding services registered.");
 
-    builder.Services.AddForwardingOrchestratorServices();
+    _ = builder.Services.AddForwardingOrchestratorServices();
     Log.Information("Forwarding orchestrator services registered.");
 
-    builder.Services.AddWindowsService();
+    _ = builder.Services.AddWindowsService();
     try
     {
         SqlServiceManager.EnsureSqlServicesRunning();
@@ -222,7 +223,7 @@ try
 
 
 
-    builder.Services.AddHangfire(config => config
+    _ = builder.Services.AddHangfire(config => config
         .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
         .UseSimpleAssemblyNameTypeSerializer()
         .UseRecommendedSerializerSettings()
@@ -238,20 +239,20 @@ try
 
 
 
-    builder.Services.AddHangfireServer();
+    _ = builder.Services.AddHangfireServer();
     Log.Information("Hangfire services (with SQL Server for production) added.");
 
-    builder.Services.AddHangfireCleaner();
+    _ = builder.Services.AddHangfireCleaner();
 
     Log.Information("Hangfire cleaner service added.");
 
     Log.Information("Performing final manual service registrations...");
 
     // FIX FOR: Unable to resolve 'IBotCommandSetupService'
-    builder.Services.AddTransient<IBotCommandSetupService, BotCommandSetupService>();
+    _ = builder.Services.AddTransient<IBotCommandSetupService, BotCommandSetupService>();
 
     Log.Information("Final manual service registrations complete.");
-    builder.Services.Configure<List<Infrastructure.Settings.ForwardingRule>>( // <<< Fully qualified
+    _ = builder.Services.Configure<List<Infrastructure.Settings.ForwardingRule>>( // <<< Fully qualified
     builder.Configuration.GetSection("ForwardingRules"));
 
 
@@ -265,7 +266,7 @@ try
     #region Queue Startup Maintenance Jobs to Hangfire
 
     // We register a callback that runs ONCE, right after the application has fully started.
-    app.Lifetime.ApplicationStarted.Register(() =>
+    _ = app.Lifetime.ApplicationStarted.Register(() =>
     {
         Log.Information("Application has fully started. Now enqueuing background maintenance jobs.");
         try
@@ -283,10 +284,10 @@ try
 
             Log.Information("Enqueuing Hangfire core cleanup job to run in the background...");
             // This job will run once, as soon as a Hangfire server is available.
-            backgroundJobClient.Enqueue<IHangfireCleaner>(cleaner => cleaner.PurgeCompletedAndFailedJobs(connectionString));
+            _ = backgroundJobClient.Enqueue<IHangfireCleaner>(cleaner => cleaner.PurgeCompletedAndFailedJobs(connectionString));
 
             Log.Information("Enqueuing duplicate NewsItem cleanup job to run in the background...");
-            backgroundJobClient.Enqueue<IHangfireCleaner>(cleaner => cleaner.PurgeDuplicateNewsItems(connectionString));
+            _ = backgroundJobClient.Enqueue<IHangfireCleaner>(cleaner => cleaner.PurgeDuplicateNewsItems(connectionString));
 
             Log.Information("✅ All startup maintenance jobs have been successfully enqueued. They will run asynchronously.");
         }
@@ -310,15 +311,15 @@ try
 
     //  فعال کردن Request Body Buffering. این برای خواندن بدنه درخواست چندین بار (مثلاً در Middleware ها یا کنترلرها) لازم است.
     //  مخصوصاً برای CryptoPayWebhookController جهت اعتبارسنجی امضا.
-    app.Use(async (context, next) =>
+    _ = app.Use(async (context, next) =>
     {
         context.Request.EnableBuffering();
         await next.Invoke();
     });
 
     // Enable Swagger in all environments
-    app.UseSwagger();
-    app.UseSwaggerUI(c =>
+    _ = app.UseSwagger();
+    _ = app.UseSwaggerUI(c =>
     {
         c.SwaggerEndpoint("/swagger/v1/swagger.json", "Forex Signal Bot API V1");
         c.RoutePrefix = string.Empty; // This will make Swagger UI the root page
@@ -330,22 +331,22 @@ try
     {
 
         programLogger.LogInformation("Development environment detected. Enabling Developer Exception Page.");
-        app.UseDeveloperExceptionPage(); //  نمایش صفحه خطای با جزئیات برای توسعه‌دهندگان
+        _ = app.UseDeveloperExceptionPage(); //  نمایش صفحه خطای با جزئیات برای توسعه‌دهندگان
     }
     else //  پیکربندی‌های مختص محیط Production
     {
         programLogger.LogInformation("Production environment detected. Enabling HSTS.");
         // app.UseExceptionHandler("/Error"); //  می‌توانید یک صفحه خطای سفارشی برای کاربران نهایی تعریف کنید
-        app.UseHsts(); //  افزودن هدر HTTP Strict Transport Security برای امنیت بیشتر (اجبار استفاده از HTTPS)
+        _ = app.UseHsts(); //  افزودن هدر HTTP Strict Transport Security برای امنیت بیشتر (اجبار استفاده از HTTPS)
     }
 
-    app.UseHttpsRedirection(); //  ریدایرکت خودکار تمام درخواست‌های HTTP به HTTPS
+    _ = app.UseHttpsRedirection(); //  ریدایرکت خودکار تمام درخواست‌های HTTP به HTTPS
 
-    app.UseSerilogRequestLogging(); //  لاگ کردن تمام درخواست‌های HTTP ورودی با جزئیات (توسط Serilog)
+    _ = app.UseSerilogRequestLogging(); //  لاگ کردن تمام درخواست‌های HTTP ورودی با جزئیات (توسط Serilog)
 
-    app.UseRouting();
-    app.UseAuthorization();
-    app.MapHangfireDashboard();
+    _ = app.UseRouting();
+    _ = app.UseAuthorization();
+    _ = app.MapHangfireDashboard();
     programLogger.LogInformation("HTTP request pipeline configured.");
     #endregion
 
@@ -360,13 +361,13 @@ try
         Authorization = new[] { new LocalRequestsOnlyAuthorizationFilter() }
     };
 
-    app.UseHangfireDashboard("/hangfire", hangfireDashboardOptions);
+    _ = app.UseHangfireDashboard("/hangfire", hangfireDashboardOptions);
     programLogger.LogInformation("Hangfire Dashboard configured at /hangfire (For development, open to local requests. Secure for production!).");
 
     // ------------------- ۸. زمان‌بندی Job های تکرارشونده Hangfire -------------------
     //  این Job ها پس از شروع کامل برنامه، توسط سرور Hangfire به طور خودکار اجرا خواهند شد.
     var appLifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
-    appLifetime.ApplicationStarted.Register(() => // اجرا پس از اینکه برنامه کامل شروع شد
+    _ = appLifetime.ApplicationStarted.Register(() => // اجرا پس از اینکه برنامه کامل شروع شد
     {
         // آیا این لاگ را در کنسول می‌بینید؟
         programLogger.LogInformation("Application fully started. Scheduling/Updating Hangfire recurring jobs...");
@@ -396,7 +397,7 @@ try
 
     #region Map Controllers & Run Application
     // ------------------- مپ کردن کنترلرها و اجرای برنامه -------------------
-    app.MapControllers(); //  مسیردهی درخواست‌ها به Action های کنترلرها
+    _ = app.MapControllers(); //  مسیردهی درخواست‌ها به Action های کنترلرها
     programLogger.LogInformation("Application setup complete. Starting web host now...");
 
     // Get the application URL from configuration or use default

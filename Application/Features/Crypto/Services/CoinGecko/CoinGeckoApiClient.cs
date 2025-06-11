@@ -1,14 +1,14 @@
 ﻿// -----------------
 // CORRECTED FILE
 // -----------------
-using Application.Common.Interfaces;
+using Application.Common.Interfaces.CoinGeckoApiClient;
 using Application.DTOs.CoinGecko;
 using Microsoft.Extensions.Logging;
 using Shared.Results;
 using System.Net.Http.Json;
 using System.Text.Json;
 
-namespace Infrastructure.Services.CoinGecko
+namespace Application.Features.Crypto.Services.CoinGecko
 {
     /// <summary>
     /// Concrete implementation of ICoinGeckoApiClient using HttpClient.
@@ -52,7 +52,7 @@ namespace Infrastructure.Services.CoinGecko
                     var trendingCoins = trendingResults?
                         .Select(r => r.Item)
                         .Where(item => item != null)
-                        .ToList() ?? new List<TrendingCoinDto>();
+                        .ToList() ?? [];
 
                     return Result<List<TrendingCoinDto>>.Success(trendingCoins!);
                 }

@@ -13,13 +13,13 @@ using Microsoft.Extensions.Logging; // For logging
 using Polly; // For resilience policies
 using Polly.Retry; // For retry policies
 using Polly.Timeout; // For custom RepositoryException
-using Shared.Exceptions;
+using Shared.Extensions;
 using System.Data; // Common Ado.Net interfaces like IDbConnection, IDbTransaction
 using System.Data.Common; // For DbException (base class for database exceptions)
 using System.Linq.Expressions; // Still included, but will throw NotSupportedException
 #endregion
 
-namespace Infrastructure.Persistence.Repositories
+namespace Infrastructure.Repositories
 {
     /// <summary>
     /// Implements the INewsItemRepository for data operations related to NewsItem entities
@@ -135,7 +135,7 @@ namespace Infrastructure.Persistence.Repositories
             _connectionString = configuration.GetConnectionString("DefaultConnection")
                                 ?? throw new ArgumentNullException("DefaultConnection", "DefaultConnection string not found.");
 
-            _timeoutPolicy = Policy.TimeoutAsync(TimeSpan.FromMinutes(5), Polly.Timeout.TimeoutStrategy.Pessimistic);
+            _timeoutPolicy = Policy.TimeoutAsync(TimeSpan.FromMinutes(5), TimeoutStrategy.Pessimistic);
             // Polly configuration for transient errors (e.g., network issues, temporary DB unavailability)
             // Excludes primary key violation errors (e.g., trying to add a user with an existing ID/email/telegramId)
             _retryPolicy = Policy
@@ -224,9 +224,9 @@ namespace Infrastructure.Persistence.Repositories
                             if (!userMap.TryGetValue(userDto.Id, out var user))
                             {
                                 user = userDto.ToDomainEntity();
-                                user.Subscriptions = new List<Subscription>();
-                                user.Preferences = new List<UserSignalPreference>();
-                                user.Transactions = new List<Transaction>(); // Transactions are not included in this query
+                                user.Subscriptions = [];
+                                user.Preferences = [];
+                                user.Transactions = []; // Transactions are not included in this query
                                 userMap.Add(user.Id, user);
                             }
 
@@ -236,10 +236,7 @@ namespace Infrastructure.Persistence.Repositories
                                 user.TokenWallet = tokenWalletDto.ToDomainEntity();
                             }
                             // Ensure every user has a TokenWallet instance (even if default/empty)
-                            if (user.TokenWallet == null)
-                            {
-                                user.TokenWallet = TokenWallet.Create(user.Id); // Default wallet
-                            }
+                            user.TokenWallet ??= TokenWallet.Create(user.Id); // Default wallet
 
 
                             // Add Subscription to the user's collection if not already added
@@ -302,13 +299,16 @@ namespace Infrastructure.Persistence.Repositories
                 using var multi = await connection.QueryMultipleAsync(sql, new { Id = id });
 
                 var userDto = await multi.ReadFirstOrDefaultAsync<UserDbDto>();
-                if (userDto == null) return null;
+                if (userDto == null)
+                {
+                    return null;
+                }
 
                 var user = userDto.ToDomainEntity();
                 user.TokenWallet = (await multi.ReadFirstOrDefaultAsync<TokenWalletDbDto>())?.ToDomainEntity() ?? TokenWallet.Create(user.Id);
                 user.Subscriptions = (await multi.ReadAsync<SubscriptionDbDto>()).Select(s => s.ToDomainEntity()).ToList();
                 user.Preferences = (await multi.ReadAsync<UserSignalPreferenceDbDto>()).Select(usp => usp.ToDomainEntity()).ToList();
-                user.Transactions = new List<Transaction>(); // Not fetched by default in this query
+                user.Transactions = []; // Not fetched by default in this query
 
                 return user;
             });
@@ -397,7 +397,7 @@ namespace Infrastructure.Persistence.Repositories
                     var preferencesDto = await multi.ReadAsync<UserSignalPreferenceDbDto>();
                     user.Preferences = preferencesDto.Select(usp => usp.ToDomainEntity()).ToList();
 
-                    user.Transactions = new List<Transaction>();
+                    user.Transactions = [];
 
                     _logger.LogDebug("Successfully fetched user {UserId} from TelegramID {TelegramId}.", user.Id, telegramId);
                     return user;
@@ -405,7 +405,7 @@ namespace Infrastructure.Persistence.Repositories
                 }, cancellationToken); // Pass the original cancellationToken here
             }
             // --- CATCHING THE TIMEOUT EXCEPTION ---
-            catch (Polly.Timeout.TimeoutRejectedException ex)
+            catch (TimeoutRejectedException ex)
             {
                 _logger.LogError(ex, "UserRepository: Operation timed out after 5 minutes while fetching user by TelegramID {TelegramId}.", telegramId);
                 // Rethrow as a more specific domain exception
@@ -436,7 +436,10 @@ namespace Infrastructure.Persistence.Repositories
                 // Fetch user ID first
                 var userIdQuery = "SELECT Id FROM Users WHERE LOWER(Email) = LOWER(@Email);";
                 var userId = await connection.ExecuteScalarAsync<Guid?>(userIdQuery, new { Email = lowerEmail });
-                if (!userId.HasValue) return null;
+                if (!userId.HasValue)
+                {
+                    return null;
+                }
 
                 var sql = @"
                     SELECT Id, Username, TelegramId, Email, Level, CreatedAt, UpdatedAt, EnableGeneralNotifications, EnableVipSignalNotifications, EnableRssNewsNotifications, PreferredLanguage
@@ -454,13 +457,16 @@ namespace Infrastructure.Persistence.Repositories
                 using var multi = await connection.QueryMultipleAsync(sql, new { UserId = userId.Value, Email = lowerEmail }); // Pass email for the main user select, UserId for related
 
                 var userDto = await multi.ReadFirstOrDefaultAsync<UserDbDto>();
-                if (userDto == null) return null;
+                if (userDto == null)
+                {
+                    return null;
+                }
 
                 var user = userDto.ToDomainEntity();
                 user.TokenWallet = (await multi.ReadFirstOrDefaultAsync<TokenWalletDbDto>())?.ToDomainEntity() ?? TokenWallet.Create(user.Id);
                 user.Subscriptions = (await multi.ReadAsync<SubscriptionDbDto>()).Select(s => s.ToDomainEntity()).ToList();
                 user.Preferences = (await multi.ReadAsync<UserSignalPreferenceDbDto>()).Select(usp => usp.ToDomainEntity()).ToList();
-                user.Transactions = new List<Transaction>(); // Not fetched
+                user.Transactions = []; // Not fetched
 
                 return user;
             });
@@ -494,7 +500,7 @@ namespace Infrastructure.Persistence.Repositories
                         user.TokenWallet = wallets.FirstOrDefault(tw => tw.UserId == user.Id)?.ToDomainEntity() ?? TokenWallet.Create(user.Id);
                         user.Subscriptions = subscriptions.Where(s => s.UserId == user.Id).Select(s => s.ToDomainEntity()).ToList();
                         user.Preferences = preferences.Where(usp => usp.UserId == user.Id).Select(usp => usp.ToDomainEntity()).ToList();
-                        user.Transactions = new List<Transaction>(); // Not fetched in this method
+                        user.Transactions = []; // Not fetched in this method
                     }
                 }
 
@@ -552,7 +558,7 @@ namespace Infrastructure.Persistence.Repositories
                             user.EnableRssNewsNotifications,
                             user.PreferredLanguage
                         };
-                        await connection.ExecuteAsync(@"
+                        _ = await connection.ExecuteAsync(@"
                             INSERT INTO Users (Id, Username, TelegramId, Email, Level, CreatedAt, UpdatedAt, EnableGeneralNotifications, EnableVipSignalNotifications, EnableRssNewsNotifications, PreferredLanguage)
                             VALUES (@Id, @Username, @TelegramId, @Email, @Level, @CreatedAt, @UpdatedAt, @EnableGeneralNotifications, @EnableVipSignalNotifications, @EnableRssNewsNotifications, @PreferredLanguage);",
                             userParams, transaction: transaction);
@@ -570,7 +576,7 @@ namespace Infrastructure.Persistence.Repositories
                                 user.TokenWallet.CreatedAt,
                                 user.TokenWallet.UpdatedAt
                             };
-                            await connection.ExecuteAsync(@"
+                            _ = await connection.ExecuteAsync(@"
                                 INSERT INTO TokenWallets (Id, UserId, Balance, IsActive, CreatedAt, UpdatedAt)
                                 VALUES (@Id, @UserId, @Balance, @IsActive, @CreatedAt, @UpdatedAt);",
                                 walletParams, transaction: transaction);
@@ -673,7 +679,7 @@ namespace Infrastructure.Persistence.Repositories
                             };
 
                             // SQL Server UPSERT (MERGE is an option, but IF EXISTS / INSERT-UPDATE is simpler for this case)
-                            await connection.ExecuteAsync(@"
+                            _ = await connection.ExecuteAsync(@"
                                 IF EXISTS (SELECT 1 FROM TokenWallets WHERE UserId = @UserId)
                                     UPDATE TokenWallets SET Balance = @Balance, IsActive = @IsActive, UpdatedAt = @UpdatedAt WHERE UserId = @UserId;
                                 ELSE
@@ -744,7 +750,11 @@ namespace Infrastructure.Persistence.Repositories
         /// <inheritdoc />
         public async Task<bool> ExistsByEmailAsync(string email, CancellationToken cancellationToken = default)
         {
-            if (string.IsNullOrWhiteSpace(email)) return false;
+            if (string.IsNullOrWhiteSpace(email))
+            {
+                return false;
+            }
+
             string lowerEmail = email.ToLowerInvariant();
             _logger.LogTrace("UserRepository: Checking existence by Email (case-insensitive): {Email}.", lowerEmail);
             try
@@ -767,7 +777,11 @@ namespace Infrastructure.Persistence.Repositories
         /// <inheritdoc />
         public async Task<bool> ExistsByTelegramIdAsync(string telegramId, CancellationToken cancellationToken = default)
         {
-            if (string.IsNullOrWhiteSpace(telegramId)) return false;
+            if (string.IsNullOrWhiteSpace(telegramId))
+            {
+                return false;
+            }
+
             _logger.LogTrace("UserRepository: Checking existence by TelegramID: {TelegramId}.", telegramId);
             try
             {

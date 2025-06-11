@@ -13,7 +13,7 @@ namespace BackgroundTasks
             //  می‌تواند Transient یا Singleton باشد. اما چون به ITelegramMessageSender (Scoped) و IUserService (Scoped) وابسته است،
             //  باید Scoped باشد و Hangfire باید برای هر Job یک Scope ایجاد کند.
             //  (Hangfire به طور پیش‌فرض این کار را با استفاده از IServiceScopeFactory انجام می‌دهد).
-            services.AddScoped<INotificationSendingService, NotificationSendingService>();
+            _ = services.AddScoped<INotificationSendingService, NotificationSendingService>();
 
             return services;
         }

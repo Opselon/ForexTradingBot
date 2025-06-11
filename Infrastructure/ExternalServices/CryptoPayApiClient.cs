@@ -26,7 +26,9 @@ namespace Infrastructure.ExternalServices
         {
             _settings = settingsOptions?.Value ?? throw new ArgumentNullException(nameof(settingsOptions), "CryptoPaySettings cannot be null.");
             if (string.IsNullOrWhiteSpace(_settings.ApiToken)) // ✅ بررسی null بودن
+            {
                 throw new ArgumentNullException(nameof(_settings.ApiToken), "CryptoPay API Token is not configured.");
+            }
 
             _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
             _httpClient.BaseAddress = new Uri(_settings.BaseUrl); // ✅ اطمینان از BaseUrl صحیح
@@ -171,11 +173,30 @@ namespace Infrastructure.ExternalServices
             if (request != null)
             {
                 var queryParams = new List<string>();
-                if (!string.IsNullOrWhiteSpace(request.Asset)) queryParams.Add($"asset={request.Asset}");
-                if (!string.IsNullOrWhiteSpace(request.InvoiceIds)) queryParams.Add($"invoice_ids={request.InvoiceIds}");
-                if (!string.IsNullOrWhiteSpace(request.Status)) queryParams.Add($"status={request.Status}");
-                if (request.Offset.HasValue) queryParams.Add($"offset={request.Offset.Value}");
-                if (request.Count.HasValue) queryParams.Add($"count={request.Count.Value}");
+                if (!string.IsNullOrWhiteSpace(request.Asset))
+                {
+                    queryParams.Add($"asset={request.Asset}");
+                }
+
+                if (!string.IsNullOrWhiteSpace(request.InvoiceIds))
+                {
+                    queryParams.Add($"invoice_ids={request.InvoiceIds}");
+                }
+
+                if (!string.IsNullOrWhiteSpace(request.Status))
+                {
+                    queryParams.Add($"status={request.Status}");
+                }
+
+                if (request.Offset.HasValue)
+                {
+                    queryParams.Add($"offset={request.Offset.Value}");
+                }
+
+                if (request.Count.HasValue)
+                {
+                    queryParams.Add($"count={request.Count.Value}");
+                }
 
                 if (queryParams.Any())
                 {

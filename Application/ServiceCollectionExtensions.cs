@@ -2,13 +2,12 @@
 // using های استاندارد .NET و NuGet Packages
 // using های مربوط به پروژه Application شما
 using Application.Common.Interfaces;       // برای اینترفیس‌های عمومی مانند IAppDbContext, INotificationService, و تمام اینترفیس‌های Repository
-using Application.Features.CoinGecko.Interfaces;
-using Application.Features.CoinGecko.Services;
+using Application.Features.Crypto.Interfaces;
 using Application.Features.Fmp.Interfaces;
 using Application.Features.Fmp.Services;
-using Application.Interface;                // ✅ Namespace اصلی برای پیاده‌سازی‌های سرویس (UserService, SignalService, و غیره)
 using Application.Interfaces;              // ✅ Namespace اصلی برای اینترفیس‌های سرویس (IUserService, ISignalService, و غیره)
 using Application.Services;
+using Application.Services.CoinGecko;
 using FluentValidation;                     // برای services.AddValidatorsFromAssembly()
 using Microsoft.Extensions.DependencyInjection; // برای IServiceCollection و متدهای توسعه‌دهنده DI
 using Microsoft.Extensions.Logging;         // برای ILogger (مثلاً در DummyNotificationService)
@@ -37,14 +36,14 @@ namespace Application // ✅ Namespace ریشه پروژه Application
             // Assembly.GetExecutingAssembly() باعث می‌شود AutoMapper تمام کلاس‌هایی را که از Profile ارث‌بری می‌کنند
             // در اسمبلی فعلی (Application) پیدا و پروفایل‌های مپینگ آن‌ها را رجیستر کند.
             // پیش‌نیاز: باید یک یا چند کلاس MappingProfile در Application/Common/Mappings/ داشته باشید.
-            services.AddAutoMapper(Assembly.GetExecutingAssembly());
+            _ = services.AddAutoMapper(Assembly.GetExecutingAssembly());
             // Comment: Registers AutoMapper profiles from the current assembly (Application layer).
 
             // ------------------- ۲. رجیستر کردن FluentValidation -------------------
             // FluentValidation برای اعتبارسنجی پیچیده‌تر و خواناتر آبجکت‌ها (معمولاً DTOs یا Commands/Queries) استفاده می‌شود.
             // این متد تمام کلاس‌هایی را که از AbstractValidator<T> ارث‌بری می‌کنند در اسمبلی فعلی پیدا و رجیستر می‌کند.
             // پیش‌نیاز: بسته NuGet "FluentValidation.DependencyInjectionExtensions" باید نصب شده باشد.
-            services.AddValidatorsFromAssembly(Assembly.GetExecutingAssembly());
+            _ = services.AddValidatorsFromAssembly(Assembly.GetExecutingAssembly());
             // Comment: Registers all FluentValidation validators from the current assembly.
 
             // ------------------- ۳. رجیستر کردن MediatR -------------------
@@ -52,9 +51,9 @@ namespace Application // ✅ Namespace ریشه پروژه Application
             // این متد تمام Request Handler ها (IRequestHandler<TRequest, TResponse>)، Command ها (IRequest<TResponse>)،
             // Query ها (IRequest<TResponse>) و Notification Handler ها (INotificationHandler<TNotification>) را
             // در اسمبلی فعلی پیدا و رجیستر می‌کند.
-            services.AddMediatR(cfg =>
+            _ = services.AddMediatR(cfg =>
             {
-                cfg.RegisterServicesFromAssembly(Assembly.GetExecutingAssembly());
+                _ = cfg.RegisterServicesFromAssembly(Assembly.GetExecutingAssembly());
                 // Comment: Registers MediatR handlers, requests, and notifications from the current assembly.
 
                 // ------------------- (اختیاری) رجیستر کردن MediatR Pipeline Behaviors -------------------
@@ -82,30 +81,30 @@ namespace Application // ✅ Namespace ریشه پروژه Application
             // طول عمر Scoped معمولاً برای سرویس‌هایی که با DbContext (که Scoped است) کار می‌کنند یا وضعیت درخواست را نگه می‌دارند، مناسب است.
             // Transient برای سرویس‌های سبک و بدون state.
             // Singleton برای سرویس‌هایی که در طول عمر برنامه فقط یک نمونه از آن‌ها کافی است و thread-safe هستند.
-            services.AddScoped<IFmpService, FmpService>();
+            _ = services.AddScoped<IFmpService, FmpService>();
 
 
             // سرویس مدیریت کاربران
-            services.AddScoped<IUserService, UserService>();
+            _ = services.AddScoped<IUserService, UserService>();
             // Comment: Registers UserService for handling user-related business logic.
 
             // سرویس مدیریت سیگنال‌ها
-            services.AddScoped<ISignalService, SignalService>();
+            _ = services.AddScoped<ISignalService, SignalService>();
             // Comment: Registers SignalService for handling signal-related business logic.
 
             // سرویس مدیریت اشتراک‌ها
-            services.AddScoped<ISubscriptionService, SubscriptionService>();
+            _ = services.AddScoped<ISubscriptionService, SubscriptionService>();
             // Comment: Registers SubscriptionService for managing user subscriptions.
 
             // سرویس مدیریت پرداخت‌ها (ایجاد فاکتور و ...)
-            services.AddScoped<IPaymentService, PaymentService>();
+            _ = services.AddScoped<IPaymentService, PaymentService>();
             // Comment: Registers PaymentService for handling payment initiation and related logic.
 
             // سرویس مدیریت تاییدیه پرداخت‌ها (پس از دریافت Webhook از درگاه)
-            services.AddScoped<IPaymentConfirmationService, PaymentConfirmationService>();
+            _ = services.AddScoped<IPaymentConfirmationService, PaymentConfirmationService>();
 
             // Add new Crypto Service
-            services.AddScoped<ICoinGeckoService, CoinGeckoService>();
+            _ = services.AddScoped<ICoinGeckoService, CoinGeckoService>();
             // Comment: Registers PaymentConfirmationService for processing successful payment confirmations.
 
             // سرویس مدیریت دسته‌بندی سیگنال‌ها (اگر منطق خاصی فراتر از CRUD Repository دارد)
@@ -122,9 +121,8 @@ namespace Application // ✅ Namespace ریشه پروژه Application
             // کامپایل و تست شوند. پیاده‌سازی واقعی در لایه مربوطه (مثلاً TelegramPanel) این رجیستری را override خواهد کرد.
 
             // سرویس عمومی نوتیفیکیشن (پیاده‌سازی Dummy)
-            services.AddScoped<INotificationService, DummyNotificationService>();
+            _ = services.AddScoped<INotificationService, DummyNotificationService>();
             // Register the new, functional CoinGecko service
-            services.AddScoped<ICoinGeckoService, CoinGeckoService>();
             // Comment: Registers a dummy implementation for INotificationService.
             // The actual implementation (e.g., TelegramNotificationService) should be registered
             // in the respective presentation layer (TelegramPanel) to override this.

@@ -99,7 +99,7 @@ namespace Domain.Features.Forwarding.ValueObjects
             PrependText = prependText;
             AppendText = appendText;
             // اطمینان حاصل می‌شود که لیست جایگزینی متن هرگز null نباشد.
-            TextReplacements = textReplacements ?? new List<TextReplacement>();
+            TextReplacements = textReplacements ?? [];
             RemoveSourceForwardHeader = removeSourceForwardHeader;
             RemoveLinks = removeLinks;
             StripFormatting = stripFormatting;
@@ -137,16 +137,16 @@ namespace Domain.Features.Forwarding.ValueObjects
             bool? noForwards = null)
         {
             return new MessageEditOptions(
-                prependText ?? this.PrependText,
-                appendText ?? this.AppendText,
-                textReplacements ?? this.TextReplacements,
-                removeSourceForwardHeader ?? this.RemoveSourceForwardHeader,
-                removeLinks ?? this.RemoveLinks,
-                stripFormatting ?? this.StripFormatting,
-                customFooter ?? this.CustomFooter,
-                dropAuthor ?? this.DropAuthor,
-                dropMediaCaptions ?? this.DropMediaCaptions,
-                noForwards ?? this.NoForwards
+                prependText ?? PrependText,
+                appendText ?? AppendText,
+                textReplacements ?? TextReplacements,
+                removeSourceForwardHeader ?? RemoveSourceForwardHeader,
+                removeLinks ?? RemoveLinks,
+                stripFormatting ?? StripFormatting,
+                customFooter ?? CustomFooter,
+                dropAuthor ?? DropAuthor,
+                dropMediaCaptions ?? DropMediaCaptions,
+                noForwards ?? NoForwards
             );
         }
     }

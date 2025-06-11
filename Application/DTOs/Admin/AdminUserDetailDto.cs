@@ -24,13 +24,13 @@ namespace Application.DTOs.Admin
         public DateTime WalletLastUpdated { get; set; }
 
         // Subscription Info
-        public List<SubscriptionSummaryDto> Subscriptions { get; set; } = new();
+        public List<SubscriptionSummaryDto> Subscriptions { get; set; } = [];
         public ActiveSubscriptionDto? ActiveSubscription { get; set; }
 
         // Transaction Info
         public int TotalTransactions { get; set; }
         public decimal TotalSpent { get; set; } // Based on subscription/token purchases
-        public List<TransactionSummaryDto> RecentTransactions { get; set; } = new();
+        public List<TransactionSummaryDto> RecentTransactions { get; set; } = [];
     }
 
     // --- Supporting DTOs for the main detail view ---

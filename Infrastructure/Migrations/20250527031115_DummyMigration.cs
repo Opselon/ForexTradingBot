@@ -10,7 +10,7 @@ namespace Infrastructure.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.CreateTable(
+            _ = migrationBuilder.CreateTable(
                 name: "ForwardingRules",
                 columns: table => new
                 {
@@ -41,10 +41,10 @@ namespace Infrastructure.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_ForwardingRules", x => x.RuleName);
+                    _ = table.PrimaryKey("PK_ForwardingRules", x => x.RuleName);
                 });
 
-            migrationBuilder.CreateTable(
+            _ = migrationBuilder.CreateTable(
                 name: "SignalCategories",
                 columns: table => new
                 {
@@ -56,10 +56,10 @@ namespace Infrastructure.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_SignalCategories", x => x.Id);
+                    _ = table.PrimaryKey("PK_SignalCategories", x => x.Id);
                 });
 
-            migrationBuilder.CreateTable(
+            _ = migrationBuilder.CreateTable(
                 name: "Users",
                 columns: table => new
                 {
@@ -77,10 +77,10 @@ namespace Infrastructure.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_Users", x => x.Id);
+                    _ = table.PrimaryKey("PK_Users", x => x.Id);
                 });
 
-            migrationBuilder.CreateTable(
+            _ = migrationBuilder.CreateTable(
                 name: "TextReplacement",
                 columns: table => new
                 {
@@ -94,8 +94,8 @@ namespace Infrastructure.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_TextReplacement", x => new { x.Id, x.EditOptionsForwardingRuleName });
-                    table.ForeignKey(
+                    _ = table.PrimaryKey("PK_TextReplacement", x => new { x.Id, x.EditOptionsForwardingRuleName });
+                    _ = table.ForeignKey(
                         name: "FK_TextReplacement_ForwardingRules_EditOptionsForwardingRuleName",
                         column: x => x.EditOptionsForwardingRuleName,
                         principalTable: "ForwardingRules",
@@ -103,7 +103,7 @@ namespace Infrastructure.Migrations
                         onDelete: ReferentialAction.Cascade);
                 });
 
-            migrationBuilder.CreateTable(
+            _ = migrationBuilder.CreateTable(
                 name: "RssSources",
                 columns: table => new
                 {
@@ -124,8 +124,8 @@ namespace Infrastructure.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_RssSources", x => x.Id);
-                    table.ForeignKey(
+                    _ = table.PrimaryKey("PK_RssSources", x => x.Id);
+                    _ = table.ForeignKey(
                         name: "FK_RssSources_SignalCategories_DefaultSignalCategoryId",
                         column: x => x.DefaultSignalCategoryId,
                         principalTable: "SignalCategories",
@@ -133,7 +133,7 @@ namespace Infrastructure.Migrations
                         onDelete: ReferentialAction.SetNull);
                 });
 
-            migrationBuilder.CreateTable(
+            _ = migrationBuilder.CreateTable(
                 name: "Signals",
                 columns: table => new
                 {
@@ -155,8 +155,8 @@ namespace Infrastructure.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_Signals", x => x.Id);
-                    table.ForeignKey(
+                    _ = table.PrimaryKey("PK_Signals", x => x.Id);
+                    _ = table.ForeignKey(
                         name: "FK_Signals_SignalCategories_CategoryId",
                         column: x => x.CategoryId,
                         principalTable: "SignalCategories",
@@ -164,7 +164,7 @@ namespace Infrastructure.Migrations
                         onDelete: ReferentialAction.Restrict);
                 });
 
-            migrationBuilder.CreateTable(
+            _ = migrationBuilder.CreateTable(
                 name: "Subscriptions",
                 columns: table => new
                 {
@@ -179,8 +179,8 @@ namespace Infrastructure.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_Subscriptions", x => x.Id);
-                    table.ForeignKey(
+                    _ = table.PrimaryKey("PK_Subscriptions", x => x.Id);
+                    _ = table.ForeignKey(
                         name: "FK_Subscriptions_Users_UserId",
                         column: x => x.UserId,
                         principalTable: "Users",
@@ -188,7 +188,7 @@ namespace Infrastructure.Migrations
                         onDelete: ReferentialAction.Cascade);
                 });
 
-            migrationBuilder.CreateTable(
+            _ = migrationBuilder.CreateTable(
                 name: "TokenWallets",
                 columns: table => new
                 {
@@ -201,8 +201,8 @@ namespace Infrastructure.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_TokenWallets", x => x.Id);
-                    table.ForeignKey(
+                    _ = table.PrimaryKey("PK_TokenWallets", x => x.Id);
+                    _ = table.ForeignKey(
                         name: "FK_TokenWallets_Users_UserId",
                         column: x => x.UserId,
                         principalTable: "Users",
@@ -210,7 +210,7 @@ namespace Infrastructure.Migrations
                         onDelete: ReferentialAction.Cascade);
                 });
 
-            migrationBuilder.CreateTable(
+            _ = migrationBuilder.CreateTable(
                 name: "Transactions",
                 columns: table => new
                 {
@@ -229,8 +229,8 @@ namespace Infrastructure.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_Transactions", x => x.Id);
-                    table.ForeignKey(
+                    _ = table.PrimaryKey("PK_Transactions", x => x.Id);
+                    _ = table.ForeignKey(
                         name: "FK_Transactions_Users_UserId",
                         column: x => x.UserId,
                         principalTable: "Users",
@@ -238,7 +238,7 @@ namespace Infrastructure.Migrations
                         onDelete: ReferentialAction.Cascade);
                 });
 
-            migrationBuilder.CreateTable(
+            _ = migrationBuilder.CreateTable(
                 name: "UserSignalPreferences",
                 columns: table => new
                 {
@@ -249,14 +249,14 @@ namespace Infrastructure.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_UserSignalPreferences", x => new { x.UserId, x.CategoryId });
-                    table.ForeignKey(
+                    _ = table.PrimaryKey("PK_UserSignalPreferences", x => new { x.UserId, x.CategoryId });
+                    _ = table.ForeignKey(
                         name: "FK_UserSignalPreferences_SignalCategories_CategoryId",
                         column: x => x.CategoryId,
                         principalTable: "SignalCategories",
                         principalColumn: "Id",
                         onDelete: ReferentialAction.Cascade);
-                    table.ForeignKey(
+                    _ = table.ForeignKey(
                         name: "FK_UserSignalPreferences_Users_UserId",
                         column: x => x.UserId,
                         principalTable: "Users",
@@ -264,7 +264,7 @@ namespace Infrastructure.Migrations
                         onDelete: ReferentialAction.Cascade);
                 });
 
-            migrationBuilder.CreateTable(
+            _ = migrationBuilder.CreateTable(
                 name: "NewsItems",
                 columns: table => new
                 {
@@ -289,14 +289,14 @@ namespace Infrastructure.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_NewsItems", x => x.Id);
-                    table.ForeignKey(
+                    _ = table.PrimaryKey("PK_NewsItems", x => x.Id);
+                    _ = table.ForeignKey(
                         name: "FK_NewsItems_RssSources_RssSourceId",
                         column: x => x.RssSourceId,
                         principalTable: "RssSources",
                         principalColumn: "Id",
                         onDelete: ReferentialAction.Cascade);
-                    table.ForeignKey(
+                    _ = table.ForeignKey(
                         name: "FK_NewsItems_SignalCategories_AssociatedSignalCategoryId",
                         column: x => x.AssociatedSignalCategoryId,
                         principalTable: "SignalCategories",
@@ -304,7 +304,7 @@ namespace Infrastructure.Migrations
                         onDelete: ReferentialAction.SetNull);
                 });
 
-            migrationBuilder.CreateTable(
+            _ = migrationBuilder.CreateTable(
                 name: "SignalAnalyses",
                 columns: table => new
                 {
@@ -317,8 +317,8 @@ namespace Infrastructure.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_SignalAnalyses", x => x.Id);
-                    table.ForeignKey(
+                    _ = table.PrimaryKey("PK_SignalAnalyses", x => x.Id);
+                    _ = table.ForeignKey(
                         name: "FK_SignalAnalyses_Signals_SignalId",
                         column: x => x.SignalId,
                         principalTable: "Signals",
@@ -326,120 +326,120 @@ namespace Infrastructure.Migrations
                         onDelete: ReferentialAction.Cascade);
                 });
 
-            migrationBuilder.CreateIndex(
+            _ = migrationBuilder.CreateIndex(
                 name: "IX_NewsItems_AssociatedSignalCategoryId",
                 table: "NewsItems",
                 column: "AssociatedSignalCategoryId");
 
-            migrationBuilder.CreateIndex(
+            _ = migrationBuilder.CreateIndex(
                 name: "IX_NewsItems_Link",
                 table: "NewsItems",
                 column: "Link");
 
-            migrationBuilder.CreateIndex(
+            _ = migrationBuilder.CreateIndex(
                 name: "IX_NewsItems_RssSourceId_SourceItemId",
                 table: "NewsItems",
                 columns: new[] { "RssSourceId", "SourceItemId" },
                 unique: true,
                 filter: "[SourceItemId] IS NOT NULL");
 
-            migrationBuilder.CreateIndex(
+            _ = migrationBuilder.CreateIndex(
                 name: "IX_RssSources_DefaultSignalCategoryId",
                 table: "RssSources",
                 column: "DefaultSignalCategoryId");
 
-            migrationBuilder.CreateIndex(
+            _ = migrationBuilder.CreateIndex(
                 name: "IX_RssSources_SourceName",
                 table: "RssSources",
                 column: "SourceName");
 
-            migrationBuilder.CreateIndex(
+            _ = migrationBuilder.CreateIndex(
                 name: "IX_RssSources_Url",
                 table: "RssSources",
                 column: "Url",
                 unique: true);
 
-            migrationBuilder.CreateIndex(
+            _ = migrationBuilder.CreateIndex(
                 name: "IX_SignalAnalyses_SignalId",
                 table: "SignalAnalyses",
                 column: "SignalId");
 
-            migrationBuilder.CreateIndex(
+            _ = migrationBuilder.CreateIndex(
                 name: "IX_SignalCategories_Name",
                 table: "SignalCategories",
                 column: "Name",
                 unique: true);
 
-            migrationBuilder.CreateIndex(
+            _ = migrationBuilder.CreateIndex(
                 name: "IX_Signals_CategoryId",
                 table: "Signals",
                 column: "CategoryId");
 
-            migrationBuilder.CreateIndex(
+            _ = migrationBuilder.CreateIndex(
                 name: "IX_Signals_Symbol",
                 table: "Signals",
                 column: "Symbol");
 
-            migrationBuilder.CreateIndex(
+            _ = migrationBuilder.CreateIndex(
                 name: "IX_Subscriptions_EndDate",
                 table: "Subscriptions",
                 column: "EndDate");
 
-            migrationBuilder.CreateIndex(
+            _ = migrationBuilder.CreateIndex(
                 name: "IX_Subscriptions_UserId",
                 table: "Subscriptions",
                 column: "UserId");
 
-            migrationBuilder.CreateIndex(
+            _ = migrationBuilder.CreateIndex(
                 name: "IX_TextReplacement_EditOptionsForwardingRuleName",
                 table: "TextReplacement",
                 column: "EditOptionsForwardingRuleName");
 
-            migrationBuilder.CreateIndex(
+            _ = migrationBuilder.CreateIndex(
                 name: "IX_TokenWallets_UserId",
                 table: "TokenWallets",
                 column: "UserId",
                 unique: true);
 
-            migrationBuilder.CreateIndex(
+            _ = migrationBuilder.CreateIndex(
                 name: "IX_Transactions_PaymentGatewayInvoiceId",
                 table: "Transactions",
                 column: "PaymentGatewayInvoiceId");
 
-            migrationBuilder.CreateIndex(
+            _ = migrationBuilder.CreateIndex(
                 name: "IX_Transactions_Status",
                 table: "Transactions",
                 column: "Status");
 
-            migrationBuilder.CreateIndex(
+            _ = migrationBuilder.CreateIndex(
                 name: "IX_Transactions_Timestamp",
                 table: "Transactions",
                 column: "Timestamp");
 
-            migrationBuilder.CreateIndex(
+            _ = migrationBuilder.CreateIndex(
                 name: "IX_Transactions_UserId",
                 table: "Transactions",
                 column: "UserId");
 
-            migrationBuilder.CreateIndex(
+            _ = migrationBuilder.CreateIndex(
                 name: "IX_Users_Email",
                 table: "Users",
                 column: "Email",
                 unique: true);
 
-            migrationBuilder.CreateIndex(
+            _ = migrationBuilder.CreateIndex(
                 name: "IX_Users_TelegramId",
                 table: "Users",
                 column: "TelegramId",
                 unique: true);
 
-            migrationBuilder.CreateIndex(
+            _ = migrationBuilder.CreateIndex(
                 name: "IX_Users_Username",
                 table: "Users",
                 column: "Username",
                 unique: true);
 
-            migrationBuilder.CreateIndex(
+            _ = migrationBuilder.CreateIndex(
                 name: "IX_UserSignalPreferences_CategoryId",
                 table: "UserSignalPreferences",
                 column: "CategoryId");
@@ -448,40 +448,40 @@ namespace Infrastructure.Migrations
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.DropTable(
+            _ = migrationBuilder.DropTable(
                 name: "NewsItems");
 
-            migrationBuilder.DropTable(
+            _ = migrationBuilder.DropTable(
                 name: "SignalAnalyses");
 
-            migrationBuilder.DropTable(
+            _ = migrationBuilder.DropTable(
                 name: "Subscriptions");
 
-            migrationBuilder.DropTable(
+            _ = migrationBuilder.DropTable(
                 name: "TextReplacement");
 
-            migrationBuilder.DropTable(
+            _ = migrationBuilder.DropTable(
                 name: "TokenWallets");
 
-            migrationBuilder.DropTable(
+            _ = migrationBuilder.DropTable(
                 name: "Transactions");
 
-            migrationBuilder.DropTable(
+            _ = migrationBuilder.DropTable(
                 name: "UserSignalPreferences");
 
-            migrationBuilder.DropTable(
+            _ = migrationBuilder.DropTable(
                 name: "RssSources");
 
-            migrationBuilder.DropTable(
+            _ = migrationBuilder.DropTable(
                 name: "Signals");
 
-            migrationBuilder.DropTable(
+            _ = migrationBuilder.DropTable(
                 name: "ForwardingRules");
 
-            migrationBuilder.DropTable(
+            _ = migrationBuilder.DropTable(
                 name: "Users");
 
-            migrationBuilder.DropTable(
+            _ = migrationBuilder.DropTable(
                 name: "SignalCategories");
         }
     }

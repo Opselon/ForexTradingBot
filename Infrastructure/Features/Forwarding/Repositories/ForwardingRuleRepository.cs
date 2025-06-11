@@ -1,4 +1,4 @@
-﻿// File: Infrastructure/Features/Forwarding/Repositories/ForwardingRuleRepository.cs
+﻿// // File: Infrastructure/Features/Forwarding/Repositories/ForwardingRuleRepository.cs
 
 #region Usings
 // Standard .NET & NuGet
@@ -40,8 +40,8 @@ namespace Infrastructure.Features.Forwarding.Repositories
         /// <param name="configuration">The application's configuration, used to retrieve the database connection string.</param>
         /// <param name="logger">The logger for logging information and errors.</param>
         public ForwardingRuleRepository(
-            IConfiguration configuration, // Injected IConfiguration
-            ILogger<ForwardingRuleRepository> logger)
+              IConfiguration configuration, // Injected IConfiguration
+              ILogger<ForwardingRuleRepository> logger)
         {
             _connectionString = configuration.GetConnectionString("DefaultConnection") // Assuming "DefaultConnection" is used
                                 ?? throw new ArgumentNullException("DefaultConnection", "DefaultConnection string not found in configuration.");
@@ -49,7 +49,6 @@ namespace Infrastructure.Features.Forwarding.Repositories
 
             // Initialize the Polly policy for retrying transient database errors.
             // This policy handles any DbException (like SqlException, NpgsqlException, etc.),
-            // but explicitly ignores DbUpdateConcurrencyException as it requires conflict resolution, not retries.
             _retryPolicy = Policy
                 .Handle<DbException>(ex => !(ex is DbUpdateConcurrencyException)) // Handles database errors, except concurrency errors
                 .WaitAndRetryAsync(
@@ -62,7 +61,6 @@ namespace Infrastructure.Features.Forwarding.Repositories
                             timeSpan, retryAttempt, exception.Message);
                     });
         }
-
         #region Internal DTOs for Dapper Mapping
 
         // DTO that mirrors the flattened database structure for ForwardingRule
@@ -131,7 +129,7 @@ namespace Infrastructure.Features.Forwarding.Repositories
                     RuleName,
                     IsEnabled,
                     SourceChannelId,
-                    JsonSerializer.Deserialize<List<long>>(TargetChannelIds ?? "[]", _jsonOptions) ?? new List<long>(),
+                    JsonSerializer.Deserialize<List<long>>(TargetChannelIds ?? "[]", _jsonOptions) ?? [],
                     editOptions,
                     filterOptions
                 );
@@ -325,8 +323,15 @@ namespace Infrastructure.Features.Forwarding.Repositories
         /// <returns>A list of forwarding rules for the specified page.</returns>
         public async Task<IEnumerable<ForwardingRule>> GetPaginatedAsync(int pageNumber, int pageSize, CancellationToken cancellationToken = default)
         {
-            if (pageNumber <= 0) pageNumber = 1;
-            if (pageSize <= 0) pageSize = 10; // Default page size
+            if (pageNumber <= 0)
+            {
+                pageNumber = 1;
+            }
+
+            if (pageSize <= 0)
+            {
+                pageSize = 10; // Default page size
+            }
 
             _logger.LogTrace("ForwardingRuleRepository: Fetching paginated forwarding rules - Page: {PageNumber}, Size: {PageSize}.", pageNumber, pageSize);
 
@@ -492,7 +497,7 @@ namespace Infrastructure.Features.Forwarding.Repositories
                             FilterOptions_MaxMessageLength = rule.FilterOptions.MaxMessageLength
                         };
 
-                        await connection.ExecuteAsync(insertRuleSql, ruleParams, transaction: transaction);
+                        _ = await connection.ExecuteAsync(insertRuleSql, ruleParams, transaction: transaction);
 
                         // Insert TextReplacements if any
                         if (rule.EditOptions.TextReplacements != null && rule.EditOptions.TextReplacements.Any())
@@ -514,7 +519,7 @@ namespace Infrastructure.Features.Forwarding.Repositories
                                     replacement.IsRegex,
                                     RegexOptions = (int)replacement.RegexOptions
                                 };
-                                await connection.ExecuteAsync(insertReplacementSql, replacementParams, transaction: transaction);
+                                _ = await connection.ExecuteAsync(insertReplacementSql, replacementParams, transaction: transaction);
                             }
                         }
                         transaction.Commit();
@@ -636,7 +641,7 @@ namespace Infrastructure.Features.Forwarding.Repositories
 
                         // Delete existing TextReplacements for this rule
                         var deleteReplacementsSql = "DELETE FROM TextReplacement WHERE EditOptionsForwardingRuleName = @RuleName;"; // <--- CORRECTED TABLE NAME HERE
-                        await connection.ExecuteAsync(deleteReplacementsSql, new { rule.RuleName }, transaction: transaction);
+                        _ = await connection.ExecuteAsync(deleteReplacementsSql, new { rule.RuleName }, transaction: transaction);
 
                         // Insert new TextReplacements
                         if (rule.EditOptions.TextReplacements != null && rule.EditOptions.TextReplacements.Any())
@@ -658,7 +663,7 @@ namespace Infrastructure.Features.Forwarding.Repositories
                                     replacement.IsRegex,
                                     RegexOptions = (int)replacement.RegexOptions
                                 };
-                                await connection.ExecuteAsync(insertReplacementSql, replacementParams, transaction: transaction);
+                                _ = await connection.ExecuteAsync(insertReplacementSql, replacementParams, transaction: transaction);
                             }
                         }
                         transaction.Commit();
@@ -737,7 +742,7 @@ namespace Infrastructure.Features.Forwarding.Repositories
                     {
                         // Delete TextReplacements first due to foreign key constraint
                         var deleteReplacementsSql = "DELETE FROM TextReplacement WHERE EditOptionsForwardingRuleName = @RuleName;"; // <--- CORRECTED TABLE NAME HERE
-                        await connection.ExecuteAsync(deleteReplacementsSql, new { RuleName = ruleName }, transaction: transaction);
+                        _ = await connection.ExecuteAsync(deleteReplacementsSql, new { RuleName = ruleName }, transaction: transaction);
 
                         // Then delete the main rule
                         var deleteRuleSql = "DELETE FROM ForwardingRules WHERE RuleName = @RuleName;";

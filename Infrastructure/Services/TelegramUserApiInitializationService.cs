@@ -74,7 +74,7 @@ namespace Infrastructure.Services
                         var random = new Random();
                         var finalDelay = TimeSpan.FromMilliseconds(
                             Math.Min(
-                                delay.TotalMilliseconds + random.NextDouble() * delay.TotalMilliseconds, // Full jitter
+                                delay.TotalMilliseconds + (random.NextDouble() * delay.TotalMilliseconds), // Full jitter
                                 MaxRetryDelayMilliseconds // Cap the maximum delay
                             )
                         );

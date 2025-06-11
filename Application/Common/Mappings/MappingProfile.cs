@@ -11,7 +11,7 @@ namespace Application.Common.Mappings
         {
 
             #region News Mappings
-            CreateMap<NewsItem, NewsItemDto>()
+            _ = CreateMap<NewsItem, NewsItemDto>()
                 .ForMember(dest => dest.SourceName, opt => opt.MapFrom(src => src.RssSource.SourceName)) // مپ کردن نام از RssSource مرتبط
                 .ForMember(dest => dest.CreatedAtInSystem, opt => opt.MapFrom(src => src.CreatedAt));
             //  مپینگ برای CreateNewsItemDto به NewsItem (اگر DTO برای ایجاد دارید)
@@ -19,48 +19,48 @@ namespace Application.Common.Mappings
             #endregion
 
             // User Mappings
-            CreateMap<User, UserDto>()
+            _ = CreateMap<User, UserDto>()
                 .ForMember(dest => dest.Level, opt => opt.MapFrom(src => src.Level.ToString()))
                 .ForMember(dest => dest.ActiveSubscription, opt => opt.Ignore()); // این باید دستی مپ شود یا از طریق یک resolver
-            CreateMap<RegisterUserDto, User>();
+            _ = CreateMap<RegisterUserDto, User>();
             CreateMap<UpdateUserDto, User>()
                 .ForAllMembers(opts => opts.Condition((src, dest, srcMember) => srcMember != null)); // فقط فیلدهای غیر null را مپ کن
 
             // TokenWallet Mappings
-            CreateMap<TokenWallet, TokenWalletDto>();
+            _ = CreateMap<TokenWallet, TokenWalletDto>();
 
             // Subscription Mappings
-            CreateMap<Subscription, SubscriptionDto>()
+            _ = CreateMap<Subscription, SubscriptionDto>()
                 .ForMember(dest => dest.IsActive, opt => opt.MapFrom(src => src.IsCurrentlyActive)); // پراپرتی محاسباتی
-            CreateMap<CreateSubscriptionDto, Subscription>();
+            _ = CreateMap<CreateSubscriptionDto, Subscription>();
 
             // SignalCategory Mappings
-            CreateMap<SignalCategory, SignalCategoryDto>();
-            CreateMap<CreateSignalCategoryDto, SignalCategory>();
+            _ = CreateMap<SignalCategory, SignalCategoryDto>();
+            _ = CreateMap<CreateSignalCategoryDto, SignalCategory>();
 
             // Signal Mappings
-            CreateMap<Signal, SignalDto>()
+            _ = CreateMap<Signal, SignalDto>()
                 .ForMember(dest => dest.Type, opt => opt.MapFrom(src => src.Type.ToString()))
                 .ForMember(dest => dest.Category, opt => opt.MapFrom(src => src.Category)); // مپ کردن نویگیشن پراپرتی
-            CreateMap<CreateSignalDto, Signal>();
+            _ = CreateMap<CreateSignalDto, Signal>();
 
             // SignalAnalysis Mappings
-            CreateMap<SignalAnalysis, SignalAnalysisDto>();
-            CreateMap<CreateSignalAnalysisDto, SignalAnalysis>();
+            _ = CreateMap<SignalAnalysis, SignalAnalysisDto>();
+            _ = CreateMap<CreateSignalAnalysisDto, SignalAnalysis>();
 
             // RssSource Mappings
-            CreateMap<RssSource, RssSourceDto>()
+            _ = CreateMap<RssSource, RssSourceDto>()
                 .ForMember(dest => dest.DefaultSignalCategoryName,
                            opt => opt.MapFrom(src => src.DefaultSignalCategory != null ? src.DefaultSignalCategory.Name : null));
-            CreateMap<CreateRssSourceDto, RssSource>();
+            _ = CreateMap<CreateRssSourceDto, RssSource>();
 
             // Transaction Mappings
-            CreateMap<Transaction, TransactionDto>()
+            _ = CreateMap<Transaction, TransactionDto>()
                 .ForMember(dest => dest.Type, opt => opt.MapFrom(src => src.Type.ToString()));
-            CreateMap<CreateTransactionDto, Transaction>();
+            _ = CreateMap<CreateTransactionDto, Transaction>();
 
             // UserSignalPreference Mappings
-            CreateMap<UserSignalPreference, UserSignalPreferenceDto>()
+            _ = CreateMap<UserSignalPreference, UserSignalPreferenceDto>()
                 .ForMember(dest => dest.CategoryId, opt => opt.MapFrom(src => src.CategoryId))
                 .ForMember(dest => dest.CategoryName, opt => opt.MapFrom(src => src.Category.Name)) // نیاز به Include(usp => usp.Category) در Repository
                 .ForMember(dest => dest.SubscribedAt, opt => opt.MapFrom(src => src.CreatedAt));

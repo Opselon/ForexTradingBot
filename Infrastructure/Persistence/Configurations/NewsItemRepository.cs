@@ -10,14 +10,13 @@ using Microsoft.Extensions.Configuration; // To access connection strings
 using Microsoft.Extensions.Logging; // For logging
 using Polly; // For resilience policies
 using Polly.Retry; // For retry policies
-using Shared.Exceptions; // For custom RepositoryException
 using Shared.Extensions; // For Truncate extension method
 using System.Data; // Common Ado.Net interfaces like IDbConnection
 using System.Data.Common; // For DbException (base class for database exceptions)
 using System.Linq.Expressions; // <--- CORRECTED: Needed for Expression<> type in FindAsync signature
 #endregion
 
-namespace Infrastructure.Persistence.Repositories
+namespace Infrastructure.Persistence.Configurations
 {
     /// <summary>
     /// Implements the INewsItemRepository for data operations related to NewsItem entities
@@ -248,8 +247,15 @@ namespace Infrastructure.Persistence.Repositories
         {
             _logger.LogDebug("SearchNewsAsync (Fallback LIKE method) called...");
 
-            if (pageNumber <= 0) pageNumber = 1;
-            if (pageSize <= 0) pageSize = 10;
+            if (pageNumber <= 0)
+            {
+                pageNumber = 1;
+            }
+
+            if (pageSize <= 0)
+            {
+                pageSize = 10;
+            }
 
             try
             {
@@ -397,7 +403,11 @@ namespace Infrastructure.Persistence.Repositories
 
         public async Task<NewsItem?> GetBySourceDetailsAsync(Guid rssSourceId, string sourceItemId, CancellationToken cancellationToken = default)
         {
-            if (string.IsNullOrWhiteSpace(sourceItemId)) return null;
+            if (string.IsNullOrWhiteSpace(sourceItemId))
+            {
+                return null;
+            }
+
             _logger.LogDebug("Fetching NewsItem by RssSourceId: {RssSourceId} and SourceItemId: {SourceItemId}", rssSourceId, sourceItemId);
             try
             {
@@ -440,7 +450,11 @@ namespace Infrastructure.Persistence.Repositories
 
         public async Task<bool> ExistsBySourceDetailsAsync(Guid rssSourceId, string sourceItemId, CancellationToken cancellationToken = default)
         {
-            if (string.IsNullOrWhiteSpace(sourceItemId)) return false;
+            if (string.IsNullOrWhiteSpace(sourceItemId))
+            {
+                return false;
+            }
+
             _logger.LogDebug("Checking existence of NewsItem by RssSourceId: {RssSourceId} and SourceItemId: {SourceItemId}", rssSourceId, sourceItemId);
             try
             {
@@ -467,7 +481,10 @@ namespace Infrastructure.Persistence.Repositories
             bool includeRssSource = false, // This hint is less relevant for Dapper, joins are explicit.
             CancellationToken cancellationToken = default)
         {
-            if (count <= 0) return Enumerable.Empty<NewsItem>();
+            if (count <= 0)
+            {
+                return Enumerable.Empty<NewsItem>();
+            }
 
             _logger.LogDebug("Fetching {Count} recent news items. RssSourceIdFilter: {RssSourceIdFilter}",
                 count, rssSourceId?.ToString() ?? "Any");
@@ -586,7 +603,10 @@ namespace Infrastructure.Persistence.Repositories
         /// <param name="cancellationToken">A token to cancel the operation.</param>
         public async Task AddAsync(NewsItem newsItem, CancellationToken cancellationToken = default)
         {
-            if (newsItem == null) throw new ArgumentNullException(nameof(newsItem));
+            if (newsItem == null)
+            {
+                throw new ArgumentNullException(nameof(newsItem));
+            }
 
             _logger.LogDebug("Attempting to upsert NewsItem. Title: {Title}", newsItem.Title.Truncate(50));
 
@@ -684,7 +704,7 @@ WHEN NOT MATCHED BY TARGET THEN
 
                     // Dapper can execute a single SQL statement multiple times for an IEnumerable of parameters
                     // This is efficient for bulk inserts.
-                    await connection.ExecuteAsync(new CommandDefinition(sql, newsItems.Select(ni => new
+                    _ = await connection.ExecuteAsync(new CommandDefinition(sql, newsItems.Select(ni => new
                     {
                         ni.Id,
                         ni.Title,
@@ -725,7 +745,10 @@ WHEN NOT MATCHED BY TARGET THEN
         /// <exception cref="RepositoryException">Thrown for general database or retry policy errors.</exception>
         public async Task UpdateAsync(NewsItem newsItem, CancellationToken cancellationToken = default)
         {
-            if (newsItem == null) throw new ArgumentNullException(nameof(newsItem));
+            if (newsItem == null)
+            {
+                throw new ArgumentNullException(nameof(newsItem));
+            }
 
             _logger.LogInformation("Updating NewsItem. NewsItemId: {NewsItemId}", newsItem.Id);
 
@@ -794,9 +817,13 @@ WHEN NOT MATCHED BY TARGET THEN
 
         public async Task DeleteAsync(NewsItem newsItem, CancellationToken cancellationToken = default)
         {
-            if (newsItem == null) throw new ArgumentNullException(nameof(newsItem));
+            if (newsItem == null)
+            {
+                throw new ArgumentNullException(nameof(newsItem));
+            }
+
             _logger.LogInformation("Removing NewsItem. NewsItemId: {NewsItemId}", newsItem.Id);
-            await DeleteByIdAsync(newsItem.Id, cancellationToken); // Delegate to DeleteByIdAsync
+            _ = await DeleteByIdAsync(newsItem.Id, cancellationToken); // Delegate to DeleteByIdAsync
         }
 
         public async Task<bool> DeleteByIdAsync(Guid id, CancellationToken cancellationToken = default)

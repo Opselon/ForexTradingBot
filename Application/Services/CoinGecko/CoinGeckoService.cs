@@ -2,12 +2,13 @@
 // UPDATED FILE
 // -----------------
 using Application.Common.Interfaces;
+using Application.Common.Interfaces.CoinGeckoApiClient;
 using Application.DTOs.CoinGecko;
-using Application.Features.CoinGecko.Interfaces;
+using Application.Features.Crypto.Interfaces;
 using Microsoft.Extensions.Logging;
 using Shared.Results;
 
-namespace Application.Features.CoinGecko.Services
+namespace Application.Services.CoinGecko
 {
     public class CoinGeckoService : ICoinGeckoService
     {

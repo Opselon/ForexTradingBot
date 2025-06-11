@@ -14,7 +14,6 @@ using Microsoft.Extensions.Configuration; // To get connection string
 using Microsoft.Extensions.Logging; // For logging
 using Polly; // For resilience policies
 using Polly.Retry; // For retry policies
-using Shared.Exceptions; // For custom RepositoryException
 using Shared.Extensions; // For Truncate extension method
 using Shared.Results; // For Result<T> pattern
 using System.Data.Common; // For DbException
@@ -79,10 +78,15 @@ namespace Infrastructure.Services
             Exception? Exception = null)
         {
             // Simplified success/failure constructors
-            public static RssFetchOutcome Success(IEnumerable<NewsItemDto> newsItems, string? etag, string? lastModified) =>
-                new(true, newsItems, etag, lastModified, RssFetchErrorType.None, null);
-            public static RssFetchOutcome Failure(RssFetchErrorType errorType, string errorMessage, Exception? ex = null, string? etag = null, string? lastModified = null) =>
-                new(false, Enumerable.Empty<NewsItemDto>(), etag, lastModified, errorType, errorMessage, ex);
+            public static RssFetchOutcome Success(IEnumerable<NewsItemDto> newsItems, string? etag, string? lastModified)
+            {
+                return new(true, newsItems, etag, lastModified, RssFetchErrorType.None, null);
+            }
+
+            public static RssFetchOutcome Failure(RssFetchErrorType errorType, string errorMessage, Exception? ex = null, string? etag = null, string? lastModified = null)
+            {
+                return new(false, Enumerable.Empty<NewsItemDto>(), etag, lastModified, errorType, errorMessage, ex);
+            }
         }
         #endregion
 
@@ -115,9 +119,9 @@ namespace Infrastructure.Services
             _httpRetryPolicy = Policy
                 .Handle<HttpRequestException>() // Includes timeouts (TaskCanceledException with no cancellation request)
                 .OrResult<HttpResponseMessage>(response =>
-                    response.StatusCode >= HttpStatusCode.InternalServerError || // 5xx errors
-                    response.StatusCode == HttpStatusCode.RequestTimeout || // 408
-                    response.StatusCode == HttpStatusCode.TooManyRequests // 429
+                    response.StatusCode is >= HttpStatusCode.InternalServerError or // 5xx errors
+                    HttpStatusCode.RequestTimeout or // 408
+                    HttpStatusCode.TooManyRequests // 429
                 )
                 .WaitAndRetryAsync(
                     retryCount: 3,
@@ -127,16 +131,9 @@ namespace Infrastructure.Services
                         string requestUri = pollyResponse?.Result?.RequestMessage?.RequestUri?.ToString() ?? "N/A";
                         HttpStatusCode? statusCode = pollyResponse?.Result?.StatusCode;
 
-                        if (pollyResponse?.Result?.Headers?.RetryAfter?.Delta.HasValue == true)
-                        {
-                            delay = pollyResponse.Result.Headers.RetryAfter.Delta.Value.Add(TimeSpan.FromMilliseconds(new Random().Next(500, 1500)));
-
-                        }
-                        else
-                        {
-                            delay = TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)) + TimeSpan.FromMilliseconds(new Random().Next(0, 500));
-
-                        }
+                        delay = pollyResponse?.Result?.Headers?.RetryAfter?.Delta.HasValue == true
+                            ? pollyResponse.Result.Headers.RetryAfter.Delta.Value.Add(TimeSpan.FromMilliseconds(new Random().Next(500, 1500)))
+                            : TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)) + TimeSpan.FromMilliseconds(new Random().Next(0, 500));
                         return delay;
                     },
                     onRetryAsync: (pollyResponse, timespan, retryAttempt, context) =>
@@ -158,13 +155,13 @@ namespace Infrastructure.Services
 
                     // Level 5: Do not retry on unique constraint violations or primary key violations.
                     // This is crucial to avoid infinite retries on data issues.
-                    if (sqlEx.Number == 2627 || sqlEx.Number == 2601) // Unique constraint violation, Primary Key violation
+                    if (sqlEx.Number is 2627 or 2601) // Unique constraint violation, Primary Key violation
                     {
                         _logger.LogWarning("PollyDbRetry: Not retrying database operation due to non-transient unique/PK constraint violation. Error: {Message}", sqlEx.Message.Truncate(100));
                         return false; // Do not retry - this is a data error, not a transient network/server error.
                     }
                     // Consider other non-transient SQL errors here (e.g., login failed, syntax error)
-                    if (sqlEx.Number == 18456 || sqlEx.Number == 4060) // Login failed, Cannot open database
+                    if (sqlEx.Number is 18456 or 4060) // Login failed, Cannot open database
                     {
                         _logger.LogError(sqlEx, "PollyDbRetry: Not retrying database operation due to permanent SQL error (e.g., authentication/db access issue). Error: {Message}", sqlEx.Message.Truncate(100));
                         return false;
@@ -188,7 +185,11 @@ namespace Infrastructure.Services
         public async Task<Result<IEnumerable<NewsItemDto>>> FetchAndProcessFeedAsync(RssSource rssSource, CancellationToken cancellationToken = default)
         {
             // Level 1: Argument validation.
-            if (rssSource == null) throw new ArgumentNullException(nameof(rssSource));
+            if (rssSource == null)
+            {
+                throw new ArgumentNullException(nameof(rssSource));
+            }
+
             if (string.IsNullOrWhiteSpace(rssSource.Url))
             {
                 // FIX: Explicit .ToString() for rssSource.Id in log message parameter
@@ -488,11 +489,14 @@ namespace Infrastructure.Services
             {
                 byte b = hash[i];
                 chars[i * 2] = GetHexChar(b >> 4);
-                chars[i * 2 + 1] = GetHexChar(b & 0xF);
+                chars[(i * 2) + 1] = GetHexChar(b & 0xF);
             }
             return new string(chars);
 
-            static char GetHexChar(int val) => (char)(val < 10 ? '0' + val : 'a' + (val - 10));
+            static char GetHexChar(int val)
+            {
+                return (char)(val < 10 ? '0' + val : 'a' + (val - 10));
+            }
         }
         #endregion
 
@@ -551,7 +555,7 @@ namespace Infrastructure.Services
                                 @RssSourceId, @IsVipOnly, @AssociatedSignalCategoryId
                             );";
 
-                        await connection.ExecuteAsync(insertNewsItemSql, newNewsEntitiesToSave.Select(ni => new
+                        _ = await connection.ExecuteAsync(insertNewsItemSql, newNewsEntitiesToSave.Select(ni => new
                         {
                             ni.Id,
                             ni.Title,
@@ -593,7 +597,7 @@ namespace Infrastructure.Services
                                 LastFetchAttemptAt = @LastFetchAttemptAt
                             WHERE Id = @Id;";
 
-                        await connection.ExecuteAsync(updateRssSourceSql, new
+                        _ = await connection.ExecuteAsync(updateRssSourceSql, new
                         {
                             rssSource.LastSuccessfulFetchAt,
                             rssSource.FetchErrorCount,
@@ -655,7 +659,7 @@ namespace Infrastructure.Services
 
                         // Hangfire.Enqueue is typically quick, but make it explicit that it's a distinct operation.
                         // Pass cancellationToken if DispatchNewsNotificationAsync respects it.
-                        _backgroundJobClient.Enqueue<INotificationDispatchService>(dispatcher =>
+                        _ = _backgroundJobClient.Enqueue<INotificationDispatchService>(dispatcher =>
                             dispatcher.DispatchNewsNotificationAsync(currentNewsItem.Id, cancellationToken)
                         );
                         _logger.LogDebug("Successfully enqueued dispatch job for NewsItem ID: {NewsId}", currentNewsItem.Id);
@@ -711,14 +715,22 @@ namespace Infrastructure.Services
                 rssSource.LastSuccessfulFetchAt = rssSource.LastFetchAttemptAt; // Successful fetch
                 rssSource.FetchErrorCount = 0; // Reset error count on success
                 // Only update ETag/LastModified if they were actually provided in the response
-                if (!string.IsNullOrWhiteSpace(outcome.ETag)) rssSource.ETag = outcome.ETag;
-                if (!string.IsNullOrWhiteSpace(outcome.LastModifiedHeader)) rssSource.LastModifiedHeader = outcome.LastModifiedHeader;
+                if (!string.IsNullOrWhiteSpace(outcome.ETag))
+                {
+                    rssSource.ETag = outcome.ETag;
+                }
+
+                if (!string.IsNullOrWhiteSpace(outcome.LastModifiedHeader))
+                {
+                    rssSource.LastModifiedHeader = outcome.LastModifiedHeader;
+                }
+
                 rssSource.IsActive = true; // Reactive if it was deactivated for transient errors
             }
             else // Fetch failed
             {
                 // Level 4: Increment error count and handle deactivation based on error type.
-                if (outcome.ErrorType == RssFetchErrorType.PermanentHttp || outcome.ErrorType == RssFetchErrorType.ContentProcessing || outcome.ErrorType == RssFetchErrorType.XmlParsing)
+                if (outcome.ErrorType is RssFetchErrorType.PermanentHttp or RssFetchErrorType.ContentProcessing or RssFetchErrorType.XmlParsing)
                 {
                     // For permanent errors, immediately deactivate (or mark as permanently failed)
                     rssSource.FetchErrorCount = MaxErrorsToDeactivateSource; // Force max errors
@@ -729,7 +741,7 @@ namespace Infrastructure.Services
                             rssSource.Id.ToString(), outcome.ErrorType, outcome.ErrorMessage.Truncate(100));
                     }
                 }
-                else if (outcome.ErrorType == RssFetchErrorType.TransientHttp || outcome.ErrorType == RssFetchErrorType.Database || outcome.ErrorType == RssFetchErrorType.Unexpected)
+                else if (outcome.ErrorType is RssFetchErrorType.TransientHttp or RssFetchErrorType.Database or RssFetchErrorType.Unexpected)
                 {
                     // For transient errors, increment count towards deactivation threshold
                     rssSource.FetchErrorCount++;
@@ -761,7 +773,7 @@ namespace Infrastructure.Services
                             LastFetchAttemptAt = @LastFetchAttemptAt
                         WHERE Id = @Id;";
 
-                    await connection.ExecuteAsync(updateRssSourceSql, new
+                    _ = await connection.ExecuteAsync(updateRssSourceSql, new
                     {
                         rssSource.LastSuccessfulFetchAt,
                         rssSource.FetchErrorCount,
@@ -890,7 +902,10 @@ namespace Infrastructure.Services
         // Level 7: More robust Last-Modified header retrieval from HttpResponseHeaders.
         private string? GetLastModifiedFromHeaders(HttpResponseHeaders headers)
         {
-            if (headers == null) return null;
+            if (headers == null)
+            {
+                return null;
+            }
 
             // FIX: Use TryGetValues to get the "Last-Modified" header string value(s)
             if (headers.TryGetValues("Last-Modified", out IEnumerable<string>? values))
@@ -908,10 +923,16 @@ namespace Infrastructure.Services
         // Level 7: Refined ETag cleaning.
         private string? CleanETag(string? etag)
         {
-            if (string.IsNullOrWhiteSpace(etag)) return null;
+            if (string.IsNullOrWhiteSpace(etag))
+            {
+                return null;
+            }
 
             // Weak ETags start with W/. Keep the W/ part for integrity.
-            if (etag.StartsWith("W/", StringComparison.OrdinalIgnoreCase)) return etag;
+            if (etag.StartsWith("W/", StringComparison.OrdinalIgnoreCase))
+            {
+                return etag;
+            }
 
             // For strong ETags, remove leading/trailing quotes if present.
             return etag.Trim('"');
@@ -920,7 +941,11 @@ namespace Infrastructure.Services
         // Other helper methods for HTML parsing (unchanged for this request)
         private string? CleanHtmlAndTruncateWithHtmlAgility(string? htmlText, int maxLength)
         {
-            if (string.IsNullOrWhiteSpace(htmlText)) return null;
+            if (string.IsNullOrWhiteSpace(htmlText))
+            {
+                return null;
+            }
+
             try
             {
                 var doc = new HtmlDocument();
@@ -937,7 +962,11 @@ namespace Infrastructure.Services
 
         private string? CleanHtmlWithHtmlAgility(string? htmlText)
         {
-            if (string.IsNullOrWhiteSpace(htmlText)) return null;
+            if (string.IsNullOrWhiteSpace(htmlText))
+            {
+                return null;
+            }
+
             try
             {
                 var doc = new HtmlDocument();
@@ -980,7 +1009,10 @@ namespace Infrastructure.Services
             }
 
             var htmlToParse = !string.IsNullOrWhiteSpace(contentHtml) ? contentHtml : summaryHtml;
-            if (string.IsNullOrWhiteSpace(htmlToParse)) return null;
+            if (string.IsNullOrWhiteSpace(htmlToParse))
+            {
+                return null;
+            }
 
             var doc = new HtmlDocument();
             try { doc.LoadHtml(htmlToParse); }
@@ -1017,8 +1049,15 @@ namespace Infrastructure.Services
 
         private string? MakeUrlAbsolute(SyndicationItem item, string? imageUrl)
         {
-            if (string.IsNullOrWhiteSpace(imageUrl)) return null;
-            if (Uri.IsWellFormedUriString(imageUrl, UriKind.Absolute)) return imageUrl;
+            if (string.IsNullOrWhiteSpace(imageUrl))
+            {
+                return null;
+            }
+
+            if (Uri.IsWellFormedUriString(imageUrl, UriKind.Absolute))
+            {
+                return imageUrl;
+            }
 
             Uri? baseUri = item.BaseUri?.IsAbsoluteUri == true ? item.BaseUri : null;
             if (baseUri == null)

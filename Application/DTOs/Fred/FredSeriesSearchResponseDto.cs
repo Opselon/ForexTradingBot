@@ -1,4 +1,5 @@
 ﻿// File: Application/DTOs/Fred/FredSeriesSearchResponseDto.cs
+using Application.Common.Interfaces.Fred;
 using System.Text.Json.Serialization;
 
 namespace Application.DTOs.Fred
@@ -16,6 +17,6 @@ namespace Application.DTOs.Fred
 
         // Handles the "seriess" naming quirk in the FRED API JSON
         [JsonPropertyName("seriess")]
-        public List<FredSeriesDto> Series { get; set; } = new();
+        public List<FredSeriesDto> Series { get; set; } = [];
     }
 }

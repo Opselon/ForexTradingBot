@@ -1,7 +1,7 @@
 ﻿// File: TelegramPanel/Infrastructure/Helpers/MarkupBuilder.cs (یا یک مسیر مناسب دیگر)
 using Telegram.Bot.Types.ReplyMarkups;
 
-namespace TelegramPanel.Infrastructure.Helpers // یا یک namespace مناسب دیگر
+namespace TelegramPanel.Infrastructure.Helper // یا یک namespace مناسب دیگر
 {
     public static class MarkupBuilder
     {
@@ -35,11 +35,7 @@ namespace TelegramPanel.Infrastructure.Helpers // یا یک namespace مناسب
         /// </summary>
         public static InlineKeyboardMarkup? CreateInlineKeyboard(params InlineKeyboardButton[] singleRowButtons)
         {
-            if (singleRowButtons == null || !singleRowButtons.Any())
-            {
-                return null;
-            }
-            return CreateInlineKeyboard(new[] { singleRowButtons });
+            return singleRowButtons == null || !singleRowButtons.Any() ? null : CreateInlineKeyboard(new[] { singleRowButtons });
         }
 
         /// <summary>

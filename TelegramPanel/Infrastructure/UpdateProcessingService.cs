@@ -57,7 +57,7 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
 
             // تعریف _internalServiceRetryPolicy برای عملیات‌های داخلی (مانند دسترسی به DB از طریق StateMachine)
             _internalServiceRetryPolicy = Policy
-                .Handle<Exception>(ex => !(ex is OperationCanceledException || ex is TaskCanceledException))
+                .Handle<Exception>(ex => ex is not (OperationCanceledException or TaskCanceledException))
                 .WaitAndRetryAsync(
                     retryCount: 3,
                     sleepDurationProvider: retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)), // تأخیر نمایی: 2s, 4s, 8s
@@ -72,7 +72,7 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
 
             // تعریف _externalApiRetryPolicy برای فراخوانی‌های API خارجی (مانند ارسال پیام تلگرام)
             _externalApiRetryPolicy = Policy
-                .Handle<Exception>(ex => !(ex is OperationCanceledException || ex is TaskCanceledException))
+                .Handle<Exception>(ex => ex is not (OperationCanceledException or TaskCanceledException))
                 .WaitAndRetryAsync(
                     retryCount: 3,
                     sleepDurationProvider: retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)), // تأخیر نمایی: 2s, 4s, 8s
@@ -100,13 +100,13 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
         {
             _logger.LogInformation("Beginning pipeline processing for update ID: {UpdateId}.", update.Id);
 
-            TelegramPipelineDelegate finalHandlerAction = async (processedUpdate, ct) =>
+            async Task finalHandlerAction(Update processedUpdate, CancellationToken ct)
             {
                 await RouteToHandlerOrStateMachineAsync(processedUpdate, ct);
-            };
+            }
 
             var pipeline = _middlewares.Aggregate(
-                finalHandlerAction,
+(TelegramPipelineDelegate)finalHandlerAction,
                 (nextMiddlewareInChain, currentMiddleware) =>
                     async (upd, ct) => await currentMiddleware.InvokeAsync(upd, nextMiddlewareInChain, ct)
             );
@@ -250,8 +250,11 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
             }
 
             // --- Fallback: No handler or state found ---
-            var contentPartial = (update.Message?.Text ?? update.CallbackQuery?.Data ?? update.InlineQuery?.Query ?? "N/A");
-            if (contentPartial.Length > 50) contentPartial = contentPartial.Substring(0, 50) + "...";
+            var contentPartial = update.Message?.Text ?? update.CallbackQuery?.Data ?? update.InlineQuery?.Query ?? "N/A";
+            if (contentPartial.Length > 50)
+            {
+                contentPartial = contentPartial.Substring(0, 50) + "...";
+            }
 
             _logger.LogWarning("No suitable specific handler or active state found for Update ID: {UpdateId}. UpdateType: {UpdateType}. Content(partial): '{Content}'. Routing to unknown/unmatched handler.",
                 update.Id, update.Type, contentPartial);
@@ -322,7 +325,7 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
                 var cacheEntryOptions = new MemoryCacheEntryOptions()
                     .SetAbsoluteExpiration(TimeSpan.FromSeconds(10));
 
-                _memoryCache.Set(rateLimitCacheKey, true, cacheEntryOptions);
+                _ = _memoryCache.Set(rateLimitCacheKey, true, cacheEntryOptions);
                 // --- END ANTI-SPAM LOGIC ---
 
                 // Wait for 3 seconds to delete the message.

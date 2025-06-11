@@ -14,7 +14,7 @@ using TelegramPanel.Application.CommandHandlers.MainMenu;
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Formatters;
 using TelegramPanel.Infrastructure;
-using TelegramPanel.Infrastructure.Helpers;
+using TelegramPanel.Infrastructure.Helper;
 using TelegramPanel.Settings;
 
 namespace TelegramPanel.Application.CommandHandlers.Admin
@@ -61,18 +61,22 @@ namespace TelegramPanel.Application.CommandHandlers.Admin
         public bool CanHandle(Update update)
         {
             if (update.Type != UpdateType.CallbackQuery || update.CallbackQuery?.Data == null || update.CallbackQuery.From == null)
+            {
                 return false;
+            }
 
             if (!_settings.AdminUserIds.Contains(update.CallbackQuery.From.Id))
+            {
                 return false;
+            }
 
             var data = update.CallbackQuery.Data;
 
             // This handler is now responsible for all these stateless admin actions.
-            return data == AdminServerStatsCallback ||
-                   data == AdminManualRssFetchCallback ||
-                   data == PurgeHangfireCallback ||
-                   data == BackToAdminPanelCallback;
+            return data is AdminServerStatsCallback or
+                   AdminManualRssFetchCallback or
+                   PurgeHangfireCallback or
+                   BackToAdminPanelCallback;
         }
 
         public async Task HandleAsync(Update update, CancellationToken cancellationToken = default)
@@ -100,13 +104,13 @@ namespace TelegramPanel.Application.CommandHandlers.Admin
             (int userCount, int newsItemCount) = await _adminService.GetDashboardStatsAsync(cancellationToken);
 
             var stats = new StringBuilder();
-            stats.AppendLine(TelegramMessageFormatter.Bold("📊 Server & Bot Status"));
-            stats.AppendLine("`------------------------------`");
-            stats.AppendLine($"👥 Total Users: `{userCount:N0}`");
-            stats.AppendLine($"📰 News Items Indexed: `{newsItemCount:N0}`");
-            stats.AppendLine("`------------------------------`");
-            stats.AppendLine($"• Environment: `{Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")}`");
-            stats.AppendLine($"• Server Time (UTC): `{DateTime.UtcNow:yyyy-MM-dd HH:mm:ss}`");
+            _ = stats.AppendLine(TelegramMessageFormatter.Bold("📊 Server & Bot Status"));
+            _ = stats.AppendLine("`------------------------------`");
+            _ = stats.AppendLine($"👥 Total Users: `{userCount:N0}`");
+            _ = stats.AppendLine($"📰 News Items Indexed: `{newsItemCount:N0}`");
+            _ = stats.AppendLine("`------------------------------`");
+            _ = stats.AppendLine($"• Environment: `{Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")}`");
+            _ = stats.AppendLine($"• Server Time (UTC): `{DateTime.UtcNow:yyyy-MM-dd HH:mm:ss}`");
 
             await _messageSender.EditMessageTextAsync(chatId, messageId, stats.ToString(), ParseMode.Markdown, GetBackToAdminPanelKeyboard(), cancellationToken);
         }

@@ -12,7 +12,7 @@ namespace WebAPI.Extensions
         /// </summary>
         public static IServiceCollection AddHangfireCleaner(this IServiceCollection services)
         {
-            services.AddScoped<IHangfireCleaner, HangfireCleaner>();
+            _ = services.AddScoped<IHangfireCleaner, HangfireCleaner>();
             return services;
         }
 
@@ -24,7 +24,7 @@ namespace WebAPI.Extensions
         public static IApplicationBuilder UseHangfirePurgeEndpoint(this IApplicationBuilder app, IHostEnvironment env)
         {
             // The 'UseEndpoints' method is the correct way to add a route to the pipeline.
-            app.UseEndpoints(endpoints =>
+            _ = app.UseEndpoints(endpoints =>
             {
                 var purgeEndpoint = endpoints.MapPost("/maintenance/hangfire-purge",
                     (IHangfireCleaner cleaner, IConfiguration config) =>
@@ -37,7 +37,7 @@ namespace WebAPI.Extensions
                 // In a production environment, require the user to be authenticated.
                 if (env.IsProduction())
                 {
-                    purgeEndpoint.RequireAuthorization();
+                    _ = purgeEndpoint.RequireAuthorization();
                 }
             });
 

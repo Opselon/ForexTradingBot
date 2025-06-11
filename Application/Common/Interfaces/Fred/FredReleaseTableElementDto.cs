@@ -1,7 +1,7 @@
 ﻿// File: Application/DTOs/Fred/FredReleaseTableElementDto.cs
 using System.Text.Json.Serialization;
 
-namespace Application.DTOs.Fred
+namespace Application.Common.Interfaces.Fred
 {
     public class FredReleaseTableElementDto
     {
@@ -24,6 +24,6 @@ namespace Application.DTOs.Fred
         public string? SeriesId { get; set; }
 
         [JsonPropertyName("children")]
-        public List<FredReleaseTableElementDto> Children { get; set; } = new();
+        public List<FredReleaseTableElementDto> Children { get; set; } = [];
     }
 }

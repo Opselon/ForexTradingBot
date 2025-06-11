@@ -12,7 +12,10 @@ namespace TelegramPanel.Formatters
         /// </summary>
         public static string EscapeMarkdownV2(string text)
         {
-            if (string.IsNullOrEmpty(text)) return string.Empty;
+            if (string.IsNullOrEmpty(text))
+            {
+                return string.Empty;
+            }
 
             var result = text;
             // 1. ابتدا خود بک‌اسلش را escape کنید تا در مراحل بعد با escape های دیگر تداخل پیدا نکند.

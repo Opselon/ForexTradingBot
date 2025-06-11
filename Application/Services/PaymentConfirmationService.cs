@@ -3,7 +3,6 @@
 using Application.Common.Interfaces; // برای ITransactionRepository, IAppDbContext, INotificationService ✅
 using Application.DTOs;             // برای CreateSubscriptionDto
 using Application.DTOs.CryptoPay;   // برای CryptoPayInvoiceDto
-using Application.Interface;
 using Application.Interfaces;       // برای IPaymentConfirmationService, ISubscriptionService, IUserService
 using Microsoft.Extensions.Logging;
 using Shared.Results;               // برای Result
@@ -46,18 +45,29 @@ namespace Application.Services // ✅ Namespace: Application.Services
         public async Task<Result> ProcessSuccessfulCryptoPayPaymentAsync(CryptoPayInvoiceDto paidInvoice, CancellationToken cancellationToken = default)
         {
             // ... (منطق داخلی متد که قبلاً داشتیم، تا قبل از ارسال پیام) ...
-            if (paidInvoice == null) return Result.Failure("Paid invoice data cannot be null.");
+            if (paidInvoice == null)
+            {
+                return Result.Failure("Paid invoice data cannot be null.");
+            }
+
             using (_logger.BeginScope(new Dictionary<string, object?> { ["CryptoPayInvoiceId"] = paidInvoice.InvoiceId }))
             {
                 _logger.LogInformation("Processing successful CryptoPay payment. Status: {Status}", paidInvoice.Status);
                 if (paidInvoice.Status?.ToLowerInvariant() != "paid")
+                {
                     return Result.Failure($"Invoice status is '{paidInvoice.Status}', expected 'paid'.");
+                }
 
                 var internalTransaction = await _transactionRepository.GetByPaymentGatewayInvoiceIdAsync(paidInvoice.InvoiceId.ToString(), cancellationToken);
                 if (internalTransaction == null)
+                {
                     return Result.Failure($"Internal transaction not found for CryptoPay Invoice ID {paidInvoice.InvoiceId}.");
+                }
+
                 if (internalTransaction.Status?.Equals("Completed", StringComparison.OrdinalIgnoreCase) == true)
+                {
                     return Result.Success("Transaction already processed.");
+                }
 
                 InvoicePayloadData? payloadData = null;
                 if (!string.IsNullOrWhiteSpace(internalTransaction.PaymentGatewayPayload)) // مطمئن شوید این فیلد در Transaction.cs هست
@@ -70,7 +80,9 @@ namespace Application.Services // ✅ Namespace: Application.Services
                     }
                 }
                 if (payloadData == null || payloadData.UserId == Guid.Empty || payloadData.PlanId == Guid.Empty)
+                {
                     return Result.Failure("Essential internal payload data (UserId, PlanId) is missing.");
+                }
 
                 internalTransaction.Status = "Completed";
                 internalTransaction.PaidAt = DateTime.UtcNow;
@@ -87,14 +99,16 @@ namespace Application.Services // ✅ Namespace: Application.Services
                 };
                 var subscriptionDto = await _subscriptionService.CreateSubscriptionAsync(createSubscriptionDto, cancellationToken);
                 if (subscriptionDto == null)
+                {
                     return Result.Failure("Subscription activation failed after payment confirmation.");
+                }
 
                 _logger.LogInformation("Subscription {SubscriptionId} activated for UserID {UserId} for plan '{PlanName}'.",
                    subscriptionDto.Id, payloadData.UserId, planName);
 
                 // ... (به‌روزرسانی UserLevel اگر لازم است) ...
 
-                await _context.SaveChangesAsync(cancellationToken);
+                _ = await _context.SaveChangesAsync(cancellationToken);
                 _logger.LogInformation("Database changes saved for CryptoPay InvoiceID {CryptoPayInvoiceId}.", paidInvoice.InvoiceId);
 
                 // --- ✅ ارسال نوتیفیکیشن با استفاده از INotificationService ---

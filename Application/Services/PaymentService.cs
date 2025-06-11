@@ -126,7 +126,7 @@ namespace Application.Services
 
                     // Add the pending transaction to the repository and save changes. **Potential database interaction/failure.**
                     await _transactionRepository.AddAsync(pendingTransaction, cancellationToken);
-                    await _context.SaveChangesAsync(cancellationToken); // Save the pending transaction record
+                    _ = await _context.SaveChangesAsync(cancellationToken); // Save the pending transaction record
                     _logger.LogDebug("Pending transaction logged for invoice {InvoiceId} with ID {TransactionId}.", invoiceResult.Data.InvoiceId, pendingTransaction.Id);
 
                     // Return the successful result received from the API client.
@@ -136,10 +136,10 @@ namespace Application.Services
                 {
                     // CryptoPay API client reported a functional error (e.g., invalid asset).
                     _logger.LogError("CryptoPay API reported functional error while creating invoice for UserID: {UserId}. Errors: {Errors}",
-                        userId, string.Join(", ", invoiceResult.Errors ?? new List<string> { "No specific errors reported by API client." }));
+                        userId, string.Join(", ", invoiceResult.Errors ?? ["No specific errors reported by API client."]));
 
                     // Return the failure result with errors from the API client.
-                    return Result<CryptoPayInvoiceDto>.Failure(invoiceResult.Errors ?? new List<string> { "Failed to create payment invoice." });
+                    return Result<CryptoPayInvoiceDto>.Failure(invoiceResult.Errors ?? ["Failed to create payment invoice."]);
                 }
             }
             catch (OperationCanceledException ex) when (cancellationToken.IsCancellationRequested)
@@ -218,10 +218,10 @@ namespace Application.Services
                 {
                     // CryptoPay API client reported a functional error or invoice not found/data is empty.
                     _logger.LogWarning("Could not retrieve status or invoice not found for CryptoPay InvoiceID {InvoiceId}. Errors: {Errors}",
-                        invoiceId, string.Join(", ", result.Errors ?? new List<string> { "No specific errors reported by API client." }));
+                        invoiceId, string.Join(", ", result.Errors ?? ["No specific errors reported by API client."]));
 
                     // Return a failure result with errors from the API client or a default message.
-                    return Result<CryptoPayInvoiceDto>.Failure(result.Errors.Any() ? result.Errors : new List<string> { "Invoice not found or failed to retrieve status." });
+                    return Result<CryptoPayInvoiceDto>.Failure(result.Errors.Any() ? result.Errors : ["Invoice not found or failed to retrieve status."]);
                 }
             }
             catch (OperationCanceledException ex) when (cancellationToken.IsCancellationRequested)

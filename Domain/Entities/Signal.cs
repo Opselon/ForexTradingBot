@@ -99,7 +99,7 @@ namespace Domain.Entities
         /// <summary>
         /// Collection of analyses performed on this signal.
         /// </summary>
-        public virtual ICollection<SignalAnalysis> Analyses { get; set; } = new List<SignalAnalysis>(); // ✅ virtual
+        public virtual ICollection<SignalAnalysis> Analyses { get; set; } = []; // ✅ virtual
         #endregion
 
         #region Constructors
@@ -108,7 +108,7 @@ namespace Domain.Entities
             Id = Guid.NewGuid();
             PublishedAt = DateTime.UtcNow; //  مقداردهی اولیه
             Status = SignalStatus.Pending;
-            Analyses = new List<SignalAnalysis>();
+            Analyses = [];
         }
         #endregion
     }

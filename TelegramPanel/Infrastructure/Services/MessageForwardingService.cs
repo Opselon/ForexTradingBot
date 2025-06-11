@@ -71,8 +71,14 @@ namespace TelegramPanel.Infrastructure.Services
                 foreach (var entity in currentTelegramBotEntities)
                 {
                     var tlEntity = ConvertTelegramBotEntityToTLEntity(entity, currentMessageContent);
-                    if (tlEntity != null) convertedEntities.Add(tlEntity);
-                    else _logger.LogWarning("MessageForwardingService: Failed to convert Telegram.Bot entity type {EntityType} for message {OriginalMessageId}", entity.Type, originalMessageId);
+                    if (tlEntity != null)
+                    {
+                        convertedEntities.Add(tlEntity);
+                    }
+                    else
+                    {
+                        _logger.LogWarning("MessageForwardingService: Failed to convert Telegram.Bot entity type {EntityType} for message {OriginalMessageId}", entity.Type, originalMessageId);
+                    }
                 }
                 tlMessageEntities = convertedEntities.ToArray();
             }
@@ -106,7 +112,7 @@ namespace TelegramPanel.Infrastructure.Services
                 _logger.LogDebug("MessageForwardingService: Message from private chat {TelegramApiId}. Skipping automatic forwarding enqueue as private chats are typically not sources for rules.", message.Chat.Id);
                 return;
             }
-            else if (message.Chat.Type == ChatType.Channel || message.Chat.Type == ChatType.Supergroup)
+            else if (message.Chat.Type is ChatType.Channel or ChatType.Supergroup)
             {
                 _logger.LogDebug("MessageForwardingService: Source is a Channel/Supergroup. Using ID {SourceId} for rule matching.", sourceIdForMatchingRules);
             }
@@ -294,8 +300,7 @@ namespace TelegramPanel.Infrastructure.Services
         // Helper function to truncate strings for logging
         private string TruncateString(string? str, int maxLength)
         {
-            if (string.IsNullOrEmpty(str)) return "[null_or_empty]";
-            return str.Length <= maxLength ? str : str.Substring(0, maxLength) + "...";
+            return string.IsNullOrEmpty(str) ? "[null_or_empty]" : str.Length <= maxLength ? str : str.Substring(0, maxLength) + "...";
         }
 
         // Helper to get Peer from Telegram.Bot.Types.Message.From or .SenderChat
@@ -307,7 +312,7 @@ namespace TelegramPanel.Infrastructure.Services
             }
             if (message.SenderChat != null)
             {
-                if (message.SenderChat.Type == ChatType.Channel || message.SenderChat.Type == ChatType.Supergroup)
+                if (message.SenderChat.Type is ChatType.Channel or ChatType.Supergroup)
                 {
                     return new TL.PeerChannel { channel_id = Math.Abs(message.SenderChat.Id) };
                 }

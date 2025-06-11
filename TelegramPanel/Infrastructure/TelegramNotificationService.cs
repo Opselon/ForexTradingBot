@@ -37,7 +37,7 @@ namespace TelegramPanel.Infrastructure
             // این سیاست هر Exception را مدیریت می‌کند به جز OperationCanceledException و TaskCanceledException
             // که نشان‌دهنده لغو عمدی عملیات هستند.
             _notificationRetryPolicy = Policy
-                .Handle<Exception>(ex => !(ex is OperationCanceledException || ex is TaskCanceledException))
+                .Handle<Exception>(ex => ex is not (OperationCanceledException or TaskCanceledException))
                 .WaitAndRetryAsync(
                     retryCount: 3, // حداکثر 3 بار تلاش مجدد
                     sleepDurationProvider: retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)), // تأخیر نمایی: 2s, 4s, 8s

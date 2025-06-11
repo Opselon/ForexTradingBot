@@ -30,7 +30,10 @@ namespace TelegramPanel.Application.States.Admin
 
         public async Task<string?> ProcessUpdateAsync(Update update, CancellationToken cancellationToken = default)
         {
-            if (update.Message?.From == null || string.IsNullOrWhiteSpace(update.Message.Text)) return Name;
+            if (update.Message?.From == null || string.IsNullOrWhiteSpace(update.Message.Text))
+            {
+                return Name;
+            }
 
             var message = update.Message;
             var adminId = message.From.Id;
@@ -53,25 +56,20 @@ namespace TelegramPanel.Application.States.Admin
             var response = new StringBuilder();
             if (userDetail == null)
             {
-                response.AppendLine($"❌ User with Telegram ID `{targetUserId}` not found.");
+                _ = response.AppendLine($"❌ User with Telegram ID `{targetUserId}` not found.");
             }
             else
             {
-                response.AppendLine($"✅ *User Found: {userDetail.Username}*");
-                response.AppendLine($"`------------------------------`");
-                response.AppendLine($"• *System ID:* `{userDetail.UserId}`");
-                response.AppendLine($"• *Telegram ID:* `{userDetail.TelegramId}`");
-                response.AppendLine($"• *Level:* `{userDetail.Level}`");
-                response.AppendLine($"• *Joined:* `{userDetail.CreatedAt:yyyy-MM-dd}`");
-                response.AppendLine($"• *Token Balance:* `{userDetail.TokenBalance:N2}`");
-                if (userDetail.ActiveSubscription != null)
-                {
-                    response.AppendLine($"• *VIP Expires:* `{userDetail.ActiveSubscription.EndDate:yyyy-MM-dd}` ({userDetail.ActiveSubscription.DaysRemaining} days left)");
-                }
-                else
-                {
-                    response.AppendLine($"• *Subscription:* `None`");
-                }
+                _ = response.AppendLine($"✅ *User Found: {userDetail.Username}*");
+                _ = response.AppendLine($"`------------------------------`");
+                _ = response.AppendLine($"• *System ID:* `{userDetail.UserId}`");
+                _ = response.AppendLine($"• *Telegram ID:* `{userDetail.TelegramId}`");
+                _ = response.AppendLine($"• *Level:* `{userDetail.Level}`");
+                _ = response.AppendLine($"• *Joined:* `{userDetail.CreatedAt:yyyy-MM-dd}`");
+                _ = response.AppendLine($"• *Token Balance:* `{userDetail.TokenBalance:N2}`");
+                _ = userDetail.ActiveSubscription != null
+                    ? response.AppendLine($"• *VIP Expires:* `{userDetail.ActiveSubscription.EndDate:yyyy-MM-dd}` ({userDetail.ActiveSubscription.DaysRemaining} days left)")
+                    : response.AppendLine($"• *Subscription:* `None`");
                 // ... add more details from the DTO as needed ...
             }
 

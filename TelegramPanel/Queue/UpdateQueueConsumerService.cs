@@ -24,7 +24,6 @@ namespace TelegramPanel.Queue
 
         #region Private Fields
         // این فیلدها در کد اصلی ارائه شده برای ExecuteAsync استفاده نمی‌شوند، اما برای حفظ ساختار حفظ شده‌اند.
-        private readonly WTelegram.Client? _client; // فرض شده این فیلد وجود دارد اما در اینجا استفاده نمی‌شود.
         private readonly SemaphoreSlim _connectionLock = new SemaphoreSlim(1, 1); // فرض شده این فیلد وجود دارد اما در اینجا استفاده نمی‌شود.
         #endregion
 
@@ -47,7 +46,7 @@ namespace TelegramPanel.Queue
             // این سیاست هر Exception را مدیریت می‌کند به جز OperationCanceledException و TaskCanceledException
             // که نشان‌دهنده لغو عمدی عملیات هستند.
             _processingRetryPolicy = Policy
-                .Handle<Exception>(ex => !(ex is OperationCanceledException || ex is TaskCanceledException))
+                .Handle<Exception>(ex => ex is not (OperationCanceledException or TaskCanceledException))
                 .WaitAndRetryAsync(
                     retryCount: 3, // حداکثر 3 بار تلاش مجدد
                     sleepDurationProvider: retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)), // تأخیر نمایی: 2s, 4s, 8s
@@ -117,15 +116,13 @@ namespace TelegramPanel.Queue
                             {
                                 // ایجاد یک Scope جدید از Dependency Injection برای هر پردازش آپدیت،
                                 // این کار تضمین می‌کند که وابستگی‌های Scoped (مانند DbContext) به درستی ایزوله و مدیریت شوند.
-                                await using (var scope = _scopeFactory.CreateAsyncScope())
-                                {
-                                    var updateProcessor = scope.ServiceProvider.GetRequiredService<ITelegramUpdateProcessor>();
-                                    _logger.LogInformation("Passing update to ITelegramUpdateProcessor.");
-                                    // passing the original stoppingToken to ProcessUpdateAsync, which Polly will also observe
-                                    // ProcessUpdateAsync باید خودش به درستی async/await (برای I/O) یا Task.Run (برای CPU-bound) را رعایت کند.
-                                    await updateProcessor.ProcessUpdateAsync(update, stoppingToken);
-                                    _logger.LogInformation("Update processed successfully by ITelegramUpdateProcessor.");
-                                }
+                                await using var scope = _scopeFactory.CreateAsyncScope();
+                                var updateProcessor = scope.ServiceProvider.GetRequiredService<ITelegramUpdateProcessor>();
+                                _logger.LogInformation("Passing update to ITelegramUpdateProcessor.");
+                                // passing the original stoppingToken to ProcessUpdateAsync, which Polly will also observe
+                                // ProcessUpdateAsync باید خودش به درستی async/await (برای I/O) یا Task.Run (برای CPU-bound) را رعایت کند.
+                                await updateProcessor.ProcessUpdateAsync(update, stoppingToken);
+                                _logger.LogInformation("Update processed successfully by ITelegramUpdateProcessor.");
                             }, pollyContext, stoppingToken); // ارسال Context و CancellationToken به Polly
 
                         }
@@ -148,16 +145,14 @@ namespace TelegramPanel.Queue
                             {
                                 try
                                 {
-                                    await using (var errorScope = _scopeFactory.CreateAsyncScope())
+                                    await using var errorScope = _scopeFactory.CreateAsyncScope();
+                                    var messageSender = errorScope.ServiceProvider.GetService<ITelegramMessageSender>();
+                                    if (messageSender != null)
                                     {
-                                        var messageSender = errorScope.ServiceProvider.GetService<ITelegramMessageSender>();
-                                        if (messageSender != null)
-                                        {
-                                            await messageSender.SendTextMessageAsync(
-                                                userId.Value,
-                                                "Sorry, an unexpected error occurred while processing your request. Our team has been notified.",
-                                                cancellationToken: CancellationToken.None); // استفاده از CancellationToken.None برای اطمینان از ارسال پیام خطا حتی در زمان توقف سرویس.
-                                        }
+                                        await messageSender.SendTextMessageAsync(
+                                            userId.Value,
+                                            "Sorry, an unexpected error occurred while processing your request. Our team has been notified.",
+                                            cancellationToken: CancellationToken.None); // استفاده از CancellationToken.None برای اطمینان از ارسال پیام خطا حتی در زمان توقف سرویس.
                                     }
                                 }
                                 catch (Exception sendEx)

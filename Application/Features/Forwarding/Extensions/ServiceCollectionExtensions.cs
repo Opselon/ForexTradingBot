@@ -9,8 +9,8 @@ namespace Application.Features.Forwarding.Extensions
         {
             // Register services
 
-            services.AddScoped<IForwardingService, ForwardingService>();
-            services.AddScoped<MessageProcessingService>();
+            _ = services.AddScoped<IForwardingService, ForwardingService>();
+            _ = services.AddScoped<MessageProcessingService>();
             return services;
         }
     }

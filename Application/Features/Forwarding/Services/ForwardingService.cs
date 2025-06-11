@@ -57,7 +57,10 @@ namespace Application.Features.Forwarding.Services
                     // Customize these exception types based on your database and ORM.
                     // Examples for PostgreSQL with Npgsql: Npgsql.NpgsqlException
                     // Examples for SQL Server: System.Data.SqlClient.SqlException, System.TimeoutException
-                    if (ex is TimeoutException) return true; // Common for transient network/DB issues
+                    if (ex is TimeoutException)
+                    {
+                        return true; // Common for transient network/DB issues
+                    }
                     // if (ex is Npgsql.NpgsqlException pgEx && pgEx.IsTransient) return true; // Check for transient PostgreSQL errors
                     // if (ex is System.Data.SqlClient.SqlException sqlEx && IsSqlTransientError(sqlEx)) return true; // Custom check for SQL Server transient errors
 
@@ -306,7 +309,7 @@ namespace Application.Features.Forwarding.Services
                 // the try-catch should ideally wrap the SaveChanges call in the caller.
                 // Assuming SaveChangesAsync happens within or immediately after this AddAsync call for simplicity here.
                 // If SaveChanges is separate, consider moving the catch blocks there.
-                await _context.SaveChangesAsync(cancellationToken); // Explicitly adding SaveChangesAsync if it's not in Repository.AddAsync
+                _ = await _context.SaveChangesAsync(cancellationToken); // Explicitly adding SaveChangesAsync if it's not in Repository.AddAsync
 
                 _logger.LogInformation("Forwarding rule '{RuleName}' created successfully.", rule.RuleName);
             }
@@ -388,7 +391,7 @@ namespace Application.Features.Forwarding.Services
 
                 // If SaveChangesAsync is not inside Repository.UpdateAsync, call it here.
                 // This is the CRITICAL point of failure.
-                await _context.SaveChangesAsync(cancellationToken); // Explicitly add if needed
+                _ = await _context.SaveChangesAsync(cancellationToken); // Explicitly add if needed
 
                 _logger.LogInformation("Forwarding rule '{RuleName}' updated successfully.", rule.RuleName);
             }
@@ -469,7 +472,7 @@ namespace Application.Features.Forwarding.Services
 
                 // If SaveChangesAsync is not inside Repository.DeleteAsync, call it here.
                 // This is the CRITICAL point of failure.
-                await _context.SaveChangesAsync(cancellationToken); // Explicitly add if needed
+                _ = await _context.SaveChangesAsync(cancellationToken); // Explicitly add if needed
 
                 _logger.LogInformation("Forwarding rule '{RuleName}' deleted successfully.", ruleName);
             }
@@ -524,13 +527,12 @@ namespace Application.Features.Forwarding.Services
 
             // Caching Logic: Attempt to retrieve rules from in-memory cache first
             string cacheKey = $"Rules_SourceChannel_{sourceChannelIdForMatching}";
-            IEnumerable<ForwardingRule> rules;
 
             // This part already calls GetRulesBySourceChannelAsync, which now uses Polly
-            if (!_memoryCache.TryGetValue(cacheKey, out rules))
+            if (!_memoryCache.TryGetValue(cacheKey, out IEnumerable<ForwardingRule> rules))
             {
                 rules = await GetRulesBySourceChannelAsync(sourceChannelIdForMatching, cancellationToken); // This call is now protected by Polly
-                _memoryCache.Set(cacheKey, rules, new MemoryCacheEntryOptions()
+                _ = _memoryCache.Set(cacheKey, rules, new MemoryCacheEntryOptions()
                     .SetAbsoluteExpiration(_rulesCacheExpiration)
                     .SetSlidingExpiration(_rulesCacheExpiration));
                 _logger.LogInformation("ForwardingService: Rules for source {SourceId} loaded from DB and cached.", sourceChannelIdForMatching);

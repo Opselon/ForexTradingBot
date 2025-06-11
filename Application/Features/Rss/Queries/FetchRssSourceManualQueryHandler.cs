@@ -32,7 +32,7 @@ namespace Application.Features.Rss.Queries
                 request.RssSourceId?.ToString() ?? "All Active", request.ForceFetch);
 
             var allFetchedNews = new List<NewsItemDto>();
-            List<string> errors = new List<string>();
+            List<string> errors = [];
 
             IEnumerable<RssSource> sourcesToFetch;
 
@@ -44,7 +44,7 @@ namespace Application.Features.Rss.Queries
                     _logger.LogWarning("Specified RssSource ID {RssSourceId} not found or is not active.", request.RssSourceId.Value);
                     return Result<IEnumerable<NewsItemDto>>.Failure($"RSS Source with ID {request.RssSourceId.Value} not found or not active.");
                 }
-                sourcesToFetch = new List<RssSource> { source };
+                sourcesToFetch = [source];
             }
             else
             {
@@ -110,10 +110,14 @@ namespace Application.Features.Rss.Queries
             {
                 // اگر همه فیدها خطا داشتند یا برخی خطا و برخی موفق بودند
                 if (!allFetchedNews.Any())
+                {
                     return Result<IEnumerable<NewsItemDto>>.Failure(errors);
+                }
                 else
+                {
                     //  موفقیت نسبی، با لیست خطاها
                     return Result<IEnumerable<NewsItemDto>>.Success(allFetchedNews, $"Partial success. Some feeds failed: {string.Join("; ", errors)}");
+                }
             }
 
             return Result<IEnumerable<NewsItemDto>>.Success(allFetchedNews, $"{allFetchedNews.Count} new news items fetched and processed in total.");

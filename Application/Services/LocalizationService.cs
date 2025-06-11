@@ -16,9 +16,11 @@ namespace Application.Services
         public string GetString(string resourceKey, CultureInfo? cultureInfo = null)
         {
             if (string.IsNullOrEmpty(resourceKey))
+            {
                 throw new ArgumentNullException(nameof(resourceKey));
+            }
 
-            cultureInfo ??= CultureInfo.CurrentUICulture;
+            _ = cultureInfo ?? CultureInfo.CurrentUICulture;
 
             // TODO: Implement actual resource file lookup
             // For now, return the key as a fallback
@@ -28,7 +30,9 @@ namespace Application.Services
         public string GetString(string resourceKey, CultureInfo? cultureInfo = null, params object[] arguments)
         {
             if (string.IsNullOrEmpty(resourceKey))
+            {
                 throw new ArgumentNullException(nameof(resourceKey));
+            }
 
             var format = GetString(resourceKey, cultureInfo);
             return string.Format(format, arguments);
@@ -37,13 +41,17 @@ namespace Application.Services
         public async Task<string?> GetUserLocalizedStringAsync(Guid userId, string resourceKey, params object[] arguments)
         {
             if (userId == Guid.Empty)
+            {
                 throw new ArgumentException("Invalid user ID", nameof(userId));
+            }
 
             if (string.IsNullOrEmpty(resourceKey))
+            {
                 throw new ArgumentNullException(nameof(resourceKey));
+            }
 
             // Get user's preferred language
-            var user = await _userService.GetUserByIdAsync(userId);
+            _ = await _userService.GetUserByIdAsync(userId);
             //var cultureInfo = !string.IsNullOrEmpty(user?.PreferredLanguage) 
             //     ? new CultureInfo(user.PreferredLanguage) 
             //   : CultureInfo.CurrentUICulture;

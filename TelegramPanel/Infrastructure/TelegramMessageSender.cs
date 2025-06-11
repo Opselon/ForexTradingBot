@@ -86,7 +86,7 @@ namespace TelegramPanel.Infrastructure
                     // For all OTHER ApiRequestExceptions, we DO want to retry.
                     return true; // True = Handle this error = Retry
                 })
-                .Or<Exception>(ex => !(ex is OperationCanceledException || ex is TaskCanceledException))
+                .Or<Exception>(ex => ex is not (OperationCanceledException or TaskCanceledException))
                 .WaitAndRetryAsync(
                     // ... rest of your policy remains the same
                     retryCount: 3,
@@ -106,7 +106,7 @@ namespace TelegramPanel.Infrastructure
                        apiEx.Message.Contains("PEER_ID_INVALID", StringComparison.OrdinalIgnoreCase)
                       ))
                 )
-                .Or<Exception>(ex => !(ex is OperationCanceledException || ex is TaskCanceledException))
+                .Or<Exception>(ex => ex is not (OperationCanceledException or TaskCanceledException))
                 .WaitAndRetryAsync(
                     retryCount: 3,
                     sleepDurationProvider: retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
@@ -131,7 +131,7 @@ namespace TelegramPanel.Infrastructure
             {
                 await _telegramApiRetryPolicy.ExecuteAsync(async ct =>
                 {
-                    await _botClient.CopyMessage(
+                    _ = await _botClient.CopyMessage(
                         chatId: targetChatId,
                         fromChatId: sourceChatId,
                         messageId: messageId,
@@ -154,7 +154,7 @@ namespace TelegramPanel.Infrastructure
         public Task DeleteMessageAsync(long chatId, int messageId, CancellationToken cancellationToken = default)
         {
             _logger.LogDebug("Enqueueing DeleteMessageAsync for ChatID {ChatId}, MsgID {MessageId}", chatId, messageId);
-            _jobScheduler.Enqueue<IActualTelegramMessageActions>(
+            _ = _jobScheduler.Enqueue<IActualTelegramMessageActions>(
                 sender => sender.DeleteMessageAsync(chatId, messageId, CancellationToken.None)
             );
             return Task.CompletedTask;
@@ -184,7 +184,7 @@ namespace TelegramPanel.Infrastructure
             {
                 await _telegramApiRetryPolicy.ExecuteAsync(async (context, ct) =>
                 {
-                    await _botClient.SendMessage(
+                    _ = await _botClient.SendMessage(
                         chatId: new ChatId(chatId),
                         text: text,
                         parseMode: Telegram.Bot.Types.Enums.ParseMode.Markdown,
@@ -259,7 +259,7 @@ namespace TelegramPanel.Infrastructure
             {
                 await _telegramApiRetryPolicy.ExecuteAsync(async (context, ct) =>
                 {
-                    await _botClient.EditMessageText(
+                    _ = await _botClient.EditMessageText(
                         chatId: new ChatId(chatId),
                         messageId: messageId,
                         text: text,
@@ -383,7 +383,7 @@ namespace TelegramPanel.Infrastructure
 
                 await _telegramApiRetryPolicy.ExecuteAsync(async (context, ct) =>
                 {
-                    await _botClient.SendPhoto(
+                    _ = await _botClient.SendPhoto(
                         chatId: new ChatId(chatId),
                         photo: photoInput,
                         caption: caption,
@@ -494,7 +494,7 @@ namespace TelegramPanel.Infrastructure
         public Task DeleteMessageAsync(long chatId, int messageId, CancellationToken cancellationToken = default)
         {
             _logger.LogDebug("Enqueueing DeleteMessageAsync for ChatID {ChatId}, MsgID {MessageId}", chatId, messageId);
-            _jobScheduler.Enqueue<IActualTelegramMessageActions>(
+            _ = _jobScheduler.Enqueue<IActualTelegramMessageActions>(
                 sender => sender.DeleteMessageAsync(chatId, messageId, CancellationToken.None)
             );
             return Task.CompletedTask;
@@ -503,7 +503,7 @@ namespace TelegramPanel.Infrastructure
         public Task SendTextMessageAsync(long chatId, string text, ParseMode? parseMode = ParseMode.Markdown, ReplyMarkup? replyMarkup = null, CancellationToken cancellationToken = default, LinkPreviewOptions? linkPreviewOptions = null)
         {
             _logger.LogDebug("Enqueueing SendTextMessageAsync for ChatID {ChatId}", chatId);
-            _jobScheduler.Enqueue<IActualTelegramMessageActions>(
+            _ = _jobScheduler.Enqueue<IActualTelegramMessageActions>(
                 // ✅ CORRECTED LINE: Swapped the order of linkPreviewOptions and CancellationToken.None
                 sender => sender.SendTextMessageToTelegramAsync(chatId, text, parseMode, replyMarkup, false, linkPreviewOptions, CancellationToken.None)
             );
@@ -513,7 +513,7 @@ namespace TelegramPanel.Infrastructure
         public Task EditMessageTextAsync(long chatId, int messageId, string text, ParseMode? parseMode = ParseMode.Markdown, InlineKeyboardMarkup? replyMarkup = null, CancellationToken cancellationToken = default)
         {
             _logger.LogDebug("Enqueueing EditMessageTextAsync for ChatID {ChatId}, MsgID {MessageId}", chatId, messageId);
-            _jobScheduler.Enqueue<IActualTelegramMessageActions>(
+            _ = _jobScheduler.Enqueue<IActualTelegramMessageActions>(
                 sender => sender.EditMessageTextInTelegramAsync(chatId, messageId, text, parseMode, replyMarkup, CancellationToken.None)
             );
             return Task.CompletedTask;
@@ -522,7 +522,7 @@ namespace TelegramPanel.Infrastructure
         public Task AnswerCallbackQueryAsync(string callbackQueryId, string? text = null, bool showAlert = false, string? url = null, int cacheTime = 0, CancellationToken cancellationToken = default)
         {
             _logger.LogDebug("Enqueueing AnswerCallbackQueryAsync for CBQID {CallbackQueryId}", callbackQueryId);
-            _jobScheduler.Enqueue<IActualTelegramMessageActions>(
+            _ = _jobScheduler.Enqueue<IActualTelegramMessageActions>(
                 sender => sender.AnswerCallbackQueryToTelegramAsync(callbackQueryId, text, showAlert, url, cacheTime, CancellationToken.None)
             );
             return Task.CompletedTask;
@@ -531,7 +531,7 @@ namespace TelegramPanel.Infrastructure
         public Task SendPhotoAsync(long chatId, string photoUrlOrFileId, string? caption = null, ParseMode? parseMode = null, ReplyMarkup? replyMarkup = null, CancellationToken cancellationToken = default)
         {
             _logger.LogDebug("Enqueueing SendPhotoAsync for ChatID {ChatId}", chatId);
-            _jobScheduler.Enqueue<IActualTelegramMessageActions>(
+            _ = _jobScheduler.Enqueue<IActualTelegramMessageActions>(
                 sender => sender.SendPhotoToTelegramAsync(chatId, photoUrlOrFileId, caption, parseMode, replyMarkup, CancellationToken.None)
             );
             return Task.CompletedTask;

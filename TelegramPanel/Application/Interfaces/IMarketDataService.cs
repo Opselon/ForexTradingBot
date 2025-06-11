@@ -173,8 +173,8 @@ namespace TelegramPanel.Application.Interfaces
         public MarketData()
         {
             // Initialize collections to prevent null reference exceptions.
-            Remarks = new List<string>();
-            Insights = new List<string>();
+            Remarks = [];
+            Insights = [];
             // Set a sensible default LastUpdated to avoid DateTime.MinValue if an object is created but not populated.
             LastUpdated = DateTime.UtcNow;
         }

@@ -117,7 +117,7 @@ namespace WebAPI.Controllers
             _logger.LogInformation("CONTROLLER.ProcessMessageViaApi: Enqueuing ForwardingJob. SourceChannelId (for matching): {SourceChannelId}, MessageId: {MessageId}, RawSourcePeerIdForApi (for job): {PeerIdForJob}",
                 request.SourceChannelId, request.MessageId, peerIdForJob);
 
-            BackgroundJob.Enqueue<ForwardingJob>(job =>
+            _ = BackgroundJob.Enqueue<ForwardingJob>(job =>
                 job.ProcessMessageAsync(
                     request.SourceChannelId,
                     request.MessageId,

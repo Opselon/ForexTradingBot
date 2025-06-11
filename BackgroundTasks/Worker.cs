@@ -254,16 +254,23 @@ public static class WorkerServiceCollectionExtensions
     public static IServiceCollection AddStrongWorker(this IServiceCollection services, Action<WorkerOptions> configureOptions)
     {
         // Null checks for method arguments.
-        if (services == null) throw new ArgumentNullException(nameof(services));
-        if (configureOptions == null) throw new ArgumentNullException(nameof(configureOptions));
+        if (services == null)
+        {
+            throw new ArgumentNullException(nameof(services));
+        }
+
+        if (configureOptions == null)
+        {
+            throw new ArgumentNullException(nameof(configureOptions));
+        }
 
         // Configure the WorkerOptions using the provided action.
-        services.Configure(configureOptions);
+        _ = services.Configure(configureOptions);
         // Register the task processor as a transient service.
-        services.AddTransient<ITaskProcessor, ExampleTaskProcessor>();
+        _ = services.AddTransient<ITaskProcessor, ExampleTaskProcessor>();
 
         // Register the Worker as a hosted service.
-        services.AddHostedService<BackgroundTasks.Worker>();
+        _ = services.AddHostedService<BackgroundTasks.Worker>();
 
         return services;
     }

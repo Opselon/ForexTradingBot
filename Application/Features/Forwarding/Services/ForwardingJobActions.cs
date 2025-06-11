@@ -288,7 +288,7 @@ namespace Application.Features.Forwarding.Services
                                          rule.EditOptions.DropMediaCaptions || // DropMediaCaptions means we modify content, so custom send
                                          rule.EditOptions.NoForwards // NoForwards flag needs to be set in SendMessage/SendMedia
                                         )) ||
-                                        (originalMessageHadMediaContent); // If original message had media, it will be handled by custom send path (even if mediaGroupItems is null, it should trigger full API to copy media from original message)
+                                        originalMessageHadMediaContent; // If original message had media, it will be handled by custom send path (even if mediaGroupItems is null, it should trigger full API to copy media from original message)
 
 
                 if (needsCustomSend)
@@ -381,7 +381,7 @@ namespace Application.Features.Forwarding.Services
             if ((filterOptions.AllowedSenderUserIds != null && filterOptions.AllowedSenderUserIds.Any()) ||
                 (filterOptions.BlockedSenderUserIds != null && filterOptions.BlockedSenderUserIds.Any()))
             {
-                if (!(senderPeer is PeerUser userSender))
+                if (senderPeer is not PeerUser userSender)
                 {
                     // If allowed sender IDs are specified, and sender is not a user, it's filtered out.
                     if (filterOptions.AllowedSenderUserIds != null && filterOptions.AllowedSenderUserIds.Any())
@@ -532,7 +532,7 @@ namespace Application.Features.Forwarding.Services
                     _logger.LogDebug("Job:{JobId}: ProcessCustomSendAsync: Media group resolved to a single item. Sending as a single media message.", jobId);
 
                     // Level 5: Execute SendMessageAsync with resilience.
-                    await _sendMessageRetryPolicy.ExecuteAsync(
+                    _ = await _sendMessageRetryPolicy.ExecuteAsync(
                         async (pollyContext, pollyCancellationToken) =>
                             await _userApiClient.SendMessageAsync(
                                 toPeer,
@@ -585,7 +585,7 @@ namespace Application.Features.Forwarding.Services
                     jobId, finalCaption.Length, rule.EditOptions?.RemoveLinks ?? false, rule.RuleName, GetInputPeerIdValueForLogging(toPeer));
 
                 // Level 5: Execute SendMessageAsync (text-only) with resilience.
-                await _sendMessageRetryPolicy.ExecuteAsync(
+                _ = await _sendMessageRetryPolicy.ExecuteAsync(
                     async (pollyContext, pollyCancellationToken) =>
                         await _userApiClient.SendMessageAsync(
                             toPeer,
@@ -614,7 +614,7 @@ namespace Application.Features.Forwarding.Services
                     jobId, rule.RuleName, defaultSkippedMessage, GetInputPeerIdValueForLogging(toPeer));
 
                 // Level 5: Execute SendMessageAsync (placeholder) with resilience.
-                await _sendMessageRetryPolicy.ExecuteAsync(
+                _ = await _sendMessageRetryPolicy.ExecuteAsync(
                     async (pollyContext, pollyCancellationToken) =>
                         await _userApiClient.SendMessageAsync(
                             toPeer,
@@ -663,7 +663,7 @@ namespace Application.Features.Forwarding.Services
             _logger.LogInformation("Job:{JobId}: Attempting to forward message {SourceMsgId} from Source {FromPeer} to Target {ToPeer} via Rule '{RuleName}'. Drop Author Header: {DropAuthor}, Remove Forward Metadata: {NoForwardsMetadata}.",
                 jobId, sourceMessageId, GetInputPeerIdValueForLogging(fromPeer), GetInputPeerIdValueForLogging(toPeer), rule.RuleName, dropAuthor, noForwardsMetadata);
 
-            await _sendMessageRetryPolicy.ExecuteAsync(
+            _ = await _sendMessageRetryPolicy.ExecuteAsync(
                 async (pollyContext, pollyCancellationToken) =>
                     await _userApiClient.ForwardMessagesAsync(
                         toPeer,
@@ -723,7 +723,10 @@ namespace Application.Features.Forwarding.Services
 
                 foreach (var entity in sortedEntities)
                 {
-                    if (entity == null) continue;
+                    if (entity == null)
+                    {
+                        continue;
+                    }
 
                     // Append text segment between currentSourceIndex and entity.Offset
                     if (entity.Offset > currentSourceIndex)
@@ -732,7 +735,7 @@ namespace Application.Features.Forwarding.Services
                         if (currentSourceIndex + segmentLength <= currentText.Length) // Defensive check
                         {
                             var textSegment = currentText.Substring(currentSourceIndex, segmentLength);
-                            tempStringBuilder.Append(textSegment);
+                            _ = tempStringBuilder.Append(textSegment);
                             currentDestIndex += textSegment.Length;
                         }
                         else
@@ -761,7 +764,7 @@ namespace Application.Features.Forwarding.Services
                         else
                         {
                             var textSegment = currentText.Substring(entity.Offset, actualSegmentLength);
-                            tempStringBuilder.Append(textSegment);
+                            _ = tempStringBuilder.Append(textSegment);
 
                             // Clone and add with adjusted offset
                             // The offset for the new entity is its position in the `tempStringBuilder`
@@ -776,7 +779,7 @@ namespace Application.Features.Forwarding.Services
                 // Append any remaining text after the last entity
                 if (currentSourceIndex < currentText.Length)
                 {
-                    tempStringBuilder.Append(currentText.Substring(currentSourceIndex));
+                    _ = tempStringBuilder.Append(currentText.Substring(currentSourceIndex));
                 }
 
                 currentText = tempStringBuilder.ToString();
@@ -806,14 +809,9 @@ namespace Application.Features.Forwarding.Services
                     }
 
                     string beforeReplace = textAfterReplacements;
-                    if (rep.IsRegex)
-                    {
-                        textAfterReplacements = Regex.Replace(beforeReplace, rep.Find, rep.ReplaceWith ?? string.Empty, rep.RegexOptions);
-                    }
-                    else
-                    {
-                        textAfterReplacements = beforeReplace.Replace(rep.Find, rep.ReplaceWith ?? string.Empty, StringComparison.OrdinalIgnoreCase);
-                    }
+                    textAfterReplacements = rep.IsRegex
+                        ? Regex.Replace(beforeReplace, rep.Find, rep.ReplaceWith ?? string.Empty, rep.RegexOptions)
+                        : beforeReplace.Replace(rep.Find, rep.ReplaceWith ?? string.Empty, StringComparison.OrdinalIgnoreCase);
 
                     if (beforeReplace != textAfterReplacements)
                     {
@@ -844,7 +842,10 @@ namespace Application.Features.Forwarding.Services
                     // Given we don't have that, this is the best we can do without dropping all entities.
                     foreach (var entity in currentEntities)
                     {
-                        if (entity == null) continue;
+                        if (entity == null)
+                        {
+                            continue;
+                        }
 
                         var originalSegment = GetSubstringSafe(initialText, entity.Offset, entity.Length);
                         if (!string.IsNullOrEmpty(originalSegment))
@@ -881,7 +882,10 @@ namespace Application.Features.Forwarding.Services
                     var adjustedEntities = new List<TL.MessageEntity>();
                     foreach (var e in currentEntities)
                     {
-                        if (e != null) adjustedEntities.Add(CloneEntityWithNewOffset(e, e.Offset + offsetShift, jobId));
+                        if (e != null)
+                        {
+                            adjustedEntities.Add(CloneEntityWithNewOffset(e, e.Offset + offsetShift, jobId));
+                        }
                     }
                     currentEntities = adjustedEntities;
                 }
@@ -891,7 +895,7 @@ namespace Application.Features.Forwarding.Services
             var textToAppend = new StringBuilder();
             if (!string.IsNullOrEmpty(options.AppendText))
             {
-                textToAppend.Append(options.AppendText);
+                _ = textToAppend.Append(options.AppendText);
                 _logger.LogDebug("Job:{JobId}: ApplyEditOptions: Appending text: '{AppendTextPreview}'", jobId, TruncateString(options.AppendText, 50));
             }
             if (!string.IsNullOrEmpty(options.CustomFooter))
@@ -899,9 +903,9 @@ namespace Application.Features.Forwarding.Services
                 // Ensure footer starts on a new line if content exists and doesn't end with a newline
                 if (currentText.Length > 0 && !currentText.EndsWith("\n") && textToAppend.Length == 0) // Only add newline if content exists and no other append is happening yet
                 {
-                    textToAppend.Append("\n");
+                    _ = textToAppend.Append("\n");
                 }
-                textToAppend.Append(options.CustomFooter);
+                _ = textToAppend.Append(options.CustomFooter);
                 _logger.LogDebug("Job:{JobId}: ApplyEditOptions: Appending custom footer: '{CustomFooterPreview}'", jobId, TruncateString(options.CustomFooter, 50));
             }
             if (textToAppend.Length > 0)
@@ -913,7 +917,7 @@ namespace Application.Features.Forwarding.Services
             if (options.RemoveLinks && currentEntities != null)
             {
                 int initialCount = currentEntities.Count;
-                currentEntities.RemoveAll(e => e is TL.MessageEntityUrl || e is TL.MessageEntityTextUrl);
+                _ = currentEntities.RemoveAll(e => e is TL.MessageEntityUrl or TL.MessageEntityTextUrl);
                 _logger.LogDebug("Job:{JobId}: ApplyEditOptions: Link entities removed. Count before: {InitialCount}, Count after: {CurrentCount}", jobId, initialCount, currentEntities.Count);
             }
 
@@ -934,19 +938,37 @@ namespace Application.Features.Forwarding.Services
         // --- NEW Helper for safe substring ---
         private string GetSubstringSafe(string text, int startIndex, int length)
         {
-            if (string.IsNullOrEmpty(text)) return string.Empty;
-            if (startIndex < 0) startIndex = 0;
-            if (startIndex >= text.Length) return string.Empty;
-            if (length < 0) length = 0;
-            if (startIndex + length > text.Length) length = text.Length - startIndex;
+            if (string.IsNullOrEmpty(text))
+            {
+                return string.Empty;
+            }
+
+            if (startIndex < 0)
+            {
+                startIndex = 0;
+            }
+
+            if (startIndex >= text.Length)
+            {
+                return string.Empty;
+            }
+
+            if (length < 0)
+            {
+                length = 0;
+            }
+
+            if (startIndex + length > text.Length)
+            {
+                length = text.Length - startIndex;
+            }
 
             return text.Substring(startIndex, length);
         }
 
         private string TruncateString(string? str, int maxLength)
         {
-            if (string.IsNullOrEmpty(str)) return "[null_or_empty]";
-            return str.Length <= maxLength ? str : str.Substring(0, maxLength) + "...";
+            return string.IsNullOrEmpty(str) ? "[null_or_empty]" : str.Length <= maxLength ? str : str.Substring(0, maxLength) + "...";
         }
 
         private string GetInputPeerIdValueForLogging(InputPeer peer)
@@ -991,7 +1013,7 @@ namespace Application.Features.Forwarding.Services
                 TL.MessageEntityBotCommand _ => new TL.MessageEntityBotCommand { Offset = newOffset, Length = newLength },
                 TL.MessageEntityBankCard _ => new TL.MessageEntityBankCard { Offset = newOffset, Length = newLength },
                 TL.MessageEntityHashtag _ => new TL.MessageEntityHashtag { Offset = newOffset, Length = newLength },
-                TL.MessageEntityUrl url => new TL.MessageEntityUrl { Offset = newOffset, Length = newLength },
+                TL.MessageEntityUrl => new TL.MessageEntityUrl { Offset = newOffset, Length = newLength },
                 TL.MessageEntityTextUrl textUrl => new TL.MessageEntityTextUrl { Offset = newOffset, Length = newLength, url = textUrl.url },
                 TL.MessageEntityMentionName mentionName => new TL.MessageEntityMentionName { Offset = newOffset, Length = newLength, user_id = mentionName.user_id },
                 TL.MessageEntityCustomEmoji customEmoji => new TL.MessageEntityCustomEmoji { Offset = newOffset, Length = newLength, document_id = customEmoji.document_id },

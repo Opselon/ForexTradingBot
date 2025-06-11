@@ -96,7 +96,7 @@ namespace Application.Services
                 }
 
                 // Convert to list and check if any users were found
-                var targetUserList = targetUsers?.ToList() ?? new List<User>();
+                var targetUserList = targetUsers?.ToList() ?? [];
                 if (!targetUserList.Any())
                 {
                     _logger.LogInformation("No target users found for news item matching criteria.");
@@ -225,12 +225,12 @@ namespace Application.Services
             string summary = EscapeTextForTelegramMarkup(TruncateWithEllipsis(newsItem.Summary, 250)?.Trim() ?? string.Empty);
             string? link = newsItem.Link?.Trim();
 
-            messageTextBuilder.AppendLine($"*{title}*"); // Bold for Telegram Markdown (V1/relaxed V2)
-            messageTextBuilder.AppendLine($"_📰 Source: {sourceName}_"); // Italic for Telegram Markdown
+            _ = messageTextBuilder.AppendLine($"*{title}*"); // Bold for Telegram Markdown (V1/relaxed V2)
+            _ = messageTextBuilder.AppendLine($"_📰 Source: {sourceName}_"); // Italic for Telegram Markdown
 
             if (!string.IsNullOrWhiteSpace(summary))
             {
-                messageTextBuilder.Append($"\n{summary}");
+                _ = messageTextBuilder.Append($"\n{summary}");
             }
 
             if (!string.IsNullOrWhiteSpace(link))
@@ -239,7 +239,7 @@ namespace Application.Services
                 {
                     // For links in Telegram Markdown, parentheses within the URL must be escaped.
                     string escapedLink = link.Replace("(", "\\(").Replace(")", "\\)");
-                    messageTextBuilder.Append($"\n\n[🔗 Read Full Article]({escapedLink})");
+                    _ = messageTextBuilder.Append($"\n\n[🔗 Read Full Article]({escapedLink})");
                 }
                 else
                 {
@@ -272,8 +272,7 @@ namespace Application.Services
         /// </summary>
         private string? TruncateWithEllipsis(string? text, int maxLength)
         {
-            if (string.IsNullOrWhiteSpace(text)) return text;
-            return text.Length <= maxLength ? text : text.Substring(0, maxLength - 3) + "...";
+            return string.IsNullOrWhiteSpace(text) ? text : text.Length <= maxLength ? text : text.Substring(0, maxLength - 3) + "...";
         }
 
         /// <summary>
@@ -283,7 +282,10 @@ namespace Application.Services
         /// </summary>
         private string EscapeTextForTelegramMarkup(string? text)
         {
-            if (string.IsNullOrEmpty(text)) return string.Empty;
+            if (string.IsNullOrEmpty(text))
+            {
+                return string.Empty;
+            }
 
             var sb = new StringBuilder(text.Length + 10);
             foreach (char c in text)
@@ -301,10 +303,10 @@ namespace Application.Services
                     case '~': // Strikethrough (primarily MarkdownV2, but escaping doesn't hurt)
                     case '`': // Code/Pre (primarily MarkdownV2, but escaping doesn't hurt)
                     case '>': // Blockquote (primarily MarkdownV2, but escaping doesn't hurt)
-                        sb.Append('\\');
+                        _ = sb.Append('\\');
                         break;
                 }
-                sb.Append(c);
+                _ = sb.Append(c);
             }
             return sb.ToString();
         }

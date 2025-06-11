@@ -18,7 +18,7 @@ namespace TelegramPanel.Infrastructure.Settings
         /// Default order of provider preference if a specific currency doesn't define its own.
         /// Uses keys from the Providers dictionary.
         /// </summary>
-        public List<string> DefaultProviderPreference { get; set; } = new();
+        public List<string> DefaultProviderPreference { get; set; } = [];
 
         /// <summary>
         /// Default number of retries for API calls (can be overridden per provider).
@@ -224,7 +224,7 @@ namespace TelegramPanel.Infrastructure.Settings
         /// Provider names should match keys in MarketDataSettings.Providers.
         /// If empty, DefaultProviderPreference from MarketDataSettings will be used.
         /// </summary>
-        public List<string> DataProviderPreference { get; set; } = new();
+        public List<string> DataProviderPreference { get; set; } = [];
 
         /// <summary>
         /// Suggested number of decimal places for displaying the price of this asset.

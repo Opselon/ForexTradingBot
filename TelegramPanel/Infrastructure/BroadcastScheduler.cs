@@ -19,7 +19,7 @@ namespace TelegramPanel.Infrastructure
         {
             _logger.LogDebug("Enqueueing broadcast CopyMessage job for TargetChatID {TargetChatId}", targetChatId);
             // This is the correct way - it calls the real sender interface that Hangfire executes.
-            _backgroundJobClient.Enqueue<IActualTelegramMessageActions>(sender =>
+            _ = _backgroundJobClient.Enqueue<IActualTelegramMessageActions>(sender =>
                 sender.CopyMessageToTelegramAsync(targetChatId, sourceChatId, messageId, CancellationToken.None));
         }
     }

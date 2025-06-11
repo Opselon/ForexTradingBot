@@ -1,7 +1,7 @@
 ﻿// File: Application/DTOs/Fred/FredSeriesDto.cs
 using System.Text.Json.Serialization;
 
-namespace Application.DTOs.Fred
+namespace Application.Common.Interfaces.Fred
 {
     /// <summary>
     /// Represents a single economic data series from the FRED API.

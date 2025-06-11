@@ -91,20 +91,26 @@ namespace WebAPI.Controllers // ✅ Namespace صحیح
         private bool VerifyCryptoPaySignature(string rawRequestBody, string? signatureHeader, string appApiToken)
         {
             // ... (کد VerifyCryptoPaySignature که قبلاً داشتیم) ...
-            if (string.IsNullOrWhiteSpace(signatureHeader) || string.IsNullOrWhiteSpace(appApiToken)) return false;
+            if (string.IsNullOrWhiteSpace(signatureHeader) || string.IsNullOrWhiteSpace(appApiToken))
+            {
+                return false;
+            }
+
             try
             {
                 byte[] secretKeyBytes;
                 using (var sha256 = SHA256.Create()) { secretKeyBytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(appApiToken)); }
-                using (var hmac = new HMACSHA256(secretKeyBytes))
+                using var hmac = new HMACSHA256(secretKeyBytes);
+                byte[] bodyBytes = Encoding.UTF8.GetBytes(rawRequestBody);
+                byte[] computedHashBytes = hmac.ComputeHash(bodyBytes);
+                string computedHashHex = Convert.ToHexString(computedHashBytes).ToLowerInvariant();
+                bool isValid = computedHashHex.Equals(signatureHeader.ToLowerInvariant(), StringComparison.Ordinal);
+                if (!isValid)
                 {
-                    byte[] bodyBytes = Encoding.UTF8.GetBytes(rawRequestBody);
-                    byte[] computedHashBytes = hmac.ComputeHash(bodyBytes);
-                    string computedHashHex = Convert.ToHexString(computedHashBytes).ToLowerInvariant();
-                    bool isValid = computedHashHex.Equals(signatureHeader.ToLowerInvariant(), StringComparison.Ordinal);
-                    if (!isValid) _logger.LogWarning("CryptoPay signature mismatch. Computed: {Computed}, Received: {Received}", computedHashHex, signatureHeader.ToLowerInvariant());
-                    return isValid;
+                    _logger.LogWarning("CryptoPay signature mismatch. Computed: {Computed}, Received: {Received}", computedHashHex, signatureHeader.ToLowerInvariant());
                 }
+
+                return isValid;
             }
             catch (Exception ex) { _logger.LogError(ex, "Exception during CryptoPay signature verification."); return false; }
         }

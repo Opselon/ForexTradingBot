@@ -11,7 +11,7 @@ using TelegramPanel.Application.CommandHandlers.MainMenu;
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Formatters;
 using TelegramPanel.Infrastructure;
-using TelegramPanel.Infrastructure.Helpers;
+using TelegramPanel.Infrastructure.Helper;
 
 namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
 {
@@ -28,8 +28,8 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
         private const string CbWatchPrefix = "analysis_cb_watch";
         private const string SearchKeywordsCallback = "analysis_search_keywords";
         private const string ShowCbNewsPrefix = "cb_news_"; // e.g., cb_news_FED
-        private static readonly List<string> BullishKeywords = new() { "strong", "hike", "beats", "optimistic", "hawkish", "robust", "upgrade", "rally", "surges", "upbeat", "better-than-expected", "gains" };
-        private static readonly List<string> BearishKeywords = new() { "weak", "cut", "misses", "pessimistic", "dovish", "recession", "slump", "downgrade", "plunges", "fears", "worse-than-expected", "concerns" };
+        private static readonly List<string> BullishKeywords = ["strong", "hike", "beats", "optimistic", "hawkish", "robust", "upgrade", "rally", "surges", "upbeat", "better-than-expected", "gains"];
+        private static readonly List<string> BearishKeywords = ["weak", "cut", "misses", "pessimistic", "dovish", "recession", "slump", "downgrade", "plunges", "fears", "worse-than-expected", "concerns"];
         private static readonly Dictionary<string, (string Name, string[] Keywords)> CentralBankKeywords = new()
         {
             { "FED", ("Federal Reserve (USA)", new[] { "Federal Reserve", "Fed", "FOMC", "Jerome Powell", "rate hike", "rate cut", "monetary policy" }) },
@@ -60,7 +60,9 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
             try
             {
                 if (update.Type != UpdateType.CallbackQuery || update.CallbackQuery?.Data == null)
+                {
                     return false;
+                }
 
                 var data = update.CallbackQuery.Data;
                 return data.StartsWith(CbWatchPrefix) ||
@@ -284,7 +286,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                     return;
                 }
 
-                keyboardRows.Add(new List<InlineKeyboardButton> { InlineKeyboardButton.WithCallbackData("⬅️ Back to Analysis Menu", MenuCommandHandler.AnalysisCallbackData) });
+                keyboardRows.Add([InlineKeyboardButton.WithCallbackData("⬅️ Back to Analysis Menu", MenuCommandHandler.AnalysisCallbackData)]);
 
                 var keyboard = new InlineKeyboardMarkup(keyboardRows);
 
@@ -387,7 +389,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                     }
 
                     // Defensive programming: check for null Title or Summary
-                    string content = ($"{item.Title ?? ""} {item.Summary ?? ""}".ToLowerInvariant()).Trim(); // Use null-coalescing and trim.
+                    string content = $"{item.Title ?? ""} {item.Summary ?? ""}".ToLowerInvariant().Trim(); // Use null-coalescing and trim.
 
                     // Additional defensive programming - content can be empty.
                     if (string.IsNullOrWhiteSpace(content))
@@ -413,10 +415,22 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                 }
 
                 string sentiment;
-                if (positiveScore > negativeScore * 1.5) sentiment = "Bullish 🟢";
-                else if (negativeScore > positiveScore * 1.5) sentiment = "Bearish 🔴";
-                else if (positiveScore > 0 || negativeScore > 0) sentiment = "Neutral/Mixed ⚪️";
-                else sentiment = "Not enough data"; // Modified to be clearer.
+                if (positiveScore > negativeScore * 1.5)
+                {
+                    sentiment = "Bullish 🟢";
+                }
+                else if (negativeScore > positiveScore * 1.5)
+                {
+                    sentiment = "Bearish 🔴";
+                }
+                else if (positiveScore > 0 || negativeScore > 0)
+                {
+                    sentiment = "Neutral/Mixed ⚪️";
+                }
+                else
+                {
+                    sentiment = "Not enough data"; // Modified to be clearer.
+                }
 
                 var topPositive = positiveArticles.OrderByDescending(a => a.Item2).Take(2).Select(a => a.Item1).ToList();
                 var topNegative = negativeArticles.OrderByDescending(a => a.Item2).Take(2).Select(a => a.Item1).ToList();
@@ -447,13 +461,13 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                 // Handle null sentiment
                 sentiment ??= "No Sentiment Available"; // Provide a default value if sentiment is null
 
-                sb.AppendLine(TelegramMessageFormatter.Bold($"Sentiment for {currencyName}: {sentiment}"));
-                sb.AppendLine($"`Score: [Positive: {positiveScore}] [Negative: {negativeScore}]`");
-                sb.AppendLine();
+                _ = sb.AppendLine(TelegramMessageFormatter.Bold($"Sentiment for {currencyName}: {sentiment}"));
+                _ = sb.AppendLine($"`Score: [Positive: {positiveScore}] [Negative: {negativeScore}]`");
+                _ = sb.AppendLine();
 
                 if (topPositive != null && topPositive.Any()) // Check for null and empty
                 {
-                    sb.AppendLine(TelegramMessageFormatter.Bold("Key Positive News:"));
+                    _ = sb.AppendLine(TelegramMessageFormatter.Bold("Key Positive News:"));
                     foreach (var item in topPositive)
                     {
                         // Defensive programming: Check for null item
@@ -462,14 +476,14 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                             _logger.LogWarning("Null NewsItem encountered in topPositive. Skipping.");
                             continue; // Skip the null item.
                         }
-                        sb.AppendLine($"▫️ {TelegramMessageFormatter.EscapeMarkdownV2(item.Title)} [↗]({item.Link})");
+                        _ = sb.AppendLine($"▫️ {TelegramMessageFormatter.EscapeMarkdownV2(item.Title)} [↗]({item.Link})");
                     }
-                    sb.AppendLine();
+                    _ = sb.AppendLine();
                 }
 
                 if (topNegative != null && topNegative.Any()) // Check for null and empty
                 {
-                    sb.AppendLine(TelegramMessageFormatter.Bold("Key Negative News:"));
+                    _ = sb.AppendLine(TelegramMessageFormatter.Bold("Key Negative News:"));
                     foreach (var item in topNegative)
                     {
                         // Defensive programming: Check for null item
@@ -478,11 +492,11 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                             _logger.LogWarning("Null NewsItem encountered in topNegative. Skipping.");
                             continue; // Skip the null item.
                         }
-                        sb.AppendLine($"▪️ {TelegramMessageFormatter.EscapeMarkdownV2(item.Title)} [↘]({item.Link})");
+                        _ = sb.AppendLine($"▪️ {TelegramMessageFormatter.EscapeMarkdownV2(item.Title)} [↘]({item.Link})");
                     }
                 }
 
-                sb.AppendLine("_Analysis based on keyword frequency in news from the last 3 days._");
+                _ = sb.AppendLine("_Analysis based on keyword frequency in news from the last 3 days._");
                 return sb.ToString();
             }
             catch (Exception ex)
@@ -593,10 +607,10 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                     return;
                 }
 
-                keyboardRows.Add(new List<InlineKeyboardButton>
-            {
+                keyboardRows.Add(
+            [
                 InlineKeyboardButton.WithCallbackData("⬅️ Back to Analysis Menu", MenuCommandHandler.AnalysisCallbackData)
-            });
+            ]);
 
                 var keyboard = new InlineKeyboardMarkup(keyboardRows);
 
@@ -662,12 +676,12 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                 var sb = new StringBuilder();
                 if (results == null || !results.Any()) // Check for null results from repository too
                 {
-                    sb.AppendLine($"No recent news found for the *{TelegramMessageFormatter.EscapeMarkdownV2(bankInfo.Name)}*."); // Use EscapeMarkdownV2
+                    _ = sb.AppendLine($"No recent news found for the *{TelegramMessageFormatter.EscapeMarkdownV2(bankInfo.Name)}*."); // Use EscapeMarkdownV2
                 }
                 else
                 {
-                    sb.AppendLine($"🏛️ *Top {results.Count()} News Results for: {TelegramMessageFormatter.EscapeMarkdownV2(bankInfo.Name)}*"); // Use EscapeMarkdownV2
-                    sb.AppendLine();
+                    _ = sb.AppendLine($"🏛️ *Top {results.Count()} News Results for: {TelegramMessageFormatter.EscapeMarkdownV2(bankInfo.Name)}*"); // Use EscapeMarkdownV2
+                    _ = sb.AppendLine();
                     // Check if any news items are null or have null properties before processing
                     foreach (var item in results.Where(i => i != null))
                     {
@@ -677,15 +691,15 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                         string link = item.Link?.Trim() ?? string.Empty;
                         DateTime publishedDate = item.PublishedDate; // Assuming PublishedDate is non-nullable DateTime
 
-                        sb.AppendLine($"🔸 *{TelegramMessageFormatter.EscapeMarkdownV2(title)}*"); // Use EscapeMarkdownV2
-                        sb.AppendLine($"_{TelegramMessageFormatter.EscapeMarkdownV2(sourceName)}_ at _{publishedDate:yyyy-MM-dd HH:mm} UTC_"); // Use EscapeMarkdownV2 and correct date format
+                        _ = sb.AppendLine($"🔸 *{TelegramMessageFormatter.EscapeMarkdownV2(title)}*"); // Use EscapeMarkdownV2
+                        _ = sb.AppendLine($"_{TelegramMessageFormatter.EscapeMarkdownV2(sourceName)}_ at _{publishedDate:yyyy-MM-dd HH:mm} UTC_"); // Use EscapeMarkdownV2 and correct date format
 
                         // Validate link format before creating link in Markdown
                         if (!string.IsNullOrWhiteSpace(link) && Uri.TryCreate(link, UriKind.Absolute, out var uri))
                         {
                             // Escape parentheses in the URL itself for MarkdownV2 links
                             string escapedLink = link.Replace("(", "\\(").Replace(")", "\\)");
-                            sb.AppendLine($"[Read More]({escapedLink})"); // MarkdownV2 link syntax
+                            _ = sb.AppendLine($"[Read More]({escapedLink})"); // MarkdownV2 link syntax
                         }
                         else
                         {
@@ -693,7 +707,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                             // Optionally append just the link text without the markdown link
                             // sb.AppendLine($"Read More: {TelegramMessageFormatter.EscapeMarkdownV2(link)}");
                         }
-                        sb.AppendLine("‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐"); // Separator
+                        _ = sb.AppendLine("‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐"); // Separator
                     }
                 }
 

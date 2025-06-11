@@ -1,5 +1,5 @@
 ﻿// File: TelegramPanel/Application/CommandHandlers/Features/EconomicCalendar/EconomicCalendarCallbackHandler.cs
-using Application.Interfaces;
+using Application.Common.Interfaces.Fred;
 using Microsoft.Extensions.Logging;
 using Shared.Extensions;
 using System.Text;
@@ -10,7 +10,7 @@ using TelegramPanel.Application.CommandHandlers.MainMenu;
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Formatters;
 using TelegramPanel.Infrastructure;
-using TelegramPanel.Infrastructure.Helpers;
+using TelegramPanel.Infrastructure.Helper;
 
 namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
 {
@@ -50,14 +50,13 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
         /// <summary>
         /// Determines if this handler can process the callback query.
         /// </summary>
-        public bool CanHandle(Update update) =>
-
-           update.CallbackQuery?.Data?.StartsWith(ReleasesCallbackPrefix) == true ||
+        public bool CanHandle(Update update)
+        {
+            return update.CallbackQuery?.Data?.StartsWith(ReleasesCallbackPrefix) == true ||
            update.CallbackQuery?.Data == SearchSeriesCallback ||
 
            update.CallbackQuery?.Data == MenuCommandHandler.BackToMainMenuGeneral;
-
-
+        }
 
         private async Task HandleExploreReleaseAsync(CallbackQuery callbackQuery, CancellationToken cancellationToken)
         {
@@ -66,7 +65,10 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
 
             // Callback data format: "econ_explore:{releaseId}:{elementId}:{parentName}"
             var parts = callbackQuery.Data!.Split(':', 4);
-            if (!int.TryParse(parts[1], out int releaseId) || !int.TryParse(parts[2], out int elementId)) return;
+            if (!int.TryParse(parts[1], out int releaseId) || !int.TryParse(parts[2], out int elementId))
+            {
+                return;
+            }
 
             string parentName = parts.Length > 3 ? parts[3] : "Root";
 
@@ -85,10 +87,10 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
 
             var currentElement = result.Data.Elements.First(); // The API returns the parent as the first element
 
-            sb.AppendLine("🗓️ *Release Explorer*");
-            sb.AppendLine($"`Path: {TelegramMessageFormatter.EscapeMarkdownV2(parentName)} > {TelegramMessageFormatter.EscapeMarkdownV2(currentElement.Name)}`");
-            sb.AppendLine();
-            sb.AppendLine("Select a category or data series below:");
+            _ = sb.AppendLine("🗓️ *Release Explorer*");
+            _ = sb.AppendLine($"`Path: {TelegramMessageFormatter.EscapeMarkdownV2(parentName)} > {TelegramMessageFormatter.EscapeMarkdownV2(currentElement.Name)}`");
+            _ = sb.AppendLine();
+            _ = sb.AppendLine("Select a category or data series below:");
 
             foreach (var child in currentElement.Children)
             {
@@ -96,32 +98,32 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
                 if (child.Type == "series" && !string.IsNullOrWhiteSpace(child.SeriesId))
                 {
                     var buttonText = $"📈 {child.Name}";
-                    keyboardRows.Add(new List<InlineKeyboardButton> {
+                    keyboardRows.Add([
                     InlineKeyboardButton.WithCallbackData(buttonText, $"series_details:{child.SeriesId}") // To be handled by another handler
-                });
+                ]);
                 }
                 // If it's a group with more children, allow further drilling
                 else if (child.Type == "group" && child.Children.Any())
                 {
                     var buttonText = $"📂 {child.Name}";
-                    keyboardRows.Add(new List<InlineKeyboardButton> {
+                    keyboardRows.Add([
                     InlineKeyboardButton.WithCallbackData(buttonText, $"{ExploreReleasePrefix}:{child.ReleaseId}:{child.ElementId}:{currentElement.Name}")
-                });
+                ]);
                 }
             }
 
             // Add "Back" button
             if (currentElement.ParentId != 0)
             {
-                keyboardRows.Add(new List<InlineKeyboardButton> {
+                keyboardRows.Add([
                 InlineKeyboardButton.WithCallbackData("⬅️ Back", $"{ExploreReleasePrefix}:{currentElement.ReleaseId}:{currentElement.ParentId}:{parentName}")
-            });
+            ]);
             }
             else
             {
-                keyboardRows.Add(new List<InlineKeyboardButton> {
+                keyboardRows.Add([
                 InlineKeyboardButton.WithCallbackData("⬅️ Back to All Releases", $"{ReleasesCallbackPrefix}:1")
-            });
+            ]);
             }
 
             await _messageSender.EditMessageTextAsync(chatId, messageId, sb.ToString(), ParseMode.MarkdownV2, new InlineKeyboardMarkup(keyboardRows), cancellationToken);
@@ -257,37 +259,30 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
 
                 // Build the message text using StringBuilder for efficiency.
                 var sb = new StringBuilder();
-                sb.AppendLine("🗓️ *Upcoming Economic Releases* 📅 - *Key Indicators for Forex Trading:*"); // Changed text and added emoji and context.
-                sb.AppendLine("*Impact Levels: 🔴 High | 🟠 Medium | 🟢 Low*");
-                sb.AppendLine("`-----------------------------------`");
+                _ = sb.AppendLine("🗓️ *Upcoming Economic Releases* 📅 - *Key Indicators for Forex Trading:*"); // Changed text and added emoji and context.
+                _ = sb.AppendLine("*Impact Levels: 🔴 High | 🟠 Medium | 🟢 Low*");
+                _ = sb.AppendLine("`-----------------------------------`");
 
                 // Loop through the retrieved releases and format them for the message.
-                int counter = 1 + (page - 1) * PageSize; // Start from the correct number for pagination
-                                                         // Added Where(r => r != null) for defensive check if list contains nulls
+                int counter = 1 + ((page - 1) * PageSize); // Start from the correct number for pagination
+                                                           // Added Where(r => r != null) for defensive check if list contains nulls
                 foreach (var release in result.Data.Where(r => r != null).ToList()) // Added ToList() if needed, or just iterate
                 {
                     // Generate numeric emoji for the item number (supports up to 100).
                     string emoji = "";
-                    if (counter >= 1 && counter <= 10) // Handle 1-10 with single emoji code
+                    if (counter is >= 1 and <= 10) // Handle 1-10 with single emoji code
                     {
                         emoji = $"{counter}\u20E3";
                     }
-                    else if (counter > 10 && counter < 100) // Handle 11-99 (two digits)
+                    else if (counter is > 10 and < 100) // Handle 11-99 (two digits)
                     {
                         // Added null check for ToString() result just to be extremely defensive, though highly unlikely
                         string counterString = counter.ToString() ?? "";
-                        if (counterString.Length == 2)
-                        {
-                            emoji = $"{counterString[0]}\u20E3{counterString[1]}\u20E3";
-                        }
-                        else if (counterString.Length == 3) // Added handling for 3 digits if necessary
-                        {
-                            emoji = $"{counterString[0]}\u20E3{counterString[1]}\u20E3{counterString[2]}\u20E3";
-                        }
-                        else // Fallback for numbers >= 100 or unusual cases
-                        {
-                            emoji = counter.ToString() + ".";
-                        }
+                        emoji = counterString.Length == 2
+                            ? $"{counterString[0]}\u20E3{counterString[1]}\u20E3"
+                            : counterString.Length == 3
+                                ? $"{counterString[0]}\u20E3{counterString[1]}\u20E3{counterString[2]}\u20E3"
+                                : counter.ToString() + ".";
                     }
                     else // Fallback for numbers >= 100 or unusual cases
                     {
@@ -311,7 +306,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
                     // --- START REPLACED LINK LOGIC ---
                     // Append formatted release information (excluding link for now)
                     string releaseName = release.Name?.Trim() ?? "Untitled Release"; // Defensive null check
-                    sb.AppendLine($"\n{emoji} *{TelegramMessageFormatter.EscapeMarkdownV2(releaseName)}* {impactEmoji}"); // Make title bold consistently
+                    _ = sb.AppendLine($"\n{emoji} *{TelegramMessageFormatter.EscapeMarkdownV2(releaseName)}* {impactEmoji}"); // Make title bold consistently
 
                     // Add official source link if available and valid.
                     // Add official source link if available and valid.
@@ -335,7 +330,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
                             string escapedLinkText = TelegramMessageFormatter.EscapeMarkdownV2(linkText);
 
                             // Append the formatted MarkdownV2 link: [Escaped Text](Escaped URL)
-                            sb.AppendLine($"[{escapedLinkText}]({escapedLinkUrl})");
+                            _ = sb.AppendLine($"[{escapedLinkText}]({escapedLinkUrl})");
 
                             // Log that a link was added (optional, but helpful for debugging)
                             _logger.LogTrace("Added valid link for release '{ReleaseName}' (ID: {ReleaseId}): [{LinkText}]({LinkUrl})", (release.Name ?? "Untitled").Truncate(30), release.Id, linkText, rawLink.Truncate(50));
@@ -355,7 +350,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
                     }
                     // --- END REPLACED LINK LOGIC ---
 
-                    sb.AppendLine("‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐"); // Add a separator after each item
+                    _ = sb.AppendLine("‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐"); // Add a separator after each item
 
                     // Increment counter after processing each item
                     counter++;
@@ -504,13 +499,13 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
                 keyboardLayout.Add(paginationRow);
             }
 
-            keyboardLayout.Add(new List<InlineKeyboardButton> {
+            keyboardLayout.Add([
                 InlineKeyboardButton.WithCallbackData("📈 Search Data Series", SearchSeriesCallback)
-            });
+            ]);
 
-            keyboardLayout.Add(new List<InlineKeyboardButton> {
+            keyboardLayout.Add([
                 InlineKeyboardButton.WithCallbackData("🏠 Main Menu", MenuCallbackQueryHandler.BackToMainMenuGeneral)
-            });
+            ]);
 
             return new InlineKeyboardMarkup(keyboardLayout);
         }

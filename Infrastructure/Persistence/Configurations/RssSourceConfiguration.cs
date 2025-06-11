@@ -14,44 +14,44 @@ namespace Infrastructure.Persistence.Configurations
     {
         public void Configure(EntityTypeBuilder<RssSource> builder)
         {
-            builder.ToTable("RssSources");
-            builder.HasKey(rs => rs.Id);
-            builder.Property(rs => rs.Id).ValueGeneratedOnAdd();
+            _ = builder.ToTable("RssSources");
+            _ = builder.HasKey(rs => rs.Id);
+            _ = builder.Property(rs => rs.Id).ValueGeneratedOnAdd();
 
-            builder.Property(rs => rs.Url)
+            _ = builder.Property(rs => rs.Url)
                 .IsRequired()
                 .HasMaxLength(2083); //  استفاده از طول استاندارد URL
-            builder.HasIndex(rs => rs.Url).IsUnique(); // URL باید منحصر به فرد باشد
+            _ = builder.HasIndex(rs => rs.Url).IsUnique(); // URL باید منحصر به فرد باشد
 
-            builder.Property(rs => rs.SourceName)
+            _ = builder.Property(rs => rs.SourceName)
                 .IsRequired()
                 .HasMaxLength(150);
-            builder.HasIndex(rs => rs.SourceName); //  ایندکس برای جستجو بر اساس نام (اختیاری)
+            _ = builder.HasIndex(rs => rs.SourceName); //  ایندکس برای جستجو بر اساس نام (اختیاری)
 
-            builder.Property(rs => rs.IsActive).IsRequired().HasDefaultValue(true);
-            builder.Property(rs => rs.CreatedAt).IsRequired().HasDefaultValueSql("GETUTCDATE()"); // یا NOW()
-            builder.Property(rs => rs.UpdatedAt); // می‌تواند null باشد
+            _ = builder.Property(rs => rs.IsActive).IsRequired().HasDefaultValue(true);
+            _ = builder.Property(rs => rs.CreatedAt).IsRequired().HasDefaultValueSql("GETUTCDATE()"); // یا NOW()
+            _ = builder.Property(rs => rs.UpdatedAt); // می‌تواند null باشد
 
             // --- پیکربندی فیلدهای جدید RSS ---
-            builder.Property(rs => rs.LastModifiedHeader) // ✅ از کد شما
+            _ = builder.Property(rs => rs.LastModifiedHeader) // ✅ از کد شما
                 .HasMaxLength(100);
 
-            builder.Property(rs => rs.ETag) // ✅ از کد شما
+            _ = builder.Property(rs => rs.ETag) // ✅ از کد شما
                 .HasMaxLength(255);
 
             // builder.Property(rs => rs.LastFetchAttemptAt); // این فیلد در مدل RssSource شما نبود، اگر اضافه کردید، اینجا هم اضافه کنید
-            builder.Property(rs => rs.LastSuccessfulFetchAt); // ✅ از کد شما (قبلاً LastSuccessfulFetchAt نامیده بودم، با مدل شما هماهنگ می‌کنم)
+            _ = builder.Property(rs => rs.LastSuccessfulFetchAt); // ✅ از کد شما (قبلاً LastSuccessfulFetchAt نامیده بودم، با مدل شما هماهنگ می‌کنم)
 
-            builder.Property(rs => rs.FetchIntervalMinutes); // ✅ از کد شما (می‌تواند null باشد)
+            _ = builder.Property(rs => rs.FetchIntervalMinutes); // ✅ از کد شما (می‌تواند null باشد)
 
-            builder.Property(rs => rs.FetchErrorCount) // ✅ از کد شما
+            _ = builder.Property(rs => rs.FetchErrorCount) // ✅ از کد شما
                 .IsRequired()
                 .HasDefaultValue(0);
 
-            builder.Property(rs => rs.Description) // ✅ از کد شما
+            _ = builder.Property(rs => rs.Description) // ✅ از کد شما
                 .HasMaxLength(1000);
 
-            builder.Property(rs => rs.DefaultSignalCategoryId); // ✅ از کد شما (می‌تواند null باشد)
+            _ = builder.Property(rs => rs.DefaultSignalCategoryId); // ✅ از کد شما (می‌تواند null باشد)
 
 
             // --- تعریف روابط ---
@@ -65,7 +65,7 @@ namespace Infrastructure.Persistence.Configurations
             //        .OnDelete(DeleteBehavior.Cascade); //  این با تعریف در NewsItemConfiguration همخوانی دارد
 
             // رابطه اختیاری با SignalCategory (برای DefaultSignalCategoryId)
-            builder.HasOne(rs => rs.DefaultSignalCategory) // ✅ از کد شما
+            _ = builder.HasOne(rs => rs.DefaultSignalCategory) // ✅ از کد شما
                    .WithMany() //  فرض می‌کنیم یک SignalCategory می‌تواند پیش‌فرض چندین RssSource باشد
                                //  و SignalCategory پراپرتی نویگیشن برعکس به RssSource ندارد.
                    .HasForeignKey(rs => rs.DefaultSignalCategoryId)

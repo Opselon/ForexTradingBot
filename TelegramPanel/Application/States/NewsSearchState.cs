@@ -92,23 +92,23 @@ namespace TelegramPanel.Application.States
             else
             {
                 var sb = new StringBuilder();
-                sb.AppendLine(TelegramMessageFormatter.Bold($"📰 Top {results.Count} News Results for: `{TelegramMessageFormatter.EscapeMarkdownV2(keywords)}`"));
-                sb.AppendLine();
+                _ = sb.AppendLine(TelegramMessageFormatter.Bold($"📰 Top {results.Count} News Results for: `{TelegramMessageFormatter.EscapeMarkdownV2(keywords)}`"));
+                _ = sb.AppendLine();
 
                 foreach (var item in results)
                 {
-                    sb.AppendLine($"🔸 *{TelegramMessageFormatter.EscapeMarkdownV2(item.Title)}*");
-                    sb.AppendLine($"_{TelegramMessageFormatter.EscapeMarkdownV2(item.SourceName)}_ at _{item.PublishedDate:yyyy-MM-dd HH:mm} UTC_");
+                    _ = sb.AppendLine($"🔸 *{TelegramMessageFormatter.EscapeMarkdownV2(item.Title)}*");
+                    _ = sb.AppendLine($"_{TelegramMessageFormatter.EscapeMarkdownV2(item.SourceName)}_ at _{item.PublishedDate:yyyy-MM-dd HH:mm} UTC_");
                     if (!string.IsNullOrWhiteSpace(item.Summary))
                     {
                         var summary = item.Summary.Length > 200 ? item.Summary.Substring(0, 200) + "..." : item.Summary;
-                        sb.AppendLine(TelegramMessageFormatter.EscapeMarkdownV2(summary));
+                        _ = sb.AppendLine(TelegramMessageFormatter.EscapeMarkdownV2(summary));
                     }
                     if (Uri.TryCreate(item.Link, UriKind.Absolute, out var validUri))
                     {
-                        sb.AppendLine($"[Read More]({validUri})");
+                        _ = sb.AppendLine($"[Read More]({validUri})");
                     }
-                    sb.AppendLine("--------------------");
+                    _ = sb.AppendLine("--------------------");
                 }
 
                 await _messageSender.SendTextMessageAsync(chatId.Value, sb.ToString(), ParseMode.MarkdownV2, cancellationToken: cancellationToken);

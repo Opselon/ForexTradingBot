@@ -3,7 +3,7 @@ using Domain.Entities;
 using Domain.Enums;
 using Microsoft.EntityFrameworkCore;
 
-namespace Infrastructure.Persistence.Repositories
+namespace Infrastructure.Repositories
 {
     /// <summary>
     /// پیاده‌سازی Repository برای موجودیت تراکنش (Transaction).
@@ -65,19 +65,20 @@ namespace Infrastructure.Persistence.Repositories
         }
         public async Task<Transaction?> GetByPaymentGatewayInvoiceIdAsync(string paymentGatewayInvoiceId, CancellationToken cancellationToken = default)
         {
-            if (string.IsNullOrWhiteSpace(paymentGatewayInvoiceId))
-            {
-                return null;
-            }
-
-            return await _context.Transactions
+            return string.IsNullOrWhiteSpace(paymentGatewayInvoiceId)
+                ? null
+                : await _context.Transactions
                 .Include(t => t.User) //  بارگذاری کاربر مرتبط (اختیاری، اما ممکن است مفید باشد)
                 .FirstOrDefaultAsync(t => t.PaymentGatewayInvoiceId == paymentGatewayInvoiceId, cancellationToken);
         }
         public async Task AddAsync(Transaction transaction, CancellationToken cancellationToken = default)
         {
-            if (transaction == null) throw new ArgumentNullException(nameof(transaction));
-            await _context.Transactions.AddAsync(transaction, cancellationToken);
+            if (transaction == null)
+            {
+                throw new ArgumentNullException(nameof(transaction));
+            }
+
+            _ = await _context.Transactions.AddAsync(transaction, cancellationToken);
             // SaveChangesAsync در Unit of Work / Service
         }
     }

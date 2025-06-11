@@ -54,7 +54,10 @@ namespace TelegramPanel.Infrastructure.Services
         /// <returns>The escaped text, or an empty string if the input is null or empty.</returns>
         private string EscapeMarkdown(string text)
         {
-            if (string.IsNullOrEmpty(text)) return string.Empty;
+            if (string.IsNullOrEmpty(text))
+            {
+                return string.Empty;
+            }
             // For legacy Markdown (ParseMode.Markdown), characters _ * ` [ ] ( ) ~ > # + - = | { } . ! must be escaped.
             // More restrictive than MarkdownV2.
             return Regex.Replace(text, @"([_*`\[\]()~>#+\-=|{}\.\!])", "\\$1");
@@ -108,7 +111,7 @@ namespace TelegramPanel.Infrastructure.Services
                 {
                     _logger.LogInformation("Handling 'change_currency' callback. CallbackQueryID: {CallbackQueryId}", callbackQuery.Id);
                     // Send a message to the user indicating the feature status.
-                    await _botClient.SendMessage(
+                    _ = await _botClient.SendMessage(
                         chatId: callbackQuery.Message.Chat.Id,
                         text: "Please select a new currency (feature coming soon!)",
                         parseMode: ParseMode.Markdown,
@@ -176,7 +179,7 @@ namespace TelegramPanel.Infrastructure.Services
                     // Inform user that data is not available and acknowledge query.
                     await _botClient.AnswerCallbackQuery(callbackQuery.Id, $"Market data not available for {symbol}.", cancellationToken: cancellationToken);
                     // Optionally, edit the original message to indicate data is not found.
-                    await _botClient.EditMessageText(
+                    _ = await _botClient.EditMessageText(
                        chatId: callbackQuery.Message.Chat.Id,
                        messageId: callbackQuery.Message.MessageId,
                        text: $"Sorry, market data is currently unavailable for *{EscapeMarkdown(symbol)}*.",
@@ -190,7 +193,7 @@ namespace TelegramPanel.Infrastructure.Services
                 InlineKeyboardMarkup keyboard = GetMarketAnalysisKeyboard(symbol);
 
                 // Edit the original message with the new market analysis data and keyboard.
-                await _botClient.EditMessageText(
+                _ = await _botClient.EditMessageText(
                     chatId: callbackQuery.Message.Chat.Id,
                     messageId: callbackQuery.Message.MessageId,
                     text: message,
@@ -208,7 +211,7 @@ namespace TelegramPanel.Infrastructure.Services
                 // Inform user about the specific market data error and acknowledge query.
                 await _botClient.AnswerCallbackQuery(callbackQuery.Id, $"Could not fetch market data for {symbol}: {mde.Message}", cancellationToken: cancellationToken);
                 // Update the message to reflect the error.
-                await _botClient.EditMessageText(
+                _ = await _botClient.EditMessageText(
                    chatId: callbackQuery.Message.Chat.Id,
                    messageId: callbackQuery.Message.MessageId,
                    text: $"Failed to retrieve data for *{EscapeMarkdown(symbol)}*. Reason: {EscapeMarkdown(mde.Message)}\nPlease try again later.",
@@ -284,33 +287,33 @@ namespace TelegramPanel.Infrastructure.Services
             string escapedFormattedLastUpdated = EscapeMarkdown(formattedLastUpdated);
 
             var sb = new StringBuilder();
-            sb.AppendLine($"*__{currencyName} ({symbol}) Analysis__*");
-            sb.AppendLine(description);
-            sb.AppendLine(); // Extra blank line for visual spacing.
+            _ = sb.AppendLine($"*__{currencyName} ({symbol}) Analysis__*");
+            _ = sb.AppendLine(description);
+            _ = sb.AppendLine(); // Extra blank line for visual spacing.
 
-            sb.AppendLine("*Current Market Status*");
-            sb.AppendLine($"Price: *{data.Price:F2}* {trendEmoji}"); // Price is double
-            sb.AppendLine($"24h Change: *{data.Change24h:F2}%*");    // Change24h is double
-            sb.AppendLine($"Volume 24h: *{data.Volume:N0}*");        // Volume is double
-            sb.AppendLine($"Volatility: *{data.Volatility:P2}*");    // Volatility is double
-            sb.AppendLine();
+            _ = sb.AppendLine("*Current Market Status*");
+            _ = sb.AppendLine($"Price: *{data.Price:F2}* {trendEmoji}"); // Price is double
+            _ = sb.AppendLine($"24h Change: *{data.Change24h:F2}%*");    // Change24h is double
+            _ = sb.AppendLine($"Volume 24h: *{data.Volume:N0}*");        // Volume is double
+            _ = sb.AppendLine($"Volatility: *{data.Volatility:P2}*");    // Volatility is double
+            _ = sb.AppendLine();
 
-            sb.AppendLine("*Technical Analysis*");
-            sb.AppendLine($"RSI: *{data.RSI:F2}* ({escapedRsiInterpretation})");
-            sb.AppendLine($"MACD: *{macd}*");
-            sb.AppendLine($"Support: *{data.Support:F2}*");       // Support is decimal
-            sb.AppendLine($"Resistance: *{data.Resistance:F2}*"); // Resistance is decimal
-            sb.AppendLine();
+            _ = sb.AppendLine("*Technical Analysis*");
+            _ = sb.AppendLine($"RSI: *{data.RSI:F2}* ({escapedRsiInterpretation})");
+            _ = sb.AppendLine($"MACD: *{macd}*");
+            _ = sb.AppendLine($"Support: *{data.Support:F2}*");       // Support is decimal
+            _ = sb.AppendLine($"Resistance: *{data.Resistance:F2}*"); // Resistance is decimal
+            _ = sb.AppendLine();
 
-            sb.AppendLine("*Market Insights*");
-            sb.AppendLine($"Trend: *{trend}*");
-            sb.AppendLine($"Market Sentiment: {sentimentEmoji} *{marketSentiment}*");
-            sb.AppendLine();
-            sb.AppendLine($"_Insights: {insights}_");
-            sb.AppendLine();
+            _ = sb.AppendLine("*Market Insights*");
+            _ = sb.AppendLine($"Trend: *{trend}*");
+            _ = sb.AppendLine($"Market Sentiment: {sentimentEmoji} *{marketSentiment}*");
+            _ = sb.AppendLine();
+            _ = sb.AppendLine($"_Insights: {insights}_");
+            _ = sb.AppendLine();
 
-            sb.AppendLine("*Last Updated*");
-            sb.AppendLine($"{escapedFormattedLastUpdated} UTC");
+            _ = sb.AppendLine("*Last Updated*");
+            _ = sb.AppendLine($"{escapedFormattedLastUpdated} UTC");
 
             return sb.ToString();
         }
@@ -358,7 +361,7 @@ namespace TelegramPanel.Infrastructure.Services
                 if (row.Count == 2) // Arrange buttons in rows of 2 for a cleaner layout.
                 {
                     buttons.Add(row);
-                    row = new System.Collections.Generic.List<InlineKeyboardButton>();
+                    row = [];
                 }
             }
             if (row.Any()) // Add any remaining buttons in the last row if the total count is odd.
@@ -367,10 +370,10 @@ namespace TelegramPanel.Infrastructure.Services
             }
 
             // Add a dedicated refresh button for the current symbol as the last row for easy access.
-            buttons.Add(new System.Collections.Generic.List<InlineKeyboardButton>
-            {
+            buttons.Add(
+            [
                 InlineKeyboardButton.WithCallbackData($"🔄 Refresh {currentSymbol}", $"market_analysis:{currentSymbol}")
-            });
+            ]);
 
             return new InlineKeyboardMarkup(buttons);
         }

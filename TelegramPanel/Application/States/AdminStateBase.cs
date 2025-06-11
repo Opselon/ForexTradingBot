@@ -9,8 +9,16 @@ namespace TelegramPanel.Application.States
         protected readonly ILogger<AdminStateBase> Logger;
         public abstract string Name { get; }
 
-        protected AdminStateBase(ILogger<AdminStateBase> logger) => Logger = logger;
-        public virtual Task<string> GetEntryMessageAsync(long userId, Update? triggerUpdate = null, CancellationToken cancellationToken = default) => Task.FromResult(string.Empty);
+        protected AdminStateBase(ILogger<AdminStateBase> logger)
+        {
+            Logger = logger;
+        }
+
+        public virtual Task<string> GetEntryMessageAsync(long userId, Update? triggerUpdate = null, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(string.Empty);
+        }
+
         public abstract Task<string?> ProcessUpdateAsync(Update update, CancellationToken cancellationToken = default);
     }
 }

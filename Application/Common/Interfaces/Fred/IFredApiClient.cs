@@ -2,7 +2,7 @@
 using Application.DTOs.Fred;
 using Shared.Results; // Assuming you have a Result<T> type
 
-namespace Application.Common.Interfaces
+namespace Application.Common.Interfaces.Fred
 {
     public interface IFredApiClient
     {

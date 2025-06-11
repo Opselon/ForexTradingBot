@@ -2,7 +2,7 @@
 using Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 
-namespace Infrastructure.Persistence.Repositories
+namespace Infrastructure.Repositories
 {
     /// <summary>
     /// پیاده‌سازی Repository برای موجودیت تحلیل سیگنال (SignalAnalysis).
@@ -34,14 +34,21 @@ namespace Infrastructure.Persistence.Repositories
 
         public async Task AddAsync(SignalAnalysis analysis, CancellationToken cancellationToken = default)
         {
-            if (analysis == null) throw new ArgumentNullException(nameof(analysis));
-            await _context.SignalAnalyses.AddAsync(analysis, cancellationToken);
+            if (analysis == null)
+            {
+                throw new ArgumentNullException(nameof(analysis));
+            }
+
+            _ = await _context.SignalAnalyses.AddAsync(analysis, cancellationToken);
             // SaveChangesAsync در Unit of Work / Service
         }
 
         public Task UpdateAsync(SignalAnalysis analysis, CancellationToken cancellationToken = default)
         {
-            if (analysis == null) throw new ArgumentNullException(nameof(analysis));
+            if (analysis == null)
+            {
+                throw new ArgumentNullException(nameof(analysis));
+            }
             // اگر فیلد UpdatedAt در SignalAnalysis وجود داشت، اینجا به‌روز می‌شد.
             // analysis.UpdatedAt = DateTime.UtcNow;
             _context.SignalAnalyses.Entry(analysis).State = EntityState.Modified;
@@ -51,8 +58,12 @@ namespace Infrastructure.Persistence.Repositories
 
         public async Task DeleteAsync(SignalAnalysis analysis, CancellationToken cancellationToken = default)
         {
-            if (analysis == null) throw new ArgumentNullException(nameof(analysis));
-            _context.SignalAnalyses.Remove(analysis);
+            if (analysis == null)
+            {
+                throw new ArgumentNullException(nameof(analysis));
+            }
+
+            _ = _context.SignalAnalyses.Remove(analysis);
             await Task.CompletedTask;
             // SaveChangesAsync در Unit of Work / Service
         }

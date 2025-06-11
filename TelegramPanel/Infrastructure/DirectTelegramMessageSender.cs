@@ -56,7 +56,7 @@ namespace TelegramPanel.Infrastructure
 
             // Policy for sending messages (returns a Message object)
             _sendRetryPolicy = Policy<Message?>
-                .Handle<ApiRequestException>(apiEx => apiEx.ErrorCode != 403 && apiEx.ErrorCode != 400) // Simplified retry logic for direct sends
+                .Handle<ApiRequestException>(apiEx => apiEx.ErrorCode is not 403 and not 400) // Simplified retry logic for direct sends
                 .Or<Exception>(ex => ex is not OperationCanceledException)
                 .WaitAndRetryAsync(3, retry => TimeSpan.FromSeconds(Math.Pow(2, retry)),
                     onRetry: (outcome, timespan, attempt, context) =>

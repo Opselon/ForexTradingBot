@@ -11,7 +11,7 @@ namespace Application.Features.Forwarding.Interfaces
     }
     public class MediaGroupBuffer
     {
-        public List<InputMediaWithCaption> Items { get; } = new List<InputMediaWithCaption>();
+        public List<InputMediaWithCaption> Items { get; } = [];
         public CancellationTokenSource CancellationTokenSource { get; set; } = new CancellationTokenSource();
         public long PeerId { get; set; }
         public int ReplyToMsgId { get; set; }

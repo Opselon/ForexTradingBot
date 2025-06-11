@@ -19,10 +19,12 @@ namespace TelegramPanel.Application.CommandHandlers.Admin
             _settings = settingsOptions.Value;
         }
 
-        public bool CanHandle(Update update) =>
-            update.Type == UpdateType.CallbackQuery &&
+        public bool CanHandle(Update update)
+        {
+            return update.Type == UpdateType.CallbackQuery &&
             update.CallbackQuery?.Data == ExecuteSqlCallback &&
             _settings.AdminUserIds.Contains(update.CallbackQuery.From.Id);
+        }
 
         public async Task HandleAsync(Update update, CancellationToken cancellationToken = default)
         {

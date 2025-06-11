@@ -73,8 +73,8 @@ namespace Application.DTOs.Notifications // ✅ Namespace: Application.DTOs.Noti
         /// </summary>
         public NotificationJobPayload()
         {
-            Buttons = new List<NotificationButton>();
-            CustomData = new Dictionary<string, string>();
+            Buttons = [];
+            CustomData = [];
         }
 
         #endregion

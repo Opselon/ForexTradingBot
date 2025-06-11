@@ -2,7 +2,7 @@
 using Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 
-namespace Infrastructure.Persistence.Repositories
+namespace Infrastructure.Repositories
 {
     /// <summary>
     /// پیاده‌سازی Repository برای موجودیت تنظیمات برگزیده سیگنال کاربر (UserSignalPreference).
@@ -41,13 +41,16 @@ namespace Infrastructure.Persistence.Repositories
 
         public async Task AddAsync(UserSignalPreference preference, CancellationToken cancellationToken = default)
         {
-            if (preference == null) throw new ArgumentNullException(nameof(preference));
+            if (preference == null)
+            {
+                throw new ArgumentNullException(nameof(preference));
+            }
 
             // بررسی اینکه آیا این ترکیب قبلاً وجود دارد یا خیر (اختیاری، بستگی به منطق شما)
             bool exists = await IsUserSubscribedToCategoryAsync(preference.UserId, preference.CategoryId, cancellationToken);
             if (!exists)
             {
-                await _context.UserSignalPreferences.AddAsync(preference, cancellationToken);
+                _ = await _context.UserSignalPreferences.AddAsync(preference, cancellationToken);
                 // SaveChangesAsync در Unit of Work / Service
             }
             // اگر وجود داشته باشد، می‌توان یک Exception یا یک نتیجه خاص برگرداند.
@@ -83,8 +86,12 @@ namespace Infrastructure.Persistence.Repositories
 
         public async Task DeleteAsync(UserSignalPreference preference, CancellationToken cancellationToken = default)
         {
-            if (preference == null) throw new ArgumentNullException(nameof(preference));
-            _context.UserSignalPreferences.Remove(preference);
+            if (preference == null)
+            {
+                throw new ArgumentNullException(nameof(preference));
+            }
+
+            _ = _context.UserSignalPreferences.Remove(preference);
             await Task.CompletedTask;
             // SaveChangesAsync در Unit of Work / Service
         }
@@ -96,7 +103,7 @@ namespace Infrastructure.Persistence.Repositories
 
             if (preferenceToDelete != null)
             {
-                _context.UserSignalPreferences.Remove(preferenceToDelete);
+                _ = _context.UserSignalPreferences.Remove(preferenceToDelete);
                 return true; // آماده برای ذخیره و حذف
             }
             return true; // رکوردی برای حذف وجود نداشت، پس عملیات موفقیت آمیز تلقی می‌شود

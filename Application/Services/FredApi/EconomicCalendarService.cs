@@ -1,10 +1,9 @@
 ﻿// File: Application/Services/FredApi/EconomicCalendarService.cs
-using Application.Common.Interfaces;
+using Application.Common.Interfaces.Fred;
 using Application.DTOs.Fred;
-using Application.Interfaces;
 using Shared.Results;
 
-namespace Application.Services
+namespace Application.Services.FredApi
 {
     public class EconomicCalendarService : IEconomicCalendarService
     {
@@ -48,7 +47,7 @@ namespace Application.Services
                 {
                     // If the API client reported a functional error, return those errors.
                     // Using null-conditional operator for safety accessing Errors.
-                    return Result<List<FredSeriesDto>>.Failure(result.Errors ?? new List<string> { "FRED API search failed with no specific errors reported." });
+                    return Result<List<FredSeriesDto>>.Failure(result.Errors ?? ["FRED API search failed with no specific errors reported."]);
                 }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -167,7 +166,7 @@ namespace Application.Services
                 {
                     // If the API client reported a functional error, return those errors.
                     // Using null-conditional operator for safety when accessing Errors.
-                    return Result<List<FredReleaseDto>>.Failure(result.Errors ?? new List<string> { "FRED API request failed with no specific errors reported." });
+                    return Result<List<FredReleaseDto>>.Failure(result.Errors ?? ["FRED API request failed with no specific errors reported."]);
                 }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

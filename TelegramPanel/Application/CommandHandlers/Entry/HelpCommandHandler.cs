@@ -28,24 +28,27 @@ namespace TelegramPanel.Application.CommandHandlers.Entry
         public async Task HandleAsync(Update update, CancellationToken cancellationToken = default)
         {
             var message = update.Message;
-            if (message == null) return;
+            if (message == null)
+            {
+                return;
+            }
 
             var chatId = message.Chat.Id;
             _logger.LogInformation("Handling /help command for ChatID {ChatId}", chatId);
 
             var helpText = new StringBuilder();
-            helpText.AppendLine(TelegramMessageFormatter.Bold("Forex Signal Bot Help"));
-            helpText.AppendLine("Here are the available commands:");
-            helpText.AppendLine(); // خط خالی
-            helpText.AppendLine($"`/start` - Start interacting with the bot and register.");
-            helpText.AppendLine($"`/menu` - Show the main menu with options.");
-            helpText.AppendLine($"`/signals` - View available trading signals (premium feature).");
-            helpText.AppendLine($"`/subscribe` - View subscription plans and subscribe.");
-            helpText.AppendLine($"`/profile` - View your profile and subscription status.");
-            helpText.AppendLine($"`/settings` - Change your preferences (e.g., signal notifications).");
-            helpText.AppendLine($"`/help` - Show this help message.");
-            helpText.AppendLine();
-            helpText.AppendLine("For more assistance, please contact support.");
+            _ = helpText.AppendLine(TelegramMessageFormatter.Bold("Forex Signal Bot Help"));
+            _ = helpText.AppendLine("Here are the available commands:");
+            _ = helpText.AppendLine(); // خط خالی
+            _ = helpText.AppendLine($"`/start` - Start interacting with the bot and register.");
+            _ = helpText.AppendLine($"`/menu` - Show the main menu with options.");
+            _ = helpText.AppendLine($"`/signals` - View available trading signals (premium feature).");
+            _ = helpText.AppendLine($"`/subscribe` - View subscription plans and subscribe.");
+            _ = helpText.AppendLine($"`/profile` - View your profile and subscription status.");
+            _ = helpText.AppendLine($"`/settings` - Change your preferences (e.g., signal notifications).");
+            _ = helpText.AppendLine($"`/help` - Show this help message.");
+            _ = helpText.AppendLine();
+            _ = helpText.AppendLine("For more assistance, please contact support.");
 
             await _messageSender.SendTextMessageAsync(chatId, helpText.ToString(), ParseMode.MarkdownV2, cancellationToken: cancellationToken);
         }

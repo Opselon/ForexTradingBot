@@ -1,6 +1,6 @@
 ﻿using Application.Common.Interfaces;
 using Application.DTOs;
-using Application.Interface;
+using Application.Interfaces;
 using AutoMapper;
 using Domain.Entities;
 using Microsoft.Extensions.Logging;
@@ -92,7 +92,7 @@ namespace Application.Services
 
 
                 // Save all changes to the database (Subscription and potentially User). **CRITICAL point of failure.**
-                await _context.SaveChangesAsync(cancellationToken);
+                _ = await _context.SaveChangesAsync(cancellationToken);
                 _logger.LogInformation("Subscription with ID {SubscriptionId} created successfully for UserID {UserId}", subscription.Id, subscription.UserId);
 
                 // Map the created Subscription entity back to DTO for return. Potential mapping error point.

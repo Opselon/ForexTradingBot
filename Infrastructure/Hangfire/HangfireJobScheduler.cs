@@ -3,7 +3,7 @@ using Application.Common.Interfaces;
 using Hangfire;
 using System.Linq.Expressions;
 
-namespace Infrastructure.Services
+namespace Infrastructure.Hangfire
 {
     public class HangfireJobScheduler : INotificationJobScheduler
     {
@@ -11,7 +11,7 @@ namespace Infrastructure.Services
         {
             // Enqueue the job to be executed by Hangfire.
             // Hangfire will resolve TJob from the DI container when it's time to execute.
-            return BackgroundJob.Enqueue<TJob>(methodCall);
+            return BackgroundJob.Enqueue(methodCall);
         }
 
         public string Enqueue<TService>(Expression<Action<TService>> methodCall)

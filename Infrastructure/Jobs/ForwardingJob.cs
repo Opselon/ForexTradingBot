@@ -32,7 +32,7 @@ namespace Infrastructure.Jobs
             // این سیاست هر Exception را مدیریت می‌کند به جز OperationCanceledException و TaskCanceledException
             // که نشان‌دهنده لغو عمدی عملیات هستند.
             _retryPolicy = Policy
-                .Handle<Exception>(ex => !(ex is OperationCanceledException || ex is TaskCanceledException))
+                .Handle<Exception>(ex => ex is not (OperationCanceledException or TaskCanceledException))
                 .WaitAndRetryAsync(
                     retryCount: 3, // حداکثر 3 بار تلاش مجدد
                     sleepDurationProvider: retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)), // تأخیر نمایی: 2s, 4s, 8s
@@ -114,8 +114,7 @@ namespace Infrastructure.Jobs
         /// <returns>رشته کوتاه شده یا "[null_or_empty]" اگر رشته ورودی null یا خالی باشد.</returns>
         private string TruncateString(string? str, int maxLength)
         {
-            if (string.IsNullOrEmpty(str)) return "[null_or_empty]";
-            return str.Length <= maxLength ? str : str.Substring(0, maxLength) + "...";
+            return string.IsNullOrEmpty(str) ? "[null_or_empty]" : str.Length <= maxLength ? str : str.Substring(0, maxLength) + "...";
         }
     }
 }

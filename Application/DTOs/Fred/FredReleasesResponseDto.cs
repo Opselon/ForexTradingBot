@@ -27,6 +27,6 @@ namespace Application.DTOs.Fred
         public int Limit { get; set; }
 
         [JsonPropertyName("releases")]
-        public List<FredReleaseDto> Releases { get; set; } = new();
+        public List<FredReleaseDto> Releases { get; set; } = [];
     }
 }

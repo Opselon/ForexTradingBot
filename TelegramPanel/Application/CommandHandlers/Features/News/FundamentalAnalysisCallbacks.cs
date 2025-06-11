@@ -11,7 +11,7 @@ using Telegram.Bot.Types.ReplyMarkups;
 using TelegramPanel.Application.CommandHandlers.MainMenu;
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Infrastructure;
-using TelegramPanel.Infrastructure.Helpers;
+using TelegramPanel.Infrastructure.Helper;
 using TelegramPanel.Infrastructure.Settings;
 
 namespace TelegramPanel.Application.CommandHandlers.Features.News
@@ -163,12 +163,18 @@ namespace TelegramPanel.Application.CommandHandlers.Features.News
         }
 
         // --- Main Handler Logic ---
-        public bool CanHandle(Update update) => update.CallbackQuery?.Data?.StartsWith(ViewFundamentalAnalysisPrefix) == true;
+        public bool CanHandle(Update update)
+        {
+            return update.CallbackQuery?.Data?.StartsWith(ViewFundamentalAnalysisPrefix) == true;
+        }
 
         public async Task HandleAsync(Update update, CancellationToken cancellationToken)
         {
             var callbackQuery = update.CallbackQuery;
-            if (callbackQuery?.Message == null) return;
+            if (callbackQuery?.Message == null)
+            {
+                return;
+            }
 
             var callbackData = callbackQuery.Data;
             var chatId = callbackQuery.Message.Chat.Id;
@@ -182,7 +188,10 @@ namespace TelegramPanel.Application.CommandHandlers.Features.News
                 await _messageSender.AnswerCallbackQueryAsync(callbackQuery.Id, cancellationToken: cancellationToken);
 
                 var parts = callbackData.Split(':', 4);
-                if (parts.Length < 2) return;
+                if (parts.Length < 2)
+                {
+                    return;
+                }
 
                 string symbol = parts[1].ToUpperInvariant();
                 string action = parts.Length > 2 ? parts[2] : string.Empty;
@@ -234,13 +243,19 @@ namespace TelegramPanel.Application.CommandHandlers.Features.News
             string symbol, DateTime startDate, int page, int pageSize, bool isVipUser, CancellationToken cancellationToken)
         {
             var keywordSet = GenerateSmartKeywords(symbol);
-            if (keywordSet == null) return (new List<NewsItem>(), 0);
+            if (keywordSet == null)
+            {
+                return (new List<NewsItem>(), 0);
+            }
 
             var (highPrecisionItems, _) = await _newsItemRepository.SearchNewsAsync(keywordSet.HighPrecisionTerms, startDate, DateTime.UtcNow, 1, 100, false, isVipUser, cancellationToken);
             var (generalItems, _) = await _newsItemRepository.SearchNewsAsync(keywordSet.GeneralTerms, startDate, DateTime.UtcNow, 1, 100, false, isVipUser, cancellationToken);
 
             var combinedNews = new Dictionary<Guid, NewsItem>();
-            foreach (var item in highPrecisionItems) combinedNews[item.Id] = item;
+            foreach (var item in highPrecisionItems)
+            {
+                combinedNews[item.Id] = item;
+            }
 
             string baseCode = symbol == "XAUUSD" ? "XAU" : symbol.Substring(0, 3);
             string quoteCode = symbol == "XAUUSD" ? "USD" : symbol.Substring(3, 3);
@@ -249,7 +264,11 @@ namespace TelegramPanel.Application.CommandHandlers.Features.News
             {
                 foreach (var item in generalItems)
                 {
-                    if (combinedNews.ContainsKey(item.Id)) continue;
+                    if (combinedNews.ContainsKey(item.Id))
+                    {
+                        continue;
+                    }
+
                     var content = $"{item.Title} {item.Summary}".ToLowerInvariant();
                     if (baseTerms.Any(k => content.Contains(k.ToLowerInvariant())) && quoteTerms.Any(k => content.Contains(k.ToLowerInvariant())))
                     {
@@ -282,14 +301,24 @@ namespace TelegramPanel.Application.CommandHandlers.Features.News
                 return null;
             }
 
-            highPrecision.Add(symbol);
-            highPrecision.Add($"{baseCode}/{quoteCode}");
-            if (nicknames.TryGetValue(symbol, out var nick)) highPrecision.Add(nick);
+            _ = highPrecision.Add(symbol);
+            _ = highPrecision.Add($"{baseCode}/{quoteCode}");
+            if (nicknames.TryGetValue(symbol, out var nick))
+            {
+                _ = highPrecision.Add(nick);
+            }
 
             termsByCurrency[baseCode] = baseInfo.CoreTerms.Concat(baseInfo.Aliases).ToList();
             termsByCurrency[quoteCode] = quoteInfo.CoreTerms.Concat(quoteInfo.Aliases).ToList();
-            foreach (var term in termsByCurrency[baseCode]) general.Add(term);
-            foreach (var term in termsByCurrency[quoteCode]) general.Add(term);
+            foreach (var term in termsByCurrency[baseCode])
+            {
+                _ = general.Add(term);
+            }
+
+            foreach (var term in termsByCurrency[quoteCode])
+            {
+                _ = general.Add(term);
+            }
 
             return new SmartKeywordSet(highPrecision.ToList(), general.ToList(), termsByCurrency);
         }
@@ -300,24 +329,28 @@ namespace TelegramPanel.Application.CommandHandlers.Features.News
             var sb = new StringBuilder();
             int totalPages = (int)Math.Ceiling((double)totalCount / pageSize);
 
-            sb.AppendLine($"📊 *Fundamental News: {GetCurrencyDisplayName(symbol)}*");
-            sb.AppendLine($"📖 Page {currentPage} of {totalPages} `({totalCount} items)`");
-            sb.AppendLine("`-----------------------------------`");
+            _ = sb.AppendLine($"📊 *Fundamental News: {GetCurrencyDisplayName(symbol)}*");
+            _ = sb.AppendLine($"📖 Page {currentPage} of {totalPages} `({totalCount} items)`");
+            _ = sb.AppendLine("`-----------------------------------`");
 
             if (!newsItems.Any())
             {
-                sb.AppendLine("\nℹ️ _No more news items on this page._");
+                _ = sb.AppendLine("\nℹ️ _No more news items on this page._");
                 return sb.ToString();
             }
 
-            int itemNumber = (currentPage - 1) * pageSize + 1;
+            int itemNumber = ((currentPage - 1) * pageSize) + 1;
             foreach (var item in newsItems)
             {
-                sb.AppendLine($"\n🔸 *{itemNumber++}. {item.Title}*");
-                sb.AppendLine($"🏦 _{item.SourceName}_ | 🗓️ _{item.PublishedDate:MMM dd, yyyy HH:mm 'UTC'}_");
-                sb.AppendLine(TruncateWithEllipsis(item.Summary, 180) ?? "_No summary available._");
-                if (!string.IsNullOrWhiteSpace(item.Link)) sb.AppendLine($"🔗 [Read Full Article]({item.Link})");
-                sb.AppendLine("`-----------------------------------`");
+                _ = sb.AppendLine($"\n🔸 *{itemNumber++}. {item.Title}*");
+                _ = sb.AppendLine($"🏦 _{item.SourceName}_ | 🗓️ _{item.PublishedDate:MMM dd, yyyy HH:mm 'UTC'}_");
+                _ = sb.AppendLine(TruncateWithEllipsis(item.Summary, 180) ?? "_No summary available._");
+                if (!string.IsNullOrWhiteSpace(item.Link))
+                {
+                    _ = sb.AppendLine($"🔗 [Read Full Article]({item.Link})");
+                }
+
+                _ = sb.AppendLine("`-----------------------------------`");
             }
             return sb.ToString();
         }
@@ -325,8 +358,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.News
         // --- Other Helper Methods ---
         private string? TruncateWithEllipsis(string? text, int maxLength)
         {
-            if (string.IsNullOrWhiteSpace(text) || text.Length <= maxLength) return text;
-            return text.Substring(0, maxLength - 3).TrimEnd() + "...";
+            return string.IsNullOrWhiteSpace(text) || text.Length <= maxLength ? text : text.Substring(0, maxLength - 3).TrimEnd() + "...";
         }
 
         private string GetCurrencyDisplayName(string symbol)
@@ -342,13 +374,32 @@ namespace TelegramPanel.Application.CommandHandlers.Features.News
             var paginationRow = new List<InlineKeyboardButton>();
             int totalPages = (int)Math.Ceiling((double)totalCount / pageSize);
 
-            if (currentPage > 1) paginationRow.Add(InlineKeyboardButton.WithCallbackData("⬅️ Prev", $"{ViewFundamentalAnalysisPrefix}:{symbol}:{PageActionPrefix}:{currentPage - 1}"));
-            if (totalPages > 1) paginationRow.Add(InlineKeyboardButton.WithCallbackData($"Page {currentPage}/{totalPages}", "noop"));
-            if (currentPage < totalPages) paginationRow.Add(InlineKeyboardButton.WithCallbackData("Next ➡️", $"{ViewFundamentalAnalysisPrefix}:{symbol}:{PageActionPrefix}:{currentPage + 1}"));
+            if (currentPage > 1)
+            {
+                paginationRow.Add(InlineKeyboardButton.WithCallbackData("⬅️ Prev", $"{ViewFundamentalAnalysisPrefix}:{symbol}:{PageActionPrefix}:{currentPage - 1}"));
+            }
 
-            if (paginationRow.Any()) rows.Add(paginationRow);
-            if (!isVipUser) rows.Add(new List<InlineKeyboardButton> { InlineKeyboardButton.WithCallbackData("💎 Unlock Full History (VIP)", $"{ViewFundamentalAnalysisPrefix}:{symbol}:{SubscribeVipAction}") });
-            rows.Add(new List<InlineKeyboardButton> { InlineKeyboardButton.WithCallbackData("🏠 Main Menu", MenuCallbackQueryHandler.BackToMainMenuGeneral) });
+            if (totalPages > 1)
+            {
+                paginationRow.Add(InlineKeyboardButton.WithCallbackData($"Page {currentPage}/{totalPages}", "noop"));
+            }
+
+            if (currentPage < totalPages)
+            {
+                paginationRow.Add(InlineKeyboardButton.WithCallbackData("Next ➡️", $"{ViewFundamentalAnalysisPrefix}:{symbol}:{PageActionPrefix}:{currentPage + 1}"));
+            }
+
+            if (paginationRow.Any())
+            {
+                rows.Add(paginationRow);
+            }
+
+            if (!isVipUser)
+            {
+                rows.Add([InlineKeyboardButton.WithCallbackData("💎 Unlock Full History (VIP)", $"{ViewFundamentalAnalysisPrefix}:{symbol}:{SubscribeVipAction}")]);
+            }
+
+            rows.Add([InlineKeyboardButton.WithCallbackData("🏠 Main Menu", MenuCallbackQueryHandler.BackToMainMenuGeneral)]);
 
             return new InlineKeyboardMarkup(rows);
         }
@@ -356,8 +407,12 @@ namespace TelegramPanel.Application.CommandHandlers.Features.News
         private InlineKeyboardMarkup GetNoNewsKeyboard(string symbol, bool isVipUser)
         {
             var rows = new List<List<InlineKeyboardButton>>();
-            if (!isVipUser) rows.Add(new List<InlineKeyboardButton> { InlineKeyboardButton.WithCallbackData("🌟 Try VIP for More News Sources", $"{ViewFundamentalAnalysisPrefix}:{symbol}:{SubscribeVipAction}") });
-            rows.Add(new List<InlineKeyboardButton> { InlineKeyboardButton.WithCallbackData("🏠 Main Menu", MenuCallbackQueryHandler.BackToMainMenuGeneral) });
+            if (!isVipUser)
+            {
+                rows.Add([InlineKeyboardButton.WithCallbackData("🌟 Try VIP for More News Sources", $"{ViewFundamentalAnalysisPrefix}:{symbol}:{SubscribeVipAction}")]);
+            }
+
+            rows.Add([InlineKeyboardButton.WithCallbackData("🏠 Main Menu", MenuCallbackQueryHandler.BackToMainMenuGeneral)]);
             return new InlineKeyboardMarkup(rows);
         }
 
@@ -372,6 +427,9 @@ namespace TelegramPanel.Application.CommandHandlers.Features.News
         }
 
         // Dummy method for error keyboard, can be expanded.
-        private InlineKeyboardMarkup GetErrorStateKeyboard(string symbol) => new InlineKeyboardMarkup(InlineKeyboardButton.WithCallbackData("🏠 Main Menu", MenuCallbackQueryHandler.BackToMainMenuGeneral));
+        private InlineKeyboardMarkup GetErrorStateKeyboard(string symbol)
+        {
+            return new InlineKeyboardMarkup(InlineKeyboardButton.WithCallbackData("🏠 Main Menu", MenuCallbackQueryHandler.BackToMainMenuGeneral));
+        }
     }
 }

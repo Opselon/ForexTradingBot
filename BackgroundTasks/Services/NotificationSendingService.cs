@@ -239,9 +239,7 @@ namespace BackgroundTasks.Services
 
         private static bool ShouldRetryTelegramApiException(ApiRequestException ex)
         {
-            if (ex.ErrorCode == 429 || ex.Parameters?.RetryAfter.HasValue == true) return true;
-            if (ex.ErrorCode >= 500 && ex.ErrorCode < 600) return true;
-            return false;
+            return ex.ErrorCode == 429 || ex.Parameters?.RetryAfter.HasValue == true ? true : ex.ErrorCode is >= 500 and < 600;
         }
         #endregion
     }

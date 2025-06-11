@@ -15,17 +15,17 @@ namespace TelegramPanel.Infrastructure.Services
         private delegate Task<(decimal? Price, decimal? Change24hPercent, decimal? High24h, decimal? Low24h, decimal? Volume, string? DataSourceName, JsonElement? RawResponse)> ApiFetchStrategy(
             HttpClient client, string symbol, string baseAsset, string quoteAsset, CurrencyDetails currencyInfo, ILogger logger, bool forceRefresh, CancellationToken cancellationToken);
 
-        private static readonly List<ApiFetchStrategy> _apiFetchStrategies = new List<ApiFetchStrategy>
-        {
+        private static readonly List<ApiFetchStrategy> _apiFetchStrategies =
+        [
             // Prioritize APIs that might give more complete data first
             FetchFromCoinGeckoProxyAsync,   // Good for XAUUSD and other crypto proxies if configured
             FetchFromFrankfurterSmartAsync, // Tries to get current and yesterday's for Forex
             FetchFromExchangeRateHostAsync,
             // Add a very basic gold price API if one is found as a last resort for XAUUSD
             // FetchFromBasicGoldApiFallbackAsync,
-        };
+        ];
 
-        private static readonly Dictionary<string, (decimal Price, DateTime Timestamp)> _previousPriceStaticCache = new Dictionary<string, (decimal, DateTime)>();
+        private static readonly Dictionary<string, (decimal Price, DateTime Timestamp)> _previousPriceStaticCache = [];
         private static readonly object _staticCacheLock = new object();
         private const int StaleCacheFallbackDurationHours_Static = 6;
         private const int StaticPreviousPriceCacheMaxAgeHours_Default = 30;
@@ -75,8 +75,8 @@ namespace TelegramPanel.Infrastructure.Services
                 DataSource = "Unavailable",
                 IsPriceLive = false,
                 LastUpdated = DateTime.MinValue,
-                Remarks = new List<string>(),
-                Insights = new List<string>()
+                Remarks = [],
+                Insights = []
             };
 
             if (forceRefresh)
@@ -114,9 +114,20 @@ namespace TelegramPanel.Infrastructure.Services
                     marketData.Remarks.Add($"Price from {marketData.DataSource}.");
 
                     if (change24h.HasValue) { marketData.Change24h = Math.Round(change24h.Value, 2); marketData.Remarks.Add($"24h change from API."); }
-                    if (high24.HasValue) marketData.High24h = Math.Round(high24.Value, currencyInfo.DisplayDecimalPlaces ?? 4);
-                    if (low24.HasValue) marketData.Low24h = Math.Round(low24.Value, currencyInfo.DisplayDecimalPlaces ?? 4);
-                    if (volume.HasValue) marketData.Volume = volume.Value;
+                    if (high24.HasValue)
+                    {
+                        marketData.High24h = Math.Round(high24.Value, currencyInfo.DisplayDecimalPlaces ?? 4);
+                    }
+
+                    if (low24.HasValue)
+                    {
+                        marketData.Low24h = Math.Round(low24.Value, currencyInfo.DisplayDecimalPlaces ?? 4);
+                    }
+
+                    if (volume.HasValue)
+                    {
+                        marketData.Volume = volume.Value;
+                    }
 
                     if (!change24h.HasValue && marketData.Price > 0) // Calculate 24h change if API didn't provide it
                     {
@@ -181,18 +192,25 @@ namespace TelegramPanel.Infrastructure.Services
 
         private void Calculate24hChangeFromStaticCache(MarketData md, CurrencyDetails currencyInfo, bool forceRefresh)
         {
-            if (md.Price == 0m) return;
+            if (md.Price == 0m)
+            {
+                return;
+            }
+
             lock (_staticCacheLock)
             {
                 if (_previousPriceStaticCache.TryGetValue(md.Symbol, out var prevCacheEntry))
                 {
                     // --- CORRECTED ACCESS TO SETTING ---
                     int maxAgeHours = _marketDataSettings.StaticPreviousPriceCacheMaxAgeHours;
-                    if (maxAgeHours <= 0) maxAgeHours = 30; // Fallback if setting is invalid
+                    if (maxAgeHours <= 0)
+                    {
+                        maxAgeHours = 30; // Fallback if setting is invalid
+                    }
 
                     if ((DateTime.UtcNow - prevCacheEntry.Timestamp).TotalHours < maxAgeHours && prevCacheEntry.Price != 0m)
                     {
-                        md.Change24h = Math.Round(((md.Price - prevCacheEntry.Price) / prevCacheEntry.Price) * 100, 2);
+                        md.Change24h = Math.Round((md.Price - prevCacheEntry.Price) / prevCacheEntry.Price * 100, 2);
                         md.Remarks.Add($"24hΔ calc vs prev ({prevCacheEntry.Price.ToString($"N{currencyInfo.DisplayDecimalPlaces ?? 4}")} @ {prevCacheEntry.Timestamp:HH:mm}).");
                     }
                     else { md.Remarks.Add($"Prev. price for 24hΔ calc too old/zero (Age: {(DateTime.UtcNow - prevCacheEntry.Timestamp).TotalHours:F1}h / Max: {maxAgeHours}h)."); }
@@ -208,7 +226,9 @@ namespace TelegramPanel.Infrastructure.Services
             HttpClient client, string fullSymbol, string baseAsset, string quoteAsset, CurrencyDetails currencyInfo, ILogger logger, bool forceRefresh, CancellationToken cancellationToken)
         {
             if (fullSymbol.Equals("XAUUSD", StringComparison.OrdinalIgnoreCase) || fullSymbol.Equals("XAGUSD", StringComparison.OrdinalIgnoreCase) || !string.IsNullOrEmpty(currencyInfo.CoinGeckoId))
+            {
                 return (null, null, null, null, null, null, null); // Frankfurter is for Forex
+            }
 
             string latestUrl = $"https://api.frankfurter.app/latest?from={baseAsset}&to={quoteAsset}";
             string yesterdayDate = DateTime.UtcNow.AddDays(-1).ToString("yyyy-MM-dd");
@@ -241,7 +261,10 @@ namespace TelegramPanel.Infrastructure.Services
             }
             catch (Exception ex) { logger.LogError(ex, "FrankfurterSmart: Error LATEST for {Symbol}", fullSymbol); }
 
-            if (!currentPrice.HasValue) return (null, null, null, null, null, null, null); // If no current price, bail
+            if (!currentPrice.HasValue)
+            {
+                return (null, null, null, null, null, null, null); // If no current price, bail
+            }
 
             try // Fetch yesterday's price for 24h change
             {
@@ -266,7 +289,7 @@ namespace TelegramPanel.Infrastructure.Services
 
             if (currentPrice.HasValue && prevDayPrice.HasValue && prevDayPrice.Value != 0)
             {
-                change24h = ((currentPrice.Value - prevDayPrice.Value) / prevDayPrice.Value) * 100;
+                change24h = (currentPrice.Value - prevDayPrice.Value) / prevDayPrice.Value * 100;
             }
 
             return (currentPrice, change24h, null, null, null, "Frankfurter.app (Smart)", latestResponseJson);
@@ -276,7 +299,11 @@ namespace TelegramPanel.Infrastructure.Services
         private static async Task<(decimal? Price, decimal? Change24hPercent, decimal? High24h, decimal? Low24h, decimal? Volume, string? DataSourceName, JsonElement? RawResponse)> FetchFromExchangeRateHostAsync(
              HttpClient client, string fullSymbol, string baseAsset, string quoteAsset, CurrencyDetails currencyInfo, ILogger logger, bool forceRefresh, CancellationToken cancellationToken)
         {
-            if (!string.IsNullOrEmpty(currencyInfo.CoinGeckoId)) return (null, null, null, null, null, null, null);
+            if (!string.IsNullOrEmpty(currencyInfo.CoinGeckoId))
+            {
+                return (null, null, null, null, null, null, null);
+            }
+
             string url = $"https://api.exchangerate.host/latest?base={baseAsset}&symbols={quoteAsset}&source=ecb";
             try
             {
@@ -300,7 +327,10 @@ namespace TelegramPanel.Infrastructure.Services
             HttpClient client, string fullSymbol, string baseAsset, string quoteAsset, CurrencyDetails currencyInfo, ILogger logger, bool forceRefresh, CancellationToken cancellationToken)
         {
             if (string.IsNullOrEmpty(currencyInfo.CoinGeckoId) || string.IsNullOrEmpty(currencyInfo.CoinGeckoPriceCurrency))
+            {
                 return (null, null, null, null, null, null, null);
+            }
+
             string url = $"https://api.coingecko.com/api/v3/coins/{currencyInfo.CoinGeckoId}?localization=false&tickers=false&market_data=true&community_data=false&developer_data=false&sparkline=false";
             try
             {
@@ -316,15 +346,35 @@ namespace TelegramPanel.Infrastructure.Services
                     decimal? price = null; decimal? change24h = null; decimal? high24 = null; decimal? low24 = null; decimal? volume = null;
                     string priceCurr = currencyInfo.CoinGeckoPriceCurrency.ToLowerInvariant();
 
-                    if (mdNode.TryGetProperty("current_price", out var cpN) && cpN.TryGetProperty(priceCurr, out var pN) && pN.TryGetDecimal(out var pVal) && pVal != 0) price = pVal;
+                    if (mdNode.TryGetProperty("current_price", out var cpN) && cpN.TryGetProperty(priceCurr, out var pN) && pN.TryGetDecimal(out var pVal) && pVal != 0)
+                    {
+                        price = pVal;
+                    }
                     else { logger.LogWarning("CoinGeckoProxy: No current_price.{Pc} for {ID}", priceCurr, currencyInfo.CoinGeckoId); return (null, null, null, null, null, null, root); }
 
-                    if (mdNode.TryGetProperty("price_change_percentage_24h_in_currency", out var pcp24N) && pcp24N.TryGetProperty(priceCurr, out var pcp24ValN) && pcp24ValN.TryGetDecimal(out var pcp24Val)) change24h = pcp24Val;
-                    else if (mdNode.TryGetProperty("price_change_percentage_24h", out var basePcp24N) && basePcp24N.TryGetDecimal(out var basePcp24)) change24h = basePcp24;
+                    if (mdNode.TryGetProperty("price_change_percentage_24h_in_currency", out var pcp24N) && pcp24N.TryGetProperty(priceCurr, out var pcp24ValN) && pcp24ValN.TryGetDecimal(out var pcp24Val))
+                    {
+                        change24h = pcp24Val;
+                    }
+                    else if (mdNode.TryGetProperty("price_change_percentage_24h", out var basePcp24N) && basePcp24N.TryGetDecimal(out var basePcp24))
+                    {
+                        change24h = basePcp24;
+                    }
 
-                    if (mdNode.TryGetProperty("high_24h", out var h24N) && h24N.TryGetProperty(priceCurr, out var h24ValN) && h24ValN.TryGetDecimal(out var hVal)) high24 = hVal;
-                    if (mdNode.TryGetProperty("low_24h", out var l24N) && l24N.TryGetProperty(priceCurr, out var l24ValN) && l24ValN.TryGetDecimal(out var lVal)) low24 = lVal;
-                    if (mdNode.TryGetProperty("total_volume", out var tvN) && tvN.TryGetProperty(priceCurr, out var tvValN) && tvValN.TryGetDecimal(out var vVal)) volume = vVal;
+                    if (mdNode.TryGetProperty("high_24h", out var h24N) && h24N.TryGetProperty(priceCurr, out var h24ValN) && h24ValN.TryGetDecimal(out var hVal))
+                    {
+                        high24 = hVal;
+                    }
+
+                    if (mdNode.TryGetProperty("low_24h", out var l24N) && l24N.TryGetProperty(priceCurr, out var l24ValN) && l24ValN.TryGetDecimal(out var lVal))
+                    {
+                        low24 = lVal;
+                    }
+
+                    if (mdNode.TryGetProperty("total_volume", out var tvN) && tvN.TryGetProperty(priceCurr, out var tvValN) && tvValN.TryGetDecimal(out var vVal))
+                    {
+                        volume = vVal;
+                    }
 
                     logger.LogInformation("CoinGeckoProxy: Success {Symbol} via {ID}. Price: {Price}", fullSymbol, currencyInfo.CoinGeckoId, price);
                     return (price, change24h, high24, low24, volume, $"CoinGecko ({currencyInfo.CoinGeckoId})", root);
@@ -337,8 +387,8 @@ namespace TelegramPanel.Infrastructure.Services
 
         private void CalculateDerivedFields(MarketData md, CurrencyDetails currencyInfo)
         {
-            md.Remarks = md.Remarks ?? new List<string>();
-            md.Insights = md.Insights ?? new List<string>(); // Ensure Insights is initialized
+            md.Remarks ??= [];
+            md.Insights ??= []; // Ensure Insights is initialized
 
             if (!md.IsPriceLive || md.Price == 0)
             {
@@ -354,25 +404,47 @@ namespace TelegramPanel.Infrastructure.Services
             else if (md.Change24h > 0.15m) { md.Trend = "Uptrend ↗️"; md.Insights.Add("Showing a slight upward trend recently."); }
             else if (md.Change24h < -0.15m) { md.Trend = "Downtrend ↘️"; md.Insights.Add("Showing a slight downward trend recently."); }
             else if (md.Change24h != 0 || HasRecentPriceMovement(md.Symbol, md.Price)) { md.Trend = "Sideways ➡️"; md.Insights.Add("Price movement appears to be consolidating or range-bound."); }
-            else md.Trend = "N/A (No Change Data)";
-            if (md.Trend != "N/A (No Change Data)") md.Remarks.Add($"Trend derived from 24h change ({md.Change24h:F2}%).");
-            else md.Remarks.Add("Trend indeterminable due to lack of 24h price change data.");
+            else
+            {
+                md.Trend = "N/A (No Change Data)";
+            }
+
+            if (md.Trend != "N/A (No Change Data)")
+            {
+                md.Remarks.Add($"Trend derived from 24h change ({md.Change24h:F2}%).");
+            }
+            else
+            {
+                md.Remarks.Add("Trend indeterminable due to lack of 24h price change data.");
+            }
 
 
             // Market Sentiment
             if (md.Trend.Contains("Uptrend")) { md.MarketSentiment = "Bullish 🐂"; md.Insights.Add("Overall market sentiment appears bullish based on recent price action."); }
             else if (md.Trend.Contains("Downtrend")) { md.MarketSentiment = "Bearish 🐻"; md.Insights.Add("Overall market sentiment appears bearish based on recent price action."); }
             else if (md.Trend == "Sideways ➡️") { md.MarketSentiment = "Neutral ⚪️"; md.Insights.Add("Market sentiment is currently neutral, awaiting clearer direction."); }
-            else md.MarketSentiment = "N/A";
+            else
+            {
+                md.MarketSentiment = "N/A";
+            }
 
             // Pseudo RSI
             if (md.Change24h != 0 || md.Trend != "N/A (No Change Data)" || HasRecentPriceMovement(md.Symbol, md.Price))
             {
                 md.RSI = Math.Clamp(50 + (md.Change24h * 10), 5, 95);
                 md.Remarks.Add($"RSI ({md.RSI:F0}) is a basic estimation from 24h change.");
-                if (md.RSI > 70) md.Insights.Add($"Estimated RSI ({md.RSI:F0}) suggests potentially overbought conditions.");
-                else if (md.RSI < 30) md.Insights.Add($"Estimated RSI ({md.RSI:F0}) suggests potentially oversold conditions.");
-                else md.Insights.Add($"Estimated RSI ({md.RSI:F0}) indicates neutral momentum.");
+                if (md.RSI > 70)
+                {
+                    md.Insights.Add($"Estimated RSI ({md.RSI:F0}) suggests potentially overbought conditions.");
+                }
+                else if (md.RSI < 30)
+                {
+                    md.Insights.Add($"Estimated RSI ({md.RSI:F0}) suggests potentially oversold conditions.");
+                }
+                else
+                {
+                    md.Insights.Add($"Estimated RSI ({md.RSI:F0}) indicates neutral momentum.");
+                }
             }
             else
             {
@@ -383,13 +455,13 @@ namespace TelegramPanel.Infrastructure.Services
             // Volatility
             if (md.High24h > 0 && md.Low24h > 0 && md.Low24h < md.High24h && md.Price > 0)
             {
-                md.Volatility = Math.Round(((md.High24h - md.Low24h) / md.Price) * 100, 2);
+                md.Volatility = Math.Round((md.High24h - md.Low24h) / md.Price * 100, 2);
                 md.Remarks.Add($"Daily Volatility (H-L/P): {md.Volatility:F2}%.");
                 md.Insights.Add(md.Volatility > 2.0m ? "Relatively high daily volatility observed." : (md.Volatility < 0.5m ? "Low daily volatility observed." : "Moderate daily volatility."));
             }
             else if (md.Price > 0 && (md.Change24h != 0 || HasRecentPriceMovement(md.Symbol, md.Price)))
             {
-                md.Volatility = Math.Round(Math.Abs(md.Change24h) * 0.6m + 0.05m, 2);
+                md.Volatility = Math.Round((Math.Abs(md.Change24h) * 0.6m) + 0.05m, 2);
                 md.Volatility = Math.Clamp(md.Volatility, 0.02m, 15.0m);
                 md.Remarks.Add($"Daily Volatility (est.): {md.Volatility:F2}%.");
                 md.Insights.Add($"Estimated daily volatility is around {md.Volatility:F2}%.");
@@ -402,22 +474,27 @@ namespace TelegramPanel.Infrastructure.Services
             {
                 md.Support = Math.Round(md.Low24h, displayDecimals); md.Remarks.Add("S: 24h Low.");
             }
-            else if (md.Price > 0) { md.Support = Math.Round(md.Price * (1 - (Math.Max(0.3m, md.Volatility) / 100m) * 0.7m), displayDecimals); md.Remarks.Add("S (est.)."); }
+            else if (md.Price > 0) { md.Support = Math.Round(md.Price * (1 - (Math.Max(0.3m, md.Volatility) / 100m * 0.7m)), displayDecimals); md.Remarks.Add("S (est.)."); }
 
             if (md.High24h > 0 && md.Price < md.High24h)
             {
                 md.Resistance = Math.Round(md.High24h, displayDecimals); md.Remarks.Add("R: 24h High.");
             }
-            else if (md.Price > 0) { md.Resistance = Math.Round(md.Price * (1 + (Math.Max(0.3m, md.Volatility) / 100m) * 0.7m), displayDecimals); md.Remarks.Add("R (est.)."); }
+            else if (md.Price > 0) { md.Resistance = Math.Round(md.Price * (1 + (Math.Max(0.3m, md.Volatility) / 100m * 0.7m)), displayDecimals); md.Remarks.Add("R (est.)."); }
 
             if (md.Support > 0 && md.Resistance > 0 && md.Support >= md.Resistance)
             { // Sanity check
                 md.Support = Math.Round(md.Price * 0.995m, displayDecimals); md.Resistance = Math.Round(md.Price * 1.005m, displayDecimals);
                 md.Remarks[md.Remarks.Count - 1] = "S/R (est. adjusted).";
             }
-            if (md.Support > 0 && md.Resistance > 0) md.Insights.Add($"Key levels: Support approx. {md.Support.ToString($"N{displayDecimals}")}, Resistance approx. {md.Resistance.ToString($"N{displayDecimals}")}.");
-            else md.Insights.Add("Support/Resistance levels could not be reliably estimated.");
-
+            if (md.Support > 0 && md.Resistance > 0)
+            {
+                md.Insights.Add($"Key levels: Support approx. {md.Support.ToString($"N{displayDecimals}")}, Resistance approx. {md.Resistance.ToString($"N{displayDecimals}")}.");
+            }
+            else
+            {
+                md.Insights.Add("Support/Resistance levels could not be reliably estimated.");
+            }
 
             md.MACD = "N/A (More Data Needed)";
             md.Remarks.Add("MACD requires historical series data, unavailable from current sources.");
@@ -425,7 +502,13 @@ namespace TelegramPanel.Infrastructure.Services
 
         private bool HasRecentPriceMovement(string symbol, decimal currentPrice)
         {
-            lock (_staticCacheLock) { if (_previousPriceStaticCache.TryGetValue(symbol, out var prev) && prev.Price != currentPrice) return true; }
+            lock (_staticCacheLock)
+            {
+                if (_previousPriceStaticCache.TryGetValue(symbol, out var prev) && prev.Price != currentPrice)
+                {
+                    return true;
+                }
+            }
             return false;
         }
         private void ResetCalculatedFieldsToUnavailable(MarketData md)
@@ -438,8 +521,16 @@ namespace TelegramPanel.Infrastructure.Services
             var currencies = _currencySettings?.Currencies ?? new Dictionary<string, CurrencyDetails>(StringComparer.OrdinalIgnoreCase);
             if (currencies.TryGetValue(symbol, out var info))
             {
-                if (!string.IsNullOrEmpty(info.CoinGeckoId) && string.IsNullOrEmpty(info.CoinGeckoPriceCurrency)) info.CoinGeckoPriceCurrency = "usd";
-                if (!info.DisplayDecimalPlaces.HasValue) info.DisplayDecimalPlaces = (info.BaseAsset == "JPY" || info.QuoteAsset == "JPY" || symbol.Contains("JPY")) ? 2 : (symbol == "XAUUSD" || symbol == "XAGUSD") ? 2 : 4;
+                if (!string.IsNullOrEmpty(info.CoinGeckoId) && string.IsNullOrEmpty(info.CoinGeckoPriceCurrency))
+                {
+                    info.CoinGeckoPriceCurrency = "usd";
+                }
+
+                if (!info.DisplayDecimalPlaces.HasValue)
+                {
+                    info.DisplayDecimalPlaces = (info.BaseAsset == "JPY" || info.QuoteAsset == "JPY" || symbol.Contains("JPY")) ? 2 : (symbol is "XAUUSD" or "XAGUSD") ? 2 : 4;
+                }
+
                 return info;
             }
             _logger.LogWarning("CurrencyInfo for {Symbol} not in settings. Using dynamic default.", symbol);

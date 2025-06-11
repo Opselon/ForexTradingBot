@@ -8,7 +8,7 @@ using TelegramPanel.Application.CommandHandlers.MainMenu; // For BackToMainMenuG
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Formatters;
 using TelegramPanel.Infrastructure;
-using TelegramPanel.Infrastructure.Helpers;
+using TelegramPanel.Infrastructure.Helper;
 using TelegramPanel.Settings;
 
 namespace TelegramPanel.Application.CommandHandlers.Admin

@@ -1,7 +1,6 @@
 ﻿// File: Infrastructure/Services/RssFetchingCoordinatorService.cs
 #region Usings
 using Application.Common.Interfaces; // For IRssSourceRepository, IRssReaderService
-using Application.Interfaces;        // For IRssFetchingCoordinatorService
 using Domain.Entities;               // For RssSource
 using Hangfire;                      // For JobDisplayName, AutomaticRetry
 using Microsoft.Extensions.Logging;
@@ -49,8 +48,10 @@ namespace Infrastructure.Services
             _coordinatorRetryPolicy = Policy
                 .Handle<Exception>(ex =>
                 {
-                    if (ex is OperationCanceledException || ex is TaskCanceledException)
+                    if (ex is OperationCanceledException or TaskCanceledException)
+                    {
                         return false; // Don't retry if it's an explicit cancellation.
+                    }
 
                     // Level 3: Check for specific HttpRequestException types (Permanent HTTP errors).
                     // This relies on HttpRequestException containing StatusCode for the propagation
@@ -139,9 +140,11 @@ namespace Infrastructure.Services
         private async Task ProcessSingleFeedWithLoggingAndRetriesAsync(RssSource source, CancellationToken cancellationToken)
         {
             // Level 2: Define specific Polly context for this individual feed for granular logging.
-            var pollyContext = new Context($"RssFeedFetch_{source.Id}"); // Use ToString() for Guid ID
-            pollyContext["RssSourceId"] = source.Id.ToString(); // Use ToString() for Guid ID
-            pollyContext["RssSourceName"] = source.SourceName;
+            var pollyContext = new Context($"RssFeedFetch_{source.Id}")
+            {
+                ["RssSourceId"] = source.Id.ToString(), // Use ToString() for Guid ID
+                ["RssSourceName"] = source.SourceName
+            }; // Use ToString() for Guid ID
 
             // Level 2: Use logging scope to include source-specific context for all logs within this method.
             using (_logger.BeginScope(new Dictionary<string, object?>

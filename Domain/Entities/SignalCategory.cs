@@ -35,21 +35,21 @@ namespace Domain.Entities
         /// <summary>
         /// Collection of Signals belonging to this category.
         /// </summary>
-        public virtual ICollection<Signal> Signals { get; set; } = new List<Signal>(); // ✅ virtual
+        public virtual ICollection<Signal> Signals { get; set; } = []; // ✅ virtual
 
         /// <summary>
         /// Collection of UserSignalPreferences linking users to this category.
         /// This defines which users are interested in this category.
         /// </summary>
-        public virtual ICollection<UserSignalPreference> UserPreferences { get; set; } = new List<UserSignalPreference>(); // ✅ اضافه شد
+        public virtual ICollection<UserSignalPreference> UserPreferences { get; set; } = []; // ✅ اضافه شد
         #endregion
 
         #region Constructors
         public SignalCategory()
         {
             Id = Guid.NewGuid();
-            Signals = new List<Signal>();
-            UserPreferences = new List<UserSignalPreference>();
+            Signals = [];
+            UserPreferences = [];
             IsActive = true;
         }
         #endregion

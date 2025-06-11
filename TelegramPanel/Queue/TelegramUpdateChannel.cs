@@ -37,7 +37,7 @@ namespace TelegramPanel.Queue
             _channel = Channel.CreateBounded<Update>(options);
 
             _writeRetryPolicy = Policy
-                .Handle<Exception>(ex => !(ex is OperationCanceledException || ex is TaskCanceledException))
+                .Handle<Exception>(ex => ex is not (OperationCanceledException or TaskCanceledException))
                 .WaitAndRetryAsync(
                     retryCount: _maxRetryAttempts,
                     sleepDurationProvider: retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
@@ -49,7 +49,7 @@ namespace TelegramPanel.Queue
                     });
 
             _readRetryPolicy = Policy<Update>
-                .Handle<Exception>(ex => !(ex is OperationCanceledException || ex is TaskCanceledException))
+                .Handle<Exception>(ex => ex is not (OperationCanceledException or TaskCanceledException))
                 .WaitAndRetryAsync(
                     retryCount: _maxRetryAttempts,
                     sleepDurationProvider: retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),

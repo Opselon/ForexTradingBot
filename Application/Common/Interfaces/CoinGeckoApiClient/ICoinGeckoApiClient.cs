@@ -4,7 +4,7 @@
 using Application.DTOs.CoinGecko;
 using Shared.Results;
 
-namespace Application.Common.Interfaces
+namespace Application.Common.Interfaces.CoinGeckoApiClient
 {
     /// <summary>
     /// Defines the contract for a client that interacts with the public CoinGecko API.

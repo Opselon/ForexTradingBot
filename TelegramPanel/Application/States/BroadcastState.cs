@@ -5,7 +5,7 @@ using Telegram.Bot.Types.Enums;
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Infrastructure;
 
-namespace TelegramPanel.Application.States.Admin
+namespace TelegramPanel.Application.States
 {
     public class BroadcastState : ITelegramState
     {
@@ -17,8 +17,10 @@ namespace TelegramPanel.Application.States.Admin
         public BroadcastState(ITelegramMessageSender ms, IBroadcastScheduler bs, IAdminService ads)
         { _messageSender = ms; _broadcastScheduler = bs; _adminService = ads; }
 
-        public Task<string> GetEntryMessageAsync(long userId, Update? triggerUpdate, CancellationToken ct) =>
-            Task.FromResult("📝 *Broadcast Message:*\nPlease send the message you wish to broadcast. Type /cancel to abort.");
+        public Task<string> GetEntryMessageAsync(long userId, Update? triggerUpdate, CancellationToken ct)
+        {
+            return Task.FromResult("📝 *Broadcast Message:*\nPlease send the message you wish to broadcast. Type /cancel to abort.");
+        }
 
         // In the BroadcastState class...
 

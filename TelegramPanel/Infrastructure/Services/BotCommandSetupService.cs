@@ -2,7 +2,7 @@
 using Telegram.Bot;
 using Telegram.Bot.Types;
 
-namespace TelegramPanel.Infrastructure
+namespace TelegramPanel.Infrastructure.Services
 {
     public interface IBotCommandSetupService
     {

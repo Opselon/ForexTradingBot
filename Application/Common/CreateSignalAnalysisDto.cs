@@ -1,6 +1,6 @@
 ﻿using System.ComponentModel.DataAnnotations;
 
-namespace Application.DTOs
+namespace Application.Common
 {
     public class CreateSignalAnalysisDto
     {

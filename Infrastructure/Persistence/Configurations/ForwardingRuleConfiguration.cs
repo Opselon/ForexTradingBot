@@ -16,17 +16,17 @@ namespace Infrastructure.Persistence.Configurations // یا Infrastructure.Data.
 
         public void Configure(EntityTypeBuilder<ForwardingRule> builder)
         {
-            builder.ToTable("ForwardingRules");
-            builder.HasKey(fr => fr.RuleName);
+            _ = builder.ToTable("ForwardingRules");
+            _ = builder.HasKey(fr => fr.RuleName);
 
-            builder.Property(fr => fr.RuleName)
+            _ = builder.Property(fr => fr.RuleName)
                 .IsRequired()
                 .HasMaxLength(100);
 
-            builder.Property(fr => fr.IsEnabled)
+            _ = builder.Property(fr => fr.IsEnabled)
                 .IsRequired();
 
-            builder.Property(fr => fr.SourceChannelId)
+            _ = builder.Property(fr => fr.SourceChannelId)
                 .IsRequired();
 
             // برای TargetChannelIds (IReadOnlyList<long>)
@@ -42,33 +42,33 @@ namespace Infrastructure.Persistence.Configurations // یا Infrastructure.Data.
                 ));
 
             // OwnerOne برای MessageEditOptions
-            builder.OwnsOne(fr => fr.EditOptions, editOptions =>
+            _ = builder.OwnsOne(fr => fr.EditOptions, editOptions =>
             {
-                editOptions.Property(e => e.PrependText);
-                editOptions.Property(e => e.AppendText);
-                editOptions.Property(e => e.RemoveSourceForwardHeader);
-                editOptions.Property(e => e.RemoveLinks);
-                editOptions.Property(e => e.StripFormatting);
-                editOptions.Property(e => e.CustomFooter);
-                editOptions.Property(e => e.DropAuthor);
-                editOptions.Property(e => e.DropMediaCaptions);
-                editOptions.Property(e => e.NoForwards);
+                _ = editOptions.Property(e => e.PrependText);
+                _ = editOptions.Property(e => e.AppendText);
+                _ = editOptions.Property(e => e.RemoveSourceForwardHeader);
+                _ = editOptions.Property(e => e.RemoveLinks);
+                _ = editOptions.Property(e => e.StripFormatting);
+                _ = editOptions.Property(e => e.CustomFooter);
+                _ = editOptions.Property(e => e.DropAuthor);
+                _ = editOptions.Property(e => e.DropMediaCaptions);
+                _ = editOptions.Property(e => e.NoForwards);
 
                 // OwnsMany برای TextReplacements - استفاده از نام کلاس TextReplacement (جدید)
-                editOptions.OwnsMany(e => e.TextReplacements, tr =>
+                _ = editOptions.OwnsMany(e => e.TextReplacements, tr =>
                 {
-                    tr.WithOwner().HasForeignKey("EditOptionsForwardingRuleName"); // باید این نام با نام FK در دیتابیس هماهنگ باشه
-                    tr.Property<int>("Id").ValueGeneratedOnAdd();
-                    tr.HasKey("Id", "EditOptionsForwardingRuleName"); // کلید ترکیبی
-                    tr.Property(t => t.Find).IsRequired();
-                    tr.Property(t => t.ReplaceWith);
-                    tr.Property(t => t.IsRegex).IsRequired();
-                    tr.Property(t => t.RegexOptions).IsRequired(); // System.Text.RegularExpressions.RegexOptions enum value
+                    _ = tr.WithOwner().HasForeignKey("EditOptionsForwardingRuleName"); // باید این نام با نام FK در دیتابیس هماهنگ باشه
+                    _ = tr.Property<int>("Id").ValueGeneratedOnAdd();
+                    _ = tr.HasKey("Id", "EditOptionsForwardingRuleName"); // کلید ترکیبی
+                    _ = tr.Property(t => t.Find).IsRequired();
+                    _ = tr.Property(t => t.ReplaceWith);
+                    _ = tr.Property(t => t.IsRegex).IsRequired();
+                    _ = tr.Property(t => t.RegexOptions).IsRequired(); // System.Text.RegularExpressions.RegexOptions enum value
                 });
             });
 
             // OwnerOne برای MessageFilterOptions
-            builder.OwnsOne(fr => fr.FilterOptions, filterOptions =>
+            _ = builder.OwnsOne(fr => fr.FilterOptions, filterOptions =>
             {
                 filterOptions.Property(f => f.AllowedMessageTypes)
                     .HasConversion(
@@ -114,13 +114,13 @@ namespace Infrastructure.Persistence.Configurations // یا Infrastructure.Data.
                         (c) => c.ToList()
                     ));
 
-                filterOptions.Property(f => f.ContainsText);
-                filterOptions.Property(f => f.ContainsTextIsRegex);
-                filterOptions.Property(f => f.ContainsTextRegexOptions);
-                filterOptions.Property(f => f.IgnoreEditedMessages);
-                filterOptions.Property(f => f.IgnoreServiceMessages);
-                filterOptions.Property(f => f.MaxMessageLength);
-                filterOptions.Property(f => f.MinMessageLength);
+                _ = filterOptions.Property(f => f.ContainsText);
+                _ = filterOptions.Property(f => f.ContainsTextIsRegex);
+                _ = filterOptions.Property(f => f.ContainsTextRegexOptions);
+                _ = filterOptions.Property(f => f.IgnoreEditedMessages);
+                _ = filterOptions.Property(f => f.IgnoreServiceMessages);
+                _ = filterOptions.Property(f => f.MaxMessageLength);
+                _ = filterOptions.Property(f => f.MinMessageLength);
             });
         }
     }

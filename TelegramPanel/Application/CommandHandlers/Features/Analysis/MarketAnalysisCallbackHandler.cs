@@ -8,7 +8,7 @@ using TelegramPanel.Application.CommandHandlers.MainMenu;
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Formatters;
 using TelegramPanel.Infrastructure;
-using TelegramPanel.Infrastructure.Helpers;
+using TelegramPanel.Infrastructure.Helper;
 
 namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
 {
@@ -179,7 +179,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                 // Wait briefly for the animation task to fully stop. This prevents a race condition
                 // where a final animation frame might overwrite the real success/error message
                 // that the calling method is about to send.
-                await Task.WhenAny(animationTask, Task.Delay(150));
+                _ = await Task.WhenAny(animationTask, Task.Delay(150));
             }
         }
         public async Task HandleAsync(Update update, CancellationToken cancellationToken)
@@ -432,7 +432,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
             {
                 await HandleServiceErrorAsync(chatId, messageId, symbol, callbackQueryId, result.Error, cancellationToken);
             }
-            else if (result.Data is null || !result.Data.IsPriceLive && result.Data.DataSource == "Unavailable")
+            else if (result.Data is null || (!result.Data.IsPriceLive && result.Data.DataSource == "Unavailable"))
             {
                 await HandleDataUnavailableAsync(chatId, messageId, symbol, callbackQueryId, result.Data, cancellationToken);
             }
@@ -516,42 +516,43 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
             var errorKeyboard = GetMarketAnalysisKeyboard(symbol); // Assumes this method is safe
 
             // Use a list of Tasks to collect reporting attempts
-            var reportingTasks = new List<Task>();
-
-            // --- Attempt 1: Edit the message to show the "unavailable" state ---
-            reportingTasks.Add(Task.Run(async () => // Use Task.Run to make this attempt independent
+            var reportingTasks = new List<Task>
             {
-                try
+                // --- Attempt 1: Edit the message to show the "unavailable" state ---
+                Task.Run(async () => // Use Task.Run to make this attempt independent
                 {
-                    await _messageSender.EditMessageTextAsync(chatId, messageId, errorText, ParseMode.MarkdownV2, errorKeyboard, cancellationToken); // Use MarkdownV2 consistently
-                    _logger.LogDebug("Successfully sent 'data unavailable' message by editing message {MessageId} in chat {ChatId}.", messageId, chatId);
-                }
-                catch (OperationCanceledException) { throw; } // Re-throw if cancellation was requested
-                catch (Exception editEx)
-                {
-                    // Log the failure to edit the message (this is a secondary error)
-                    _logger.LogError(editEx, "Failed to edit message {MessageId} in chat {ChatId} to report data unavailability for {Symbol}.", messageId, chatId, symbol);
-                    // Do NOT re-throw here
-                }
-            }, CancellationToken.None)); // Use CancellationToken.None for independence, or pass cancellationToken
+                    try
+                    {
+                        await _messageSender.EditMessageTextAsync(chatId, messageId, errorText, ParseMode.MarkdownV2, errorKeyboard, cancellationToken); // Use MarkdownV2 consistently
+                        _logger.LogDebug("Successfully sent 'data unavailable' message by editing message {MessageId} in chat {ChatId}.", messageId, chatId);
+                    }
+                    catch (OperationCanceledException) { throw; } // Re-throw if cancellation was requested
+                    catch (Exception editEx)
+                    {
+                        // Log the failure to edit the message (this is a secondary error)
+                        _logger.LogError(editEx, "Failed to edit message {MessageId} in chat {ChatId} to report data unavailability for {Symbol}.", messageId, chatId, symbol);
+                        // Do NOT re-throw here
+                    }
+                }, CancellationToken.None), // Use CancellationToken.None for independence, or pass cancellationToken
 
-            // --- Attempt 2: Send a pop-up alert to the user ---
-            reportingTasks.Add(Task.Run(async () => // Use Task.Run to make this attempt independent
-            {
-                try
+                // --- Attempt 2: Send a pop-up alert to the user ---
+                Task.Run(async () => // Use Task.Run to make this attempt independent
                 {
-                    // Use the original callbackQueryId passed to this method.
-                    await _messageSender.AnswerCallbackQueryAsync(callbackQueryId, "Data for this pair is currently unavailable.", showAlert: true, cancellationToken: cancellationToken);
-                    _logger.LogDebug("Successfully sent 'data unavailable' pop-up alert for callback {CallbackId}.", callbackQueryId);
-                }
-                catch (OperationCanceledException) { throw; } // Re-throw if cancellation was requested
-                catch (Exception ackEx)
-                {
-                    // Log the failure to send the pop-up alert
-                    _logger.LogError(ackEx, "Failed to send pop-up alert for callback {CallbackId} to report data unavailability for {Symbol}.", callbackQueryId, symbol);
-                    // Do NOT re-throw here
-                }
-            }, CancellationToken.None)); // Use CancellationToken.None for independence, or pass cancellationToken
+                    try
+                    {
+                        // Use the original callbackQueryId passed to this method.
+                        await _messageSender.AnswerCallbackQueryAsync(callbackQueryId, "Data for this pair is currently unavailable.", showAlert: true, cancellationToken: cancellationToken);
+                        _logger.LogDebug("Successfully sent 'data unavailable' pop-up alert for callback {CallbackId}.", callbackQueryId);
+                    }
+                    catch (OperationCanceledException) { throw; } // Re-throw if cancellation was requested
+                    catch (Exception ackEx)
+                    {
+                        // Log the failure to send the pop-up alert
+                        _logger.LogError(ackEx, "Failed to send pop-up alert for callback {CallbackId} to report data unavailability for {Symbol}.", callbackQueryId, symbol);
+                        // Do NOT re-throw here
+                    }
+                }, CancellationToken.None) // Use CancellationToken.None for independence, or pass cancellationToken
+            };
 
 
             // Execute reporting tasks in parallel.
@@ -601,46 +602,47 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
             var errorKeyboard = GetMarketAnalysisKeyboard(symbol); // Assumes this method is safe and purely building UI markup
 
             // Use a list of Tasks to collect reporting attempts
-            var reportingTasks = new List<Task>();
-
-            // --- Attempt 1: Edit the message to show the error state ---
-            reportingTasks.Add(Task.Run(async () => // Use Task.Run to make this attempt independent and handle its own error
+            var reportingTasks = new List<Task>
             {
-                try
+                // --- Attempt 1: Edit the message to show the error state ---
+                Task.Run(async () => // Use Task.Run to make this attempt independent and handle its own error
                 {
-                    await _messageSender.EditMessageTextAsync(chatId, messageId, errorText, ParseMode.MarkdownV2, errorKeyboard, cancellationToken); // Use MarkdownV2 consistently
-                    _logger.LogDebug("Successfully sent error message by editing message {MessageId} in chat {ChatId}.", messageId, chatId);
-                }
-                catch (OperationCanceledException) { throw; } // Re-throw if cancellation was requested
-                catch (Exception editEx)
-                {
-                    // Log the failure to edit the message (this is a secondary error)
-                    _logger.LogError(editEx, "Failed to edit message {MessageId} in chat {ChatId} to report service error for {Symbol}.", messageId, chatId, symbol);
-                    // Do NOT re-throw here, we want the other reporting attempts to proceed
-                }
-            }, CancellationToken.None)); // Use CancellationToken.None so this task runs even if the main method's token is cancelled immediately (unless explicit cancellation is handled internally)
-                                         // Consider passing the original cancellationToken if editing should be cancelable.
+                    try
+                    {
+                        await _messageSender.EditMessageTextAsync(chatId, messageId, errorText, ParseMode.MarkdownV2, errorKeyboard, cancellationToken); // Use MarkdownV2 consistently
+                        _logger.LogDebug("Successfully sent error message by editing message {MessageId} in chat {ChatId}.", messageId, chatId);
+                    }
+                    catch (OperationCanceledException) { throw; } // Re-throw if cancellation was requested
+                    catch (Exception editEx)
+                    {
+                        // Log the failure to edit the message (this is a secondary error)
+                        _logger.LogError(editEx, "Failed to edit message {MessageId} in chat {ChatId} to report service error for {Symbol}.", messageId, chatId, symbol);
+                        // Do NOT re-throw here, we want the other reporting attempts to proceed
+                    }
+                }, CancellationToken.None), // Use CancellationToken.None so this task runs even if the main method's token is cancelled immediately (unless explicit cancellation is handled internally)
+                                            // Consider passing the original cancellationToken if editing should be cancelable.
 
 
-            // --- Attempt 2: Send a prominent pop-up alert to the user ---
-            reportingTasks.Add(Task.Run(async () => // Use Task.Run to make this attempt independent
-            {
-                try
+                // --- Attempt 2: Send a prominent pop-up alert to the user ---
+                Task.Run(async () => // Use Task.Run to make this attempt independent
                 {
-                    // Use the original callbackQueryId passed to this method.
-                    // AnswerCallbackQueryAsync is often fire-and-forget or awaited briefly in the main handler,
-                    // but ensuring its completion here means the alert *attempt* finishes.
-                    await _messageSender.AnswerCallbackQueryAsync(callbackQueryId, "An error occurred. Please try again.", showAlert: true, cancellationToken: cancellationToken);
-                    _logger.LogDebug("Successfully sent pop-up error alert for callback {CallbackId}.", callbackQueryId);
-                }
-                catch (OperationCanceledException) { throw; } // Re-throw if cancellation was requested
-                catch (Exception ackEx)
-                {
-                    // Log the failure to send the pop-up alert
-                    _logger.LogError(ackEx, "Failed to send pop-up alert for callback {CallbackId} to report service error for {Symbol}.", callbackQueryId, symbol);
-                    // Do NOT re-throw here
-                }
-            }, CancellationToken.None)); // Use CancellationToken.None for independence, or pass cancellationToken
+                    try
+                    {
+                        // Use the original callbackQueryId passed to this method.
+                        // AnswerCallbackQueryAsync is often fire-and-forget or awaited briefly in the main handler,
+                        // but ensuring its completion here means the alert *attempt* finishes.
+                        await _messageSender.AnswerCallbackQueryAsync(callbackQueryId, "An error occurred. Please try again.", showAlert: true, cancellationToken: cancellationToken);
+                        _logger.LogDebug("Successfully sent pop-up error alert for callback {CallbackId}.", callbackQueryId);
+                    }
+                    catch (OperationCanceledException) { throw; } // Re-throw if cancellation was requested
+                    catch (Exception ackEx)
+                    {
+                        // Log the failure to send the pop-up alert
+                        _logger.LogError(ackEx, "Failed to send pop-up alert for callback {CallbackId} to report service error for {Symbol}.", callbackQueryId, symbol);
+                        // Do NOT re-throw here
+                    }
+                }, CancellationToken.None) // Use CancellationToken.None for independence, or pass cancellationToken
+            };
 
 
             // Execute reporting tasks in parallel.

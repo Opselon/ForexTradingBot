@@ -5,7 +5,6 @@
 // Project specific: Application Layer (Core - پروژه اصلی شما)
 using Application.Common.Interfaces; // برای IUserRepository, IUserSignalPreferenceRepository, ISignalCategoryRepository, IAppDbContext, INotificationService
 using Application.DTOs;
-using Application.Interface; // برای UserDto, SubscriptionDto, SignalCategoryDto از پروژه اصلی Application
 using Application.Interfaces;        // برای IUserService, ISubscriptionService از پروژه اصلی Application
 using Microsoft.Extensions.Logging; // برای ILogger
 using System.Text;                  // برای StringBuilder
@@ -23,7 +22,7 @@ using TelegramPanel.Application.Interfaces; // برای ITelegramCommandHandler,
 using TelegramPanel.Application.States;   // برای IUserConversationStateService, UserConversationState
 using TelegramPanel.Formatters;           // برای TelegramMessageFormatter
 using TelegramPanel.Infrastructure;
-using TelegramPanel.Infrastructure.Helpers;       // برای ITelegramMessageSender
+using TelegramPanel.Infrastructure.Helper;
 #endregion
 
 namespace TelegramPanel.Application.CommandHandlers.Settings
@@ -113,7 +112,9 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
         {
             // This handler only processes CallbackQuery updates.
             if (update.Type != UpdateType.CallbackQuery || update.CallbackQuery?.Data == null)
+            {
                 return false;
+            }
 
             string data = update.CallbackQuery.Data;
 
@@ -188,29 +189,53 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
                 {
                     // Routing logic based on the callback_data
                     if (callbackData.Equals(SettingsCommandHandler.PrefsSignalCategoriesCallback))
+                    {
                         await ShowSignalCategoryPreferencesAsync(userEntity, chatId, originalMessageId, cancellationToken);
+                    }
                     else if (callbackData.StartsWith(ToggleSignalCategoryPrefix))
+                    {
                         await HandleToggleSignalCategoryAsync(userEntity, chatId, originalMessageId, callbackData, callbackQuery.Id, cancellationToken);
+                    }
                     else if (callbackData.Equals(SaveSignalPreferencesCallback))
+                    {
                         await HandleSaveSignalPreferencesAsync(userEntity, chatId, originalMessageId, cancellationToken);
+                    }
                     else if (callbackData.Equals(SelectAllSignalCategoriesCallback))
+                    {
                         await HandleSelectAllSignalCategoriesAsync(userEntity, chatId, originalMessageId, callbackQuery.Id, cancellationToken);
+                    }
                     else if (callbackData.Equals(DeselectAllSignalCategoriesCallback))
+                    {
                         await HandleDeselectAllSignalCategoriesAsync(userEntity, chatId, originalMessageId, callbackQuery.Id, cancellationToken);
+                    }
                     else if (callbackData.Equals(SettingsCommandHandler.PrefsNotificationsCallback))
+                    {
                         await ShowNotificationSettingsAsync(userEntity, chatId, originalMessageId, cancellationToken);
+                    }
                     else if (callbackData.StartsWith(ToggleNotificationPrefix))
+                    {
                         await HandleToggleNotificationAsync(userEntity, chatId, originalMessageId, callbackData, callbackQuery.Id, cancellationToken);
+                    }
                     else if (callbackData.Equals(SettingsCommandHandler.MySubscriptionInfoCallback))
+                    {
                         await ShowMySubscriptionInfoAsync(userEntity, chatId, originalMessageId, cancellationToken);
+                    }
                     else if (callbackData.Equals(LanguageSettingsCallback))
+                    {
                         await ShowLanguageSettingsAsync(userEntity, chatId, originalMessageId, cancellationToken);
+                    }
                     else if (callbackData.StartsWith(SelectLanguagePrefix))
+                    {
                         await HandleSelectLanguageAsync(userEntity, chatId, originalMessageId, callbackData, callbackQuery.Id, cancellationToken);
+                    }
                     else if (callbackData.Equals(PrivacySettingsCallback))
+                    {
                         await ShowPrivacySettingsAsync(userEntity, chatId, originalMessageId, cancellationToken);
+                    }
                     else if (callbackData.Equals(SettingsCommandHandler.ShowSettingsMenuCallback)) // Action to re-show the main settings menu
+                    {
                         await ReshowSettingsMenuAsync(chatId, originalMessageId, cancellationToken);
+                    }
                     else if (callbackData.Equals(MenuCallbackQueryHandler.BackToMainMenuGeneral)) // Action to go to the app's main menu
                     {
                         _logger.LogInformation("User {TelegramUserId} requested to return to the main application menu.", telegramUserId);
@@ -318,14 +343,15 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
                        "You will receive signals from your chosen categories.\n" +
                        TelegramMessageFormatter.Italic("Note: Access to VIP category signals requires an active VIP subscription.", escapePlainText: false) + "\n\n" +
                        "Press 'Save Preferences' when you are done.";
-            var keyboardRowArrays = new List<InlineKeyboardButton[]>(); //  
-
-            // دکمه‌های Select All / Deselect All
-            keyboardRowArrays.Add(new[]
+            var keyboardRowArrays = new List<InlineKeyboardButton[]>
+            {
+                // دکمه‌های Select All / Deselect All
+                new[]
 {
     InlineKeyboardButton.WithCallbackData("✅ Select All", SelectAllSignalCategoriesCallback),
     InlineKeyboardButton.WithCallbackData("⬜ Deselect All", DeselectAllSignalCategoriesCallback)
-});
+}
+            }; //  
             // ...
             // await EditMessageOrSendNewAsync(chatId, messageIdToEdit, text, new InlineKeyboardMarkup(keyboardRows), ...);
             // به جای خط بالا، از MarkupBuilder استفاده کنید اگر keyboardRows از نوع IEnumerable<IEnumerable<...>> است:
@@ -371,12 +397,12 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
             {
                 if (tempSelectedCategories.Contains(categoryId))
                 {
-                    tempSelectedCategories.Remove(categoryId);
+                    _ = tempSelectedCategories.Remove(categoryId);
                     _logger.LogInformation("UserID {SystemUserId}: CategoryID {CategoryId} deselected (temporarily).", userEntity.Id, categoryId);
                 }
                 else
                 {
-                    tempSelectedCategories.Add(categoryId);
+                    _ = tempSelectedCategories.Add(categoryId);
                     _logger.LogInformation("UserID {SystemUserId}: CategoryID {CategoryId} selected (temporarily).", userEntity.Id, categoryId);
                 }
                 // The HashSet is modified by reference, so the object in conversationState.StateData is updated.
@@ -448,13 +474,13 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
                     // Use the repository to persist the preferences.
                     // The repository's SetUserPreferencesAsync should handle adding new and removing old preferences.
                     await _userPrefsRepository.SetUserPreferencesAsync(userEntity.Id, finalSelectedCategoryIds, cancellationToken);
-                    await _appDbContext.SaveChangesAsync(cancellationToken); // Commit the changes to the database.
+                    _ = await _appDbContext.SaveChangesAsync(cancellationToken); // Commit the changes to the database.
 
                     _logger.LogInformation("UserID {SystemUserId}: Signal preferences saved successfully. Count: {Count}",
                         userEntity.Id, finalSelectedCategoryIds.Count);
 
                     // Clean up the temporary state from conversation service.
-                    conversationState.StateData.Remove(tempSelectedCategoriesKey);
+                    _ = conversationState.StateData.Remove(tempSelectedCategoriesKey);
                     await _userConversationStateService.SetAsync(long.Parse(userEntity.TelegramId), conversationState, cancellationToken);
 
                     await EditMessageOrSendNewAsync(chatId, messageIdToEdit,
@@ -498,38 +524,39 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
             bool isVipUser = IsUserVip(activeSubscription);
 
             //  ایجاد لیست ردیف‌های دکمه
-            var keyboardRowList = new List<List<InlineKeyboardButton>>();
-
-            // ردیف اول: General Bot Updates
-            keyboardRowList.Add(new List<InlineKeyboardButton> { InlineKeyboardButton.WithCallbackData(
+            var keyboardRowList = new List<List<InlineKeyboardButton>>
+            {
+                // ردیف اول: General Bot Updates
+                ([ InlineKeyboardButton.WithCallbackData(
         $"{(userEntity.EnableGeneralNotifications ? "✅" : "⬜")} General Bot Updates",
         $"{ToggleNotificationPrefix}{NotificationTypeGeneral}")
-    });
+    ])
+            };
 
             // ردیف دوم: VIP Signal Alerts (شرطی)
             if (isVipUser)
             {
-                keyboardRowList.Add(new List<InlineKeyboardButton> { InlineKeyboardButton.WithCallbackData(
+                keyboardRowList.Add([ InlineKeyboardButton.WithCallbackData(
             $"{(userEntity.EnableVipSignalNotifications ? "✅" : "⬜")} ✨ VIP Signal Alerts",
             $"{ToggleNotificationPrefix}{NotificationTypeVipSignal}")
-        });
+        ]);
             }
             else
             {
-                keyboardRowList.Add(new List<InlineKeyboardButton> { InlineKeyboardButton.WithCallbackData(
+                keyboardRowList.Add([ InlineKeyboardButton.WithCallbackData(
             "💎 Enable VIP Signal Alerts (Upgrade Required)",
             MenuCommandHandler.SubscribeCallbackData) // لینک به صفحه اشتراک
-        });
+        ]);
             }
 
             // ردیف سوم: RSS News Updates
-            keyboardRowList.Add(new List<InlineKeyboardButton> { InlineKeyboardButton.WithCallbackData(
+            keyboardRowList.Add([ InlineKeyboardButton.WithCallbackData(
         $"{(userEntity.EnableRssNewsNotifications ? "✅" : "⬜")} RSS News Updates",
         $"{ToggleNotificationPrefix}{NotificationTypeRssNews}")
-    });
+    ]);
             var finalKeyboard = new InlineKeyboardMarkup(keyboardRowList);
             // ردیف چهارم: Back to Settings Menu
-            keyboardRowList.Add(new List<InlineKeyboardButton> { InlineKeyboardButton.WithCallbackData("⬅️ Back to Settings Menu", SettingsCommandHandler.ShowSettingsMenuCallback) });
+            keyboardRowList.Add([InlineKeyboardButton.WithCallbackData("⬅️ Back to Settings Menu", SettingsCommandHandler.ShowSettingsMenuCallback)]);
 
             await EditMessageOrSendNewAsync(chatId, messageIdToEdit, text, finalKeyboard, ParseMode.Markdown, cancellationToken);
 
@@ -580,7 +607,7 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
             try
             {
                 // The User entity was fetched by GetUserEntityForProcessingAsync, so it's tracked by the DbContext.
-                await _appDbContext.SaveChangesAsync(cancellationToken); // Save changes to the User entity
+                _ = await _appDbContext.SaveChangesAsync(cancellationToken); // Save changes to the User entity
                 _logger.LogInformation("UserID {SystemUserId}: Notification setting '{NotificationType}' successfully changed to {NewStatus}.",
                     userEntity.Id, notificationType, newStatus);
 
@@ -596,7 +623,9 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
                 // Re-fetch the entity to show the non-persisted state (or the old state if an error occurred before modification)
                 var refreshedUserEntity = await _userRepository.GetByIdAsync(userEntity.Id, cancellationToken);
                 if (refreshedUserEntity != null)
+                {
                     await ShowNotificationSettingsAsync(refreshedUserEntity, chatId, messageIdToEdit, cancellationToken);
+                }
             }
         }
 
@@ -628,34 +657,35 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
             }
 
             var sb = new StringBuilder();
-            sb.AppendLine(TelegramMessageFormatter.Bold("⭐ My Subscription Status", escapePlainText: false));
-            sb.AppendLine();
+            _ = sb.AppendLine(TelegramMessageFormatter.Bold("⭐ My Subscription Status", escapePlainText: false));
+            _ = sb.AppendLine();
 
             if (userDto.ActiveSubscription != null)
             {
                 string planNameForDisplay = "Your Current Plan"; //  جایگزین با نام واقعی پلن
-                sb.AppendLine($"You are currently subscribed to the {TelegramMessageFormatter.Bold(planNameForDisplay, escapePlainText: true)}.");
-                sb.AppendLine($"Your subscription is active until: {TelegramMessageFormatter.Bold($"{userDto.ActiveSubscription.EndDate:yyyy-MM-dd HH:mm} UTC")}");
-                sb.AppendLine("\nThank you for your support! You have access to all premium features.");
+                _ = sb.AppendLine($"You are currently subscribed to the {TelegramMessageFormatter.Bold(planNameForDisplay, escapePlainText: true)}.");
+                _ = sb.AppendLine($"Your subscription is active until: {TelegramMessageFormatter.Bold($"{userDto.ActiveSubscription.EndDate:yyyy-MM-dd HH:mm} UTC")}");
+                _ = sb.AppendLine("\nThank you for your support! You have access to all premium features.");
             }
             else
             {
-                sb.AppendLine("You currently do not have an active subscription.");
-                sb.AppendLine("Upgrade to a premium plan to unlock exclusive signals, advanced analytics, and more benefits!");
+                _ = sb.AppendLine("You currently do not have an active subscription.");
+                _ = sb.AppendLine("Upgrade to a premium plan to unlock exclusive signals, advanced analytics, and more benefits!");
             }
 
             //  ایجاد لیست ردیف‌های دکمه
-            var keyboardRowList = new List<List<InlineKeyboardButton>>();
-
-            // ردیف اول: دکمه مدیریت/خرید اشتراک
-            keyboardRowList.Add(new List<InlineKeyboardButton> { InlineKeyboardButton.WithCallbackData(
+            var keyboardRowList = new List<List<InlineKeyboardButton>>
+            {
+                // ردیف اول: دکمه مدیریت/خرید اشتراک
+                ([ InlineKeyboardButton.WithCallbackData(
         userDto.ActiveSubscription != null ? "🔄 Manage / Renew Subscription" : "💎 View Subscription Plans",
         MenuCommandHandler.SubscribeCallbackData
-    )});
+    )])
+            };
 
             var finalKeyboard = new InlineKeyboardMarkup(keyboardRowList);
             // ردیف دوم: دکمه بازگشت
-            keyboardRowList.Add(new List<InlineKeyboardButton> { InlineKeyboardButton.WithCallbackData("⬅️ Back to Settings Menu", SettingsCommandHandler.ShowSettingsMenuCallback) });
+            keyboardRowList.Add([InlineKeyboardButton.WithCallbackData("⬅️ Back to Settings Menu", SettingsCommandHandler.ShowSettingsMenuCallback)]);
 
             await EditMessageOrSendNewAsync(chatId, messageIdToEdit, sb.ToString(), finalKeyboard, ParseMode.Markdown, cancellationToken);
         }
@@ -710,7 +740,7 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
 
             try
             {
-                await _appDbContext.SaveChangesAsync(cancellationToken);
+                _ = await _appDbContext.SaveChangesAsync(cancellationToken);
                 _logger.LogInformation("UserID {SystemUserId}: Preferred language successfully changed to '{LangCode}'.", userEntity.Id, langCode);
                 await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken, $"Language preferences updated to {langCode.ToUpperInvariant()}.");
                 await ShowLanguageSettingsAsync(userEntity, chatId, messageIdToEdit, cancellationToken); // Refresh to show new selection
@@ -743,21 +773,21 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
 
             // Constructing the message text using TelegramMessageFormatter for consistent styling.
             var textBuilder = new StringBuilder();
-            textBuilder.AppendLine(TelegramMessageFormatter.Bold("🔒 Privacy & Data Management", escapePlainText: false));
-            textBuilder.AppendLine(); // Blank line for readability
-            textBuilder.AppendLine("We are committed to protecting your privacy and handling your data responsibly.");
-            textBuilder.AppendLine("You can review our full privacy policy to understand how we collect, use, and protect your information.");
-            textBuilder.AppendLine();
-            textBuilder.AppendLine(TelegramMessageFormatter.Link("📜 Read our Full Privacy Policy", privacyPolicyUrl, escapeLinkText: false)); // escapeLinkText=false as "📜..." is already formatted
-            textBuilder.AppendLine();
-            textBuilder.AppendLine(TelegramMessageFormatter.Bold("Data Requests:", escapePlainText: false));
-            textBuilder.AppendLine("If you wish to request access to your data, or request data deletion, please contact our support team.");
-            textBuilder.AppendLine($"You can reach us via the {TelegramMessageFormatter.Code(supportContactCommand)} command or by emailing us at {TelegramMessageFormatter.Link(supportEmail, $"mailto:{supportEmail}", escapeLinkText: false)}.");
-            textBuilder.AppendLine();
-            textBuilder.AppendLine(TelegramMessageFormatter.Italic("Note: Data deletion requests will be processed according to our data retention policy and applicable regulations.", escapePlainText: true));
+            _ = textBuilder.AppendLine(TelegramMessageFormatter.Bold("🔒 Privacy & Data Management", escapePlainText: false));
+            _ = textBuilder.AppendLine(); // Blank line for readability
+            _ = textBuilder.AppendLine("We are committed to protecting your privacy and handling your data responsibly.");
+            _ = textBuilder.AppendLine("You can review our full privacy policy to understand how we collect, use, and protect your information.");
+            _ = textBuilder.AppendLine();
+            _ = textBuilder.AppendLine(TelegramMessageFormatter.Link("📜 Read our Full Privacy Policy", privacyPolicyUrl, escapeLinkText: false)); // escapeLinkText=false as "📜..." is already formatted
+            _ = textBuilder.AppendLine();
+            _ = textBuilder.AppendLine(TelegramMessageFormatter.Bold("Data Requests:", escapePlainText: false));
+            _ = textBuilder.AppendLine("If you wish to request access to your data, or request data deletion, please contact our support team.");
+            _ = textBuilder.AppendLine($"You can reach us via the {TelegramMessageFormatter.Code(supportContactCommand)} command or by emailing us at {TelegramMessageFormatter.Link(supportEmail, $"mailto:{supportEmail}", escapeLinkText: false)}.");
+            _ = textBuilder.AppendLine();
+            _ = textBuilder.AppendLine(TelegramMessageFormatter.Italic("Note: Data deletion requests will be processed according to our data retention policy and applicable regulations.", escapePlainText: true));
 
             // Constructing the inline keyboard
-            var keyboardRows = new List<IEnumerable<InlineKeyboardButton>>
+            _ = new List<IEnumerable<InlineKeyboardButton>>
             {
                 // First row: Link to the privacy policy
                 new[]
@@ -778,9 +808,11 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
             */
 
             // Last row: Back to the main settings menu
-            var keyboardRowArrays = new List<InlineKeyboardButton[]>();
-            keyboardRowArrays.Add(new[] { InlineKeyboardButton.WithUrl("📜 View Privacy Policy Online", privacyPolicyUrl) });
-            keyboardRowArrays.Add(new[] { InlineKeyboardButton.WithCallbackData("⬅️ Back to Settings Menu", SettingsCommandHandler.ShowSettingsMenuCallback) });
+            var keyboardRowArrays = new List<InlineKeyboardButton[]>
+            {
+                new[] { InlineKeyboardButton.WithUrl("📜 View Privacy Policy Online", privacyPolicyUrl) },
+                new[] { InlineKeyboardButton.WithCallbackData("⬅️ Back to Settings Menu", SettingsCommandHandler.ShowSettingsMenuCallback) }
+            };
             var finalKeyboard = MarkupBuilder.CreateInlineKeyboard(keyboardRowArrays.ToArray());
             // await EditMessageOrSendNewAsync(chatId, messageIdToEdit, textBuilder.ToString(), inlineKeyboard, ...); // قبلی
             await EditMessageOrSendNewAsync(chatId, messageIdToEdit, textBuilder.ToString(), finalKeyboard, ParseMode.Markdown, cancellationToken);
@@ -809,9 +841,13 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
             {
                 await _botClient.AnswerCallbackQuery(callbackQueryId, text, showAlert, cancellationToken: cancellationToken);
                 if (!string.IsNullOrWhiteSpace(text))
+                {
                     _logger.LogDebug("Answered CallbackQueryID: {CallbackQueryId} with text: '{Text}', ShowAlert: {ShowAlert}", callbackQueryId, text, showAlert);
+                }
                 else
+                {
                     _logger.LogDebug("Answered CallbackQueryID: {CallbackQueryId} silently.", callbackQueryId);
+                }
             }
             catch (ApiRequestException apiEx) when (apiEx.ErrorCode == 400 && (apiEx.Message.Contains("query is too old", StringComparison.OrdinalIgnoreCase) || apiEx.Message.Contains("QUERY_ID_INVALID", StringComparison.OrdinalIgnoreCase)))
             {
@@ -839,7 +875,7 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
             try
             {
                 _logger.LogDebug("Attempting to edit message. ChatID: {ChatId}, MessageID: {MessageId}, NewText (partial): {TextStart}", chatId, messageId, text.Length > 50 ? text.Substring(0, 50) + "..." : text);
-                await _botClient.EditMessageText(
+                _ = await _botClient.EditMessageText(
                     chatId: chatId,
                     messageId: messageId,
                     text: text,
@@ -868,10 +904,25 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
         }
 
         // Helper methods to check specific ApiRequestException conditions for better readability
-        private bool MessageWasNotModified(ApiRequestException ex) => ex.Message.Contains("message is not modified", StringComparison.OrdinalIgnoreCase);
-        private bool MessageToEditNotFound(ApiRequestException ex) => ex.Message.Contains("message to edit not found", StringComparison.OrdinalIgnoreCase);
-        private bool ChatNotFound(ApiRequestException ex) => ex.Message.Contains("chat not found", StringComparison.OrdinalIgnoreCase); // Added
-        private bool IsBadRequestFromOldQuery(ApiRequestException ex) => ex.ErrorCode == 400 && (ex.Message.Contains("query is too old", StringComparison.OrdinalIgnoreCase) || ex.Message.Contains("MESSAGE_ID_INVALID", StringComparison.OrdinalIgnoreCase)); // Added MESSAGE_ID_INVALID
+        private bool MessageWasNotModified(ApiRequestException ex)
+        {
+            return ex.Message.Contains("message is not modified", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private bool MessageToEditNotFound(ApiRequestException ex)
+        {
+            return ex.Message.Contains("message to edit not found", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private bool ChatNotFound(ApiRequestException ex)
+        {
+            return ex.Message.Contains("chat not found", StringComparison.OrdinalIgnoreCase); // Added
+        }
+
+        private bool IsBadRequestFromOldQuery(ApiRequestException ex)
+        {
+            return ex.ErrorCode == 400 && (ex.Message.Contains("query is too old", StringComparison.OrdinalIgnoreCase) || ex.Message.Contains("MESSAGE_ID_INVALID", StringComparison.OrdinalIgnoreCase)); // Added MESSAGE_ID_INVALID
+        }
         #endregion
     }
 }

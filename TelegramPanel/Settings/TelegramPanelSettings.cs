@@ -15,7 +15,7 @@ namespace TelegramPanel.Settings
         public string BotToken { get; set; } = string.Empty;
 
 
-        public List<long> AdminUserIds { get; set; } = new();
+        public List<long> AdminUserIds { get; set; } = [];
 
 
 

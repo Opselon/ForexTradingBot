@@ -1,5 +1,4 @@
-﻿
-namespace Application.Interfaces // ✅ Namespace صحیح
+﻿namespace Application.Common.Interfaces // ✅ Namespace صحیح
 {
     /// <summary>
     /// Service responsible for coordinating the fetching of all active RSS feeds.

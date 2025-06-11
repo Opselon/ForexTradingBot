@@ -116,7 +116,7 @@ namespace Infrastructure.Data
             // اعمال تمام پیکربندی‌های موجودیت (entity configurations) که کلاس IEntityTypeConfiguration<TEntity>
             // را پیاده‌سازی می‌کنند و در اسمبلی جاری (assembly containing this DbContext) قرار دارند.
             // این روش برای سازماندهی بهتر و جداسازی منطق پیکربندی توصیه می‌شود.
-            modelBuilder.ApplyConfigurationsFromAssembly(Assembly.GetExecutingAssembly());
+            _ = modelBuilder.ApplyConfigurationsFromAssembly(Assembly.GetExecutingAssembly());
         }
     }
 }

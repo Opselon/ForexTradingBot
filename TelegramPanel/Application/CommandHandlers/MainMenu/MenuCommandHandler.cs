@@ -4,10 +4,10 @@ using Microsoft.Extensions.Logging;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
-using TelegramPanel.Application.CommandHandlers.Features.Crypto;
+using TelegramPanel.Application.CommandHandlers.Features.CoinGecko;
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Infrastructure;
-using TelegramPanel.Infrastructure.Helpers;
+using TelegramPanel.Infrastructure.Helper;
 #endregion
 
 namespace TelegramPanel.Application.CommandHandlers.MainMenu

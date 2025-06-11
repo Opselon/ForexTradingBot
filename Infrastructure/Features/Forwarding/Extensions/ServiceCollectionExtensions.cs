@@ -8,7 +8,7 @@ namespace Infrastructure.Features.Forwarding.Extensions
     {
         public static IServiceCollection AddForwardingInfrastructure(this IServiceCollection services)
         {
-            services.AddScoped<IForwardingRuleRepository, ForwardingRuleRepository>();
+            _ = services.AddScoped<IForwardingRuleRepository, ForwardingRuleRepository>();
             return services;
         }
     }

@@ -75,8 +75,8 @@ namespace TelegramPanel.Application.CommandHandlers.Features.News
             if (userDto == null)
             {
                 _logger.LogWarning("User not found for TelegramID {TelegramUserId} while handling news preference callback.", telegramUserId);
-                await _botClient.EditMessageReplyMarkup(chatId, message.MessageId, replyMarkup: null, cancellationToken: cancellationToken); // حذف دکمه‌ها
-                await _botClient.SendMessage(chatId, "Error: Could not find your user profile. Please /start again.", cancellationToken: cancellationToken);
+                _ = await _botClient.EditMessageReplyMarkup(chatId, message.MessageId, replyMarkup: null, cancellationToken: cancellationToken); // حذف دکمه‌ها
+                _ = await _botClient.SendMessage(chatId, "Error: Could not find your user profile. Please /start again.", cancellationToken: cancellationToken);
                 return;
             }
             Guid systemUserId = userDto.Id;
@@ -114,7 +114,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.News
                 if (category == null)
                 {
                     _logger.LogWarning("Category with ID {CategoryId} not found for news preference update.", categoryId);
-                    await _botClient.EditMessageText(chatId, message.MessageId, "Error: The selected category no longer exists.", replyMarkup: null, cancellationToken: cancellationToken);
+                    _ = await _botClient.EditMessageText(chatId, message.MessageId, "Error: The selected category no longer exists.", replyMarkup: null, cancellationToken: cancellationToken);
                     return;
                 }
 
@@ -125,7 +125,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.News
                     if (!await _userPrefsRepository.IsUserSubscribedToCategoryAsync(systemUserId, categoryId, cancellationToken))
                     {
                         await _userPrefsRepository.AddAsync(new UserSignalPreference { UserId = systemUserId, CategoryId = categoryId, CreatedAt = DateTime.UtcNow }, cancellationToken);
-                        await _appDbContext.SaveChangesAsync(cancellationToken);
+                        _ = await _appDbContext.SaveChangesAsync(cancellationToken);
                         actionMessage = $"You are now subscribed to news from: *{TelegramMessageFormatter.EscapeMarkdownV2(category.Name)}*";
                         _logger.LogInformation("User {SystemUserId} subscribed to Category {CategoryId} ('{CategoryName}') via news notification.", systemUserId, categoryId, category.Name);
                     }
@@ -139,7 +139,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.News
                     bool deleted = await _userPrefsRepository.DeleteAsync(systemUserId, categoryId, cancellationToken); //  این متد باید در Repository شما تغییر کند تا SaveChanges را انجام دهد یا bool برگرداند
                     if (deleted) //  اگر DeleteAsync در Repository خودش SaveChanges را انجام می‌دهد
                     {
-                        await _appDbContext.SaveChangesAsync(cancellationToken); //  اگر DeleteAsync فقط علامت می‌زند
+                        _ = await _appDbContext.SaveChangesAsync(cancellationToken); //  اگر DeleteAsync فقط علامت می‌زند
                         actionMessage = $"You have unsubscribed from news from: *{TelegramMessageFormatter.EscapeMarkdownV2(category.Name)}*";
                         _logger.LogInformation("User {SystemUserId} unsubscribed from Category {CategoryId} ('{CategoryName}') via news notification.", systemUserId, categoryId, category.Name);
                     }
@@ -151,7 +151,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.News
 
                 //  پیام اصلی را با یک پیام تأیید ویرایش کنید و دکمه‌ها را حذف کنید.
                 //  یا می‌توانید دکمه‌ها را به حالت جدید آپدیت کنید (کمی پیچیده‌تر).
-                await _botClient.EditMessageText(
+                _ = await _botClient.EditMessageText(
                     chatId: chatId,
                     messageId: message.MessageId,
                     text: $"{message.Text}\n\n{actionMessage}", //  متن خبر اصلی + پیام تأیید

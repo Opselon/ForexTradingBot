@@ -10,7 +10,7 @@ namespace TelegramPanel.Application.States // ✅ Namespace صحیح
 
         public string? CurrentStateName { get; set; }
         public ConversationState CurrentState { get; set; } = ConversationState.None;
-        public Dictionary<string, object> StateData { get; set; } = new();
+        public Dictionary<string, object> StateData { get; set; } = [];
     }
 
     /// <summary>
@@ -35,7 +35,7 @@ namespace TelegramPanel.Application.States // ✅ Namespace صحیح
 
         public Task<UserConversationState?> GetAsync(long userId, CancellationToken cancellationToken = default)
         {
-            _userStates.TryGetValue(userId, out var state);
+            _ = _userStates.TryGetValue(userId, out var state);
             return Task.FromResult(state);
         }
 
@@ -47,7 +47,7 @@ namespace TelegramPanel.Application.States // ✅ Namespace صحیح
 
         public Task ClearAsync(long userId, CancellationToken cancellationToken = default)
         {
-            _userStates.TryRemove(userId, out _);
+            _ = _userStates.TryRemove(userId, out _);
             return Task.CompletedTask;
         }
     }

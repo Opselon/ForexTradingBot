@@ -29,7 +29,10 @@ namespace TelegramPanel.Application.States.Admin
 
         public async Task<string?> ProcessUpdateAsync(Update update, CancellationToken cancellationToken)
         {
-            if (update.Message?.From == null || string.IsNullOrWhiteSpace(update.Message.Text)) return Name;
+            if (update.Message?.From == null || string.IsNullOrWhiteSpace(update.Message.Text))
+            {
+                return Name;
+            }
 
             var message = update.Message;
             var adminId = message.From.Id;

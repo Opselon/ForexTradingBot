@@ -98,9 +98,14 @@ namespace Domain.Entities
         public static TokenWallet Create(Guid userId, decimal initialBalance = 0m)
         {
             if (userId == Guid.Empty)
+            {
                 throw new ArgumentException("User ID cannot be empty.", nameof(userId));
+            }
+
             if (initialBalance < 0)
+            {
                 throw new ArgumentOutOfRangeException(nameof(initialBalance), "Initial balance cannot be negative.");
+            }
 
             var now = DateTime.UtcNow;
             // Use the new public constructor here for consistency
@@ -118,7 +123,9 @@ namespace Domain.Entities
         public void AddToBalance(decimal amount)
         {
             if (amount <= 0)
+            {
                 throw new ArgumentOutOfRangeException(nameof(amount), "Amount to add must be positive.");
+            }
 
             Balance += amount;
             UpdatedAt = DateTime.UtcNow;
@@ -135,9 +142,14 @@ namespace Domain.Entities
         public void DeductFromBalance(decimal amount)
         {
             if (amount <= 0)
+            {
                 throw new ArgumentOutOfRangeException(nameof(amount), "Amount to deduct must be positive.");
+            }
+
             if (Balance < amount)
+            {
                 throw new InvalidOperationException("Insufficient funds in the wallet to perform this deduction.");
+            }
 
             Balance -= amount;
             UpdatedAt = DateTime.UtcNow;

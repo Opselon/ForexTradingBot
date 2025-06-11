@@ -11,9 +11,9 @@ namespace TelegramPanel.Infrastructure.Extensions
         public static IServiceCollection AddMarketDataServices(this IServiceCollection services, IConfiguration configuration)
         {
             // Register settings
-            services.Configure<MarketDataSettings>(
+            _ = services.Configure<MarketDataSettings>(
                 configuration.GetSection(MarketDataSettings.SectionName));
-            services.Configure<CurrencyInfoSettings>(
+            _ = services.Configure<CurrencyInfoSettings>(
                 configuration.GetSection(CurrencyInfoSettings.SectionName));
 
             // Get market data settings
@@ -30,9 +30,11 @@ namespace TelegramPanel.Infrastructure.Extensions
             foreach (var provider in marketDataSettings.Providers)
             {
                 if (!provider.Value.IsEnabled)
+                {
                     continue;
+                }
 
-                services.AddHttpClient(provider.Key, client =>
+                _ = services.AddHttpClient(provider.Key, client =>
                     {
                         if (!string.IsNullOrWhiteSpace(provider.Value.BaseUrl))
                         {
@@ -54,7 +56,7 @@ namespace TelegramPanel.Infrastructure.Extensions
             }
 
             // Register the market data service
-            services.AddScoped<IMarketDataService, MarketDataService>();
+            _ = services.AddScoped<IMarketDataService, MarketDataService>();
 
             return services;
         }

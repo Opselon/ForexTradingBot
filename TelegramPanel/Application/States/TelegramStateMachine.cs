@@ -3,10 +3,9 @@
 using Microsoft.Extensions.Logging;
 using Telegram.Bot.Types;
 using TelegramPanel.Application.Interfaces;
-using TelegramPanel.Application.States;
 using TelegramPanel.Infrastructure;
 
-namespace TelegramPanel.Application.Services
+namespace TelegramPanel.Application.States
 {
     public class TelegramStateMachine : ITelegramStateMachine
     {
@@ -60,11 +59,9 @@ namespace TelegramPanel.Application.Services
         public async Task<ITelegramState?> GetCurrentStateAsync(long userId, CancellationToken cancellationToken = default)
         {
             var userConvState = await _stateService.GetAsync(userId, cancellationToken);
-            if (userConvState == null || string.IsNullOrWhiteSpace(userConvState.CurrentStateName))
-            {
-                return null;
-            }
-            return _availableStates.FirstOrDefault(s => s.Name.Equals(userConvState.CurrentStateName, StringComparison.OrdinalIgnoreCase));
+            return userConvState == null || string.IsNullOrWhiteSpace(userConvState.CurrentStateName)
+                ? null
+                : _availableStates.FirstOrDefault(s => s.Name.Equals(userConvState.CurrentStateName, StringComparison.OrdinalIgnoreCase));
         }
 
         public async Task ProcessUpdateInCurrentStateAsync(long userId, Update update, CancellationToken cancellationToken = default)

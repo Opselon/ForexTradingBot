@@ -9,27 +9,27 @@ namespace Infrastructure.Persistence.Configurations
     {
         public void Configure(EntityTypeBuilder<TokenWallet> builder)
         {
-            builder.ToTable("TokenWallets");
-            builder.HasKey(tw => tw.Id);
+            _ = builder.ToTable("TokenWallets");
+            _ = builder.HasKey(tw => tw.Id);
 
             // UserId (FK to User) is configured by the User entity's HasOne relationship.
             // We just need to ensure it's required if not handled by User's config.
             // builder.Property(tw => tw.UserId).IsRequired(); // This is implicitly handled by the User-TokenWallet relationship
 
-            builder.Property(tw => tw.Balance)
+            _ = builder.Property(tw => tw.Balance)
                 .IsRequired()
                 .HasColumnType("decimal(18, 8)") // High precision for token balance
                 .HasDefaultValue(0m);
 
             // builder.Property(tw => tw.CurrencyCode).HasMaxLength(10); // If using CurrencyCode
 
-            builder.Property(tw => tw.IsActive)
+            _ = builder.Property(tw => tw.IsActive)
                 .IsRequired()
                 .HasDefaultValue(true);
 
-            builder.Property(tw => tw.CreatedAt)
+            _ = builder.Property(tw => tw.CreatedAt)
                 .IsRequired();
-            builder.Property(tw => tw.UpdatedAt)
+            _ = builder.Property(tw => tw.UpdatedAt)
                 .IsRequired();
 
             // builder.Property(tw => tw.LastTransactionDate); // If using LastTransactionDate

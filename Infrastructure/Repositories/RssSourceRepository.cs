@@ -10,7 +10,7 @@ using Polly.Retry; // Added for Polly
 using System.Data.Common; // For DbException
 #endregion
 
-namespace Infrastructure.Persistence.Repositories
+namespace Infrastructure.Repositories
 {
     /// <summary>
     /// Implements IRssSourceRepository providing data access methods for RssSource entities
@@ -35,7 +35,7 @@ namespace Infrastructure.Persistence.Repositories
             // ✅ Define the database retry policy
             _dbRetryPolicy = Policy
                 .Handle<DbException>(ex => !(ex is Microsoft.Data.SqlClient.SqlException sqlEx && (sqlEx.Number == 1205 || sqlEx.Number == 1219))) // Handle transient DB errors
-                .Or<Exception>(ex => !(ex is OperationCanceledException || ex is TaskCanceledException)) // General transient errors, excluding cancellation
+                .Or<Exception>(ex => ex is not (OperationCanceledException or TaskCanceledException)) // General transient errors, excluding cancellation
                 .WaitAndRetryAsync(
                     retryCount: 3,
                     sleepDurationProvider: retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
@@ -128,7 +128,7 @@ namespace Infrastructure.Persistence.Repositories
             _logger.LogInformation("RssSourceRepository: Adding new RssSource. Name: {SourceName}, URL: {Url}", rssSource.SourceName, rssSource.Url);
             await _dbRetryPolicy.ExecuteAsync(async () => // ✅ Polly applied
             {
-                await _context.RssSources.AddAsync(rssSource, cancellationToken);
+                _ = await _context.RssSources.AddAsync(rssSource, cancellationToken);
             });
         }
 
@@ -150,7 +150,7 @@ namespace Infrastructure.Persistence.Repositories
             var entry = _context.RssSources.Entry(rssSource);
             if (entry.State == EntityState.Detached)
             {
-                _context.RssSources.Attach(rssSource);
+                _ = _context.RssSources.Attach(rssSource);
             }
             entry.State = EntityState.Modified;
 
@@ -167,7 +167,7 @@ namespace Infrastructure.Persistence.Repositories
             }
 
             _logger.LogInformation("RssSourceRepository: Marking RssSource for deletion. ID: {Id}, Name: {SourceName}", rssSource.Id, rssSource.SourceName);
-            _context.RssSources.Remove(rssSource);
+            _ = _context.RssSources.Remove(rssSource);
             return Task.CompletedTask; // SaveChangesAsync will be called by UoW/Service.
         }
 
@@ -183,7 +183,7 @@ namespace Infrastructure.Persistence.Repositories
                     _logger.LogWarning("RssSourceRepository: RssSource with ID {Id} not found for deletion.", id);
                     return false;
                 }
-                _context.RssSources.Remove(sourceToDelete);
+                _ = _context.RssSources.Remove(sourceToDelete);
                 return true;
             });
         }
@@ -222,7 +222,10 @@ namespace Infrastructure.Persistence.Repositories
         #region Helper Methods for Sanitization/Normalization (Private)
         private string NormalizeUrlForComparison(string url)
         {
-            if (string.IsNullOrWhiteSpace(url)) return string.Empty;
+            if (string.IsNullOrWhiteSpace(url))
+            {
+                return string.Empty;
+            }
 
             var uriBuilder = new UriBuilder(url.Trim());
             uriBuilder.Scheme = uriBuilder.Scheme.ToLowerInvariant();
@@ -231,8 +234,7 @@ namespace Infrastructure.Persistence.Repositories
             if (uriBuilder.Host.StartsWith("www.")) { uriBuilder.Host = uriBuilder.Host.Substring(4); }
 
             string path = uriBuilder.Path.TrimEnd(UrlPathSeparator);
-            if (string.IsNullOrEmpty(path) || path == "/") { uriBuilder.Path = "/"; }
-            else { uriBuilder.Path = path; }
+            uriBuilder.Path = string.IsNullOrEmpty(path) || path == "/" ? "/" : path;
 
             if ((uriBuilder.Scheme == "http" && uriBuilder.Port == 80) || (uriBuilder.Scheme == "https" && uriBuilder.Port == 443)) { uriBuilder.Port = -1; }
 

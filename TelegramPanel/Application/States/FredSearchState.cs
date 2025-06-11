@@ -1,6 +1,5 @@
 ﻿// File: TelegramPanel/Application/States/FredSearchState.cs
-using Application.DTOs.Fred;
-using Application.Interfaces;
+using Application.Common.Interfaces.Fred;
 using Microsoft.Extensions.Logging;
 using System.Text;
 using Telegram.Bot.Types;
@@ -9,7 +8,7 @@ using Telegram.Bot.Types.ReplyMarkups;
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Formatters;
 using TelegramPanel.Infrastructure;
-using TelegramPanel.Infrastructure.Helpers;
+using TelegramPanel.Infrastructure.Helper;
 
 namespace TelegramPanel.Application.States
 {
@@ -36,16 +35,16 @@ namespace TelegramPanel.Application.States
             {
                 // Add a bit more detail to the entry message.
                 var entryMessage = new StringBuilder();
-                entryMessage.AppendLine("📈 *Search for Economic Data Series* 📊"); // Add emoji to emphasize the topic.
-                entryMessage.AppendLine(); // Add some space.
-                entryMessage.AppendLine("🔍 Enter the *exact* name or a *partial* name of the data series you want to find.");
-                entryMessage.AppendLine("💡 *Tip:*  Use common abbreviations (e.g., `CPI` for Consumer Price Index).");
-                entryMessage.AppendLine("Example search terms:");
-                entryMessage.AppendLine("• `GDP`");
-                entryMessage.AppendLine("• `Unemployment Rate`");
-                entryMessage.AppendLine("• `Inflation - All items`");
-                entryMessage.AppendLine();
-                entryMessage.AppendLine("⌨️  Just type your search term and send it! 👇");  // Encourage action
+                _ = entryMessage.AppendLine("📈 *Search for Economic Data Series* 📊"); // Add emoji to emphasize the topic.
+                _ = entryMessage.AppendLine(); // Add some space.
+                _ = entryMessage.AppendLine("🔍 Enter the *exact* name or a *partial* name of the data series you want to find.");
+                _ = entryMessage.AppendLine("💡 *Tip:*  Use common abbreviations (e.g., `CPI` for Consumer Price Index).");
+                _ = entryMessage.AppendLine("Example search terms:");
+                _ = entryMessage.AppendLine("• `GDP`");
+                _ = entryMessage.AppendLine("• `Unemployment Rate`");
+                _ = entryMessage.AppendLine("• `Inflation - All items`");
+                _ = entryMessage.AppendLine();
+                _ = entryMessage.AppendLine("⌨️  Just type your search term and send it! 👇");  // Encourage action
                 return Task.FromResult<string?>(entryMessage.ToString());
             }
             catch (Exception ex)
@@ -115,13 +114,13 @@ namespace TelegramPanel.Application.States
         private (string, InlineKeyboardMarkup?) BuildResponseMessage(string searchText, List<FredSeriesDto> seriesList)
         {
             var singleMessageSb = new StringBuilder();
-            singleMessageSb.AppendLine($"✅ Found *{seriesList.Count}* results for `{TelegramMessageFormatter.EscapeMarkdownV2(searchText)}`:");
+            _ = singleMessageSb.AppendLine($"✅ Found *{seriesList.Count}* results for `{TelegramMessageFormatter.EscapeMarkdownV2(searchText)}`:");
 
             foreach (var series in seriesList.OrderByDescending(s => s.Popularity).Take(5))
             {
-                singleMessageSb.AppendLine();
-                singleMessageSb.AppendLine($"📈 *{TelegramMessageFormatter.EscapeMarkdownV2(series.Title)}*");
-                singleMessageSb.AppendLine($"`ID:` [{series.Id}](https://fred.stlouisfed.org/series/{series.Id}) `| Freq: {series.FrequencyShort} | Units: {series.UnitsShort}`");
+                _ = singleMessageSb.AppendLine();
+                _ = singleMessageSb.AppendLine($"📈 *{TelegramMessageFormatter.EscapeMarkdownV2(series.Title)}*");
+                _ = singleMessageSb.AppendLine($"`ID:` [{series.Id}](https://fred.stlouisfed.org/series/{series.Id}) `| Freq: {series.FrequencyShort} | Units: {series.UnitsShort}`");
             }
 
             var finalKeyboard = MarkupBuilder.CreateInlineKeyboard(

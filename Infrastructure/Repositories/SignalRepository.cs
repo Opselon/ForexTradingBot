@@ -3,7 +3,7 @@ using Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using System.Linq.Expressions;
 
-namespace Infrastructure.Persistence.Repositories
+namespace Infrastructure.Repositories
 {
     /// <summary>
     /// پیاده‌سازی Repository برای موجودیت سیگنال (Signal).
@@ -80,14 +80,22 @@ namespace Infrastructure.Persistence.Repositories
 
         public async Task AddAsync(Signal signal, CancellationToken cancellationToken = default)
         {
-            if (signal == null) throw new ArgumentNullException(nameof(signal));
-            await _context.Signals.AddAsync(signal, cancellationToken);
+            if (signal == null)
+            {
+                throw new ArgumentNullException(nameof(signal));
+            }
+
+            _ = await _context.Signals.AddAsync(signal, cancellationToken);
             // SaveChangesAsync در Unit of Work / Service
         }
 
         public Task UpdateAsync(Signal signal, CancellationToken cancellationToken = default)
         {
-            if (signal == null) throw new ArgumentNullException(nameof(signal));
+            if (signal == null)
+            {
+                throw new ArgumentNullException(nameof(signal));
+            }
+
             _context.Signals.Entry(signal).State = EntityState.Modified;
             // SaveChangesAsync در Unit of Work / Service
             return Task.CompletedTask;
@@ -95,8 +103,12 @@ namespace Infrastructure.Persistence.Repositories
 
         public async Task DeleteAsync(Signal signal, CancellationToken cancellationToken = default)
         {
-            if (signal == null) throw new ArgumentNullException(nameof(signal));
-            _context.Signals.Remove(signal);
+            if (signal == null)
+            {
+                throw new ArgumentNullException(nameof(signal));
+            }
+
+            _ = _context.Signals.Remove(signal);
             await Task.CompletedTask; // به تعویق انداختن حذف واقعی تا SaveChangesAsync
         }
 
@@ -105,7 +117,7 @@ namespace Infrastructure.Persistence.Repositories
             var signalToDelete = await GetByIdAsync(id, cancellationToken);
             if (signalToDelete != null)
             {
-                _context.Signals.Remove(signalToDelete);
+                _ = _context.Signals.Remove(signalToDelete);
             }
             // SaveChangesAsync در Unit of Work / Service
         }

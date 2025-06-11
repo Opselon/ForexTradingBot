@@ -6,7 +6,7 @@ namespace Infrastructure.Services
     {
         public static IServiceCollection AddForwardingOrchestratorServices(this IServiceCollection services)
         {
-            services.AddSingleton<UserApiForwardingOrchestrator>();
+            _ = services.AddSingleton<UserApiForwardingOrchestrator>();
             return services;
         }
     }

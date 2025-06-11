@@ -49,21 +49,19 @@ DELETE FROM DuplicateCTE
 WHERE RowNum > 1;
 ";
 
-                using (var dbConnection = new SqlConnection(connectionString))
+                using var dbConnection = new SqlConnection(connectionString);
+                var duplicatesRemoved = dbConnection.Execute(sql, commandTimeout: 300);
+
+                if (duplicatesRemoved > 0)
                 {
-                    var duplicatesRemoved = dbConnection.Execute(sql, commandTimeout: 300);
-
-                    if (duplicatesRemoved > 0)
-                    {
-                        _logger.LogInformation("Successfully purged {DuplicateCount} duplicate NewsItem records based on title and date.", duplicatesRemoved);
-                    }
-                    else
-                    {
-                        _logger.LogInformation("No title-based duplicate NewsItem records were found to purge.");
-                    }
-
-                    return duplicatesRemoved;
+                    _logger.LogInformation("Successfully purged {DuplicateCount} duplicate NewsItem records based on title and date.", duplicatesRemoved);
                 }
+                else
+                {
+                    _logger.LogInformation("No title-based duplicate NewsItem records were found to purge.");
+                }
+
+                return duplicatesRemoved;
             }
             catch (Exception)
             {
@@ -117,7 +115,7 @@ GO
 
             foreach (var job in succeeded)
             {
-                BackgroundJob.Delete(job.Key);
+                _ = BackgroundJob.Delete(job.Key);
             }
         }
     }

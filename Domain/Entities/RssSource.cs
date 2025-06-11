@@ -127,7 +127,7 @@ namespace Domain.Entities
             CreatedAt = DateTime.UtcNow; // Initialize CreatedAt
             IsActive = true;
             FetchErrorCount = 0;
-            NewsItems = new List<NewsItem>(); // Initialize collection
+            NewsItems = []; // Initialize collection
         }
         #endregion
     }

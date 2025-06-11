@@ -7,6 +7,7 @@ using Telegram.Bot.Exceptions;  // ✅ برای ApiRequestException
 using Telegram.Bot.Polling; // ✅ برای IUpdateHandler, DefaultUpdateHandlerOptions
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums; // ✅ برای UpdateType
+using TelegramPanel.Infrastructure.Services;
 using TelegramPanel.Queue;
 using TelegramPanel.Settings;
 
@@ -39,7 +40,7 @@ namespace TelegramPanel.Infrastructure
         public async Task StartAsync(CancellationToken hostCancellationToken)
         {
             _cancellationTokenSourceForPolling = CancellationTokenSource.CreateLinkedTokenSource(hostCancellationToken);
-            User? me = null; // برای نگهداری اطلاعات ربات
+            User? me;
 
             #region Bot Information Retrieval
             try
@@ -220,7 +221,11 @@ namespace TelegramPanel.Infrastructure
         /// <param name="cancellationToken">توکنی که توسط حلقه Polling پاس داده می‌شود و نشان‌دهنده درخواست توقف Polling است.</param>
         public async Task HandleUpdateAsync(ITelegramBotClient botClient, Update update, CancellationToken cancellationToken)
         {
-            if (botClient == null) throw new ArgumentNullException(nameof(botClient));
+            if (botClient == null)
+            {
+                throw new ArgumentNullException(nameof(botClient));
+            }
+
             if (update == null)
             {
                 _logger.LogWarning("Polling: HandleUpdateAsync received a null update object.");

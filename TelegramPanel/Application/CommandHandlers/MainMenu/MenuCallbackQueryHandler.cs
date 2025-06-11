@@ -14,7 +14,7 @@ using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Application.States;
 using TelegramPanel.Formatters;
 using TelegramPanel.Infrastructure;
-using TelegramPanel.Infrastructure.Helpers;
+using TelegramPanel.Infrastructure.Helper;
 #endregion
 
 namespace TelegramPanel.Application.CommandHandlers.MainMenu
@@ -119,7 +119,11 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
             if (callbackQuery?.Message?.Chat == null || callbackQuery.From == null || string.IsNullOrWhiteSpace(callbackQuery.Data))
             {
                 _logger.LogWarning("MenuCallbackHandler: CallbackQuery, its Message, Chat, From user, or Data is null/empty in UpdateID {UpdateId}.", update.Id);
-                if (callbackQuery != null) await AnswerCallbackQuerySilentAsync(callbackQuery.Id, cancellationToken, "Error processing request.");
+                if (callbackQuery != null)
+                {
+                    await AnswerCallbackQuerySilentAsync(callbackQuery.Id, cancellationToken, "Error processing request.");
+                }
+
                 return;
             }
 
@@ -317,7 +321,7 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
                                      "This link may expire. Please complete your payment promptly.";
                 var paymentLinkKeyboard = MarkupBuilder.CreateInlineKeyboard(new[] { InlineKeyboardButton.WithUrl($"🚀 Pay with {selectedCryptoAsset} Now", invoice.BotInvoiceUrl!) },
                                                                              new[] { InlineKeyboardButton.WithCallbackData("⬅️ Back to Main Menu", BackToMainMenuGeneral) });
-                await _botClient.SendMessage(chatId, paymentMessage, ParseMode.Markdown, replyMarkup: paymentLinkKeyboard, cancellationToken: cancellationToken);
+                _ = await _botClient.SendMessage(chatId, paymentMessage, ParseMode.Markdown, replyMarkup: paymentLinkKeyboard, cancellationToken: cancellationToken);
                 //  می‌توانید پیام "در حال پردازش" را حذف کنید
                 // await _botClient.DeleteMessageAsync(chatId, messageIdToEdit, cancellationToken);
             }
@@ -327,7 +331,7 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
                 var failureMessage = $"⚠️ Sorry, we couldn't create your payment invoice for {TelegramMessageFormatter.Bold(selectedCryptoAsset, escapePlainText: false)}.\n" +
                                      $"Details: {string.Join("; ", invoiceResult.Errors)}\n\n" +
                                      "Please try a different payment method or contact support.";
-                await _botClient.SendMessage(chatId, failureMessage, ParseMode.Markdown, cancellationToken: cancellationToken);
+                _ = await _botClient.SendMessage(chatId, failureMessage, ParseMode.Markdown, cancellationToken: cancellationToken);
                 // بازگشت به منوی انتخاب پلن پس از خطا در ایجاد فاکتور
                 await ShowSubscriptionPlansAsync(chatId, messageIdToEdit, cancellationToken);
             }
@@ -380,18 +384,18 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
 
             if (signals.Any())
             {
-                sb.AppendLine(TelegramMessageFormatter.Bold("📊 Recent Trading Signals:"));
-                sb.AppendLine(); // Add a blank line for better readability
+                _ = sb.AppendLine(TelegramMessageFormatter.Bold("📊 Recent Trading Signals:"));
+                _ = sb.AppendLine(); // Add a blank line for better readability
                 foreach (var signalDto in signals)
                 {
                     var formattedSignal = SignalFormatter.FormatSignal(signalDto, ParseMode.Markdown);
-                    sb.AppendLine(formattedSignal);
-                    sb.AppendLine("─".PadRight(20, '─')); // Separator line
+                    _ = sb.AppendLine(formattedSignal);
+                    _ = sb.AppendLine("─".PadRight(20, '─')); // Separator line
                 }
             }
             else
             {
-                sb.AppendLine("No active signals available at the moment. Please check back later!");
+                _ = sb.AppendLine("No active signals available at the moment. Please check back later!");
             }
 
             var backKeyboard = MarkupBuilder.CreateInlineKeyboard(
@@ -428,12 +432,12 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
             }
 
             var sb = new StringBuilder();
-            sb.AppendLine(TelegramMessageFormatter.Bold("🔐 Your Profile:"));
-            sb.AppendLine($"👤 Username: {TelegramMessageFormatter.Code(userDto.Username)}");
-            sb.AppendLine($"📧 Email: {TelegramMessageFormatter.Code(userDto.Email)}");
-            sb.AppendLine($"🆔 Telegram ID: {TelegramMessageFormatter.Code(userDto.TelegramId)}");
-            sb.AppendLine($"⭐ Access Level: {TelegramMessageFormatter.Bold(GetLevelTitle((int)userDto.Level))}");
-            sb.AppendLine($"💰 Token Balance: {TelegramMessageFormatter.Code(userDto.TokenBalance.ToString("N2"))}");
+            _ = sb.AppendLine(TelegramMessageFormatter.Bold("🔐 Your Profile:"));
+            _ = sb.AppendLine($"👤 Username: {TelegramMessageFormatter.Code(userDto.Username)}");
+            _ = sb.AppendLine($"📧 Email: {TelegramMessageFormatter.Code(userDto.Email)}");
+            _ = sb.AppendLine($"🆔 Telegram ID: {TelegramMessageFormatter.Code(userDto.TelegramId)}");
+            _ = sb.AppendLine($"⭐ Access Level: {TelegramMessageFormatter.Bold(GetLevelTitle((int)userDto.Level))}");
+            _ = sb.AppendLine($"💰 Token Balance: {TelegramMessageFormatter.Code(userDto.TokenBalance.ToString("N2"))}");
 
             // تابع داخلی برای نمایش سطح دسترسی بدون نیاز به enum خارجی
             string GetLevelTitle(int level)
@@ -453,15 +457,15 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
 
             if (userDto.TokenWallet != null)
             {
-                sb.AppendLine($"Token Balance: {TelegramMessageFormatter.Code(userDto.TokenWallet.Balance.ToString("N2"))} Tokens");
+                _ = sb.AppendLine($"Token Balance: {TelegramMessageFormatter.Code(userDto.TokenWallet.Balance.ToString("N2"))} Tokens");
             }
             if (userDto.ActiveSubscription != null)
             {
-                sb.AppendLine($"Active Subscription: Plan XXX (Expires: {userDto.ActiveSubscription.EndDate:yyyy-MM-dd})"); // نام پلن را اضافه کنید
+                _ = sb.AppendLine($"Active Subscription: Plan XXX (Expires: {userDto.ActiveSubscription.EndDate:yyyy-MM-dd})"); // نام پلن را اضافه کنید
             }
             else
             {
-                sb.AppendLine("Subscription: No active subscription.");
+                _ = sb.AppendLine("Subscription: No active subscription.");
             }
 
             var backKeyboard = MarkupBuilder.CreateInlineKeyboard(
@@ -546,7 +550,7 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
         {
             try
             {
-                await _botClient.EditMessageText( // 
+                _ = await _botClient.EditMessageText( // 
                     chatId: chatId,
                     messageId: messageId,
                     text: text,

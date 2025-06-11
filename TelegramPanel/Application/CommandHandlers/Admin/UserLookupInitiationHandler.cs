@@ -42,7 +42,7 @@ namespace TelegramPanel.Application.CommandHandlers.Admin
         public async Task HandleAsync(Update update, CancellationToken cancellationToken = default)
         {
             var callbackQuery = update.CallbackQuery!;
-            var message = callbackQuery.Message!;
+            _ = callbackQuery.Message!;
             var adminId = callbackQuery.From.Id;
 
             await _messageSender.AnswerCallbackQueryAsync(callbackQuery.Id, "Enter lookup mode...", showAlert: false, cancellationToken: cancellationToken);

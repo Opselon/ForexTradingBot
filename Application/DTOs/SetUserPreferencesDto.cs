@@ -21,7 +21,7 @@ namespace Application.DTOs
         /// <summary>
         /// Gets or sets the collection of category identifiers for user preferences.
         /// </summary>
-        public IEnumerable<Guid> CategoryIds { get; set; } = new List<Guid>();
+        public IEnumerable<Guid> CategoryIds { get; set; } = [];
 
         #endregion
     }

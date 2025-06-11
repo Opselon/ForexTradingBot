@@ -81,20 +81,22 @@ namespace Shared.Helpers
                     }
                 };
 
-                process.Start();
+                _ = process.Start();
                 string output = process.StandardOutput.ReadToEnd();
                 process.WaitForExit();
 
                 if (output.Contains("RUNNING"))
+                {
                     return "RUNNING";
+                }
                 else if (output.Contains("STOPPED"))
+                {
                     return "STOPPED";
-                else if (output.Contains("START_PENDING"))
-                    return "START_PENDING";
-                else if (output.Contains("STOP_PENDING"))
-                    return "STOP_PENDING";
+                }
                 else
-                    return "UNKNOWN";
+                {
+                    return output.Contains("START_PENDING") ? "START_PENDING" : output.Contains("STOP_PENDING") ? "STOP_PENDING" : "UNKNOWN";
+                }
             }
             catch
             {
@@ -122,7 +124,7 @@ namespace Shared.Helpers
                     }
                 };
 
-                process.Start();
+                _ = process.Start();
                 process.WaitForExit();
 
                 Console.WriteLine("[SUCCESS] All requested services have been started.");

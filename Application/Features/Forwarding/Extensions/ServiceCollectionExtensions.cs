@@ -1,4 +1,3 @@
-using Application.Features.Forwarding.Interfaces;
 using Application.Features.Forwarding.Services;
 using Microsoft.Extensions.DependencyInjection;
 

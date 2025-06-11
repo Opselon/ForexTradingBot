@@ -2,21 +2,21 @@
 
 #region Usings
 // Standard .NET & NuGet
+// Project specific
+using Application.Common.Interfaces; // For IUserRepository
 using Dapper; // Dapper for micro-ORM operations
+using Domain.Entities;             // For User, Subscription, TokenWallet, UserSignalPreference entities
+using Domain.Enums; // For UserLevel enum (stored as string in DB)
 using Microsoft.Data.SqlClient; // SQL Server specific connection
-using System.Data; // Common Ado.Net interfaces like IDbConnection, IDbTransaction
 using Microsoft.Extensions.Configuration; // To access connection strings
 using Microsoft.Extensions.Logging; // For logging
 using Polly; // For resilience policies
 using Polly.Retry; // For retry policies
-using System.Data.Common; // For DbException (base class for database exceptions)
-// Project specific
-using Application.Common.Interfaces; // For IUserRepository
-using Domain.Entities;             // For User, Subscription, TokenWallet, UserSignalPreference entities
-using Domain.Enums; // For UserLevel enum (stored as string in DB)
-using System.Linq.Expressions; // Still included, but will throw NotSupportedException
-using Shared.Exceptions;
 using Polly.Timeout; // For custom RepositoryException
+using Shared.Exceptions;
+using System.Data; // Common Ado.Net interfaces like IDbConnection, IDbTransaction
+using System.Data.Common; // For DbException (base class for database exceptions)
+using System.Linq.Expressions; // Still included, but will throw NotSupportedException
 #endregion
 
 namespace Infrastructure.Persistence.Repositories

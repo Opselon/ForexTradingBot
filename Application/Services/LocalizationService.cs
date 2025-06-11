@@ -34,7 +34,7 @@ namespace Application.Services
             return string.Format(format, arguments);
         }
 
-        public async Task<string> GetUserLocalizedStringAsync(Guid userId, string resourceKey, params object[] arguments)
+        public async Task<string?> GetUserLocalizedStringAsync(Guid userId, string resourceKey, params object[] arguments)
         {
             if (userId == Guid.Empty)
                 throw new ArgumentException("Invalid user ID", nameof(userId));

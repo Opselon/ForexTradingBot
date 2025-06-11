@@ -54,7 +54,7 @@ namespace TelegramPanel.Infrastructure.Settings
         /// Example: "https://api.coingecko.com/api/v3/"
         /// </summary>
         [Required(AllowEmptyStrings = false)]
-        public string BaseUrl { get; set; }
+        public required string BaseUrl { get; set; }
 
         /// <summary>
         /// API Key, if required by the provider.
@@ -124,7 +124,7 @@ namespace TelegramPanel.Infrastructure.Settings
         /// Example: "latest?from={BaseAsset}&to={QuoteAsset}"
         /// </summary>
         [Required(AllowEmptyStrings = false)]
-        public string PathTemplate { get; set; }
+        public required string PathTemplate { get; set; }
 
         // --- JSON Path Data Extractors ---
         // These paths specify how to extract data from the JSON response of this endpoint.
@@ -168,7 +168,7 @@ namespace TelegramPanel.Infrastructure.Settings
         /// User-friendly display name (e.g., "Gold (XAU/USD)", "Euro / US Dollar").
         /// </summary>
         [Required(AllowEmptyStrings = false)]
-        public string Name { get; set; }
+        public required string Name { get; set; }
 
         /// <summary>
         /// Brief description of the asset or currency pair.
@@ -180,7 +180,7 @@ namespace TelegramPanel.Infrastructure.Settings
         /// This helps in selecting an appropriate provider if AssetTypeFocus matches.
         /// </summary>
         [Required(AllowEmptyStrings = false)]
-        public string Category { get; set; }
+        public required string Category { get; set; }
 
         /// <summary>
         /// For currency pairs (Forex, Crypto pairs), the base asset symbol.

@@ -4,7 +4,6 @@ using System.Text;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using TelegramPanel.Application.Interfaces;
-using TelegramPanel.Formatters;
 using TelegramPanel.Infrastructure;
 
 namespace TelegramPanel.Application.States.Admin

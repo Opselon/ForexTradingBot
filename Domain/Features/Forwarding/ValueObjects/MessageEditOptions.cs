@@ -1,9 +1,6 @@
 ﻿// File: Domain\Features\Forwarding\ValueObjects\MessageEditOptions.cs
 // این فایل نیاز به using برای TextReplacement ندارد زیرا TextReplacement
 // در همین namespace Domain.Features.Forwarding.ValueObjects تعریف شده است.
-using System.Collections.Generic; // برای IReadOnlyList
-using System.Text.RegularExpressions; // اگر RegexOptions در اینجا هم مستقیما استفاده شود یا برای کامنت‌ها
-
 namespace Domain.Features.Forwarding.ValueObjects
 {
     /// <summary>

@@ -51,14 +51,14 @@ namespace Application.Services
                     return Result<List<FredSeriesDto>>.Failure(result.Errors ?? new List<string> { "FRED API search failed with no specific errors reported." });
                 }
             }
-            catch (OperationCanceledException ex) when (cancellationToken.IsCancellationRequested)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 // Handle cancellation specifically.
                 // Log if needed.
                 // _logger.LogInformation(ex, "FRED API search was cancelled for text '{SearchText}'.", searchText);
                 return Result<List<FredSeriesDto>>.Failure($"Search request cancelled for '{searchText}'.");
             }
-            catch (Exception ex)
+            catch (Exception)
             {
                 // Catch any other unexpected technical exceptions (network issues, parsing errors etc.)
                 // Log the detailed technical error for debugging.
@@ -102,14 +102,14 @@ namespace Application.Services
                 // the catch block below will handle it.
                 return result;
             }
-            catch (OperationCanceledException ex) when (cancellationToken.IsCancellationRequested)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 // Handle cancellation specifically.
                 // Log this as an informational event if desired.
                 // _logger.LogInformation(ex, "FRED API call for release table tree was cancelled for release {ReleaseId}, element {ElementId}.", releaseId, elementId);
                 return Result<FredReleaseTablesResponseDto>.Failure($"Request cancelled for release {releaseId}.");
             }
-            catch (Exception ex)
+            catch (Exception)
             {
                 // Catch any other unexpected technical exceptions (network issues, parsing errors etc.)
                 // Log the detailed technical error for debugging.
@@ -170,7 +170,7 @@ namespace Application.Services
                     return Result<List<FredReleaseDto>>.Failure(result.Errors ?? new List<string> { "FRED API request failed with no specific errors reported." });
                 }
             }
-            catch (OperationCanceledException ex) when (cancellationToken.IsCancellationRequested)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 // Handle cancellation specifically if needed.
                 // This can happen if the CancellationToken passed from the caller is cancelled.

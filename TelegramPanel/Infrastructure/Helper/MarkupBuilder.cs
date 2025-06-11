@@ -12,7 +12,7 @@ namespace TelegramPanel.Infrastructure.Helpers // یا یک namespace مناسب
         /// </summary>
         /// <param name="buttonRows">An array where each element is an array of InlineKeyboardButtons representing a row.</param>
         /// <returns>An InlineKeyboardMarkup.</returns>
-        public static InlineKeyboardMarkup CreateInlineKeyboard(params InlineKeyboardButton[][] buttonRows)
+        public static InlineKeyboardMarkup? CreateInlineKeyboard(params InlineKeyboardButton[][] buttonRows)
         {
             if (buttonRows == null || !buttonRows.Any())
             {
@@ -33,7 +33,7 @@ namespace TelegramPanel.Infrastructure.Helpers // یا یک namespace مناسب
         /// <summary>
         /// Overload to create an InlineKeyboardMarkup from a single row of buttons.
         /// </summary>
-        public static InlineKeyboardMarkup CreateInlineKeyboard(params InlineKeyboardButton[] singleRowButtons)
+        public static InlineKeyboardMarkup? CreateInlineKeyboard(params InlineKeyboardButton[] singleRowButtons)
         {
             if (singleRowButtons == null || !singleRowButtons.Any())
             {
@@ -46,7 +46,7 @@ namespace TelegramPanel.Infrastructure.Helpers // یا یک namespace مناسب
         /// Overload to handle IEnumerable of IEnumerables, converting them to List of Lists.
         /// This is useful if you are dynamically building rows.
         /// </summary>
-        public static InlineKeyboardMarkup CreateInlineKeyboard(IEnumerable<IEnumerable<InlineKeyboardButton>> buttonRows)
+        public static InlineKeyboardMarkup? CreateInlineKeyboard(IEnumerable<IEnumerable<InlineKeyboardButton>> buttonRows)
         {
             if (buttonRows == null || !buttonRows.Any())
             {

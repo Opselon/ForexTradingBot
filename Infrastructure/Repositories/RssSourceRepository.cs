@@ -7,12 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Polly; // Added for Polly
 using Polly.Retry; // Added for Polly
-using System;
-using System.Collections.Generic;
 using System.Data.Common; // For DbException
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
 #endregion
 
 namespace Infrastructure.Persistence.Repositories

@@ -1,21 +1,9 @@
 #region Usings
 using Application.Common.Interfaces;
 using Application.Features.Forwarding.Interfaces;
-using Domain.Features.Forwarding.Entities;
-using Domain.Features.Forwarding.ValueObjects;
-using Hangfire;
-using Hangfire.Server; // Ensure this is present for PerformContext
 using Microsoft.Extensions.Logging;
 using Polly;
 using Polly.Retry;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text.RegularExpressions;
-using System.Threading;
-using System.Threading.Tasks;
-using TL;
-using Telegram.Bot.Types; // For Telegram.Bot.Types.Message
 using Telegram.Bot.Types.Enums; // For ChatType, MessageEntityType
 
 #endregion
@@ -90,9 +78,6 @@ namespace TelegramPanel.Infrastructure.Services
             }
 
             TL.Peer? tlSenderPeer = GetSenderPeer(message);
-
-            // --- Media Group Aggregation (simplified, still no download/upload) ---
-            List<InputMediaWithCaption>? jobMediaGroupItems = null; // This will now typically remain null or hold placeholders if actual media isn't handled.
 
             // The main logic for handling media messages without re-download/re-upload is to rely on ForwardMessagesAsync.
             // If the rule requires custom sends (e.g., NoForwards = true), media will be skipped.

@@ -8,15 +8,8 @@ using Hangfire.Server; // Crucial: Add this for PerformContext
 using Microsoft.Extensions.Logging;
 using Polly;
 using Polly.Retry;
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Net.Http;
 using System.Text;
 using System.Text.RegularExpressions;
-using System.Threading;
-using System.Threading.Tasks;
 using TL;
 #endregion
 

@@ -204,6 +204,8 @@ namespace Infrastructure
             services.AddScoped<ISignalAnalysisRepository, SignalAnalysisRepository>(); // رجیستر SignalAnalysisRepository
             services.AddScoped<ITransactionRepository, TransactionRepository>(); // رجیستر TransactionRepository
             services.AddScoped<IAdminService, AdminService>();
+
+
             // بازگرداندن IServiceCollection به‌روزرسانی شده برای فعال کردن زنجیره‌ای کردن متدها در Program.cs
             return services;
         }

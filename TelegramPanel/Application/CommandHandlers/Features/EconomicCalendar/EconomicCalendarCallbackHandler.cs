@@ -379,7 +379,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
                 // Optionally answer the callback query upon success to remove the loading spinner.
                 // await _botClient.AnswerCallbackQueryAsync(callbackQuery.Id, cancellationToken: cancellationToken);
             }
-            catch (Exception ex)
+            catch (Exception)
             {
                 // --- Exception Handling ---
                 // Catching a general Exception to handle any unexpected errors during the process.
@@ -397,7 +397,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
                         "An unexpected error occurred while loading releases. Please try again later. 😢",
                         cancellationToken: cancellationToken);
                 }
-                catch (Exception editEx)
+                catch (Exception)
                 {
                     // If editing fails, maybe the message was deleted or bot was blocked.
                     // Log this secondary error but don't re-throw, as the primary issue is logged.

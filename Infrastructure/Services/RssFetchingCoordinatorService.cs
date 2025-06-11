@@ -139,7 +139,7 @@ namespace Infrastructure.Services
         private async Task ProcessSingleFeedWithLoggingAndRetriesAsync(RssSource source, CancellationToken cancellationToken)
         {
             // Level 2: Define specific Polly context for this individual feed for granular logging.
-            var pollyContext = new Context($"RssFeedFetch_{source.Id.ToString()}"); // Use ToString() for Guid ID
+            var pollyContext = new Context($"RssFeedFetch_{source.Id}"); // Use ToString() for Guid ID
             pollyContext["RssSourceId"] = source.Id.ToString(); // Use ToString() for Guid ID
             pollyContext["RssSourceName"] = source.SourceName;
 

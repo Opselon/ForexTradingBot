@@ -6,10 +6,6 @@ using Application.DTOs.CoinGecko;
 using Application.Features.CoinGecko.Interfaces;
 using Microsoft.Extensions.Logging;
 using Shared.Results;
-using System; // For TimeSpan
-using System.Collections.Generic;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace Application.Features.CoinGecko.Services
 {

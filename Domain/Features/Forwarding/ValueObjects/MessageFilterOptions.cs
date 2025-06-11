@@ -1,5 +1,4 @@
 ﻿// فایل: Domain\Features\Forwarding\ValueObjects\MessageFilterOptions.cs
-using System.Collections.Generic;
 using System.Text.RegularExpressions;
 
 namespace Domain.Features.Forwarding.ValueObjects

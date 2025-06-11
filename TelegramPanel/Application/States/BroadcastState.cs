@@ -1,6 +1,5 @@
 ﻿// NEW FILE: TelegramPanel/Application/States/Admin/BroadcastState.cs
 using Application.Interfaces;
-using Microsoft.Extensions.Logging;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using TelegramPanel.Application.Interfaces;

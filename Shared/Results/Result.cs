@@ -1,8 +1,4 @@
 ﻿// File: Shared/Results/Result.cs
-using System;
-using System.Collections.Generic;
-using System.Linq; // For .ToArray() and .Any()
-
 namespace Shared.Results
 {
     /// <summary>

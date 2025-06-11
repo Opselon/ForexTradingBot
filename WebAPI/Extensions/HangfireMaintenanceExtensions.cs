@@ -1,9 +1,5 @@
 ﻿// File: WebAPI/Extensions/HangfireMaintenanceExtensions.cs
 
-using Microsoft.AspNetCore.Builder;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Shared.Maintenance;
 
 namespace WebAPI.Extensions

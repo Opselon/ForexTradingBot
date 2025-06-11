@@ -1,8 +1,6 @@
 ﻿// -----------------
 // NEW FILE
 // -----------------
-using System;
-
 namespace Application.Common.Interfaces
 {
     /// <summary>

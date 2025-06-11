@@ -2,13 +2,7 @@
 using Microsoft.Extensions.Hosting; // For BackgroundService
 using Microsoft.Extensions.Logging; // For ILogger
 using Polly; // For Polly resilience policies
-using Polly.Retry; // For RetryPolicy
-using System; // For EventArgs, ArgumentNullException, TimeSpan, Random
 using System.Net.Sockets; // For SocketException (common network error)
-using System.IO; // For IOException (common network/stream error)
-using System.Net.Http; // For HttpRequestException (if client uses HTTP internally)
-using System.Threading; // For CancellationToken
-using System.Threading.Tasks; // For Task, Task.Delay, Task.CompletedTask
 
 namespace Infrastructure.Services
 {

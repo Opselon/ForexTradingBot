@@ -1,6 +1,5 @@
 ﻿// File: Application/DTOs/Fred/FredReleaseTableElementDto.cs
 using System.Text.Json.Serialization;
-using System.Collections.Generic;
 
 namespace Application.DTOs.Fred
 {

@@ -1,6 +1,5 @@
 ﻿// File: Domain\Features\Forwarding\Entities\ForwardingRule.cs
 using Domain.Features.Forwarding.ValueObjects;
-using System.Collections.Generic;
 
 namespace Domain.Features.Forwarding.Entities
 {

@@ -5,7 +5,7 @@ namespace Application.Features.Forwarding.Interfaces
 {
     public class InputMediaWithCaption
     {
-        public InputMedia Media { get; set; }
+        public required InputMedia Media { get; set; }
         public string? Caption { get; set; }
         public MessageEntity[]? Entities { get; set; }
     }

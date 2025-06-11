@@ -398,11 +398,16 @@ namespace TelegramPanel.Infrastructure.Services
 
             // Support & Resistance
             int displayDecimals = currencyInfo.DisplayDecimalPlaces ?? 4;
-            bool srFromHL = false;
-            if (md.Low24h > 0 && md.Price > md.Low24h) { md.Support = Math.Round(md.Low24h, displayDecimals); md.Remarks.Add("S: 24h Low."); srFromHL = true; }
+            if (md.Low24h > 0 && md.Price > md.Low24h)
+            {
+                md.Support = Math.Round(md.Low24h, displayDecimals); md.Remarks.Add("S: 24h Low.");
+            }
             else if (md.Price > 0) { md.Support = Math.Round(md.Price * (1 - (Math.Max(0.3m, md.Volatility) / 100m) * 0.7m), displayDecimals); md.Remarks.Add("S (est.)."); }
 
-            if (md.High24h > 0 && md.Price < md.High24h) { md.Resistance = Math.Round(md.High24h, displayDecimals); md.Remarks.Add("R: 24h High."); srFromHL = true; }
+            if (md.High24h > 0 && md.Price < md.High24h)
+            {
+                md.Resistance = Math.Round(md.High24h, displayDecimals); md.Remarks.Add("R: 24h High.");
+            }
             else if (md.Price > 0) { md.Resistance = Math.Round(md.Price * (1 + (Math.Max(0.3m, md.Volatility) / 100m) * 0.7m), displayDecimals); md.Remarks.Add("R (est.)."); }
 
             if (md.Support > 0 && md.Resistance > 0 && md.Support >= md.Resistance)

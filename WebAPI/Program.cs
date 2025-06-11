@@ -5,8 +5,6 @@
 // Using های مربوط به پروژه‌های شما
 using Application;                          // برای متد توسعه‌دهنده AddApplicationServices
 using Application.Features.Forwarding.Extensions;
-using Application.Features.Forwarding.Interfaces;
-using Application.Features.Forwarding.Services;
 using Application.Interfaces; // برای IRssFetchingCoordinatorService (جهت زمان‌بندی Job در Hangfire)
 // using Application.Interfaces;          // معمولاً اینترفیس‌های Application مستقیماً اینجا نیاز نیستند مگر برای موارد خاص
 // using Application.Services;            // و نه پیاده‌سازی‌های آن
@@ -24,11 +22,8 @@ using Serilog;                              // برای Log, LoggerConfiguration
 using Shared.Helpers;
 using Shared.Maintenance;
 using Shared.Settings;                    // برای CryptoPaySettings (از پروژه Shared)
-using TelegramPanel.Application.CommandHandlers.Admin;
-using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Extensions;
 using TelegramPanel.Infrastructure;
-using TL;
 using WebAPI.Extensions;
 #endregion
 

@@ -6,7 +6,6 @@ using System.Text;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
-using TelegramPanel.Application.CommandHandlers.MainMenu;
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Formatters;
 using TelegramPanel.Infrastructure;

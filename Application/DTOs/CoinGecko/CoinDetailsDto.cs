@@ -1,7 +1,6 @@
 ﻿// -----------------
 // CORRECTED FILE
 // -----------------
-using System.Collections.Generic;
 using System.Text.Json.Serialization;
 
 namespace Application.DTOs.CoinGecko

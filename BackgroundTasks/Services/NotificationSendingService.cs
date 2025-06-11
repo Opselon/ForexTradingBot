@@ -2,17 +2,11 @@
 
 #region Usings
 // Standard .NET & NuGet
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Net.Http;
-using System.Threading;
-using System.Threading.Tasks;
-using Microsoft.Extensions.Logging;
 // Project specific
 using Application.Common.Interfaces;
 using Application.DTOs.Notifications;
 using Application.Interfaces;
+using Hangfire;
 using Polly;
 using Polly.Retry;
 using Shared.Extensions;
@@ -21,11 +15,10 @@ using Telegram.Bot.Exceptions;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
+using TelegramPanel.Application.CommandHandlers.Features.News;
 // TelegramPanel
 using TelegramPanel.Formatters;
 using TelegramPanel.Infrastructure;
-using Hangfire;
-using TelegramPanel.Application.CommandHandlers.Features.News;
 #endregion
 
 namespace BackgroundTasks.Services

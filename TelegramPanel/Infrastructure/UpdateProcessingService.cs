@@ -1,18 +1,11 @@
-﻿using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Logging;
+using Polly; // اضافه شده برای Polly
+using Polly.Retry; // اضافه شده برای سیاست‌های Retry
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums; // Required for UpdateType
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Application.Pipeline; // برای TelegramPipelineDelegate
-using TelegramPanel.Infrastructure.Services; // فرض شده ITelegramMessageSender در اینجا پیاده‌سازی شده
-using Polly; // اضافه شده برای Polly
-using Polly.Retry; // اضافه شده برای سیاست‌های Retry
-using System;
-using System.Collections.Generic; // برای IReadOnlyList
-using System.Linq; // برای Reverse(), FirstOrDefault(), Any()
-using System.Threading;
-using System.Threading.Tasks;
-using Telegram.Bot.Exceptions;
-using Microsoft.Extensions.Caching.Memory;
 
 namespace TelegramPanel.Infrastructure // یا Application اگر در آن لایه است
 {

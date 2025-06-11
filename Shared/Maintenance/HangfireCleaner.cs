@@ -65,7 +65,7 @@ WHERE RowNum > 1;
                     return duplicatesRemoved;
                 }
             }
-            catch (Exception ex)
+            catch (Exception)
             {
                 // ... error logging ...
                 return 0;

@@ -1,7 +1,6 @@
 ﻿// --- START OF FILE: Application/Interfaces/IAdminService.cs ---
 
 using Application.DTOs.Admin; // For the detailed DTO
-using Domain.Entities;      // For the User entity
 
 namespace Application.Interfaces
 {

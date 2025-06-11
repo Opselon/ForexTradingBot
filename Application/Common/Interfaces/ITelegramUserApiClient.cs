@@ -1,10 +1,4 @@
 ﻿// Application/Common/Interfaces/ITelegramUserApiClient.cs
-using System;
-using System.Collections.Generic; // Used for ICollection<T>
-using System.Threading;
-using System.Threading.Tasks;
-using TL; // WTelegramClient's namespace for Telegram types
-
 namespace Application.Common.Interfaces
 {
     public interface ITelegramUserApiClient : IAsyncDisposable

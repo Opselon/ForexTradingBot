@@ -4,11 +4,8 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
-using Telegram.Bot.Types.ReplyMarkups;
 using TelegramPanel.Application.Interfaces;
-using TelegramPanel.Application.States;
 using TelegramPanel.Infrastructure;
-using TelegramPanel.Infrastructure.Helpers;
 using TelegramPanel.Settings;
 
 namespace TelegramPanel.Application.CommandHandlers.Admin
@@ -56,7 +53,6 @@ namespace TelegramPanel.Application.CommandHandlers.Admin
 
             // ... the rest of the method is the same ...
             _logger.LogInformation("Admin {AdminId} entered user lookup flow.", adminId);
-            var text = "🔎 *User Lookup*\n\nPlease send the numerical Telegram ID...";
             // ...
         }
     }

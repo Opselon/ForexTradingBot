@@ -1,15 +1,9 @@
 ﻿// File: Infrastructure\Jobs\ForwardingJob.cs
 using Application.Features.Forwarding.Interfaces;
-using Application.Features.Forwarding.Services;
 using Microsoft.Extensions.Logging;
-using System;
-using System.Collections.Generic; // برای List
-using System.Linq; // برای Any()
-using System.Threading;
-using System.Threading.Tasks;
-using TL; // این using لازم است تا بتوانید از MessageEntity و Peer و سایر انواع Telegram.Bot استفاده کنید
 using Polly; // اضافه کردن using برای Polly
 using Polly.Retry; // اضافه کردن using برای سیاست‌های Retry
+using TL; // این using لازم است تا بتوانید از MessageEntity و Peer و سایر انواع Telegram.Bot استفاده کنید
 
 namespace Infrastructure.Jobs
 {

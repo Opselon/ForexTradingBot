@@ -3,7 +3,6 @@
 // -----------------
 using Application.Common.Interfaces;
 using Microsoft.Extensions.Caching.Memory;
-using System;
 
 namespace Infrastructure.Services.Caching
 {

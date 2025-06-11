@@ -5,17 +5,10 @@ using Application.Common.Interfaces; // For ITelegramUserApiClient
 using Application.Features.Forwarding.Interfaces; // For IForwardingService, InputMediaWithCaption
 using Hangfire; // For IBackgroundJobClient
 using Microsoft.Extensions.Logging; // For ILogger
-using System; // For EventArgs, ArgumentNullException, TimeSpan, Guid
-using System.Collections.Concurrent; // For ConcurrentDictionary
-using System.Collections.Generic; // For List, Dictionary, ICollection
-using System.Linq; // For LINQ extensions like .Any(), .FirstOrDefault(), .Select()
-using System.Text; // For StringBuilder (if used for logging)
-using System.Text.RegularExpressions; // For Regex (if used for message processing)
-using System.Threading; // For CancellationToken, CancellationTokenSource
-using System.Threading.Tasks; // For Task, Task.Run, Task.Delay, Task.CompletedTask
-using TL; // Telegram API types: Update, Message, Peer, InputMedia, InputMediaPhoto, InputMediaDocument, etc.
 using Polly; // For Polly resilience policies
 using Polly.Retry; // For RetryPolicy
+using System.Collections.Concurrent; // For ConcurrentDictionary
+using TL; // Telegram API types: Update, Message, Peer, InputMedia, InputMediaPhoto, InputMediaDocument, etc.
 #endregion
 
 namespace Infrastructure.Services
@@ -154,7 +147,7 @@ namespace Infrastructure.Services
         {
             // Detach the update processing to a new task to prevent blocking the Telegram client's update loop.
             // Using _ = Task.Run(...) to avoid "await" in async void for better fire-and-forget.
-            _ = Task.Run(async () =>
+            _ = Task.Run(() =>
             {
                 TL.Message? messageToProcess = null;
                 Peer? sourceApiPeer = null;

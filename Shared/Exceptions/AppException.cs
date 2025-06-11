@@ -1,6 +1,4 @@
-﻿using System;
-using System.Collections.Generic; // For IDictionary in example
-using System.Globalization; // For CultureInfo
+﻿using System.Globalization; // For CultureInfo
 using System.Runtime.Serialization; // Required for [Serializable]
 
 namespace Shared.Exceptions

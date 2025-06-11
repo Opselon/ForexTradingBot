@@ -1,30 +1,30 @@
 ﻿// File: Infrastructure/Services/RssReaderService.cs
 
 #region Usings
-using System.Data.Common; // For DbException
 using Application.Common.Interfaces; // For INotificationDispatchService
 using Application.DTOs.News; // For NewsItemDto
 using Application.Interfaces; // For IRssReaderService
 using AutoMapper; // For mapping DTOs
+using Dapper; // For Dapper operations
 using Domain.Entities; // For NewsItem, RssSource, SignalCategory entities
 using Hangfire; // For IBackgroundJobClient
 using HtmlAgilityPack; // For HTML parsing
+using Microsoft.Data.SqlClient; // For SqlConnection (for SQL Server)
+using Microsoft.Extensions.Configuration; // To get connection string
 using Microsoft.Extensions.Logging; // For logging
 using Polly; // For resilience policies
 using Polly.Retry; // For retry policies
+using Shared.Exceptions; // For custom RepositoryException
 using Shared.Extensions; // For Truncate extension method
 using Shared.Results; // For Result<T> pattern
-using Shared.Exceptions; // For custom RepositoryException
+using System.Data.Common; // For DbException
+using System.Globalization; // Added for CultureInfo
 using System.Net; // For HttpStatusCode
 using System.Net.Http.Headers; // For HTTP headers
+using System.Security.Cryptography; // Added for SHA256 for more robust ID hashing
 using System.ServiceModel.Syndication; // For SyndicationFeed
 using System.Text; // For Encoding
 using System.Xml; // For XmlReader
-using System.Security.Cryptography; // Added for SHA256 for more robust ID hashing
-using Microsoft.Extensions.Configuration; // To get connection string
-using Microsoft.Data.SqlClient; // For SqlConnection (for SQL Server)
-using Dapper; // For Dapper operations
-using System.Globalization; // Added for CultureInfo
 #endregion
 
 namespace Infrastructure.Services
@@ -198,7 +198,7 @@ namespace Infrastructure.Services
 
             // Level 2: Define correlation ID for the entire fetch cycle.
             // FIX: Explicit .ToString() for rssSource.Id in string interpolation
-            string correlationId = $"RSSFetch_{rssSource.Id.ToString()}_{Guid.NewGuid():N}";
+            string correlationId = $"RSSFetch_{rssSource.Id}_{Guid.NewGuid():N}";
             using (_logger.BeginScope(new Dictionary<string, object?>
             {
                 // FIX: Explicit .ToString() for rssSource.Id in logging scope dictionary
@@ -237,7 +237,7 @@ namespace Infrastructure.Services
                     if (httpResponse.StatusCode == HttpStatusCode.NotModified)
                     {
                         _logger.LogInformation("Feed content has not changed (HTTP 304 Not Modified). CorrelationId: {CorrelationId}", correlationId);
-                        outcome = await HandleNotModifiedResponseAsync(rssSource, httpResponse, cancellationToken).ConfigureAwait(false); // Level 1: ConfigureAwait(false)
+                        outcome = HandleNotModifiedResponse(rssSource, httpResponse, cancellationToken); // Level 1: ConfigureAwait(false)
                     }
                     else if (!httpResponse.IsSuccessStatusCode)
                     {
@@ -880,7 +880,7 @@ namespace Infrastructure.Services
         }
 
         // Level 7: Handle 304 response.
-        private async Task<RssFetchOutcome> HandleNotModifiedResponseAsync(RssSource rssSource, HttpResponseMessage httpResponse, CancellationToken cancellationToken)
+        private RssFetchOutcome HandleNotModifiedResponse(RssSource rssSource, HttpResponseMessage httpResponse, CancellationToken cancellationToken)
         {
             _logger.LogInformation("Feed '{SourceName}' (HTTP 304 Not Modified). Updating metadata from 304 response.", rssSource.SourceName);
             // This is a success path, so return success outcome. Status update will be handled by the main flow.

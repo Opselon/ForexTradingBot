@@ -13,7 +13,6 @@ using TelegramPanel.Application.CommandHandlers.MainMenu; // For centralized men
 using TelegramPanel.Application.Interfaces; // For ITelegramCommandHandler
 using TelegramPanel.Formatters;         // For TelegramMessageFormatter
 using TelegramPanel.Infrastructure;
-using TelegramPanel.Infrastructure.Helpers; // For MarkupBuilder (though we get kbd from MenuCommandHandler now)
 
 namespace TelegramPanel.Application.CommandHandlers.Entry
 {

@@ -1,7 +1,6 @@
 ﻿// FILE TO EDIT: TelegramPanel/Application/Interfaces/ITelegramStateMachine.cs
 
 using Telegram.Bot.Types;
-using TelegramPanel.Application.States;
 
 namespace TelegramPanel.Application.Interfaces
 {

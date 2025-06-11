@@ -1,7 +1,6 @@
 ﻿// File: Infrastructure/ExternalServices/FredApiClient.cs
 using Application.Common.Interfaces;
 using Application.DTOs.Fred;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Shared.Results;
 using System.Net.Http.Json;

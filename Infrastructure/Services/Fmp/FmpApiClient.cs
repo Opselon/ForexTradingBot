@@ -5,12 +5,7 @@ using Application.Common.Interfaces;
 using Application.DTOs.Fmp;
 using Microsoft.Extensions.Logging;
 using Shared.Results;
-using System;
-using System.Collections.Generic;
-using System.Net.Http;
 using System.Net.Http.Json;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace Infrastructure.Services.Fmp
 {

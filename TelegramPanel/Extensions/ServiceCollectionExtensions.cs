@@ -9,10 +9,9 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Telegram.Bot;
-using TelegramPanel.Application.CommandHandlers; // For marker types like StartCommandHandler, MenuCommandHandler
 using TelegramPanel.Application.CommandHandlers.Entry;
 using TelegramPanel.Application.CommandHandlers.Features.Analysis;
-using TelegramPanel.Application.CommandHandlers.Features.CoinGecko;
+using TelegramPanel.Application.CommandHandlers.Features.Crypto;
 using TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar;
 using TelegramPanel.Application.Interfaces;    // For ITelegram...Handler interfaces
 using TelegramPanel.Application.Pipeline;
@@ -46,6 +45,8 @@ namespace TelegramPanel.Extensions
                 }
                 return new TelegramBotClient(settings.BotToken);
             });
+
+
 
             // 3. Register ITelegramMessageSender
             services.AddScoped<ITelegramCallbackQueryHandler, CryptoCallbackHandler>();
@@ -144,7 +145,7 @@ namespace TelegramPanel.Extensions
             services.AddHostedService<UpdateQueueConsumerService>();
 
             // Register the new CryptoCallbackHandler
-                
+
 
             return services;
         }

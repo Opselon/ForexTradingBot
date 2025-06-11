@@ -1,6 +1,5 @@
 ﻿// File: TelegramPanel/Infrastructure/DirectTelegramMessageSender.cs
 
-using Application.Common.Interfaces; // For IUserRepository, IAppDbContext
 using Microsoft.Extensions.Logging;
 using Polly;
 using Polly.Retry;

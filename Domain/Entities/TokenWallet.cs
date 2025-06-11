@@ -1,6 +1,5 @@
 ﻿// File: Domain/Entities/TokenWallet.cs
 #region Usings
-using System; // Added for Guid, DateTime
 using System.ComponentModel.DataAnnotations;        // برای [Key], [Required]
 using System.ComponentModel.DataAnnotations.Schema; // برای [Column], [ForeignKey]
 #endregion

@@ -1,20 +1,20 @@
 ﻿// File: Infrastructure/Persistence/Repositories/NewsItemRepository.cs
 #region Usings
 // Standard .NET & NuGet
+// Project specific
+using Application.Common.Interfaces; // For INewsItemRepository
 using Dapper; // Dapper for micro-ORM operations
+using Domain.Entities;               // For NewsItem, RssSource, SignalCategory
 using Microsoft.Data.SqlClient; // SQL Server specific connection
-using System.Data; // Common Ado.Net interfaces like IDbConnection
 using Microsoft.Extensions.Configuration; // To access connection strings
 using Microsoft.Extensions.Logging; // For logging
 using Polly; // For resilience policies
 using Polly.Retry; // For retry policies
+using Shared.Exceptions; // For custom RepositoryException
+using Shared.Extensions; // For Truncate extension method
+using System.Data; // Common Ado.Net interfaces like IDbConnection
 using System.Data.Common; // For DbException (base class for database exceptions)
 using System.Linq.Expressions; // <--- CORRECTED: Needed for Expression<> type in FindAsync signature
-// Project specific
-using Application.Common.Interfaces; // For INewsItemRepository
-using Domain.Entities;               // For NewsItem, RssSource, SignalCategory
-using Shared.Extensions; // For Truncate extension method
-using Shared.Exceptions; // For custom RepositoryException
 #endregion
 
 namespace Infrastructure.Persistence.Repositories

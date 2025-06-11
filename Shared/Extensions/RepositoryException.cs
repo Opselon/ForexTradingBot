@@ -1,5 +1,4 @@
 ﻿// File: Shared/Exceptions/RepositoryException.cs
-using System;
 using System.Runtime.Serialization; // Required for [Serializable]
 
 namespace Shared.Exceptions

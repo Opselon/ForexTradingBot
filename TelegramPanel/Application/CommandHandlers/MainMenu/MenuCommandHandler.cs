@@ -1,11 +1,10 @@
 ﻿// File: TelegramPanel/Application/CommandHandlers/MenuCommandHandler.cs
 #region Usings
 using Microsoft.Extensions.Logging;
-using System;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
-using TelegramPanel.Application.CommandHandlers.Features.CoinGecko;
+using TelegramPanel.Application.CommandHandlers.Features.Crypto;
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Infrastructure;
 using TelegramPanel.Infrastructure.Helpers;
@@ -67,8 +66,7 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
                 },
                  new[] // Row 3: Crypto Details (NEW)
                 {
-                   InlineKeyboardButton.WithCallbackData("🪙 Crypto Prices", $"{CryptoCallbackHandler.CallbackPrefix}_list_1")
-                },
+                   InlineKeyboardButton.WithCallbackData("🪙 Crypto Prices", $"{CryptoCallbackHandler.CallbackPrefix}_list_1")  },
                 new[] // Row 3: Subscription
                 {
                     InlineKeyboardButton.WithCallbackData("💎 Subscribe / Plans", SubscribeCallbackData)

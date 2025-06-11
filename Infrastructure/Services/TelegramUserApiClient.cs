@@ -6,18 +6,10 @@ using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Polly;
-using Polly.Caching;
 using Polly.Retry;
-using System;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Net.Http;
 using System.Runtime.CompilerServices;
-using System.Threading;
 using System.Threading.Channels;
-using System.Threading.Tasks;
 using TL;
 #endregion
 
@@ -58,7 +50,7 @@ namespace Infrastructure.Services
 
         #region Private Fields
         private WTelegram.Client? _client;
-        private SemaphoreSlim _connectionLock = new SemaphoreSlim(1, 1);
+        private readonly SemaphoreSlim _connectionLock = new SemaphoreSlim(1, 1);
         private System.Threading.Timer? _cacheCleanupTimer;
         // Internal caches used by WTelegramClient's update handler to populate main caches.
         // These remain Dictionary<long, ...> as WTelegramClient's CollectUsersChats populates these.

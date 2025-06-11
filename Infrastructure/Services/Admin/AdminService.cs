@@ -4,7 +4,6 @@ using Application.DTOs.Admin;
 using Application.Interfaces;
 using Dapper;
 using Domain.Entities;
-using Domain.Enums;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;

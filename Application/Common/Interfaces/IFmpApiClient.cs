@@ -3,9 +3,6 @@
 // -----------------
 using Application.DTOs.Fmp;
 using Shared.Results;
-using System.Collections.Generic;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace Application.Common.Interfaces
 {

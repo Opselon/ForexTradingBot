@@ -24,8 +24,8 @@ namespace TelegramPanel.Queue
 
         #region Private Fields
         // این فیلدها در کد اصلی ارائه شده برای ExecuteAsync استفاده نمی‌شوند، اما برای حفظ ساختار حفظ شده‌اند.
-        private WTelegram.Client? _client; // فرض شده این فیلد وجود دارد اما در اینجا استفاده نمی‌شود.
-        private SemaphoreSlim _connectionLock = new SemaphoreSlim(1, 1); // فرض شده این فیلد وجود دارد اما در اینجا استفاده نمی‌شود.
+        private readonly WTelegram.Client? _client; // فرض شده این فیلد وجود دارد اما در اینجا استفاده نمی‌شود.
+        private readonly SemaphoreSlim _connectionLock = new SemaphoreSlim(1, 1); // فرض شده این فیلد وجود دارد اما در اینجا استفاده نمی‌شود.
         #endregion
 
         /// <summary>

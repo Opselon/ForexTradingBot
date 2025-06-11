@@ -1,5 +1,4 @@
-﻿using System;
-using System.Globalization; // For CultureInfo, TextInfo
+﻿using System.Globalization; // For CultureInfo, TextInfo
 using System.Security.Cryptography; // For SHA256
 using System.Text; // For StringBuilder, Encoding
 using System.Text.RegularExpressions; // For Regex

@@ -2,6 +2,7 @@
 using Application.Common.Interfaces;
 using Domain.Entities;
 using Microsoft.Extensions.Logging;
+using Shared.Extensions;
 using System.Text;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
@@ -81,50 +82,164 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
             }
         }
 
+        /// <summary>
+        /// Handles incoming CallbackQuery updates from Telegram.
+        /// This method processes button clicks from inline keyboards, directing them
+        /// to appropriate handlers based on the callback data prefix.
+        /// Includes logging and basic error handling for Telegram API interactions and potential exceptions from sub-handlers.
+        /// </summary>
+        /// <param name="update">The Telegram Update object containing the CallbackQuery.</param>
+        /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
         public async Task HandleAsync(Update update, CancellationToken cancellationToken = default)
         {
-            var callbackQuery = update.CallbackQuery!;
-            await _messageSender.AnswerCallbackQueryAsync(callbackQuery.Id, cancellationToken: cancellationToken);
+            // Using null-conditional operator and checking for null instead of null-forgiving operator (!)
+            var callbackQuery = update.CallbackQuery;
+            if (callbackQuery?.Data == null || callbackQuery.Message == null)
+            {
+                // Log a warning if essential callback data is missing.
+                _logger.LogWarning("Received CallbackQuery with missing data or message. UpdateID: {UpdateId}, CallbackID: {CallbackId}", update.Id, callbackQuery?.Id);
+                // Optionally answer the callback query here to remove the loading spinner, though without ID it might be impossible.
+                // if (callbackQuery?.Id != null) { await _messageSender.AnswerCallbackQueryAsync(callbackQuery.Id, cancellationToken: cancellationToken); }
+                return; // Exit early if essential data is missing.
+            }
 
-            var data = callbackQuery.Data!;
-            var chatId = callbackQuery.Message!.Chat.Id;
+            var data = callbackQuery.Data;
+            var chatId = callbackQuery.Message.Chat.Id;
             var messageId = callbackQuery.Message.MessageId;
             var userId = callbackQuery.From.Id;
 
-            // VVVVVV FIX: CONVERT TO A PROPER IF/ELSE IF CHAIN VVVVVV
-            if (data == MenuCallbackQueryHandler.BackToMainMenuGeneral)
-            {
-                _logger.LogInformation("User {UserId} is cancelling an operation and returning to main menu.", userId);
-                await _stateMachine.ClearStateAsync(userId, cancellationToken);
+            // Log the incoming callback query for traceability
+            _logger.LogInformation("Handling CallbackQuery from UserID {UserId} in ChatID {ChatId}, MessageID {MessageId}. Data: {CallbackData}",
+                userId, chatId, messageId, data.Truncate(100));
 
-                var (text, keyboard) = MenuCommandHandler.GetMainMenuMarkup();
-                await _messageSender.EditMessageTextAsync(chatId, messageId, text, ParseMode.Markdown, keyboard, cancellationToken: cancellationToken);
-            }
-            else if (data.StartsWith(SentimentAnalysisCallback))
+            try
             {
-                await ShowSentimentCurrencySelectionMenuAsync(chatId, messageId, cancellationToken);
+                // --- Answer Callback Query ---
+                // Answer the callback query *before* starting potentially long operations
+                // to dismiss the loading indicator on the user's button.
+                // This should be done *inside* the try block, as answering can also fail.
+                await _messageSender.AnswerCallbackQueryAsync(callbackQuery.Id, cancellationToken: cancellationToken);
+                _logger.LogTrace("Answered CallbackQuery {CallbackId}.", callbackQuery.Id);
+
+                // --- Dispatch Logic ---
+                // Use a proper if/else if chain to handle different callback data prefixes.
+                if (data == MenuCallbackQueryHandler.BackToMainMenuGeneral)
+                {
+                    _logger.LogInformation("User {UserId} triggered Back to Main Menu.", userId);
+                    await _stateMachine.ClearStateAsync(userId, cancellationToken);
+
+                    // Assuming MenuCommandHandler.GetMainMenuMarkup returns (string text, InlineKeyboardMarkup keyboard)
+                    var (text, keyboard) = MenuCommandHandler.GetMainMenuMarkup();
+                    // Edit the message to show the main menu. Potential Telegram API call failure.
+                    await _messageSender.EditMessageTextAsync(chatId, messageId, text, ParseMode.MarkdownV2, keyboard, cancellationToken: cancellationToken);
+                    _logger.LogDebug("Sent Main Menu to ChatID {ChatId}.", chatId);
+                }
+                else if (data.StartsWith(SentimentAnalysisCallback))
+                {
+                    _logger.LogInformation("User {UserId} triggered Sentiment Analysis.", userId);
+                    // Call the handler for sentiment analysis menu. This method might have its own try-catch, but errors from it should be caught here too.
+                    await ShowSentimentCurrencySelectionMenuAsync(chatId, messageId, cancellationToken);
+                }
+                else if (data.StartsWith(SelectSentimentCurrencyPrefix))
+                {
+                    var currencyCode = data.Substring(SelectSentimentCurrencyPrefix.Length);
+                    _logger.LogInformation("User {UserId} selected currency '{CurrencyCode}' for sentiment.", userId, currencyCode);
+                    // Call the handler for currency selection. This method might have its own try-catch.
+                    await HandleSentimentCurrencySelectionAsync(chatId, messageId, currencyCode, cancellationToken);
+                }
+                else if (data.StartsWith(CbWatchPrefix))
+                {
+                    _logger.LogInformation("User {UserId} triggered CB Watch menu.", userId);
+                    // Call the handler for central bank selection menu. This method might have its own try-catch.
+                    await ShowCentralBankSelectionMenuAsync(chatId, messageId, cancellationToken);
+                }
+                else if (data.StartsWith(SearchKeywordsCallback))
+                {
+                    _logger.LogInformation("User {UserId} triggered Keyword Search initiation.", userId);
+                    // Call the handler to initiate keyword search. This method might have its own try-catch.
+                    // Note: Passing 'update' might be problematic if it's not serializable/deserializable by JobScheduler if this initiates a job.
+                    await InitiateKeywordSearchAsync(chatId, messageId, userId, update, cancellationToken);
+                }
+                else if (data.StartsWith(ShowCbNewsPrefix))
+                {
+                    var bankCode = data.Substring(ShowCbNewsPrefix.Length);
+                    _logger.LogInformation("User {UserId} triggered Central Bank News for '{BankCode}'.", userId, bankCode);
+                    // Call the handler for central bank news. This method might have its own try-catch.
+                    await ShowCentralBankNewsAsync(chatId, messageId, bankCode, cancellationToken);
+                }
+                // --- Add other callback data handlers here ---
+                else
+                {
+                    _logger.LogWarning("Received unhandled CallbackQuery data from UserID {UserId} in ChatID {ChatId}: {CallbackData}",
+                        userId, chatId, data.Truncate(100));
+                    // Optionally inform the user about the unhandled command or show a default menu.
+                    // await _messageSender.EditMessageTextAsync(chatId, messageId, "Unknown command.", cancellationToken: cancellationToken);
+                }
+
+                _logger.LogInformation("Successfully processed CallbackQuery from UserID {UserId} for data: {CallbackData}", userId, data.Truncate(100));
             }
-            else if (data.StartsWith(SelectSentimentCurrencyPrefix))
+            catch (OperationCanceledException ex) when (cancellationToken.IsCancellationRequested)
             {
-                var currencyCode = data.Substring(SelectSentimentCurrencyPrefix.Length);
-                await HandleSentimentCurrencySelectionAsync(chatId, messageId, currencyCode, cancellationToken);
+                // Handle cancellation specifically.
+                _logger.LogInformation(ex, "CallbackQuery handling was cancelled for UserID {UserId}, ChatID {ChatId}.", userId, chatId);
+                // No need to send an error message as the operation was cancelled.
+                // Attempt to answer the callback query again just in case the first one failed.
+                // try { await _messageSender.AnswerCallbackQueryAsync(callbackQuery.Id, "Operation cancelled.", true, cancellationToken: cancellationToken); } catch { }
             }
-            else if (data.StartsWith(CbWatchPrefix))
+            // Catch specific exceptions thrown by your sub-handlers if you need to handle them differently.
+            // catch (InvalidOperationException ioEx) // Example: If a sub-handler throws InvalidOperationException for business logic
+            // {
+            //     _logger.LogWarning(ioEx, "Business logic error handling CallbackQuery for UserID {UserId}, ChatID {ChatId}. Data: {CallbackData}",
+            //         userId, chatId, data.Truncate(100));
+            //     // Inform the user about the business logic error.
+            //     try
+            //     {
+            //          await _messageSender.EditMessageTextAsync(chatId, messageId, $"Error: {ioEx.Message}", cancellationToken: cancellationToken);
+            //          // Or send a new message
+            //          // await _messageSender.SendMessageAsync(chatId, $"Error: {ioEx.Message}", cancellationToken: cancellationToken);
+            //     }
+            //     catch { /* Log secondary send error if needed */ }
+            // Attempt to answer the callback query again to remove spinner.
+            // try { await _messageSender.AnswerCallbackQueryAsync(callbackQuery.Id, "Action failed.", true, cancellationToken: cancellationToken); } catch { }
+            // }
+            catch (Exception ex)
             {
-                await ShowCentralBankSelectionMenuAsync(chatId, messageId, cancellationToken);
+                // Catch any other unexpected exceptions from sub-handlers or Telegram API calls.
+                // Log the critical technical error.
+                _logger.LogError(ex, "An unexpected error occurred while handling CallbackQuery for UserID {UserId}, ChatID {ChatId}. Data: {CallbackData}",
+                    userId, chatId, data.Truncate(100));
+
+                // Inform the user about the unexpected error.
+                // This EditMessageTextAsync might also fail, hence the potential need for robust error messaging.
+                try
+                {
+                    await _messageSender.EditMessageTextAsync(
+                        chatId,
+                        messageId,
+                        "An unexpected error occurred while processing your request. Please try again later. 😢",
+                        cancellationToken: cancellationToken);
+                    // Or send a new message if editing the original isn't appropriate or fails.
+                    // await _messageSender.SendMessageAsync(chatId, "An unexpected error occurred...", cancellationToken: cancellationToken);
+                }
+                catch (Exception sendErrorEx)
+                {
+                    // Log if sending the error message also fails.
+                    _logger.LogError(sendErrorEx, "Failed to send fallback error message to ChatID {ChatId} after CallbackQuery handling failure.", chatId);
+                }
+
+                // **CRUCIAL:** Attempt to answer the callback query again as a last resort
+                // to dismiss the loading indicator on the button, even if message sending failed.
+                try
+                {
+                    await _messageSender.AnswerCallbackQueryAsync(callbackQuery.Id, "An error occurred!", true, cancellationToken: cancellationToken); // true means show alert
+                }
+                catch (Exception answerEx)
+                {
+                    // Log if answering the callback fails as well (less common but possible).
+                    _logger.LogError(answerEx, "Failed to answer callback query {CallbackId} after handling error.", callbackQuery.Id);
+                }
             }
-            else if (data.StartsWith(SearchKeywordsCallback))
-            {
-                await InitiateKeywordSearchAsync(chatId, messageId, userId, update, cancellationToken);
-            }
-            else if (data.StartsWith(ShowCbNewsPrefix))
-            {
-                var bankCode = data.Substring(ShowCbNewsPrefix.Length);
-                await ShowCentralBankNewsAsync(chatId, messageId, bankCode, cancellationToken);
-            }
-            // ^^^^^^ FIX: CONVERTED TO A PROPER IF/ELSE IF CHAIN ^^^^^^
         }
-
 
         private async Task ShowSentimentCurrencySelectionMenuAsync(long chatId, int messageId, CancellationToken cancellationToken)
         {
@@ -493,62 +608,153 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                 await _messageSender.SendTextMessageAsync(chatId, "An error occurred while displaying the Central Bank menu. Please try again later.", cancellationToken: cancellationToken);
             }
         }
-
         /// <summary>
-        /// 
+        /// Handles the request to show recent news for a selected central bank.
+        /// Fetches news from the repository, formats it, and updates the message.
+        /// Handles potential data access and Telegram API errors.
         /// </summary>
-        /// <param name="chatId"></param>
-        /// <param name="messageId"></param>
-        /// <param name="bankCode"></param>
-        /// <param name="cancellationToken"></param>
-        /// <returns></returns>
-        private async Task ShowCentralBankNewsAsync(long chatId, int messageId, string bankCode, CancellationToken cancellationToken)
+        /// <param name="chatId">The chat ID.</param>
+        /// <param name="messageId">The message ID to edit.</param>
+        /// <param name="bankCode">The code of the central bank.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>A Task representing the asynchronous operation.</returns>
+        public async Task ShowCentralBankNewsAsync(long chatId, int messageId, string bankCode, CancellationToken cancellationToken)
         {
+            // Basic validation for bankCode (already present)
             if (!CentralBankKeywords.TryGetValue(bankCode, out var bankInfo))
             {
-                _logger.LogWarning("Invalid bank code received: {BankCode}", bankCode);
-                return;
+                _logger.LogWarning("Invalid bank code received: {BankCode}. Exiting handler for ChatID {ChatId}, MessageID {MessageId}.", bankCode, chatId, messageId);
+                // Optionally inform the user or edit the message to indicate invalid input.
+                // await _messageSender.EditMessageTextAsync(chatId, messageId, "Invalid central bank selected.", cancellationToken: cancellationToken);
+                return; // Exit if bank code is invalid
             }
 
-            _logger.LogInformation("Fetching news for Central Bank: {BankName}", bankInfo.Name);
-            await _messageSender.EditMessageTextAsync(chatId, messageId, $"⏳ Fetching news for *{bankInfo.Name}*...", ParseMode.Markdown, cancellationToken: cancellationToken);
+            _logger.LogInformation("Fetching news for Central Bank: {BankName} (Code: {BankCode}) for ChatID {ChatId}, MessageID {MessageId}.", bankInfo.Name, bankCode, chatId, messageId);
 
-            var (results, totalCount) = await _newsRepository.SearchNewsAsync(
-                keywords: bankInfo.Keywords,
-                sinceDate: DateTime.UtcNow.AddDays(-14), // Search last 2 weeks for relevance
-                untilDate: DateTime.UtcNow,
-                pageNumber: 1,
-                pageSize: 5, // Show top 5
-                matchAllKeywords: false,
-                isUserVip: true,
-                cancellationToken: cancellationToken);
+            try
+            {
+                // --- Step 1: Show Loading Message ---
+                // Potential Telegram API call failure.
+                await _messageSender.EditMessageTextAsync(
+                    chatId,
+                    messageId,
+                    $"⏳ Fetching news for *{bankInfo.Name}*...", // Use MarkdownV2 escaping if needed for bankInfo.Name
+                    ParseMode.MarkdownV2, // Use MarkdownV2 consistently
+                    cancellationToken: cancellationToken);
+                _logger.LogDebug("Loading message sent for CB news fetch.");
 
-            var sb = new StringBuilder();
-            if (!results.Any())
-            {
-                sb.AppendLine($"No recent news found for the *{bankInfo.Name}*.");
-            }
-            else
-            {
-                sb.AppendLine(TelegramMessageFormatter.Bold($"🏛️ Top {results.Count} News Results for: {bankInfo.Name}"));
-                sb.AppendLine();
-                foreach (var item in results)
+                // --- Step 2: Search News ---
+                // Potential database/repository interaction failure.
+                var (results, totalCount) = await _newsRepository.SearchNewsAsync(
+                    keywords: bankInfo.Keywords,
+                    sinceDate: DateTime.UtcNow.AddDays(-14),
+                    untilDate: DateTime.UtcNow,
+                    pageNumber: 1,
+                    pageSize: 5,
+                    matchAllKeywords: false,
+                    isUserVip: true, // Assume search logic uses this
+                    cancellationToken: cancellationToken);
+                _logger.LogDebug("News search completed for {BankName}. Found {ResultCount} results out of {TotalCount}.", bankInfo.Name, results.Count(), totalCount);
+
+                // --- Step 3: Build and Send Result Message ---
+                var sb = new StringBuilder();
+                if (results == null || !results.Any()) // Check for null results from repository too
                 {
-                    sb.AppendLine($"🔸 *{TelegramMessageFormatter.EscapeMarkdownV2(item.Title)}*");
-                    sb.AppendLine($"_{TelegramMessageFormatter.EscapeMarkdownV2(item.SourceName)}_ at _{item.PublishedDate:yyyy-MM-dd HH:mm} UTC_");
-                    if (!string.IsNullOrWhiteSpace(item.Link) && Uri.TryCreate(item.Link, UriKind.Absolute, out var uri))
-                    {
-                        sb.AppendLine($"[Read More]({uri})");
-                    }
-                    sb.AppendLine("‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐");
+                    sb.AppendLine($"No recent news found for the *{TelegramMessageFormatter.EscapeMarkdownV2(bankInfo.Name)}*."); // Use EscapeMarkdownV2
                 }
+                else
+                {
+                    sb.AppendLine($"🏛️ *Top {results.Count()} News Results for: {TelegramMessageFormatter.EscapeMarkdownV2(bankInfo.Name)}*"); // Use EscapeMarkdownV2
+                    sb.AppendLine();
+                    // Check if any news items are null or have null properties before processing
+                    foreach (var item in results.Where(i => i != null))
+                    {
+                        // Ensure properties are not null before using them
+                        string title = item.Title?.Trim() ?? "Untitled";
+                        string sourceName = item.SourceName?.Trim() ?? "Unknown Source";
+                        string link = item.Link?.Trim() ?? string.Empty;
+                        DateTime publishedDate = item.PublishedDate; // Assuming PublishedDate is non-nullable DateTime
+
+                        sb.AppendLine($"🔸 *{TelegramMessageFormatter.EscapeMarkdownV2(title)}*"); // Use EscapeMarkdownV2
+                        sb.AppendLine($"_{TelegramMessageFormatter.EscapeMarkdownV2(sourceName)}_ at _{publishedDate:yyyy-MM-dd HH:mm} UTC_"); // Use EscapeMarkdownV2 and correct date format
+
+                        // Validate link format before creating link in Markdown
+                        if (!string.IsNullOrWhiteSpace(link) && Uri.TryCreate(link, UriKind.Absolute, out var uri))
+                        {
+                            // Escape parentheses in the URL itself for MarkdownV2 links
+                            string escapedLink = link.Replace("(", "\\(").Replace(")", "\\)");
+                            sb.AppendLine($"[Read More]({escapedLink})"); // MarkdownV2 link syntax
+                        }
+                        else
+                        {
+                            _logger.LogWarning("Invalid or missing URL format for news item link. NewsItemID: {NewsItemId}, Link: {Link}", item.Id, link);
+                            // Optionally append just the link text without the markdown link
+                            // sb.AppendLine($"Read More: {TelegramMessageFormatter.EscapeMarkdownV2(link)}");
+                        }
+                        sb.AppendLine("‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐"); // Separator
+                    }
+                }
+
+                // Build the keyboard. Assumes MarkupBuilder and CbWatchPrefix are defined.
+                var keyboard = MarkupBuilder.CreateInlineKeyboard(new[] {
+            InlineKeyboardButton.WithCallbackData("⬅️ Back to Bank Selection", CbWatchPrefix)
+        });
+
+                // Edit the message with the search results and keyboard. Potential Telegram API call failure.
+                await _messageSender.EditMessageTextAsync(
+                    chatId,
+                    messageId,
+                    sb.ToString().Trim(), // Trim trailing newlines
+                    ParseMode.MarkdownV2, // Use MarkdownV2 consistently
+                    keyboard,
+                    cancellationToken: cancellationToken);
+                _logger.LogInformation("CB news results sent for {BankName}.", bankInfo.Name);
             }
+            catch (OperationCanceledException ex) when (cancellationToken.IsCancellationRequested)
+            {
+                // Handle cancellation specifically.
+                _logger.LogInformation(ex, "CB news fetch for {BankName} was cancelled for ChatID {ChatId}.", bankInfo.Name, chatId);
+                // Optionally inform the user about cancellation
+                // try { await _messageSender.EditMessageTextAsync(chatId, messageId, "Operation cancelled.", cancellationToken: cancellationToken); } catch { }
+            }
+            // Catch specific repository/DB or mapping exceptions if you want more granular logging or handling.
+            // catch (DbException dbEx) // Example: Database error during search
+            // {
+            //     _logger.LogError(dbEx, "Database error during news search for {BankName} for ChatID {ChatId}.", bankInfo.Name, chatId);
+            //      // Inform the user about the database error
+            //     try { await _messageSender.EditMessageTextAsync(chatId, messageId, "A database error occurred while fetching news. Please try again later.", cancellationToken: cancellationToken); } catch { }
+            // }
+            // catch (AutoMapperMappingException mapEx) // Example: Mapping error inside SearchNewsAsync
+            // {
+            //      _logger.LogError(mapEx, "Mapping error during news processing for {BankName} for ChatID {ChatId}.", bankInfo.Name, chatId);
+            //       // Inform the user about the processing error
+            //      try { await _messageSender.EditMessageTextAsync(chatId, messageId, "An error occurred while processing news data. Please try again later.", cancellationToken: cancellationToken); } catch { }
+            // }
+            catch (Exception ex)
+            {
+                // Catch any other unexpected technical exceptions (e.g., Telegram API errors, other unhandled issues).
+                // Log the critical technical error.
+                _logger.LogError(ex, "An unexpected error occurred while showing CB news for {BankName} for ChatID {ChatId}.", bankInfo.Name, chatId);
 
-            var keyboard = MarkupBuilder.CreateInlineKeyboard(new[] {
-                InlineKeyboardButton.WithCallbackData("⬅️ Back to Bank Selection", CbWatchPrefix)
-            });
-
-            await _messageSender.EditMessageTextAsync(chatId, messageId, sb.ToString(), ParseMode.MarkdownV2, keyboard, cancellationToken: cancellationToken);
+                // Inform the user about the unexpected error.
+                // This EditMessageTextAsync might also fail, hence the potential need for robustness.
+                try
+                {
+                    await _messageSender.EditMessageTextAsync(
+                        chatId,
+                        messageId,
+                        "An unexpected error occurred while fetching news. Please try again later. 😢",
+                        cancellationToken: cancellationToken);
+                }
+                catch (Exception sendErrorEx)
+                {
+                    // Log if sending the error message also fails.
+                    _logger.LogError(sendErrorEx, "Failed to send fallback error message to ChatID {ChatId} after CB news failure.", chatId);
+                }
+                // Note: This is a message Edit, not a CallbackQuery Answer. If this was triggered
+                // by a CallbackQuery, the AnswerCallbackQueryAsync should have been done in the
+                // calling handler method to dismiss the spinner.
+            }
         }
     }
-}
+    }

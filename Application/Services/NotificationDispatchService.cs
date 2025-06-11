@@ -45,27 +45,45 @@ namespace Application.Services
 
         /// <summary>
         /// Asynchronously dispatches notifications for a specified news item to eligible users.
+        /// This involves fetching users, chunking them into batches, and enqueuing jobs
+        /// to send notifications for each batch, with an optional delay between enqueuing batches
+        /// to manage load or adhere to potential rate limits at the job scheduling level.
         /// </summary>
         /// <param name="newsItemId">The unique identifier of the news item to dispatch notifications for.</param>
         /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
         public async Task DispatchNewsNotificationAsync(Guid newsItemId, CancellationToken cancellationToken = default)
         {
-            NewsItem? newsItem = await _newsItemRepository.GetByIdAsync(newsItemId, cancellationToken);
+            // Retrieve the news item. Potential database interaction.
+            // Added try-catch for database call as discussed previously
+            NewsItem? newsItem;
+            try
+            {
+                newsItem = await _newsItemRepository.GetByIdAsync(newsItemId, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to retrieve news item {NewsItemId}.", newsItemId);
+                // Depending on error handling strategy, could re-throw a specific exception
+                return; // Cannot dispatch if news item cannot be retrieved
+            }
+
+
             if (newsItem == null)
             {
                 _logger.LogWarning("News item with ID {NewsItemId} not found. Cannot dispatch.", newsItemId);
-                return;
+                return; // Exit if news item is not found
             }
 
+            // Use a logging scope for better traceability
             using (_logger.BeginScope(new Dictionary<string, object?>
             {
                 ["NewsItemId"] = newsItem.Id,
-                ["NewsTitleScope"] = newsItem.Title?.Truncate(50) ?? "No Title"
+                ["NewsTitleScope"] = newsItem.Title?.Truncate(50) ?? "No Title" // Log truncated title
             }))
             {
                 _logger.LogInformation("Initiating BATCH notification dispatch for news item.");
 
-                // دریافت کل کاربران (بدون تغییر در Repository)
+                // Fetch target users based on news item criteria. Potential database interaction.
                 IEnumerable<User> targetUsers;
                 try
                 {
@@ -77,60 +95,80 @@ namespace Application.Services
                 }
                 catch (Exception ex)
                 {
+                    // Log the error but do not re-throw, as the goal is to dispatch if possible.
                     _logger.LogError(ex, "Failed to retrieve target users for news dispatch.");
-                    return;
+                    return; // Cannot proceed without users
                 }
 
+                // Convert to list and check if any users were found
                 var targetUserList = targetUsers?.ToList() ?? new List<User>();
                 if (!targetUserList.Any())
                 {
-                    _logger.LogInformation("No target users found for news item.");
-                    return;
+                    _logger.LogInformation("No target users found for news item matching criteria.");
+                    return; // Exit if no users match
                 }
 
-                _logger.LogInformation("Fetched {UserCount} total users. Now chunking into batches of {BatchSize}.", targetUserList.Count, BatchSize);
+                _logger.LogInformation("Fetched {UserCount} total users eligible for notification. Now chunking into batches of {BatchSize}.", targetUserList.Count, BatchSize);
 
-                // 1. دسته‌بندی کاربران (Chunking)
-                // ابتدا شناسه‌های تلگرام معتبر را استخراج کرده و سپس آن‌ها را دسته‌بندی می‌کنیم.
-                // متد Chunk نیازمند .NET 6 یا بالاتر است.
+                // 1. Chunk users into batches for sending
+                // Filter for valid Telegram IDs (long) and then chunk. Requires .NET 6+ for Chunk.
                 var userBatches = targetUserList
-                    .Select(u => long.TryParse(u.TelegramId, out long id) ? (long?)id : null)
-                    .Where(id => id.HasValue)
-                    .Select(id => id.Value)
-                    .Chunk(BatchSize);
+                    .Select(u => long.TryParse(u.TelegramId, out long id) ? (long?)id : null) // Safely parse TelegramId to long
+                    .Where(id => id.HasValue) // Keep only successful parses
+                    .Select(id => id.Value) // Get the long value
+                    .Chunk(BatchSize); // Divide into batches of BatchSize
 
-                // استخراج پارامترهای مشترک پیام (یک بار)
-                string messageText = BuildMessageText(newsItem);
+                // Extract common message parameters once
+                string messageText = BuildMessageText(newsItem); // Assume this method builds the MarkdownV2 text
                 string? imageUrl = newsItem.ImageUrl;
-                var buttons = BuildNotificationButtons(newsItem);
+                var buttons = BuildNotificationButtons(newsItem); // Assume this method builds InlineKeyboardMarkup
                 var categoryId = newsItem.AssociatedSignalCategoryId;
-                var categoryName = newsItem.AssociatedSignalCategory?.Name ?? string.Empty;
+                var categoryName = newsItem.AssociatedSignalCategory?.Name ?? string.Empty; // Added null check
 
                 int totalUsersEnqueued = 0;
                 int batchNumber = 1;
 
-                // 2. ایجاد یک جاب برای هر دسته
+                // Define the delay duration between enqueuing each batch job
+                // ADJUST THIS VALUE based on desired overall speed and Telegram rate limits at the job scheduling level.
+                // This is NOT the primary place to handle Telegram's message-per-second rate limit.
+                // The optimal place is *within* SendBatchNotificationAsync (between individual messages).
+                TimeSpan delayBetweenBatchEnqueues = TimeSpan.FromSeconds(0.5); // Example: Delay enqueuing next job by 500ms
+
+                // 2. Enqueue a job for each batch
                 foreach (var userBatch in userBatches)
                 {
+                    // Check for cancellation before enqueuing each batch's job
                     if (cancellationToken.IsCancellationRequested)
                     {
-                        _logger.LogWarning("Dispatch process was cancelled. {TotalUsersEnqueued} users were enqueued in batches.", totalUsersEnqueued);
-                        break;
+                        _logger.LogWarning("Dispatch process was cancelled while enqueuing batches. {TotalUsersEnqueued} users were enqueued in {BatchCount} batches so far.", totalUsersEnqueued, batchNumber - 1);
+                        break; // Exit the loop if cancellation is requested
                     }
+
+                    // Ensure the batch is not empty after filtering invalid Telegram IDs
+                    if (!userBatch.Any())
+                    {
+                        _logger.LogWarning("Batch #{BatchNumber} is empty after filtering. Skipping.", batchNumber);
+                        batchNumber++;
+                        continue; // Skip empty batches
+                    }
+
 
                     try
                     {
-                        // فراخوانی متد جدید برای ارسال دسته‌ای
+                        // Enqueue the job to send notifications for the current batch of users.
+                        // The actual delay between sending messages to *individual users* within the batch
+                        // should ideally be handled *inside* SendBatchNotificationAsync or by JobScheduler configuration.
                         string jobId = _jobScheduler.Enqueue<INotificationSendingService>(
                             service => service.SendBatchNotificationAsync(
-                                userBatch.ToList(),
+                                userBatch.ToList(), // Pass the list of user Telegram IDs for this batch
                                 messageText,
                                 imageUrl,
                                 buttons,
                                 newsItem.Id,
                                 categoryId,
                                 categoryName,
-                                CancellationToken.None
+                                CancellationToken.None // Pass CancellationToken.None if job cancellation is independent
+                                                       // Or pass 'cancellationToken' if job should respect overall dispatch cancellation
                             )
                         );
                         _logger.LogInformation("Enqueued batch job {JobId} for {UserCount} users (Batch #{BatchNumber}).",
@@ -139,15 +177,38 @@ namespace Application.Services
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError(ex, "Failed to enqueue batch job #{BatchNumber}. This batch of {UserCount} users will be skipped.", batchNumber, userBatch.Length);
+                        // Log the error if enqueuing a job fails, but continue with other batches.
+                        _logger.LogError(ex, "Failed to enqueue batch job #{BatchNumber} for {UserCount} users. This batch will be skipped.", batchNumber, userBatch.Length);
                     }
+
+                    // --- Apply Delay Between Enqueuing Batches ---
+                    // This delays the *creation/scheduling* of the next job.
+                    // It helps space out the jobs if your scheduler runs them immediately.
+                    // Use Task.Delay and pass the cancellation token so the delay can be interrupted.
+                    // We delay before the *next* batch, so we check if there *is* a next batch (current batch number is less than total batches).
+                    if (batchNumber < userBatches.Count())
+                    {
+                        try
+                        {
+                            // Wait for the specified delay duration.
+                            await Task.Delay(delayBetweenBatchEnqueues, cancellationToken);
+                            _logger.LogTrace("Delayed {DelayTotalSeconds} seconds before enqueuing batch #{NextBatchNumber}.", delayBetweenBatchEnqueues.TotalSeconds, batchNumber + 1);
+                        }
+                        catch (TaskCanceledException)
+                        {
+                            // Catch cancellation specifically for the delay task.
+                            _logger.LogWarning("Delay between batch enqueues was cancelled.");
+                            // The main cancellation check at the start of the loop will handle exiting.
+                        }
+                    }
+                    // --------------------------------------------
+
                     batchNumber++;
                 }
 
                 _logger.LogInformation("Completed enqueuing all batches. Total jobs created: {BatchCount}. Total users enqueued: {TotalUsersEnqueued}.", batchNumber - 1, totalUsersEnqueued);
             }
         }
-
         /// <summary>
         /// Builds the main text content for a news notification.
         /// </summary>

@@ -6,6 +6,7 @@ using Telegram.Bot.Types.ReplyMarkups;
 using TelegramPanel.Application.CommandHandlers.Features.News;
 using TelegramPanel.Application.CommandHandlers.MainMenu;
 using TelegramPanel.Application.Interfaces;
+using TelegramPanel.Formatters;
 using TelegramPanel.Infrastructure;
 using TelegramPanel.Infrastructure.Helpers;
 
@@ -22,25 +23,43 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
         private const string SelectCurrencyCallback = "select_currency";
         private readonly IActualTelegramMessageActions _directMessageSender;
         // 13+ popular forex pairs + gold
+        // Using country flag emojis for better visual representation of currency pairs.
+        // Note: Emoji support depends on the user's device and Telegram client.
         private static readonly (string Symbol, string Label)[] SupportedSymbols = new[]
         {
-            ("EURUSD", "🇪🇺 EUR/USD"),
-            ("GBPUSD", "🇬🇧 GBP/USD"),
-            ("USDJPY", "🇺🇸 USD/JPY"),
-            ("AUDUSD", "🇦🇺 AUD/USD"),
-            ("USDCAD", "🇺🇸 USD/CAD"),
-            ("USDCHF", "🇺🇸 USD/CHF"),
-            ("NZDUSD", "🇳🇿 NZD/USD"),
-            ("EURGBP", "🇪🇺 EUR/GBP"),
-            ("EURJPY", "🇪🇺 EUR/JPY"),
-            ("GBPJPY", "🇬🇧 GBP/JPY"),
-            ("AUDJPY", "🇦🇺 AUD/JPY"),
-            ("CHFJPY", "🇨🇭 CHF/JPY"),
-            ("EURAUD", "🇪🇺 EUR/AUD"),
-            ("EURCAD", "🇪🇺 EUR/CAD"),
-            ("GBPAUD", "🇬🇧 GBP/AUD"),
-            ("XAUUSD", "🥇 Gold (XAU/USD)")
-        };
+        // 🇪🇺 - European Union (Euro), 🇺🇸 - United States Dollar
+        ("EURUSD", "🇪🇺🇺🇸 EUR/USD"),
+        // 🇬🇧 - United Kingdom (British Pound), 🇺🇸 - United States Dollar
+        ("GBPUSD", "🇬🇧🇺🇸 GBP/USD"),
+        // 🇺🇸 - United States Dollar, 🇯🇵 - Japan (Yen)
+        ("USDJPY", "🇺🇸🇯🇵 USD/JPY"),
+        // 🇦🇺 - Australia (Australian Dollar), 🇺🇸 - United States Dollar
+        ("AUDUSD", "🇦🇺🇺🇸 AUD/USD"),
+        // 🇺🇸 - United States Dollar, 🇨🇦 - Canada (Canadian Dollar)
+        ("USDCAD", "🇺🇸🇨🇦 USD/CAD"),
+        // 🇺🇸 - United States Dollar, 🇨🇭 - Switzerland (Swiss Franc)
+        ("USDCHF", "🇺🇸🇨🇭 USD/CHF"),
+        // 🇳🇿 - New Zealand (New Zealand Dollar), 🇺🇸 - United States Dollar
+        ("NZDUSD", "🇳🇿🇺🇸 NZD/USD"),
+        // 🇪🇺 - European Union, 🇬🇧 - United Kingdom
+        ("EURGBP", "🇪🇺🇬🇧 EUR/GBP"),
+        // 🇪🇺 - European Union, 🇯🇵 - Japan
+        ("EURJPY", "🇪🇺🇯🇵 EUR/JPY"),
+        // 🇬🇧 - United Kingdom, 🇯🇵 - Japan
+        ("GBPJPY", "🇬🇧🇯🇵 GBP/JPY"),
+        // 🇦🇺 - Australia, 🇯🇵 - Japan
+        ("AUDJPY", "🇦🇺🇯🇵 AUD/JPY"),
+        // 🇨🇭 - Switzerland, 🇯🇵 - Japan
+        ("CHFJPY", "🇨🇭🇯🇵 CHF/JPY"),
+        // 🇪🇺 - European Union, 🇦🇺 - Australia
+        ("EURAUD", "🇪🇺🇦🇺 EUR/AUD"),
+        // 🇪🇺 - European Union, 🇨🇦 - Canada
+        ("EURCAD", "🇪🇺🇨🇦 EUR/CAD"),
+        // 🇬🇧 - United Kingdom, 🇦🇺 - Australia
+        ("GBPAUD", "🇬🇧🇦🇺 GBP/AUD"),
+        // For Gold (XAU/USD), Gold emoji 🥇 is appropriate, and USD is one component.
+        ("XAUUSD", "🥇🇺🇸 Gold (XAU/USD)")
+    };
 
         public MarketAnalysisCallbackHandler(
             ILogger<MarketAnalysisCallbackHandler> logger,
@@ -298,42 +317,88 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
         // ...
         private async Task ShowCurrencySelectionMenu(long chatId, int messageId, CancellationToken cancellationToken)
         {
-            // 3 columns per row
-            // این بخش rows را به صورت IEnumerable<InlineKeyboardButton[]> یا InlineKeyboardButton[][] می‌سازد
-            var buttonRowsArray = SupportedSymbols
-                .Select((pair, i) => new { pair, i })
-                .GroupBy(x => x.i / 3) // گروه بندی برای ردیف‌ها
-                .Select(group => group.Select(item => // هر گروه یک ردیف است
-                    InlineKeyboardButton.WithCallbackData(item.pair.Label, $"{SelectCurrencyCallback}:{item.pair.Symbol}"))
-                    .ToArray()) // هر ردیف را به آرایه‌ای از دکمه‌ها تبدیل می‌کند
-                .ToArray(); // کل ردیف‌ها را به آرایه‌ای از آرایه‌ها تبدیل می‌کند (InlineKeyboardButton[][])
+            _logger.LogInformation("Attempting to show currency selection menu for ChatID {ChatId}, MessageID {MessageId}.", chatId, messageId);
 
-            // اضافه کردن دکمه "Back to Main Menu"
-            // ابتدا یک ردیف جدید برای دکمه بازگشت می‌سازیم
-            var backButtonRow = new[] // این یک آرایه تکی از دکمه‌ها است
+            try
             {
-        InlineKeyboardButton.WithCallbackData("⬅️ Back to Main Menu", MenuCallbackQueryHandler.BackToMainMenuGeneral)
-    };
+                // Data source validation (basic check if SupportedSymbols could be null/empty unexpectedly)
+                if (SupportedSymbols == null || !SupportedSymbols.Any())
+                {
+                    _logger.LogError("SupportedSymbols list is null or empty. Cannot build currency selection menu.");
+                    // Optionally inform the user about this internal configuration error.
+                    // try { await _messageSender.EditMessageTextAsync(chatId, messageId, "Configuration error: Currency list is unavailable.", cancellationToken: cancellationToken); } catch { }
+                    return; // Exit if the data source is invalid
+                }
 
-            // ترکیب ردیف‌های دکمه‌های ارز با ردیف دکمه بازگشت
-            // این کار یک InlineKeyboardButton[][] می‌سازد
-            var allButtonRowsArray = buttonRowsArray.Concat(new[] { backButtonRow }).ToArray();
+                // Build button rows using LINQ (operations are generally safe)
+                // 3 columns per row
+                var buttonRowsArray = SupportedSymbols
+                    .Select((pair, i) => new { pair, i })
+                    .GroupBy(x => x.i / 3) // Grouping for rows
+                    .Select(group => group.Select(item => // Each group is a row
+                        InlineKeyboardButton.WithCallbackData(item.pair.Label, $"{SelectCurrencyCallback}:{item.pair.Symbol}"))
+                        .ToArray()) // Convert each row group to an array of buttons
+                    .ToArray(); // Convert all rows to an array of arrays (InlineKeyboardButton[][])
 
 
-            // استفاده از MarkupBuilder برای ساخت کیبورد نهایی
-            // اورلودی که params InlineKeyboardButton[][] می‌گیرد، استفاده خواهد شد.
-            var keyboard = MarkupBuilder.CreateInlineKeyboard(allButtonRowsArray);
+                // Add the "Back to Main Menu" button row
+                var backButtonRow = new[] // This is a single row array of buttons
+                {
+                InlineKeyboardButton.WithCallbackData("⬅️ Back to Main Menu", MenuCallbackQueryHandler.BackToMainMenuGeneral)
+            };
+
+                // Concatenate currency button rows with the back button row
+                var allButtonRowsArray = buttonRowsArray.Concat(new[] { backButtonRow }).ToArray();
 
 
-            await _messageSender.EditMessageTextAsync(
-                chatId,
-                messageId,
-                "💱 *Select a Forex Pair for Analysis:*\n\nChoose from the most popular currency pairs:",
-                ParseMode.Markdown, // یا هر ParseMode ای که استفاده می‌کنید
-                keyboard, // پاس دادن کیبورد ساخته شده توسط MarkupBuilder
-                cancellationToken); // CancellationToken فراموش نشود اگر متد EditMessageTextAsync شما آن را می‌پذیرد
+                // Use MarkupBuilder to create the final keyboard. Assumed safe.
+                var keyboard = MarkupBuilder.CreateInlineKeyboard(allButtonRowsArray);
+                _logger.LogTrace("Currency selection keyboard built with {RowCount} rows.", allButtonRowsArray.Length);
+
+
+                // Edit the message to show the currency selection menu. **Potential Telegram API call failure.**
+                await _messageSender.EditMessageTextAsync(
+                    chatId,
+                    messageId,
+                    "💱 *Select a Forex Pair for Analysis:*\n\nChoose from the most popular currency pairs:",
+                    ParseMode.MarkdownV2, // Using MarkdownV2 consistently. Ensure text is escaped.
+                    keyboard, // Pass the built keyboard
+                    cancellationToken); // Pass CancellationToken
+                _logger.LogInformation("Currency selection menu sent to ChatID {ChatId}, MessageID {MessageId}.", chatId, messageId);
+            }
+            catch (OperationCanceledException ex) when (cancellationToken.IsCancellationRequested)
+            {
+                // Handle cancellation specifically.
+                _logger.LogInformation(ex, "Showing currency selection menu was cancelled for ChatID {ChatId}, MessageID {MessageId}.", chatId, messageId);
+                // Optionally inform user about cancellation if needed, but often not necessary for UI updates.
+            }
+            // Catch specific exceptions from MarkupBuilder or SupportedSymbols access if needed, though unlikely for standard operations.
+            // catch (Exception exBuilder) { ... log builder error ... }
+            catch (Exception ex)
+            {
+                // Catch any other unexpected technical exceptions (e.g., Telegram API errors).
+                // Log the critical technical error.
+                _logger.LogError(ex, "An unexpected error occurred while showing currency selection menu for ChatID {ChatId}, MessageID {MessageId}.", chatId, messageId);
+
+                // Inform the user about the unexpected error by editing the message.
+                // This EditMessageTextAsync might also fail.
+                try
+                {
+                    await _messageSender.EditMessageTextAsync(
+                        chatId,
+                        messageId,
+                        "An error occurred while loading the currency list. Please try again later. 😢",
+                        cancellationToken: cancellationToken);
+                }
+                catch (Exception sendErrorEx)
+                {
+                    // Log if sending the error message also fails.
+                    _logger.LogError(sendErrorEx, "Failed to send fallback error message to ChatID {ChatId} after currency menu failure.", chatId);
+                }
+                // Note: If this was triggered by a CallbackQuery, the AnswerCallbackQueryAsync should have been
+                // handled in the calling handler method to dismiss the spinner.
+            }
         }
-
 
         // --- CHANGE START: Replace the entire ShowMarketAnalysis method ---
         // --- REWRITE START ---
@@ -423,40 +488,192 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                 await HandleServiceErrorAsync(chatId, messageId, symbol, callbackQueryId, ex, cancellationToken);
             }
         }
-        private Task HandleDataUnavailableAsync(long chatId, int messageId, string symbol, string callbackQueryId, MarketData? marketData, CancellationToken cancellationToken)
+
+
+
+        /// <summary>
+        /// Handles and reports the "data unavailable" state to the user by editing the message
+        /// and showing a pop-up alert. Logs the unavailability.
+        /// This method is designed to be resilient against Telegram API errors
+        /// while attempting to report the data status.
+        /// </summary>
+        /// <param name="chatId">The chat ID where the message should be edited.</param>
+        /// <param name="messageId">The ID of the message to edit.</param>
+        /// <param name="symbol">The symbol for which data is unavailable.</param>
+        /// <param name="callbackQueryId">The ID of the callback query to acknowledge (for pop-up).</param>
+        /// <param name="marketData">The market data object (might be null or incomplete, for logging context).</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>A Task representing the asynchronous operation (completion of reporting attempts).</returns>
+        public async Task HandleDataUnavailableAsync(long chatId, int messageId, string symbol, string callbackQueryId, MarketData? marketData, CancellationToken cancellationToken)
         {
-            _logger.LogWarning("Data unavailable for {Symbol}. IsLive:{IsLive}, Source:{Source}",
-                symbol, marketData?.IsPriceLive, marketData?.DataSource);
+            // Log the data unavailability status
+            _logger.LogWarning("Data unavailable for {Symbol}. IsLive:{IsLive}, Source:{Source} for ChatID {ChatId}, MessageID {MessageId}.",
+                symbol, marketData?.IsPriceLive, marketData?.DataSource, chatId, messageId);
 
-            string errorText = $"⚠️ Live market data for *{symbol}* is currently unavailable.\n\n" +
+            // Prepare the status message and keyboard (these operations are safe and don't need try-catch)
+            string errorText = $"⚠️ Live market data for *{TelegramMessageFormatter.EscapeMarkdownV2(symbol)}* is currently unavailable.\n\n" + // Escape symbol for MarkdownV2
                       $"However, you can fetch the latest fundamental news for this pair using the button below.";
-            var errorKeyboard = GetMarketAnalysisKeyboard(symbol);
+            var errorKeyboard = GetMarketAnalysisKeyboard(symbol); // Assumes this method is safe
 
-            // Edit the message to show the "unavailable" state.
-            var editTask = _messageSender.EditMessageTextAsync(chatId, messageId, errorText, ParseMode.Markdown, errorKeyboard, cancellationToken);
+            // Use a list of Tasks to collect reporting attempts
+            var reportingTasks = new List<Task>();
 
-            // Send a pop-up alert to the user explaining the issue.
-            var ackTask = _messageSender.AnswerCallbackQueryAsync(callbackQueryId, "Data for this pair is currently unavailable.", showAlert: true);
+            // --- Attempt 1: Edit the message to show the "unavailable" state ---
+            reportingTasks.Add(Task.Run(async () => // Use Task.Run to make this attempt independent
+            {
+                try
+                {
+                    await _messageSender.EditMessageTextAsync(chatId, messageId, errorText, ParseMode.MarkdownV2, errorKeyboard, cancellationToken); // Use MarkdownV2 consistently
+                    _logger.LogDebug("Successfully sent 'data unavailable' message by editing message {MessageId} in chat {ChatId}.", messageId, chatId);
+                }
+                catch (OperationCanceledException) { throw; } // Re-throw if cancellation was requested
+                catch (Exception editEx)
+                {
+                    // Log the failure to edit the message (this is a secondary error)
+                    _logger.LogError(editEx, "Failed to edit message {MessageId} in chat {ChatId} to report data unavailability for {Symbol}.", messageId, chatId, symbol);
+                    // Do NOT re-throw here
+                }
+            }, CancellationToken.None)); // Use CancellationToken.None for independence, or pass cancellationToken
 
-            // Execute both in parallel for maximum responsiveness.
-            return Task.WhenAll(editTask, ackTask);
+            // --- Attempt 2: Send a pop-up alert to the user ---
+            reportingTasks.Add(Task.Run(async () => // Use Task.Run to make this attempt independent
+            {
+                try
+                {
+                    // Use the original callbackQueryId passed to this method.
+                    await _messageSender.AnswerCallbackQueryAsync(callbackQueryId, "Data for this pair is currently unavailable.", showAlert: true, cancellationToken: cancellationToken);
+                    _logger.LogDebug("Successfully sent 'data unavailable' pop-up alert for callback {CallbackId}.", callbackQueryId);
+                }
+                catch (OperationCanceledException) { throw; } // Re-throw if cancellation was requested
+                catch (Exception ackEx)
+                {
+                    // Log the failure to send the pop-up alert
+                    _logger.LogError(ackEx, "Failed to send pop-up alert for callback {CallbackId} to report data unavailability for {Symbol}.", callbackQueryId, symbol);
+                    // Do NOT re-throw here
+                }
+            }, CancellationToken.None)); // Use CancellationToken.None for independence, or pass cancellationToken
+
+
+            // Execute reporting tasks in parallel.
+            // We await Task.WhenAll to ensure all attempts finish (either successfully or with logged errors).
+            // We wrap Task.WhenAll in a try-catch in case *it* throws (e.g., due to cancellation propagation).
+            try
+            {
+                await Task.WhenAll(reportingTasks);
+            }
+            catch (OperationCanceledException)
+            {
+                // If cancellation occurred within the tasks, just log and exit.
+                _logger.LogWarning("'Data unavailable' reporting tasks for {Symbol} were cancelled.", symbol);
+                throw; // Re-throw cancellation if it was requested
+            }
+            catch (Exception exWhileReporting)
+            {
+                // This catch block is for errors within Task.WhenAll itself.
+                _logger.LogError(exWhileReporting, "An error occurred within the 'data unavailable' reporting tasks for {Symbol}. Some reporting might have failed.", symbol);
+                // Do NOT re-throw. This method's job is done after attempting to report.
+            }
+
+            // Return Task.CompletedTask as this method is complete after attempts to report.
+            // (Or just 'return;' if the return type was Task).
         }
 
-        private Task HandleServiceErrorAsync(long chatId, int messageId, string symbol, string callbackQueryId, Exception ex, CancellationToken cancellationToken)
+        /// <summary>
+        /// Handles and reports a service error to the user by editing the message
+        /// and showing a pop-up alert. Logs the original error.
+        /// This method is designed to be resilient against Telegram API errors
+        /// while attempting to report the primary service error.
+        /// </summary>
+        /// <param name="chatId">The chat ID where the message should be edited.</param>
+        /// <param name="messageId">The ID of the message to edit.</param>
+        /// <param name="symbol">The symbol related to the failed operation (for user message).</param>
+        /// <param name="callbackQueryId">The ID of the callback query to acknowledge (for pop-up).</param>
+        /// <param name="ex">The exception that occurred in the primary service operation.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>A Task representing the asynchronous operation (completion of reporting attempts).</returns>
+        public async Task HandleServiceErrorAsync(long chatId, int messageId, string symbol, string callbackQueryId, Exception ex, CancellationToken cancellationToken)
         {
-            _logger.LogError(ex, "A service error occurred while fetching data for {Symbol}", symbol);
+            // Log the original service error immediately
+            _logger.LogError(ex, "A service error occurred while fetching data for {Symbol} for ChatID {ChatId}, MessageID {MessageId}.", symbol, chatId, messageId);
 
-            string errorText = $"❌ An unexpected error occurred while fetching data for *{symbol}*.";
-            var errorKeyboard = GetMarketAnalysisKeyboard(symbol);
+            // Prepare the error message and keyboard (these operations are safe and don't need try-catch)
+            string errorText = $"❌ An unexpected error occurred while fetching data for *{TelegramMessageFormatter.EscapeMarkdownV2(symbol)}*."; // Escape symbol for MarkdownV2
+            var errorKeyboard = GetMarketAnalysisKeyboard(symbol); // Assumes this method is safe and purely building UI markup
 
-            // Edit the message to show the error state.
-            var editTask = _messageSender.EditMessageTextAsync(chatId, messageId, errorText, ParseMode.Markdown, errorKeyboard, cancellationToken);
+            // Use a list of Tasks to collect reporting attempts
+            var reportingTasks = new List<Task>();
 
-            // Send a prominent pop-up alert to the user.
-            var ackTask = _messageSender.AnswerCallbackQueryAsync(callbackQueryId, "An error occurred. Please try again.", showAlert: true);
+            // --- Attempt 1: Edit the message to show the error state ---
+            reportingTasks.Add(Task.Run(async () => // Use Task.Run to make this attempt independent and handle its own error
+            {
+                try
+                {
+                    await _messageSender.EditMessageTextAsync(chatId, messageId, errorText, ParseMode.MarkdownV2, errorKeyboard, cancellationToken); // Use MarkdownV2 consistently
+                    _logger.LogDebug("Successfully sent error message by editing message {MessageId} in chat {ChatId}.", messageId, chatId);
+                }
+                catch (OperationCanceledException) { throw; } // Re-throw if cancellation was requested
+                catch (Exception editEx)
+                {
+                    // Log the failure to edit the message (this is a secondary error)
+                    _logger.LogError(editEx, "Failed to edit message {MessageId} in chat {ChatId} to report service error for {Symbol}.", messageId, chatId, symbol);
+                    // Do NOT re-throw here, we want the other reporting attempts to proceed
+                }
+            }, CancellationToken.None)); // Use CancellationToken.None so this task runs even if the main method's token is cancelled immediately (unless explicit cancellation is handled internally)
+                                         // Consider passing the original cancellationToken if editing should be cancelable.
 
-            // Execute both in parallel for maximum responsiveness.
-            return Task.WhenAll(editTask, ackTask);
+
+            // --- Attempt 2: Send a prominent pop-up alert to the user ---
+            reportingTasks.Add(Task.Run(async () => // Use Task.Run to make this attempt independent
+            {
+                try
+                {
+                    // Use the original callbackQueryId passed to this method.
+                    // AnswerCallbackQueryAsync is often fire-and-forget or awaited briefly in the main handler,
+                    // but ensuring its completion here means the alert *attempt* finishes.
+                    await _messageSender.AnswerCallbackQueryAsync(callbackQueryId, "An error occurred. Please try again.", showAlert: true, cancellationToken: cancellationToken);
+                    _logger.LogDebug("Successfully sent pop-up error alert for callback {CallbackId}.", callbackQueryId);
+                }
+                catch (OperationCanceledException) { throw; } // Re-throw if cancellation was requested
+                catch (Exception ackEx)
+                {
+                    // Log the failure to send the pop-up alert
+                    _logger.LogError(ackEx, "Failed to send pop-up alert for callback {CallbackId} to report service error for {Symbol}.", callbackQueryId, symbol);
+                    // Do NOT re-throw here
+                }
+            }, CancellationToken.None)); // Use CancellationToken.None for independence, or pass cancellationToken
+
+
+            // Execute reporting tasks in parallel.
+            // We await Task.WhenAll to ensure all attempts finish (either successfully or with logged errors).
+            // We wrap Task.WhenAll in a try-catch in case *it* throws (e.g., due to cancellation propagation
+            // from the inner Task.Run calls if they re-throw cancellation).
+            try
+            {
+                await Task.WhenAll(reportingTasks);
+            }
+            catch (OperationCanceledException)
+            {
+                // If cancellation occurred within the tasks, just log and exit.
+                _logger.LogWarning("Service error reporting tasks for {Symbol} were cancelled.", symbol);
+                throw; // Re-throw cancellation if it was requested
+            }
+            catch (Exception exWhileReporting)
+            {
+                // This catch block is for errors that happened within Task.WhenAll itself,
+                // or possibly re-thrown exceptions from the inner tasks if not caught there.
+                // Given the inner tasks catch and log, this outer catch is mostly for robustness
+                // or if inner tasks re-throw non-cancellation exceptions.
+                _logger.LogError(exWhileReporting, "An error occurred within the error reporting tasks for {Symbol}. Some reporting might have failed.", symbol);
+                // Do NOT re-throw exWhileReporting if you want the primary service error to be the main focus.
+                // This method's primary goal is to log the original error and attempt reporting.
+            }
+
+            // The original service error (ex) has already been logged at the start of the method.
+            // We do NOT re-throw 'ex' here, as this method's job is to handle the *reporting* of 'ex', not propagate 'ex'.
+            // The caller of HandleServiceErrorAsync should have already caught the original 'ex'.
+
+            // Return Task.CompletedTask as this method is complete after attempts to report.
+            // (Or just 'return;' if the return type was Task).
         }
 
 

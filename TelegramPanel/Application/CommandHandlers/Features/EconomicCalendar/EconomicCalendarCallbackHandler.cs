@@ -1,6 +1,7 @@
 ﻿// File: TelegramPanel/Application/CommandHandlers/Features/EconomicCalendar/EconomicCalendarCallbackHandler.cs
 using Application.Interfaces;
 using Microsoft.Extensions.Logging;
+using Shared.Extensions;
 using System.Text;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
@@ -262,7 +263,8 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
 
                 // Loop through the retrieved releases and format them for the message.
                 int counter = 1 + (page - 1) * PageSize; // Start from the correct number for pagination
-                foreach (var release in result.Data)
+                                                         // Added Where(r => r != null) for defensive check if list contains nulls
+                foreach (var release in result.Data.Where(r => r != null).ToList()) // Added ToList() if needed, or just iterate
                 {
                     // Generate numeric emoji for the item number (supports up to 100).
                     string emoji = "";
@@ -272,7 +274,20 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
                     }
                     else if (counter > 10 && counter < 100) // Handle 11-99 (two digits)
                     {
-                        emoji = $"{counter.ToString()[0]}\u20E3{counter.ToString()[1]}\u20E3";
+                        // Added null check for ToString() result just to be extremely defensive, though highly unlikely
+                        string counterString = counter.ToString() ?? "";
+                        if (counterString.Length == 2)
+                        {
+                            emoji = $"{counterString[0]}\u20E3{counterString[1]}\u20E3";
+                        }
+                        else if (counterString.Length == 3) // Added handling for 3 digits if necessary
+                        {
+                            emoji = $"{counterString[0]}\u20E3{counterString[1]}\u20E3{counterString[2]}\u20E3";
+                        }
+                        else // Fallback for numbers >= 100 or unusual cases
+                        {
+                            emoji = counter.ToString() + ".";
+                        }
                     }
                     else // Fallback for numbers >= 100 or unusual cases
                     {
@@ -283,24 +298,69 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
                     // Determine Impact Level and Emoji based on release name content.
                     // Using OrdinalIgnoreCase for case-insensitive comparison without locale issues.
                     string impactEmoji = "🟢"; // Default: Low Impact
-                    if (release.Name.Contains("H.", StringComparison.OrdinalIgnoreCase))
+                    string releaseNameForImpactCheck = release.Name?.Trim() ?? ""; // Defensive null check
+                    if (releaseNameForImpactCheck.Contains("H.", StringComparison.OrdinalIgnoreCase))
                     {
                         impactEmoji = "🔴";  // High Impact
                     }
-                    else if (release.Name.Contains("M.", StringComparison.OrdinalIgnoreCase))
+                    else if (releaseNameForImpactCheck.Contains("M.", StringComparison.OrdinalIgnoreCase))
                     {
                         impactEmoji = "🟠";  // Medium Impact
                     }
 
-                    // Append formatted release information to the message.
-                    sb.AppendLine($"\n{emoji} {TelegramMessageFormatter.EscapeMarkdownV2(release.Name)} {impactEmoji}");  // Added emoji and enhanced formatting
-                                                                                                                          // Add official source link if available.
+                    // --- START REPLACED LINK LOGIC ---
+                    // Append formatted release information (excluding link for now)
+                    string releaseName = release.Name?.Trim() ?? "Untitled Release"; // Defensive null check
+                    sb.AppendLine($"\n{emoji} *{TelegramMessageFormatter.EscapeMarkdownV2(releaseName)}* {impactEmoji}"); // Make title bold consistently
+
+                    // Add official source link if available and valid.
+                    // Add official source link if available and valid.
                     if (!string.IsNullOrWhiteSpace(release.Link))
                     {
-                        sb.AppendLine($"🔗 [Official Source]({TelegramMessageFormatter.EscapeMarkdownV2(release.Link)})"); // More engaging link and escape link in MarkdownV2
+                        string rawLink = release.Link.Trim();
+                        // Validate if the link is a valid absolute URI (http or https)
+                        if (Uri.TryCreate(rawLink, UriKind.Absolute, out Uri? uri) && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
+                        {
+                            // **CORRECTED MarkdownV2 URL ESCAPING:**
+                            // Only characters '(' ')' and '\' need to be escaped with '\' inside a MarkdownV2 URL link part.
+                            // This replaces the problematic TelegramMessageFormatter.EscapeMarkdownV2(rawLink)
+                            string escapedLinkUrl = rawLink
+                                .Replace("(", "\\(")
+                                .Replace(")", "\\)")
+                                .Replace("\\", "\\\\"); // Escape backslashes themselves if they can appear in the URL
+
+                            // Escape the *text* part of the link for MarkdownV2.
+                            string linkText = "🔗 Official Source"; // Text to display for the link
+                                                                    // Use your existing EscapeMarkdownV2 method for the *text* part.
+                            string escapedLinkText = TelegramMessageFormatter.EscapeMarkdownV2(linkText);
+
+                            // Append the formatted MarkdownV2 link: [Escaped Text](Escaped URL)
+                            sb.AppendLine($"[{escapedLinkText}]({escapedLinkUrl})");
+
+                            // Log that a link was added (optional, but helpful for debugging)
+                            _logger.LogTrace("Added valid link for release '{ReleaseName}' (ID: {ReleaseId}): [{LinkText}]({LinkUrl})", (release.Name ?? "Untitled").Truncate(30), release.Id, linkText, rawLink.Truncate(50));
+                        }
+                        else
+                        {
+                            // Log if the link exists but is invalid/not absolute (optional, but helpful for debugging)
+                            _logger.LogWarning("Skipping invalid or non-absolute link for release '{ReleaseName}' (ID: {ReleaseId}): '{Link}'", (release.Name ?? "Untitled").Truncate(30), release.Id, rawLink.Truncate(100));
+                            // Optionally append the raw link as text (escaped) so user can see it (useful for debugging API data)
+                            // sb.AppendLine($"🔗 Source Link: {TelegramMessageFormatter.EscapeMarkdownV2(rawLink.Truncate(100))}");
+                        }
                     }
+                    else
+                    {
+                        // Log if the link is missing
+                        _logger.LogTrace("Link is null or whitespace for release '{ReleaseName}' (ID: {ReleaseId}). Skipping link.", releaseName.Truncate(30), release.Id);
+                    }
+                    // --- END REPLACED LINK LOGIC ---
+
+                    sb.AppendLine("‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐"); // Add a separator after each item
+
+                    // Increment counter after processing each item
                     counter++;
                 }
+
 
                 // Build the pagination keyboard based on whether there are more pages.
                 var releasesKeyboard = GetPaginationKeyboard(page, result.Data.Count == PageSize);
@@ -310,10 +370,11 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
                 await _messageSender.EditMessageTextAsync(
                     chatId.Value,
                     messageId.Value,
-                    sb.ToString(),
+                    sb.ToString().TrimEnd('\n', '\r'), // Trim trailing newlines/carriage returns
                     ParseMode.MarkdownV2, // Ensure correct parsing mode is used
                     releasesKeyboard,
                     cancellationToken);
+
 
                 // Optionally answer the callback query upon success to remove the loading spinner.
                 // await _botClient.AnswerCallbackQueryAsync(callbackQuery.Id, cancellationToken: cancellationToken);

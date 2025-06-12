@@ -17,10 +17,8 @@
 
 ### 🚀 Get Started Now!
 
-<ul style="list-style: none; padding: 0;"> <!-- Optional: removes default list bullets and padding -->
-  <li style="font-size: 1.5em;">**Live Bot:** [https://t.me/trade_ai_helper_bot](https://t.me/trade_ai_helper_bot) ✨</li>
-  <li>*Just click the link to open the bot in Telegram and start trading!*</li>
-</ul>
+*   <span style="font-size: 3.5em;">**Live Bot:** [https://t.me/trade_ai_helper_bot](https://t.me/trade_ai_helper_bot) ✨</span>
+*   *Just click the link to open the bot in Telegram and start trading!*
 
 ![ForexSignalBot Demo](https://raw.githubusercontent.com/Opselon/ForexTradingBot/master/assets/lcak2Rr.gif)
 ---

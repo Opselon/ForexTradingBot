@@ -127,7 +127,7 @@ namespace Application.Services
                 // ADJUST THIS VALUE based on desired overall speed and Telegram rate limits at the job scheduling level.
                 // This is NOT the primary place to handle Telegram's message-per-second rate limit.
                 // The optimal place is *within* SendBatchNotificationAsync (between individual messages).
-                TimeSpan delayBetweenBatchEnqueues = TimeSpan.FromSeconds(0.5); // Example: Delay enqueuing next job by 500ms
+                TimeSpan delayBetweenBatchEnqueues = TimeSpan.FromSeconds(5); // Example: Delay enqueuing next job by 500ms
 
                 // 2. Enqueue a job for each batch
                 foreach (var userBatch in userBatches)
@@ -150,6 +150,7 @@ namespace Application.Services
 
                     try
                     {
+
                         // Enqueue the job to send notifications for the current batch of users.
                         // The actual delay between sending messages to *individual users* within the batch
                         // should ideally be handled *inside* SendBatchNotificationAsync or by JobScheduler configuration.

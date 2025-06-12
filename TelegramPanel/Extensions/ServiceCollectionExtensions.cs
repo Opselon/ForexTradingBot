@@ -11,7 +11,7 @@ using Microsoft.Extensions.Options;
 using Telegram.Bot;
 using TelegramPanel.Application.CommandHandlers.Entry;
 using TelegramPanel.Application.CommandHandlers.Features.Analysis;
-using TelegramPanel.Application.CommandHandlers.Features.Crypto;
+using TelegramPanel.Application.CommandHandlers.Features.CoinGecko;
 using TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar;
 using TelegramPanel.Application.Interfaces;    // For ITelegram...Handler interfaces
 using TelegramPanel.Application.Pipeline;

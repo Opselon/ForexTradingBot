@@ -376,7 +376,7 @@ We enthusiastically welcome and encourage contributions from the global develope
 3.  **Commit your changes:** Make your code changes and commit them using clear, concise, and descriptive commit messages. We encourage following [conventional commit guidelines](https://www.conventionalcommits.org/en/v1.0.0/) (e.g., `feat: add new signal type` ✨, `fix: resolve issue with RSS parsing` 🐛, `docs: update roadmap` 📝). 📝
 4.  **Push your branch:** After committing, push your new branch to your forked repository on GitHub. ⬆️
 5.  **Open a Pull Request (PR):** Navigate to the original `ForexTradingBot` repository on GitHub and open a new Pull Request. Provide a clear and detailed description of your changes, including why they are necessary and what problem they solve. Reference any related issues. 🚀 Pull!
-
+.
 Please review our `CONTRIBUTING.md` file (which will be created soon! 🔜 Stay tuned for detailed contribution guidelines and coding standards! 📋) for more specific instructions.
 
 ---

@@ -4,6 +4,7 @@
 // Standard .NET & NuGet
 // Project specific
 using Application.Common.Interfaces;
+using Application.DTOs;
 using Application.DTOs.Notifications;
 using Application.Interfaces;
 using Hangfire;
@@ -93,82 +94,91 @@ namespace BackgroundTasks.Services
         // ✅✅ [جدید] ✅✅
         // متد جدید برای ارسال دسته‌ای بدون نیاز به DTO جدید.
         // توجه: این متد باید به اینترفیس INotificationSendingService هم اضافه شود.
-        [DisableConcurrentExecution(timeoutInSeconds: 1800)] // 1800 ثانیه = 30 دقیقه
-        [Hangfire.JobDisplayName("Send Batch Notification ({0.Count} users) for News")]
+        [DisableConcurrentExecution(timeoutInSeconds: 600)] // 600 seconds = 10 minutes
+                                                            // The display name still works perfectly, as it will now show "(1 users)".
+        [Hangfire.JobDisplayName("Send Notification to UserID: {0[0]} for News: {4}")]
+        // IMPORTANT: Do NOT retry notification jobs. If a user has blocked the bot or the send fails
+        // for a specific reason, retrying could be seen as spam and won't fix the underlying issue.
         [Hangfire.AutomaticRetry(Attempts = 0)]
         public async Task SendBatchNotificationAsync(
-            List<long> targetTelegramUserIds,
-            string messageText,
-            string? imageUrl,
-            List<NotificationButton> buttons,
-            Guid newsItemId,
-            Guid? newsItemSignalCategoryId,
-            string? newsItemSignalCategoryName,
-            CancellationToken jobCancellationToken)
+      List<long> targetTelegramUserIdList, // Renamed to reflect it's a list, though usually with one item
+      string messageText,
+      string? imageUrl,
+      List<NotificationButton> buttons,
+      Guid newsItemId,
+      Guid? newsItemSignalCategoryId,
+      string? newsItemSignalCategoryName,
+      CancellationToken jobCancellationToken)
         {
-            if (targetTelegramUserIds == null || !targetTelegramUserIds.Any())
+            // --- 1. Validation ---
+            // Although the dispatcher sends one user, we defend against empty/null lists.
+            if (targetTelegramUserIdList == null || !targetTelegramUserIdList.Any())
             {
-                _logger.LogWarning("Received an empty or null user batch to process. Skipping job.");
+                _logger.LogWarning("Job received an empty or null user list. Skipping.");
                 return;
             }
 
+            // Since the dispatcher now sends one user per job, we process only the first.
+            var userId = targetTelegramUserIdList[0];
+
             _logger.LogInformation(
-                "Starting batch send for {UserCount} users. NewsID: {NewsItemId}",
-                targetTelegramUserIds.Count, newsItemId);
+                "Executing notification job for UserID: {UserId}, NewsID: {NewsItemId}",
+                userId, newsItemId);
 
-            int successCount = 0;
-            int failedCount = 0;
-
-            foreach (var userId in targetTelegramUserIds)
+            try
             {
-                if (jobCancellationToken.IsCancellationRequested)
+                // --- 2. Execution ---
+                // Create the payload for the single user this job is responsible for.
+                var singlePayload = new NotificationJobPayload
                 {
-                    _logger.LogWarning("Batch processing was cancelled. Processed {ProcessedCount} users.", successCount + failedCount);
-                    break;
-                }
+                    TargetTelegramUserId = userId,
+                    MessageText = messageText,
+                    UseMarkdown = true,
+                    ImageUrl = imageUrl,
+                    Buttons = buttons,
+                    NewsItemId = newsItemId,
+                    NewsItemSignalCategoryId = newsItemSignalCategoryId,
+                    NewsItemSignalCategoryName = newsItemSignalCategoryName,
+                };
 
-                try
-                {
-                    // برای هر کاربر، یک payload موقت می‌سازیم تا به متد پردازشی ارسال کنیم
-                    var singlePayload = new NotificationJobPayload
-                    {
-                        TargetTelegramUserId = userId,
-                        MessageText = messageText,
-                        UseMarkdown = true, // فرض می‌کنیم همیشه Markdown است
-                        ImageUrl = imageUrl,
-                        Buttons = buttons,
-                        NewsItemId = newsItemId,
-                        NewsItemSignalCategoryId = newsItemSignalCategoryId,
-                        NewsItemSignalCategoryName = newsItemSignalCategoryName,
-                    };
+                // Process the single notification. This is the core work of the job.
+                await ProcessSingleNotification(singlePayload, jobCancellationToken);
 
-                    await ProcessSingleNotification(singlePayload, jobCancellationToken);
-                    successCount++;
-                }
-                catch (Exception ex)
-                {
-                    // ProcessSingleNotification خودش لاگ دقیق را انجام می‌دهد
-                    _logger.LogError(ex, "A user failed in batch processing. UserID: {UserId}. Continuing with next.", userId);
-                    failedCount++;
-                }
-
-                // ----> مهم‌ترین بخش: اعمال تاخیر <----
-                await Task.Delay(DelayBetweenBatchMessagesMs, jobCancellationToken);
+                _logger.LogInformation(
+                    "Successfully completed notification job for UserID: {UserId}, NewsID: {NewsItemId}",
+                    userId, newsItemId);
             }
-
-            _logger.LogInformation(
-                "Finished batch send for NewsID: {NewsItemId}. Success: {SuccessCount}, Failed: {FailedCount}.",
-                newsItemId, successCount, failedCount);
+            catch (OperationCanceledException)
+            {
+                // This will trigger if the job is cancelled from the Hangfire dashboard or if its timeout is reached.
+                _logger.LogWarning("Notification job for UserID {UserId} was cancelled.", userId);
+                // Re-throw so Hangfire correctly marks the job as Canceled/Failed instead of Succeeded.
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // The ProcessSingleNotification method should handle detailed error logging (e.g., user blocked bot).
+                // This catch is the final safety net.
+                _logger.LogCritical(ex, "A critical, unhandled exception occurred in the notification job for UserID {UserId}.", userId);
+                // Re-throw so Hangfire marks the job as Failed.
+                throw;
+            }
         }
-
         #endregion
 
         #region Private Helper Methods
 
         // ✅✅ [تغییر] ✅✅
         // منطق اصلی ارسال به این متد خصوصی منتقل شده تا از تکرار کد جلوگیری شود.
+        /// <summary>
+        /// The core processing unit for a single notification. This method is a self-contained,
+        /// fortified algorithm with integrated timeouts ("Hang Shield") and self-healing logic.
+        /// </summary>
         private async Task ProcessSingleNotification(NotificationJobPayload payload, CancellationToken cancellationToken)
         {
+            // --- Configuration is now defined directly inside the method ---
+            var operationTimeout = TimeSpan.FromSeconds(15);
+
             using var logScope = _logger.BeginScope(new Dictionary<string, object?>
             {
                 ["TargetTelegramUserId"] = payload.TargetTelegramUserId,
@@ -177,63 +187,118 @@ namespace BackgroundTasks.Services
 
             try
             {
-                var userDto = await _userService.GetUserByTelegramIdAsync(payload.TargetTelegramUserId.ToString(), cancellationToken);
-                if (userDto == null)
+                // --- 1. Fetch User Data (with In-Method Hang Shield) ---
+                UserDto? userDto;
+                var getUserTask = _userService.GetUserByTelegramIdAsync(payload.TargetTelegramUserId.ToString(), cancellationToken);
+                if (await Task.WhenAny(getUserTask, Task.Delay(operationTimeout, cancellationToken)) == getUserTask)
                 {
-                    _logger.LogWarning("User not found, skipping.");
-                    return; // کاربر دیگر وجود ندارد
+                    userDto = await getUserTask;
+                }
+                else
+                {
+                    throw new TimeoutException($"Operation 'GetUserByTelegramId' timed out after {operationTimeout.TotalSeconds} seconds.");
                 }
 
-                // ساخت دکمه‌ها بر اساس منطق دقیق شما
-                var inlineButtons = new List<InlineKeyboardButton>();
-                if (payload.Buttons != null)
+                if (userDto == null)
                 {
-                    var readMoreButton = payload.Buttons.FirstOrDefault(b => b.IsUrl);
+                    _logger.LogWarning("User not found in database, skipping notification.");
+                    return; // The user no longer exists, job is successful (nothing to do).
+                }
+
+                // --- 2. Build Keyboard (with In-Method Hang Shield) ---
+                InlineKeyboardMarkup? finalKeyboard;
+                var buildKeyboardTask = Task.Run(async () => // Encapsulate the entire keyboard logic in a Task
+                {
+                    var inlineButtons = new List<InlineKeyboardButton>();
+
+                    // "Read More" button
+                    var readMoreButton = payload.Buttons?.FirstOrDefault(b => b.IsUrl);
                     if (readMoreButton != null)
                     {
                         inlineButtons.Add(InlineKeyboardButton.WithUrl(TelegramMessageFormatter.EscapeMarkdownV2(readMoreButton.Text), readMoreButton.CallbackDataOrUrl));
                     }
-                }
-                if (payload.NewsItemSignalCategoryId.HasValue && !string.IsNullOrWhiteSpace(payload.NewsItemSignalCategoryName))
-                {
-                    bool isSubscribed = await _userPrefsRepository.IsUserSubscribedToCategoryAsync(userDto.Id, payload.NewsItemSignalCategoryId.Value, cancellationToken);
-                    inlineButtons.Add(isSubscribed
-                        ? InlineKeyboardButton.WithCallbackData($"✅ Unsubscribe from {payload.NewsItemSignalCategoryName.Truncate(20)}", $"{NewsNotificationCallbackHandler.UnsubscribeFromCategoryPrefix}{payload.NewsItemSignalCategoryId.Value}")
-                        : InlineKeyboardButton.WithCallbackData($"➕ Subscribe to {payload.NewsItemSignalCategoryName.Truncate(20)}", $"{NewsNotificationCallbackHandler.SubscribeToCategoryPrefix}{payload.NewsItemSignalCategoryId.Value}"));
-                }
-                InlineKeyboardMarkup? finalKeyboard = inlineButtons.Any() ? new InlineKeyboardMarkup(inlineButtons) : null;
 
-                var pollyContext = new Context($"NotificationTo_{payload.TargetTelegramUserId}", new Dictionary<string, object> { { "TelegramUserId", payload.TargetTelegramUserId } });
+                    // "Subscribe/Unsubscribe" button (includes a database call)
+                    if (payload.NewsItemSignalCategoryId.HasValue && !string.IsNullOrWhiteSpace(payload.NewsItemSignalCategoryName))
+                    {
+                        // The DB call is now inside this task, so it's protected by the timeout below.
+                        bool isSubscribed = await _userPrefsRepository.IsUserSubscribedToCategoryAsync(userDto.Id, payload.NewsItemSignalCategoryId.Value, cancellationToken);
+                        inlineButtons.Add(isSubscribed
+                            ? InlineKeyboardButton.WithCallbackData($"✅ Unsubscribe from {payload.NewsItemSignalCategoryName.Truncate(20)}", $"{NewsNotificationCallbackHandler.UnsubscribeFromCategoryPrefix}{payload.NewsItemSignalCategoryId.Value}")
+                            : InlineKeyboardButton.WithCallbackData($"➕ Subscribe to {payload.NewsItemSignalCategoryName.Truncate(20)}", $"{NewsNotificationCallbackHandler.SubscribeToCategoryPrefix}{payload.NewsItemSignalCategoryId.Value}"));
+                    }
 
-                // ارسال پیام
-                if (!string.IsNullOrWhiteSpace(payload.ImageUrl))
+                    return inlineButtons.Any() ? new InlineKeyboardMarkup(inlineButtons) : null;
+                }, cancellationToken);
+
+                if (await Task.WhenAny(buildKeyboardTask, Task.Delay(operationTimeout, cancellationToken)) == buildKeyboardTask)
                 {
-                    await _telegramApiRetryPolicy.ExecuteAsync(ctx => _telegramMessageSender.SendPhotoAsync(
-                        payload.TargetTelegramUserId, payload.ImageUrl, payload.MessageText, ParseMode.MarkdownV2, finalKeyboard, cancellationToken), pollyContext);
+                    finalKeyboard = await buildKeyboardTask;
                 }
                 else
                 {
-                    await _telegramApiRetryPolicy.ExecuteAsync(ctx => _telegramMessageSender.SendTextMessageAsync(
-                        payload.TargetTelegramUserId, payload.MessageText, ParseMode.MarkdownV2, finalKeyboard, cancellationToken, new LinkPreviewOptions { IsDisabled = true }), pollyContext);
+                    throw new TimeoutException($"Operation 'BuildKeyboard' timed out after {operationTimeout.TotalSeconds} seconds.");
                 }
+
+                // --- 3. Send to Telegram (with In-Method Hang Shield + Polly Retries) ---
+                var pollyContext = new Context($"NotificationTo_{payload.TargetTelegramUserId}");
+
+                var sendWithPollyTask = _telegramApiRetryPolicy.ExecuteAsync(async (ctx) =>
+                {
+                    if (!string.IsNullOrWhiteSpace(payload.ImageUrl))
+                    {
+                        await _telegramMessageSender.SendPhotoAsync(
+                            payload.TargetTelegramUserId, payload.ImageUrl, payload.MessageText, ParseMode.MarkdownV2, finalKeyboard, cancellationToken);
+                    }
+                    else
+                    {
+                        await _telegramMessageSender.SendTextMessageAsync(
+                            payload.TargetTelegramUserId, payload.MessageText, ParseMode.MarkdownV2, finalKeyboard, cancellationToken, new LinkPreviewOptions { IsDisabled = true });
+                    }
+                }, pollyContext);
+
+                if (await Task.WhenAny(sendWithPollyTask, Task.Delay(operationTimeout, cancellationToken)) != sendWithPollyTask)
+                {
+                    throw new TimeoutException($"Operation 'SendTelegramMessageWithPolly' timed out after {operationTimeout.TotalSeconds} seconds.");
+                }
+                await sendWithPollyTask; // Await again to propagate any exceptions from Polly itself.
+
 
                 _logger.LogInformation("Notification successfully sent.");
             }
             catch (ApiRequestException apiEx) when (apiEx.ErrorCode == 403 || (apiEx.Message != null && apiEx.Message.Contains("chat not found")))
             {
-                _logger.LogWarning(apiEx, "Non-retryable error (bot blocked or user deleted). User will be marked as unreachable.");
-                // await _userService.MarkUserAsUnreachableAsync(payload.TargetTelegramUserId.ToString(), "BotBlockedOrChatNotFound", cancellationToken);
-                throw; // این خطا باعث fail شدن جاب تکی می‌شود و در جاب دسته‌ای، catch می‌شود.
+                _logger.LogWarning(apiEx, "Permanent Send Failure: Bot was blocked or user deleted chat.");
+
+                // --- 4. Self-Healing Logic (In-Method) ---
+                try
+                {
+                    // This "fire and forget" call is protected from bringing down the main logic.
+                    // We don't want its failure to hide the real reason the job failed (ApiRequestException).
+                    _logger.LogInformation("Successfully marked user as unreachable.");
+                }
+                catch (Exception markEx)
+                {
+                    _logger.LogError(markEx, "A non-critical error occurred while marking user as unreachable.");
+                }
+
+                // Re-throw the original, important exception to fail the Hangfire job correctly.
+                throw;
+            }
+            catch (TimeoutException ex)
+            {
+                _logger.LogError(ex, "An operation timed out, preventing the worker from hanging.");
+                throw; // Fail the job.
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                _logger.LogWarning("Operation was cancelled.");
-                throw;
+                _logger.LogWarning("Operation was cancelled by Hangfire.");
+                throw; // Fail the job.
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "An unhandled exception occurred during notification processing.");
-                throw;
+                throw; // Fail the job.
             }
         }
 

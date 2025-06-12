@@ -21,7 +21,7 @@ namespace TelegramPanel.Queue
         private readonly AsyncRetryPolicy<Update> _readRetryPolicy;
         private readonly int _maxRetryAttempts;
 
-        public TelegramUpdateChannel(ILogger<TelegramUpdateChannel> logger, int capacity = 5000)
+        public TelegramUpdateChannel(ILogger<TelegramUpdateChannel> logger, int capacity = 50000)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _maxRetryAttempts = 3;

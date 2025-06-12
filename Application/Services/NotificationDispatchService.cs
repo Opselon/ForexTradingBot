@@ -6,8 +6,14 @@ using Application.DTOs.Notifications;
 using Application.Interfaces;
 using Domain.Entities;
 using Microsoft.Extensions.Logging;
-using Shared.Extensions;
+using StackExchange.Redis;
+
+// using Shared.Extensions; // Assuming TruncateWithEllipsis is a local method
 using System.Text;
+// using System.Threading.RateLimiting; // Not needed here
+
+// --- ✅ FIX 1: ADD MISSING USINGS ---
+using System.Text.Json;
 #endregion
 
 namespace Application.Services
@@ -19,7 +25,8 @@ namespace Application.Services
         private readonly INotificationJobScheduler _jobScheduler;
         private readonly ILogger<NotificationDispatchService> _logger;
         private readonly INewsItemRepository _newsItemRepository;
-        private const int BatchSize = 1;
+        private readonly StackExchange.Redis.IDatabase _redisDb;
+        private readonly INotificationRateLimiter _rateLimiter;
         #endregion
 
         #region Constructor
@@ -27,12 +34,20 @@ namespace Application.Services
             INewsItemRepository newsItemRepository,
             IUserRepository userRepository,
             INotificationJobScheduler jobScheduler,
-            ILogger<NotificationDispatchService> logger)
+            ILogger<NotificationDispatchService> logger,
+            IConnectionMultiplexer redisConnection,   // It receives this...
+            INotificationRateLimiter rateLimiter)      // and this.
         {
+            // Assign all the dependencies you receive.
             _newsItemRepository = newsItemRepository ?? throw new ArgumentNullException(nameof(newsItemRepository));
             _userRepository = userRepository ?? throw new ArgumentNullException(nameof(userRepository));
             _jobScheduler = jobScheduler ?? throw new ArgumentNullException(nameof(jobScheduler));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+
+            _rateLimiter = rateLimiter ?? throw new ArgumentNullException(nameof(rateLimiter)); // ✅ ASSIGN the rate limiter
+
+            if (redisConnection == null) throw new ArgumentNullException(nameof(redisConnection));
+            _redisDb = redisConnection.GetDatabase(); // ✅ ASSIGN the Redis DB instance
         }
         #endregion
 
@@ -54,34 +69,18 @@ namespace Application.Services
         public Task DispatchNewsNotificationAsync(Guid newsItemId, CancellationToken cancellationToken = default)
         {
             #region --- Hang Shield & Algorithm Configuration ---
-            // Layer 8: A master timeout for the entire dispatch process.
             var TotalDispatchTimeout = TimeSpan.FromHours(3);
-
-            // Layer 7: A timeout for each individual job enqueue operation.
-            var PerOperationTimeout = TimeSpan.FromSeconds(10);
-
-            // The number of users to process in one batch before pausing for throttling.
+            var PerEnqueueTimeout = TimeSpan.FromSeconds(10);
             const int DispatchChunkSize = 100;
-
-            // The desired rate of job creation.
             const double TargetJobsPerSecond = 25.0;
-
-            // Randomized jitter factor to prevent thundering herd.
             const double JitterFactor = 0.2;
-
-            // Circuit breaker threshold for consecutive failures.
             const int CircuitBreakerThreshold = 15;
-
-            // Interval for logging progress.
             const int ProgressLoggingInterval = 5000;
             #endregion
 
             return Task.Run(async () =>
             {
-                // --- HANG SHIELD - Layer 8: Overall Dispatch Timeout ---
-                // Create a master cancellation source that triggers after the total timeout.
                 using var dispatchTimeoutCts = new CancellationTokenSource(TotalDispatchTimeout);
-                // Link it with the external cancellation token. The dispatch will stop if EITHER is cancelled.
                 using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, dispatchTimeoutCts.Token);
                 var masterToken = linkedCts.Token;
 
@@ -94,138 +93,115 @@ namespace Application.Services
                         return;
                     }
 
-                    masterToken.ThrowIfCancellationRequested();
-
                     using (_logger.BeginScope(new Dictionary<string, object?> { ["NewsItemId"] = newsItem.Id }))
                     {
-                        _logger.LogInformation("Initiating HANG-SHIELDED streaming dispatch for news item.");
-
+                        _logger.LogInformation("Initiating CACHE-FIRST dispatch orchestration...");
+                        _logger.LogInformation("Fetching all eligible users from the database...");
                         IEnumerable<User> targetUsersStream = await _userRepository.GetUsersForNewsNotificationAsync(
                             newsItem.AssociatedSignalCategoryId, newsItem.IsVipOnly, masterToken);
 
-                        if (targetUsersStream == null)
+                        var validTelegramIds = targetUsersStream?
+                            .Select(u => long.TryParse(u.TelegramId, out long id) ? (long?)id : null)
+                            .Where(id => id.HasValue)
+                            .Select(id => id.Value)
+                            .ToList() ?? [];
+
+                        if (!validTelegramIds.Any())
                         {
-                            _logger.LogWarning("User repository returned a null stream.");
+                            _logger.LogWarning("No eligible users found for this dispatch. Aborting.");
                             return;
                         }
+                        _logger.LogInformation("Found {UserCount} eligible users.", validTelegramIds.Count);
 
-                        string messageText = BuildMessageText(newsItem);
-                        string? imageUrl = newsItem.ImageUrl;
-                        List<NotificationButton> buttons = BuildNotificationButtons(newsItem);
-                        var categoryId = newsItem.AssociatedSignalCategoryId;
-                        var categoryName = newsItem.AssociatedSignalCategory?.Name ?? string.Empty;
+                        var userListCacheKey = $"dispatch:users:{newsItemId}";
+                        var serializedUserIds = JsonSerializer.Serialize(validTelegramIds);
+                        bool cacheSet = await _redisDb.StringSetAsync(userListCacheKey, serializedUserIds, TimeSpan.FromHours(24));
+                        if (!cacheSet)
+                        {
+                            _logger.LogCritical("Failed to set user list in Redis cache. Aborting dispatch.");
+                            return;
+                        }
+                        _logger.LogInformation("Successfully cached {UserCount} user IDs in Redis. Key: {CacheKey}", validTelegramIds.Count, userListCacheKey);
 
                         int totalUsersEnqueued = 0;
                         int processedInChunk = 0;
                         int consecutiveFailures = 0;
                         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
-                        foreach (var user in targetUsersStream)
+                        for (int i = 0; i < validTelegramIds.Count; i++)
                         {
-                            if (masterToken.IsCancellationRequested)
-                            {
-                                _logger.LogWarning("Dispatch was cancelled by master token after processing {Count} users.", totalUsersEnqueued);
-                                break;
-                            }
+                            masterToken.ThrowIfCancellationRequested();
+                            long userId = validTelegramIds[i];
+                            int userIndex = i;
 
-                            if (!long.TryParse(user.TelegramId, out long telegramId)) continue;
+                            if (await _rateLimiter.IsUserOverLimitAsync(userId, 15, TimeSpan.FromHours(1)))
+                            {
+                                _logger.LogTrace("User {UserId} is over rate limit. Skipping job enqueue.", userId);
+                                continue;
+                            }
 
                             try
                             {
-                                // --- HANG SHIELD - Layer 7: Per-Operation Timeout ---
-                                // Create a specific timeout for this single operation.
-                                using var operationTimeoutCts = new CancellationTokenSource(PerOperationTimeout);
-                                // To apply a timeout to a synchronous call, we must wrap it to make it awaitable and cancellable.
-                                // Task.Run is the correct tool for this specific, targeted need.
                                 await Task.Run(() =>
                                 {
+                                    // --- ✅ FIX 4: ENSURE THIS METHOD EXISTS ON THE INTERFACE ---
+                                    // We will define this method in the next step.
                                     _jobScheduler.Enqueue<INotificationSendingService>(
-                                        service => service.SendBatchNotificationAsync(
-                                            new List<long> { telegramId }, messageText, imageUrl, buttons,
-                                            newsItem.Id, categoryId, categoryName, CancellationToken.None));
-                                }, operationTimeoutCts.Token);
-
+                                        service => service.ProcessNotificationFromCacheAsync(
+                                            newsItemId,
+                                            userListCacheKey,
+                                            userIndex
+                                        )
+                                    );
+                                }, new CancellationTokenSource(PerEnqueueTimeout).Token);
                                 totalUsersEnqueued++;
-                                consecutiveFailures = 0; // Reset circuit breaker on success.
-                            }
-                            catch (OperationCanceledException)
-                            {
-                                // This block is hit if the operation or the entire dispatch is cancelled.
-                                if (masterToken.IsCancellationRequested)
-                                {
-                                    // Propagate cancellation if it came from the master token.
-                                    _logger.LogWarning("Dispatch cancelled during job enqueue.");
-                                    break;
-                                }
-
-                                // Otherwise, the per-operation timeout was triggered.
-                                _logger.LogWarning("Job enqueue for user {Id} timed out after {Seconds}s. Skipping user.", telegramId, PerOperationTimeout.TotalSeconds);
-                                consecutiveFailures++;
+                                consecutiveFailures = 0;
                             }
                             catch (Exception ex)
                             {
                                 consecutiveFailures++;
-                                _logger.LogError(ex, "Failed to enqueue job for user {Id}. Consecutive failures: {FailureCount}",
-                                                 telegramId, consecutiveFailures);
+                                _logger.LogError(ex, "Failed to enqueue job for user index {Index}. Consecutive failures: {FailureCount}", userIndex, consecutiveFailures);
                             }
 
                             if (consecutiveFailures >= CircuitBreakerThreshold)
                             {
-                                _logger.LogCritical("CIRCUIT BREAKER TRIPPED after {Count} consecutive failures. Aborting dispatch.", consecutiveFailures);
+                                _logger.LogCritical("CIRCUIT BREAKER TRIPPED. Aborting dispatch.", consecutiveFailures);
                                 return;
                             }
 
                             processedInChunk++;
-
                             if (processedInChunk >= DispatchChunkSize)
                             {
-                                // --- HANG SHIELD - Bonus Layer: Cooperative Yielding ---
-                                // Give other application tasks a chance to run before we calculate delays.
                                 await Task.Yield();
-
                                 stopwatch.Stop();
-                                var targetChunkTimeMs = (DispatchChunkSize / TargetJobsPerSecond) * 1000.0;
-                                var delayNeededMs = targetChunkTimeMs - stopwatch.ElapsedMilliseconds;
-                                var jitterMs = delayNeededMs * JitterFactor * (Random.Shared.NextDouble() - 0.5) * 2.0;
-                                delayNeededMs += jitterMs;
-
-                                if (delayNeededMs > 0)
+                                var delayNeeded = TimeSpan.FromSeconds(DispatchChunkSize / TargetJobsPerSecond) - stopwatch.Elapsed;
+                                if (delayNeeded > TimeSpan.Zero)
                                 {
-                                    await Task.Delay(TimeSpan.FromMilliseconds(delayNeededMs), masterToken);
+                                    var jitter = TimeSpan.FromMilliseconds(delayNeeded.TotalMilliseconds * JitterFactor * (Random.Shared.NextDouble() - 0.5) * 2.0);
+                                    await Task.Delay(delayNeeded + jitter, masterToken);
                                 }
-
                                 processedInChunk = 0;
                                 stopwatch.Restart();
                             }
-
                             if (totalUsersEnqueued > 0 && totalUsersEnqueued % ProgressLoggingInterval == 0)
                             {
-                                _logger.LogInformation("Dispatch progress: {EnqueuedCount} jobs successfully created.", totalUsersEnqueued);
+                                _logger.LogInformation("Dispatch progress: {EnqueuedCount}/{TotalCount} jobs created.", totalUsersEnqueued, validTelegramIds.Count);
                             }
                         }
-
-                        _logger.LogInformation("Completed streaming dispatch. Total jobs successfully created: {Count}", totalUsersEnqueued);
+                        _logger.LogInformation("Orchestration complete. Enqueued {TotalEnqueued} jobs for dispatch.", totalUsersEnqueued);
                     }
                 }
                 catch (OperationCanceledException)
                 {
-                    // This top-level catch handles the master token being cancelled.
-                    if (dispatchTimeoutCts.IsCancellationRequested)
-                    {
-                        _logger.LogCritical("DISPATCH ABORTED due to exceeding the master timeout of {Timeout}. This is a final safety net.", TotalDispatchTimeout);
-                    }
-                    else
-                    {
-                        _logger.LogWarning("Dispatch was cancelled externally.");
-                    }
+                    if (dispatchTimeoutCts.IsCancellationRequested) _logger.LogCritical("DISPATCH ABORTED due to master timeout.");
+                    else _logger.LogWarning("Dispatch was cancelled externally.");
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogCritical(ex, "An unhandled exception occurred during the dispatch orchestration.");
+                    _logger.LogCritical(ex, "An unhandled exception occurred during dispatch orchestration.");
                 }
-            }, cancellationToken); // Note: We pass the original token here, the linking happens inside.
+            }, cancellationToken);
         }
-
 
         /// <summary>
         /// Builds the main text content for a news notification.

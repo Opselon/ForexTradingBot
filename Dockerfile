@@ -1,62 +1,38 @@
-#-------------------------------------------------------------------------------------
-# Stage 1: Restore Dependencies
-# This stage's only job is to download NuGet packages.
-# It copies only the files needed for restore, so this layer is cached very effectively.
-# It will only re-run if your project dependencies change.
-#-------------------------------------------------------------------------------------
-FROM mcr.microsoft.com/dotnet/sdk:9.0 AS restore
+# Stage 1: Build the Application (Unified Stage)
+# This single-stage approach is the most robust way to solve persistent
+# file contamination issues between the host and the container.
+FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 WORKDIR /src
 
-# Copy the solution file and all project files into their respective directories
-COPY ForexTradingBot.sln .
-COPY ["WebAPI/WebAPI.csproj", "WebAPI/"]
-COPY ["Application/Application.csproj", "Application/"]
-COPY ["Domain/Domain.csproj", "Domain/"]
-COPY ["Infrastructure/Infrastructure.csproj", "Infrastructure/"]
-COPY ["Shared/Shared.csproj", "Shared/"]
-COPY ["TelegramPanel/TelegramPanel.csproj", "TelegramPanel/"]
-COPY ["BackgroundTasks/BackgroundTasks.csproj", "BackgroundTasks/"]
-COPY ["Application.Tests/Application.Tests.csproj", "Application.Tests/"]
-
-# Run the restore command for the entire solution. This creates clean 'obj' folders.
-RUN dotnet restore "ForexTradingBot.sln"
-
-
-#-------------------------------------------------------------------------------------
-# Stage 2: Build and Publish
-# This stage takes the restored packages from the 'restore' stage and compiles the application.
-# It starts from the 'restore' stage, inheriting its state.
-#-------------------------------------------------------------------------------------
-FROM restore AS build
-WORKDIR /src
-
-# Copy the rest of the source code.
-# The .dockerignore file will prevent your local bin/obj folders from being copied,
-# so this command copies all your .cs files without overwriting the clean 'obj'
-# folders that were created in the 'restore' stage.
+# Copy ALL files from your local project directory into the container.
+# At this point, the container has your source code AND the contaminated
+# Windows-specific bin/obj folders.
 COPY . .
 
-# Publish the main application.
-# The --no-restore flag is crucial here; it tells the command to use the
-# packages that were already restored in the previous stage.
-RUN dotnet publish "WebAPI/WebAPI.csproj" -c Release -o /app/publish --no-restore
+# --- THE CRITICAL SANITIZATION STEP ---
+# Run a fresh `dotnet restore` on the entire solution INSIDE the container.
+# This command completely ignores and overwrites the contaminated obj folders
+# with new, clean ones that have correct Linux paths. This sanitizes the
+# entire build environment and is the key to fixing the error.
+RUN dotnet restore "ForexTradingBot.sln"
+
+# Now that the environment is clean, publish the application.
+# We do not use --no-restore, allowing publish to use the sanitized assets.
+RUN dotnet publish "WebAPI/WebAPI.csproj" -c Release -o /app/publish
 
 
-#-------------------------------------------------------------------------------------
-# Stage 3: Final Runtime Image
-# This is the small, secure image that will actually run in production.
-# It starts from the lightweight ASP.NET runtime image.
-#-------------------------------------------------------------------------------------
+# Stage 2: Final Runtime Image
+# This stage remains the same, creating a small and secure final image.
 FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS final
 WORKDIR /app
 
 # Install curl, which is a tiny but useful tool needed for the HEALTHCHECK.
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 
-# Copy the final, published application from the 'build' stage.
+# Copy the published application from the 'build' stage.
 COPY --from=build /app/publish .
 
-# Create a dedicated, non-root user for enhanced security.
+# Create a dedicated, non-root user for security.
 RUN adduser --system --group --disabled-password --gecos "" --home /app appuser
 USER appuser
 
@@ -67,10 +43,9 @@ ENV ASPNETCORE_ENVIRONMENT=Production
 # Expose the port that the application will listen on.
 EXPOSE 80
 
-# Define a health check to let Docker (or orchestrators like Kubernetes) know if the application is healthy.
-# IMPORTANT: Change '/health' to your actual health check endpoint if you have one.
+# Define a health check. IMPORTANT: Change '/health' to your actual health check endpoint.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD curl -f http://localhost/health || exit 1
 
-# Define the entry point for the container, which is the command that runs your application.
+# Define the entry point for the container.
 ENTRYPOINT ["dotnet", "WebAPI.dll"]

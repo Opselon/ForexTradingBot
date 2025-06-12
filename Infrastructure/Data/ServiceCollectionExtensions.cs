@@ -18,7 +18,8 @@ using Microsoft.EntityFrameworkCore;      // Entity Framework Core
 using Microsoft.Extensions.Configuration; // برای خواندن تنظیمات از فایل پیکربندی
 using Microsoft.Extensions.DependencyInjection;
 using Polly;
-using Polly.Extensions.Http; // برای افزودن سرویس‌ها به کانتینر DI
+using Polly.Extensions.Http;
+using StackExchange.Redis; // برای افزودن سرویس‌ها به کانتینر DI
 
 namespace Infrastructure.Data
 {
@@ -53,6 +54,10 @@ namespace Infrastructure.Data
                        Console.WriteLine($"--> Polly: Retrying API request... Delaying for {timespan.TotalSeconds}s, then making retry {retryAttempt}");
                    });
 
+            var redisConnectionString = configuration.GetConnectionString("Redis");
+            var options = ConfigurationOptions.Parse(redisConnectionString);
+            options.AbortOnConnectFail = false; // Make it resilient
+            services.AddSingleton<IConnectionMultiplexer>(ConnectionMultiplexer.Connect(options));
 
             var allConfig = configuration.AsEnumerable().ToDictionary(x => x.Key, x => x.Value);
             var allConfigString = string.Join(Environment.NewLine, allConfig.Select(kv => $"  - Key: '{kv.Key}', Value: '{kv.Value}'"));

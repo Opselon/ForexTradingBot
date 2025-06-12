@@ -23,8 +23,10 @@ using Serilog;                              // برای Log, LoggerConfiguration
 using Shared.Helpers;
 using Shared.Maintenance;
 using Shared.Settings;                    // برای CryptoPaySettings (از پروژه Shared)
+using StackExchange.Redis;
 using TelegramPanel.Extensions;
 using TelegramPanel.Infrastructure.Services;
+using TL;
 using WebAPI.Extensions;
 #endregion
 
@@ -42,7 +44,9 @@ try
     Log.Information("--------------------------------------------------");
     Log.Information("Application Starting Up (Program.cs)...");
     Log.Information("--------------------------------------------------");
-
+    int minThreads = 500; // Adjust as needed based on monitoring
+    ThreadPool.SetMinThreads(minThreads, minThreads);
+    Log.Information("ThreadPool minimum threads set to {MinThreads}.", minThreads);
     var builder = WebApplication.CreateBuilder(args);
     _ = builder.WebHost.UseKestrel();
 
@@ -188,6 +192,7 @@ try
     _ = builder.Services.AddForwardingInfrastructure();
     Log.Information("Forwarding infrastructure services registered.");
 
+
     _ = builder.Services.AddTelegramPanelServices(builder.Configuration);
     Log.Information("Telegram panel services registered.");
 
@@ -229,6 +234,10 @@ try
             Log.Information("Skipping SQL Server service check: Application is not running on Windows.");
         }
     }
+
+
+
+
 
     #endregion
 
@@ -428,7 +437,6 @@ try
         var orchestrator = scope.ServiceProvider.GetRequiredService<UserApiForwardingOrchestrator>();
         // Use orchestrator if needed
     }
-
     app.Run(); //  شروع به گوش دادن به درخواست‌های HTTP و اجرای برنامه
     #endregion
 }

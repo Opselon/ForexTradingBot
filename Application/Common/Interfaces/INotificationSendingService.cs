@@ -28,6 +28,11 @@ namespace Application.Common.Interfaces // ✅ Namespace: Application.Common.Int
         /// </remarks>
         Task SendNotificationAsync(NotificationJobPayload payload, CancellationToken cancellationToken);
 
+
+        // --- ✅ ADD THIS NEW METHOD SIGNATURE ---
+        Task ProcessNotificationFromCacheAsync(Guid newsItemId, string userListCacheKey, int userIndex);
+
+
         // ✅✅ [جدید] ✅✅ متد جدید برای ارسال دسته‌ای
         Task SendBatchNotificationAsync(
             List<long> targetTelegramUserIds,

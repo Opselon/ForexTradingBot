@@ -23,7 +23,31 @@
     "REMOTE_TEMP_PATH": "C:\\Apps\\Temp",
     "SESSION_FOLDER": "Session"
   },
-  "jobs": {
+ "jobs": {
+    "docker_build_check": {
+      "name": "🐳 Docker Build Check (Independent)",
+      "runs-on": "ubuntu-latest",
+      "steps": [
+        {
+          "name": "📥 [Docker] Checkout Repository",
+          "uses": "actions/checkout@v4"
+        },
+        {
+          "name": "🐳 [Docker] Set up Docker Buildx",
+          "uses": "docker/setup-buildx-action@v3"
+        },
+        {
+          "name": "🛠️ [Docker] Build Image for Validation",
+          "uses": "docker/build-push-action@v5",
+          "with": {
+            "context": ".",
+            "file": "./Dockerfile",
+            "push": false,
+            "tags": "forex-trading-bot-ci:latest"
+          }
+        }
+      ]
+    },
     "build": {
       "name": "✅ 1. Build & Package",
       "runs-on": "ubuntu-latest",

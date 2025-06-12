@@ -323,8 +323,8 @@ namespace TelegramPanel.Application.CommandHandlers.Features.CoinGecko
             }
         }
 
-        // Builds the text and keyboard for the crypto list page
-        // Builds the text and keyboard for the crypto list page
+
+        
         private (string text, InlineKeyboardMarkup keyboard) BuildCryptoListMessage(int page, List<UnifiedCryptoDto> coins)
         {
             var sb = new StringBuilder();
@@ -358,12 +358,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.CoinGecko
                     sb.AppendLine($"{EscapeTextForTelegramMarkup("  Price:")} `${price}` USD {changeEmoji} `{change}`");
                     // sb.AppendLine("`-- -- -- -- -- -- -- -- -- -- -- --`"); // Smaller separator
                 }
-                // Remove the last separator line if using them
-                // if (sb.Length > 0)
-                // {
-                //      var lastLineStart = sb.ToString().LastIndexOf("`-- --");
-                //      if(lastLineStart > 0) sb.Remove(lastLineStart, sb.Length - lastLineStart);
-                // }
+
 
                 sb.AppendLine().AppendLine("👇 Select a coin below for full details."); // Added emoji
             }
@@ -375,18 +370,9 @@ namespace TelegramPanel.Application.CommandHandlers.Features.CoinGecko
             int buttonsInRow = 0;
             foreach (var coin in coins)
             {
-                // --- UI/UX Improvement: Include the current page number in the details callback ---
-                // This allows the back button on the details page to return here
 
-                // FIX: Use a safe identifier for coin ID in callback data.
-                // Use coin.Symbol.ToUpper() as a temporary safe identifier.
-                // This is NOT a robust solution if symbols are not unique across all displayable coins.
                 // A proper solution requires an ID mapping layer.
                 string safeCoinIdentifier = coin.Symbol.ToUpper(); // Assuming symbols are alphanumeric and <= 64 bytes
-
-                // If coin.Symbol isn't guaranteed safe or unique, you MUST use a mapped ID or GUID here.
-                // Example using a hypothetical SafeCoinId property:
-                // string safeCoinIdentifier = coin.SafeCoinId; // Requires adding SafeCoinId to UnifiedCryptoDto
 
                 // Check if the safe identifier is valid according to Telegram's rules just in case
                 if (string.IsNullOrEmpty(safeCoinIdentifier) || safeCoinIdentifier.Length > 64 || !System.Text.RegularExpressions.Regex.IsMatch(safeCoinIdentifier, @"^[a-zA-Z0-9_]+$"))
@@ -402,12 +388,15 @@ namespace TelegramPanel.Application.CommandHandlers.Features.CoinGecko
 
                 // Get the emoji for the button
                 string buttonEmoji = CoinEmojis.TryGetValue(coin.Symbol.ToLower(), out var e) ? e : "🔹";
-                // Create the button text by prepending the emoji
+
+
                 // The symbol itself is usually safe to use directly as button text
                 string buttonText = $"{buttonEmoji} {coin.Symbol.ToUpper()}";
 
                 buttonRow.Add(InlineKeyboardButton.WithCallbackData(buttonText, callbackData));
                 buttonsInRow++;
+
+
                 // Limit row width for better display
                 if (buttonsInRow >= 4) // Adjusted button per row count slightly
                 {
@@ -416,6 +405,8 @@ namespace TelegramPanel.Application.CommandHandlers.Features.CoinGecko
                     buttonsInRow = 0;
                 }
             }
+
+
             // Add any remaining buttons
             if (buttonRow.Any())
             {
@@ -447,17 +438,20 @@ namespace TelegramPanel.Application.CommandHandlers.Features.CoinGecko
         }
 
 
-        // Builds the keyboard for the details view, including the back button
         // Takes the page number to return to as input
         private InlineKeyboardMarkup GetBackKeyboard(int page)
         {
+
             // Create callback data to go back to the specific list page.
-            // This only uses safe characters and the page number.
             var backCallbackData = $"{CallbackPrefix}_{ListAction}_{PageParam}_{page}";
+
             var keyboardRows = new List<List<InlineKeyboardButton>>();
+
             keyboardRows.Add(new List<InlineKeyboardButton> { InlineKeyboardButton.WithCallbackData($"⬅️ Back to Page {page}", backCallbackData) });
+
             // ASSUMING MenuCallbackQueryHandler.BackToMainMenuGeneral is a VALID callback data string
             keyboardRows.Add(new List<InlineKeyboardButton> { InlineKeyboardButton.WithCallbackData("🏠 Main Menu", MenuCallbackQueryHandler.BackToMainMenuGeneral) }); // Add Main Menu button here too
+
             return new InlineKeyboardMarkup(keyboardRows);
         }
 
@@ -469,8 +463,6 @@ namespace TelegramPanel.Application.CommandHandlers.Features.CoinGecko
 
             // FIX UI/UX: Correct header formatting and apply less aggressive escaping.
             // Escape Name and Symbol minimally for literal inclusion, put the literal parentheses outside bold.
-            // Example desired output: 💎 Tether (USDT) - Name is bold, symbol in parentheses is not.
-            // Use the local, less aggressive escape helper for the text parts.
             string escapedName = EscapeTextForTelegramMarkup(coin.Name ?? coin.Symbol);
             string escapedSymbol = EscapeTextForTelegramMarkup(coin.Symbol.ToUpper());
 
@@ -534,17 +526,18 @@ namespace TelegramPanel.Application.CommandHandlers.Features.CoinGecko
             _ = sb.AppendLine($"{EscapeTextForTelegramMarkup("🧢 Market Cap:")} `${coin.MarketCap?.ToString("N0", CultureInfo.InvariantCulture) ?? "N/A"}`");
             // Label contains parentheses - use the helper that doesn't escape them
             _ = sb.AppendLine($"{EscapeTextForTelegramMarkup("🔄 Volume (24h):")} `${coin.TotalVolume?.ToString("N0", CultureInfo.InvariantCulture) ?? "N/A"}`");
+
             _ = sb.AppendLine($"{EscapeTextForTelegramMarkup("🔼 Day High:")} `{coin.DayHigh?.ToString(priceFormat, CultureInfo.InvariantCulture) ?? "N/A"}`");
+
             _ = sb.AppendLine($"{EscapeTextForTelegramMarkup("🔽 Day Low:")} `{coin.DayLow?.ToString(priceFormat, CultureInfo.InvariantCulture) ?? "N/A"}`");
+
             return (sb.ToString(), GetBackKeyboard(currentPage));
         }
 
 
 
 
-        // FIX UI/UX: Modify the EscapeTextForTelegramMarkup helper to be LESS aggressive.
-        // This version only escapes the characters that are absolutely necessary to prevent
-        // Telegram from interpreting them as formatting in MOST plain text contexts,
+
         // while allowing common punctuation like (), ., -, :, etc., to appear literally.
         // This is a balance between strict V2 compliance and desired "pretty" output.
         private string EscapeTextForTelegramMarkup(string? text)

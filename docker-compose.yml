@@ -1,0 +1,69 @@
+version: '3.8'
+
+services:
+  ########################################
+  # Your .NET Web API Application Service
+  ########################################
+  forex-trading-bot-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: forex-trading-bot-app
+    ports:
+      - "8080:80"
+    environment:
+      # --- Database Connection ---
+      - ConnectionStrings__DefaultConnection=Server=db,1433;Database=${DB_DATABASE_NAME};User Id=sa;Password=${DB_SA_PASSWORD};TrustServerCertificate=True
+
+      # --- Telegram Panel ---
+      - TelegramPanel__BotToken=${TELEGRAM_BOT_TOKEN}
+      # This maps the comma-separated string from the .env file to the AdminUserIds array.
+      # .NET Core automatically splits the string by comma and parses the values.
+      - TelegramPanel__AdminUserIds=${TELEGRAM_ADMIN_IDS}
+
+      # --- Telegram User API ---
+      - TelegramUserApi__ApiId=${TELEGRAM_API_ID}
+      - TelegramUserApi__ApiHash=${TELEGRAM_API_HASH}
+      - TelegramUserApi__PhoneNumber=${TELEGRAM_PHONE_NUMBER}
+      - TelegramUserApi__SessionPath=/app/sessions/telegram_user.session
+
+      # --- CryptoPay ---
+      - CryptoPay__ApiToken=${CRYPTO_PAY_API_TOKEN}
+      # - CryptoPay__ApiKey=${...} # Add other CryptoPay vars if needed
+
+      # --- Other Settings ---
+      - ASPNETCORE_ENVIRONMENT=Production
+
+    volumes:
+      - telegram_session_data:/app/sessions
+      - log_data:/app/logs
+    depends_on:
+      - db
+    restart: unless-stopped
+    networks:
+      - forex-bot-network
+
+  ###################################
+  # The SQL Server Database Service
+  ###################################
+  db:
+    image: "mcr.microsoft.com/mssql/server:2022-latest"
+    container_name: sql-server-db
+    environment:
+      - ACCEPT_EULA=Y
+      - SA_PASSWORD=${DB_SA_PASSWORD}
+    volumes:
+      - sqlserver_data:/var/opt/mssql
+    networks:
+      - forex-bot-network
+
+# --- Docker Network ---
+networks:
+  forex-bot-network:
+    driver: bridge
+
+# --- Docker Volumes ---
+volumes:
+  sqlserver_data:
+  telegram_session_data:
+  log_data:

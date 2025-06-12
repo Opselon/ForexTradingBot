@@ -201,14 +201,33 @@ try
     Log.Information("Forwarding orchestrator services registered.");
 
     _ = builder.Services.AddWindowsService();
-    try
+    var isRunningInContainer = Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER") == "true";
+    if (OperatingSystem.IsWindows() && !isRunningInContainer)
     {
-        SqlServiceManager.EnsureSqlServicesRunning();
+        try
+        {
+            Log.Information("Running on Windows (not in a container). Checking for local SQL Server services...");
+            SqlServiceManager.EnsureSqlServicesRunning();
+            Log.Information("SQL Server service check complete.");
+        }
+        catch (Exception exSql)
+        {
+            // This is not a fatal error, so we just log it and continue.
+            // The app might be connecting to a remote or non-service SQL instance.
+            Log.Warning(exSql, "Could not ensure local SQL Server services are running. This may be expected.");
+        }
     }
-    catch (Exception exSql)
+    else
     {
-        Log.Error(exSql, "Error during SqlServiceManager.EnsureSqlServicesRunning()");
-        // Optionally rethrow if it's critical, or decide if the app can continue
+        // Log why we are skipping the check. This is useful for debugging.
+        if (isRunningInContainer)
+        {
+            Log.Information("Skipping SQL Server service check: Application is running inside a Docker container.");
+        }
+        else if (!OperatingSystem.IsWindows())
+        {
+            Log.Information("Skipping SQL Server service check: Application is not running on Windows.");
+        }
     }
 
     #endregion

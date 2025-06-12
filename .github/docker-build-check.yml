@@ -1,0 +1,50 @@
+# .github/workflows/docker-build-check.yml
+
+# Name of the workflow, which will appear in the "Actions" tab on GitHub
+name: Docker Build Check
+
+# --- Trigger Conditions ---
+# This workflow runs automatically on two conditions:
+# 1. When a push is made to the 'main' or 'master' branch.
+# 2. When a pull request is created or updated that targets the 'main' or 'master' branch.
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+# --- Jobs ---
+# A workflow is made up of one or more jobs that run in parallel or sequentially.
+jobs:
+  # This job is named 'build-and-test'
+  build-and-test:
+    # The type of runner that the job will run on. 'ubuntu-latest' is a standard, fast choice.
+    runs-on: ubuntu-latest
+
+    # --- Steps ---
+    # A sequence of tasks that will be executed as part of the job.
+    steps:
+      # Step 1: Check out your repository code
+      # This action checks out your repository under $GITHUB_WORKSPACE, so your job can access it.
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # Step 2: Set up Docker Buildx
+      # Buildx is a Docker component that enables advanced build features. It's a best practice to set it up.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Step 3: Build the Docker image
+      # This is the core of our test. It runs the 'docker build' command.
+      # We don't push the image anywhere; we just build it. If this step completes, the test passes.
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          # 'context' tells Docker where to find the Dockerfile and source code (the root of our repo).
+          context: .
+          # 'file' specifies the path to the Dockerfile.
+          file: ./Dockerfile
+          # 'push: false' is CRITICAL. It tells the action to ONLY build the image and not try to push it to a registry.
+          push: false
+          # 'tags' gives the image a temporary name for the build process.
+          tags: forex-trading-bot-ci:latest

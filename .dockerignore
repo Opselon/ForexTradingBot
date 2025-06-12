@@ -1,0 +1,17 @@
+# Ignore build artifacts
+bin/
+obj/
+
+# Ignore user-specific files
+*.user
+*.csproj.user
+.vs/
+
+# Ignore local settings and secrets
+appsettings.Development.json
+secrets.json
+
+# Ignore version control
+.git/
+.gitignore
+.gitattributes

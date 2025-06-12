@@ -440,9 +440,6 @@ namespace TelegramPanel.Application.CommandHandlers.Features.CoinGecko
                 keyboardRows.Add(paginationRow);
             }
 
-            // Add a footer note for data source disclaimer (Plain text)
-            sb.AppendLine().AppendLine("Data sources may vary and might be slightly delayed.");
-
             // Main menu button at the bottom - ASSUMING MenuCallbackQueryHandler.BackToMainMenuGeneral is a VALID callback data string ([a-zA-Z0-9_] only)
             keyboardRows.Add(new List<InlineKeyboardButton> { InlineKeyboardButton.WithCallbackData("🏠 Main Menu", MenuCallbackQueryHandler.BackToMainMenuGeneral) });
 

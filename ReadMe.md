@@ -15,7 +15,7 @@
 [![Code Size](https://img.shields.io/github/languages/code-size/Opselon/ForexTradingBot?style=for-the-badge&color=important)](https://github.com/Opselon/ForexTradingBot "Total Code Size: Indicates the total lines of code in the repository, offering a rough estimate of the project's scale and complexity. Click for code size details.")
 [![Contributors](https://img.shields.io/github/contributors/Opselon/ForexTradingBot?style=for-the-badge)](https://github.com/Opselon/ForexTradingBot/graphs/contributors "Number of Contributors: Shows the total number of individuals who have contributed code to this project, highlighting community involvement and collaborative efforts.")
 
-![ForexSignalBot Demo](https://i.imgur.com/lcak2Rr.gif)
+![ForexSignalBot Demo](https://raw.githubusercontent.com/Opselon/ForexTradingBot/main/assets/lcak2Rr.gif)
 
 ---
 

@@ -2,11 +2,13 @@
 #region Usings
 using Application.Common.Interfaces;
 using Microsoft.Extensions.Logging;
+using System.Text;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
 using TelegramPanel.Application.CommandHandlers.Features.CoinGecko;
 using TelegramPanel.Application.Interfaces;
+using TelegramPanel.Formatters;
 using TelegramPanel.Infrastructure;
 using TelegramPanel.Infrastructure.Helper;
 using static TelegramPanel.Application.CommandHandlers.Features.CoinGecko.CryptoCallbackHandler;
@@ -45,46 +47,70 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
             _uiCache = uiCache ?? throw new ArgumentNullException(nameof(uiCache)); // <-- NEW
             _messageSender = messageSender ?? throw new ArgumentNullException(nameof(messageSender));
         }
-        #endregion
-
-        #region Static Menu Markup Generation
-
-
         /// <summary>
         /// Generates the main menu markup with buttons for various features.
         /// </summary>
         /// <returns></returns>
         public static (string text, InlineKeyboardMarkup keyboard) GetMainMenuMarkup()
         {
-            var text = "Welcome to the Main Menu!\nChoose one of the available options:";
+            var text = new StringBuilder()
+           
+               // Header
+               .AppendLine(TelegramMessageFormatter.Bold("👋 Welcome to Your Trading Bot!"))
+                .AppendLine(TelegramMessageFormatter.Italic("Your comprehensive tool for market insights and signals."))
+                .AppendLine() // Blank line
+
+                // Navigation Hint
+                .AppendLine("Choose an option from the sections below:")
+                .AppendLine(TelegramMessageFormatter.Italic("Tap on buttons to explore features or manage your account."))
+                .AppendLine() // Blank line before first section
+
+                // Section 1: Trading Essentials
+                // Combined button details for this section onto one line with \n
+                .AppendLine("📈 " + TelegramMessageFormatter.Bold("View Signals") + ": " + TelegramMessageFormatter.Italic("See the latest trading signals recommended by our analysis."))
+                .AppendLine("📊 " + TelegramMessageFormatter.Bold("Market Analysis") + ": " + TelegramMessageFormatter.Italic("Get an overview of current market conditions and trends."))
+                .AppendLine("📰 " + TelegramMessageFormatter.Bold("News Analysis") + ": " + TelegramMessageFormatter.Italic("Explore recent news impacting the markets and sentiment."))
+                .AppendLine("🗓️ " + TelegramMessageFormatter.Bold("Economic Calendar") + ": " + TelegramMessageFormatter.Italic("Stay informed about important upcoming economic events."))
+                .AppendLine("📈 " + TelegramMessageFormatter.Bold("Crypto Prices") + ": " + TelegramMessageFormatter.Italic("View real-time market data for popular cryptocurrencies."))
+                .AppendLine("✨ " + TelegramMessageFormatter.Bold("View Plans") + ": " + TelegramMessageFormatter.Italic("Learn about subscription tiers and unlock premium features."))
+                .AppendLine("⚙️ " + TelegramMessageFormatter.Bold("Settings") + ": " + TelegramMessageFormatter.Italic("Manage your notification preferences and other bot settings."))
+                .AppendLine("👤 " + TelegramMessageFormatter.Bold("My Profile") + ": " + TelegramMessageFormatter.Italic("View your account status, subscription details, and history."))
+                .AppendLine();
+
 
             var keyboard = MarkupBuilder.CreateInlineKeyboard(
                 new[] // Row 1: Core Features
                 {
-                    InlineKeyboardButton.WithCallbackData("📈 View Signals", SignalsCallbackData),
-                    InlineKeyboardButton.WithCallbackData("📊 Market Analysis", MarketAnalysisData)
+                   InlineKeyboardButton.WithCallbackData("📈 View Signals", SignalsCallbackData),
+                   InlineKeyboardButton.WithCallbackData("📊 Market Analysis", MarketAnalysisData)
                 },
                 new[] // Row 2: NEW Analysis Button
                 {
-                    InlineKeyboardButton.WithCallbackData("🔍 News Analysis", AnalysisCallbackData),
-                    InlineKeyboardButton.WithCallbackData("🗓️ Economic Calendar", EconomicCalendarCallbackData)
-
+                   InlineKeyboardButton.WithCallbackData("🔍 News Analysis", AnalysisCallbackData),
+                   InlineKeyboardButton.WithCallbackData("🗓️ Economic Calendar", EconomicCalendarCallbackData)
                 },
-                 new[] // Row 3: Crypto Details (NEW)
+                new[] // Row 3: Crypto Details (NEW)
                 {
-                  InlineKeyboardButton.WithCallbackData("🪙 Crypto Prices", $"{CryptoCallbackHandler.CallbackPrefix}_list_1")
-        },
+                   InlineKeyboardButton.WithCallbackData("🪙 Crypto Prices", $"{CryptoCallbackHandler.CallbackPrefix}_list_1")
+                },
                 new[] // Row 3: Subscription
                 {
-                    InlineKeyboardButton.WithCallbackData("💎 Subscribe / Plans", SubscribeCallbackData)
+                   InlineKeyboardButton.WithCallbackData("💎 Subscribe / Plans", SubscribeCallbackData)
                 },
                 new[] // Row 4: Account Management
                 {
-                    InlineKeyboardButton.WithCallbackData("⚙️ Settings", SettingsCallbackData),
-                    InlineKeyboardButton.WithCallbackData("👤 My Profile", ProfileCallbackData)
+                   InlineKeyboardButton.WithCallbackData("⚙️ Settings", SettingsCallbackData),
+                   InlineKeyboardButton.WithCallbackData("👤 My Profile", ProfileCallbackData)
                 }
             );
-            return (text, keyboard);
+
+            // Ensure the keyboard is not null to match the expected return type.
+            if (keyboard == null)
+            {
+                throw new InvalidOperationException("Keyboard generation failed.");
+            }
+
+            return (text: text.ToString(), keyboard: keyboard);
         }
 
         #endregion

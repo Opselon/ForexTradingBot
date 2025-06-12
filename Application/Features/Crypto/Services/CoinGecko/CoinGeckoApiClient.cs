@@ -29,7 +29,7 @@ namespace Application.Features.Crypto.Services.CoinGecko
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
             // Add a default User-Agent header
-            _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("YourAppName/1.0 (Contact: your@email.com)"); // FIX: Use a more descriptive User-Agent
+            _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("ForexBotAi/1.0"); // FIX: Use a more descriptive User-Agent
 
             // --- FIX: Configure Polly Retry Policy for HTTP Calls ---
             _retryPolicy = HttpPolicyExtensions

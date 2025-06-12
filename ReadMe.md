@@ -245,6 +245,72 @@ This dual-interface approach ensures accessibility and convenience through Teleg
 
 Ready to dive into the codebase and contribute to the evolution of ForexSignalBot? Follow these comprehensive steps to set up the project locally. Our development philosophy emphasizes a `dotnet ducker` approach 🐳, ensuring consistent, isolated, and highly reproducible development environments across various machines. 🚀
 
+
+## 🚀 Getting Started with Docker
+
+This project is fully containerized using **Docker Compose**. This is the recommended way to run the application for development, as it automatically sets up the .NET application and the SQL Server database in an isolated environment.
+
+You do **not** need to install the .NET SDK or SQL Server on your machine.
+
+### Prerequisites
+
+All you need is **Docker Desktop** installed and running on your system.
+-   [Download Docker Desktop](https://www.docker.com/products/docker-desktop/) (for Windows, Mac, and Linux)
+
+### 1. Clone the Repository
+
+First, get the source code onto your local machine.
+```bash
+git clone https://github.com/Opselon/ForexTradingBot.git
+cd ForexTradingBot
+```
+
+### 2. Configure Your Secrets
+
+The application requires secret keys (like API tokens and passwords) to run. These are managed in a local `.env` file that is kept private and is not checked into Git.
+
+A template file named `.env.example` is provided for you.
+
+-   **Automatic Setup (Recommended):** Simply run the startup script for your operating system. It will create the `.env` file for you if it doesn't exist.
+-   **Manual Setup:** If you prefer, you can manually copy `.env.example` to a new file named `.env`.
+
+Open the `.env` file in a text editor and fill in your actual secret values.
+
+### 3. Run the Application! 🔥
+
+With Docker running and your `.env` file configured, you can start the entire application stack with a single command.
+
+-   **On Windows:** Double-click the `start.bat` file.
+-   **On Linux or macOS:** Open a terminal in the project root and run:
+    ```bash
+    # Make the script executable (only need to do this once)
+    chmod +x start.sh
+
+    # Run the script
+    ./start.sh
+    ```
+
+**That's it!** The script will:
+1.  Build the .NET application's Docker image.
+2.  Download and start a SQL Server container.
+3.  Start your application container.
+4.  Connect everything on a private network.
+5.  Your application, if configured with Entity Framework, will automatically apply database migrations on startup.
+
+The API will be available at `http://localhost:8080` shortly.
+
+### Managing Your Application
+
+-   **View real-time logs:** `docker-compose logs -f`
+-   **Stop the application:** `docker-compose down`
+-   **Connect to the Database (Optional):** You can connect to the SQL Server instance running in Docker using any database tool (like Azure Data Studio or SSMS).
+    -   **Server:** `localhost,1433` (You may need to uncomment the ports line in `docker-compose.yml` for the `db` service first)
+    -   **Authentication:** SQL Login
+    -   **User:** `sa`
+    -   **Password:** The `DB_SA_PASSWORD` you set in your `.env` file.
+
+
+
 1.  **Clone the repository:** Initiate the development process by cloning the project's source code from GitHub:
     ```bash
     git clone https://github.com/Opselon/ForexTradingBot.git

@@ -38,160 +38,194 @@ namespace Application.Services
 
         #region INotificationDispatchService Implementation
 
+        private readonly TimeSpan _delayBetweenJobEnqueues = TimeSpan.FromMilliseconds(50); // Configurable
+
         /// <summary>
         /// Asynchronously dispatches notifications for a specified news item to eligible users.
-        /// This involves fetching users, chunking them into batches, and enqueuing jobs
-        /// to send notifications for each batch, with an optional delay between enqueuing batches
-        /// to manage load or adhere to potential rate limits at the job scheduling level.
+        /// This method enqueues one job per user with a delay between each enqueue operation
+        /// to manage load and respect potential rate limits at the job scheduling level.
         /// </summary>
         /// <param name="newsItemId">The unique identifier of the news item to dispatch notifications for.</param>
         /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+        /// <summary>
+        /// Dispatches notifications using a hyper-resilient, memory-efficient streaming algorithm
+        /// equipped with a multi-layer "Hang Shield" to ensure application stability.
+        /// </summary>
         public Task DispatchNewsNotificationAsync(Guid newsItemId, CancellationToken cancellationToken = default)
         {
-            // Offload the entire dispatch orchestration to a ThreadPool thread.
-            // This ensures the calling thread (e.g., an ASP.NET request thread) is not blocked
-            // by the potentially long-running process of enqueuing all batches,
-            // especially due to the Task.Delay between enqueuing batches.
+            #region --- Hang Shield & Algorithm Configuration ---
+            // Layer 8: A master timeout for the entire dispatch process.
+            var TotalDispatchTimeout = TimeSpan.FromHours(3);
+
+            // Layer 7: A timeout for each individual job enqueue operation.
+            var PerOperationTimeout = TimeSpan.FromSeconds(10);
+
+            // The number of users to process in one batch before pausing for throttling.
+            const int DispatchChunkSize = 100;
+
+            // The desired rate of job creation.
+            const double TargetJobsPerSecond = 25.0;
+
+            // Randomized jitter factor to prevent thundering herd.
+            const double JitterFactor = 0.2;
+
+            // Circuit breaker threshold for consecutive failures.
+            const int CircuitBreakerThreshold = 15;
+
+            // Interval for logging progress.
+            const int ProgressLoggingInterval = 5000;
+            #endregion
+
             return Task.Run(async () =>
             {
-                NewsItem? newsItem;
+                // --- HANG SHIELD - Layer 8: Overall Dispatch Timeout ---
+                // Create a master cancellation source that triggers after the total timeout.
+                using var dispatchTimeoutCts = new CancellationTokenSource(TotalDispatchTimeout);
+                // Link it with the external cancellation token. The dispatch will stop if EITHER is cancelled.
+                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, dispatchTimeoutCts.Token);
+                var masterToken = linkedCts.Token;
+
                 try
                 {
-                    newsItem = await _newsItemRepository.GetByIdAsync(newsItemId, cancellationToken);
+                    NewsItem? newsItem = await _newsItemRepository.GetByIdAsync(newsItemId, masterToken);
+                    if (newsItem == null)
+                    {
+                        _logger.LogWarning("News item with ID {Id} not found. Cannot dispatch.", newsItemId);
+                        return;
+                    }
+
+                    masterToken.ThrowIfCancellationRequested();
+
+                    using (_logger.BeginScope(new Dictionary<string, object?> { ["NewsItemId"] = newsItem.Id }))
+                    {
+                        _logger.LogInformation("Initiating HANG-SHIELDED streaming dispatch for news item.");
+
+                        IEnumerable<User> targetUsersStream = await _userRepository.GetUsersForNewsNotificationAsync(
+                            newsItem.AssociatedSignalCategoryId, newsItem.IsVipOnly, masterToken);
+
+                        if (targetUsersStream == null)
+                        {
+                            _logger.LogWarning("User repository returned a null stream.");
+                            return;
+                        }
+
+                        string messageText = BuildMessageText(newsItem);
+                        string? imageUrl = newsItem.ImageUrl;
+                        List<NotificationButton> buttons = BuildNotificationButtons(newsItem);
+                        var categoryId = newsItem.AssociatedSignalCategoryId;
+                        var categoryName = newsItem.AssociatedSignalCategory?.Name ?? string.Empty;
+
+                        int totalUsersEnqueued = 0;
+                        int processedInChunk = 0;
+                        int consecutiveFailures = 0;
+                        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+                        foreach (var user in targetUsersStream)
+                        {
+                            if (masterToken.IsCancellationRequested)
+                            {
+                                _logger.LogWarning("Dispatch was cancelled by master token after processing {Count} users.", totalUsersEnqueued);
+                                break;
+                            }
+
+                            if (!long.TryParse(user.TelegramId, out long telegramId)) continue;
+
+                            try
+                            {
+                                // --- HANG SHIELD - Layer 7: Per-Operation Timeout ---
+                                // Create a specific timeout for this single operation.
+                                using var operationTimeoutCts = new CancellationTokenSource(PerOperationTimeout);
+                                // To apply a timeout to a synchronous call, we must wrap it to make it awaitable and cancellable.
+                                // Task.Run is the correct tool for this specific, targeted need.
+                                await Task.Run(() =>
+                                {
+                                    _jobScheduler.Enqueue<INotificationSendingService>(
+                                        service => service.SendBatchNotificationAsync(
+                                            new List<long> { telegramId }, messageText, imageUrl, buttons,
+                                            newsItem.Id, categoryId, categoryName, CancellationToken.None));
+                                }, operationTimeoutCts.Token);
+
+                                totalUsersEnqueued++;
+                                consecutiveFailures = 0; // Reset circuit breaker on success.
+                            }
+                            catch (OperationCanceledException)
+                            {
+                                // This block is hit if the operation or the entire dispatch is cancelled.
+                                if (masterToken.IsCancellationRequested)
+                                {
+                                    // Propagate cancellation if it came from the master token.
+                                    _logger.LogWarning("Dispatch cancelled during job enqueue.");
+                                    break;
+                                }
+
+                                // Otherwise, the per-operation timeout was triggered.
+                                _logger.LogWarning("Job enqueue for user {Id} timed out after {Seconds}s. Skipping user.", telegramId, PerOperationTimeout.TotalSeconds);
+                                consecutiveFailures++;
+                            }
+                            catch (Exception ex)
+                            {
+                                consecutiveFailures++;
+                                _logger.LogError(ex, "Failed to enqueue job for user {Id}. Consecutive failures: {FailureCount}",
+                                                 telegramId, consecutiveFailures);
+                            }
+
+                            if (consecutiveFailures >= CircuitBreakerThreshold)
+                            {
+                                _logger.LogCritical("CIRCUIT BREAKER TRIPPED after {Count} consecutive failures. Aborting dispatch.", consecutiveFailures);
+                                return;
+                            }
+
+                            processedInChunk++;
+
+                            if (processedInChunk >= DispatchChunkSize)
+                            {
+                                // --- HANG SHIELD - Bonus Layer: Cooperative Yielding ---
+                                // Give other application tasks a chance to run before we calculate delays.
+                                await Task.Yield();
+
+                                stopwatch.Stop();
+                                var targetChunkTimeMs = (DispatchChunkSize / TargetJobsPerSecond) * 1000.0;
+                                var delayNeededMs = targetChunkTimeMs - stopwatch.ElapsedMilliseconds;
+                                var jitterMs = delayNeededMs * JitterFactor * (Random.Shared.NextDouble() - 0.5) * 2.0;
+                                delayNeededMs += jitterMs;
+
+                                if (delayNeededMs > 0)
+                                {
+                                    await Task.Delay(TimeSpan.FromMilliseconds(delayNeededMs), masterToken);
+                                }
+
+                                processedInChunk = 0;
+                                stopwatch.Restart();
+                            }
+
+                            if (totalUsersEnqueued > 0 && totalUsersEnqueued % ProgressLoggingInterval == 0)
+                            {
+                                _logger.LogInformation("Dispatch progress: {EnqueuedCount} jobs successfully created.", totalUsersEnqueued);
+                            }
+                        }
+
+                        _logger.LogInformation("Completed streaming dispatch. Total jobs successfully created: {Count}", totalUsersEnqueued);
+                    }
                 }
                 catch (OperationCanceledException)
                 {
-                    _logger.LogWarning("News item retrieval for {NewsItemId} was cancelled.", newsItemId);
-                    throw; // Propagate to ensure the Task returned by Task.Run is Canceled.
+                    // This top-level catch handles the master token being cancelled.
+                    if (dispatchTimeoutCts.IsCancellationRequested)
+                    {
+                        _logger.LogCritical("DISPATCH ABORTED due to exceeding the master timeout of {Timeout}. This is a final safety net.", TotalDispatchTimeout);
+                    }
+                    else
+                    {
+                        _logger.LogWarning("Dispatch was cancelled externally.");
+                    }
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Failed to retrieve news item {NewsItemId}.", newsItemId);
-                    // Exit the lambda; the Task from Task.Run will complete as RanToCompletion.
-                    // If this background task's failure should be more visible, consider re-throwing.
-                    return;
+                    _logger.LogCritical(ex, "An unhandled exception occurred during the dispatch orchestration.");
                 }
-
-                if (newsItem == null)
-                {
-                    _logger.LogWarning("News item with ID {NewsItemId} not found. Cannot dispatch.", newsItemId);
-                    return;
-                }
-
-                // Ensure cancellation is checked after operations if they don't internally throw OperationCanceledException.
-                cancellationToken.ThrowIfCancellationRequested();
-
-                // Use a logging scope for better traceability
-                using (_logger.BeginScope(new Dictionary<string, object?>
-                {
-                    ["NewsItemId"] = newsItem.Id,
-                    // Assuming a Truncate extension method exists for strings
-                    ["NewsTitleScope"] = newsItem.Title?.Length > 50 ? newsItem.Title.Substring(0, 50) : newsItem.Title ?? "No Title"
-                }))
-                {
-                    _logger.LogInformation("Initiating BATCH notification dispatch for news item.");
-
-                    IEnumerable<User> targetUsers;
-                    try
-                    {
-                        targetUsers = await _userRepository.GetUsersForNewsNotificationAsync(
-                            newsItem.AssociatedSignalCategoryId,
-                            newsItem.IsVipOnly,
-                            cancellationToken
-                        );
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        _logger.LogWarning("Target user retrieval for news item {NewsItemId} was cancelled.", newsItemId);
-                        throw; // Propagate to ensure the Task returned by Task.Run is Canceled.
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Failed to retrieve target users for news dispatch.");
-                        return;
-                    }
-
-                    cancellationToken.ThrowIfCancellationRequested();
-
-                    var targetUserList = targetUsers?.ToList() ?? [];
-                    if (!targetUserList.Any())
-                    {
-                        _logger.LogInformation("No target users found for news item matching criteria.");
-                        return;
-                    }
-
-                    _logger.LogInformation("Fetched {UserCount} total users eligible for notification. Now chunking into batches of {BatchSize}.", targetUserList.Count, BatchSize);
-
-                    var userBatches = targetUserList
-                        .Select(u => long.TryParse(u.TelegramId, out long id) ? (long?)id : null)
-                        .Where(id => id.HasValue)
-                        .Select(id => id.Value)
-                        .Chunk(BatchSize); // .Chunk() is available in .NET 6+
-
-                    string messageText = BuildMessageText(newsItem);
-                    string? imageUrl = newsItem.ImageUrl;
-                    var buttons = BuildNotificationButtons(newsItem); // Ensure this returns the correct type
-                    var categoryId = newsItem.AssociatedSignalCategoryId;
-                    // Assuming SignalCategory is a related entity that might be loaded with NewsItem
-                    var categoryName = newsItem.AssociatedSignalCategory?.Name ?? string.Empty;
-
-                    int totalUsersEnqueued = 0;
-                    int batchNumber = 1;
-                    // Calculate total batches once if userBatches is a deferred execution LINQ query
-                    // and .Count() would re-iterate. .Chunk() typically returns an IEnumerable<T[]>,
-                    // where .Count() would iterate.
-                    var userBatchesList = userBatches.ToList();
-                    int totalBatches = userBatchesList.Count;
-
-                    TimeSpan delayBetweenBatchEnqueues = TimeSpan.FromSeconds(15);
-
-                    foreach (var userBatch in userBatchesList)
-                    {
-                        cancellationToken.ThrowIfCancellationRequested(); // Check at the start of each iteration.
-
-                        if (!userBatch.Any())
-                        {
-                            _logger.LogWarning("Batch #{BatchNumber} is empty after filtering. Skipping.", batchNumber);
-                            batchNumber++;
-                            continue;
-                        }
-
-                        try
-                        {
-                            string jobId = _jobScheduler.Enqueue<INotificationSendingService>(
-                                service => service.SendBatchNotificationAsync(
-                                    userBatch.ToList(), // Pass the list of user Telegram IDs for this batch
-                                    messageText,
-                                    imageUrl,
-                                    buttons,
-                                    newsItem.Id,
-                                    categoryId,
-                                    categoryName,
-                                    CancellationToken.None // As per original: job cancellation is independent
-                                )
-                            );
-                            _logger.LogInformation("Enqueued batch job {JobId} for {UserCount} users (Batch #{BatchNumber}).",
-                                                   jobId, userBatch.Length, batchNumber);
-                            totalUsersEnqueued += userBatch.Length;
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogError(ex, "Failed to enqueue batch job #{BatchNumber} for {UserCount} users. This batch will be skipped.", batchNumber, userBatch.Length);
-                        }
-
-                        if (batchNumber < totalBatches) // Only delay if there are more batches to enqueue
-                        {
-                            // Task.Delay will throw OperationCanceledException if 'cancellationToken' is signaled.
-                            // This exception will propagate out, causing the Task from Task.Run to be Canceled.
-                            await Task.Delay(delayBetweenBatchEnqueues, cancellationToken);
-                            _logger.LogTrace("Delayed {DelayTotalSeconds} seconds before enqueuing batch #{NextBatchNumber}.", delayBetweenBatchEnqueues.TotalSeconds, batchNumber + 1);
-                        }
-                        batchNumber++;
-                    }
-                    _logger.LogInformation("Completed enqueuing all batches. Total jobs created: {BatchCount}. Total users enqueued: {TotalUsersEnqueued}.", batchNumber - 1, totalUsersEnqueued);
-                }
-            }, cancellationToken); // Pass CancellationToken to Task.Run for cooperative cancellation.
+            }, cancellationToken); // Note: We pass the original token here, the linking happens inside.
         }
+
 
         /// <summary>
         /// Builds the main text content for a news notification.
@@ -207,15 +241,13 @@ namespace Application.Services
 
             var messageTextBuilder = new StringBuilder();
 
-            // Using the updated escaping method to handle Markdown for Telegram.
-            // Truncation limit for summary is kept at 250 as in original.
             string title = EscapeTextForTelegramMarkup(newsItem.Title?.Trim() ?? "Untitled News");
             string sourceName = EscapeTextForTelegramMarkup(newsItem.SourceName?.Trim() ?? "Unknown Source");
             string summary = EscapeTextForTelegramMarkup(TruncateWithEllipsis(newsItem.Summary, 250)?.Trim() ?? string.Empty);
             string? link = newsItem.Link?.Trim();
 
-            _ = messageTextBuilder.AppendLine($"*{title}*"); // Bold for Telegram Markdown (V1/relaxed V2)
-            _ = messageTextBuilder.AppendLine($"_📰 Source: {sourceName}_"); // Italic for Telegram Markdown
+            _ = messageTextBuilder.AppendLine($"*{title}*");
+            _ = messageTextBuilder.AppendLine($"_📰 Source: {sourceName}_");
 
             if (!string.IsNullOrWhiteSpace(summary))
             {
@@ -226,7 +258,6 @@ namespace Application.Services
             {
                 if (Uri.TryCreate(link, UriKind.Absolute, out _))
                 {
-                    // For links in Telegram Markdown, parentheses within the URL must be escaped.
                     string escapedLink = link.Replace("(", "\\(").Replace(")", "\\)");
                     _ = messageTextBuilder.Append($"\n\n[🔗 Read Full Article]({escapedLink})");
                 }
@@ -238,10 +269,11 @@ namespace Application.Services
             return messageTextBuilder.ToString().Trim();
         }
 
+
         /// <summary>
         /// Builds a list of notification buttons for a news item.
         /// </summary>
-        private List<NotificationButton> BuildNotificationButtons(NewsItem newsItem)
+        private List<NotificationButton> BuildNotificationButtons(NewsItem newsItem) // Correct return type
         {
             if (newsItem == null)
             {

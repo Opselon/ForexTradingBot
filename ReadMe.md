@@ -1,6 +1,4 @@
-﻿# ForexSignalBot: AI-Driven Telegram Forex Signals 📈🤖✨🚀
-
-# ForexSignalBot: AI-Driven Telegram Forex Signals 📈🤖✨🚀
+﻿# ForexSignalBot: AI-Driven Telegram Forex Signals / Auto Forwarder Smart Free OpenSource 📈🤖✨🚀
 
 [![License](https://img.shields.io/github/license/Opselon/ForexTradingBot?style=for-the-badge&color=blue)](https://github.com/Opselon/ForexTradingBot/blob/main/LICENSE "Project License Badge: Indicates the MIT License, allowing open use and modification of the codebase. Click to view license details and usage terms.")
 [![GitHub Stars](https://img.shields.io/github/stars/Opselon/ForexTradingBot?style=for-the-badge&logo=github)](https://github.com/Opselon/ForexTradingBot/stargazers "GitHub Stars Count: Shows how many users have starred this repository, reflecting popularity and interest in the project. Click to see stargazers.")
@@ -18,13 +16,13 @@
 [![Contributors](https://img.shields.io/github/contributors/Opselon/ForexTradingBot?style=for-the-badge)](https://github.com/Opselon/ForexTradingBot/graphs/contributors "Number of Contributors: Shows the total number of individuals who have contributed code to this project, highlighting community involvement and collaborative efforts.")
 
 ![ForexSignalBot Demo](https://i.imgur.com/lcak2Rr.gif)
+
 ---
 
-### 🚀 Get Started Now! Demo Link Below 👇
+### 🚀 Get Started Now!
 
 *   **Live Bot:** [https://t.me/trade_ai_helper_bot](https://t.me/trade_ai_helper_bot) ✨
 *   *Just click the link to open the bot in Telegram and start trading!*
-
 ## 📖 Table of Contents 📚
 
 *   [🚀 Project Overview: Precision Trading with ForexSignalBot](#-project-overview-precision-trading-with-forexsignalbot)

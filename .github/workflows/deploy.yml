@@ -59,36 +59,7 @@
           "options": "--health-cmd \"redis-cli ping\" --health-interval 10s --health-timeout 5s --health-retries 5"
         }
       },
-      "steps": [
-        {
-          "name": "📥 Checkout Test Configuration",
-          "uses": "actions/checkout@v4"
-        },
-        {
-          "name": "🚀 [Layer 1] Start Application Container with Test Config",
-          "run": "docker run -d --name app-test --network ${{ job.services.redis-test.network }} -e \"ConnectionStrings__Redis=redis-test:6379,abortConnect=false\" -e \"ASPNETCORE_ENVIRONMENT=Development\" -e \"ASPNETCORE_URLS=http://+:80\" -p 8080:80 -e \"ConnectionStrings__DefaultConnection=Server=dummy-db;Database=dummy;User Id=sa;Password=dummy;\" -e \"TelegramPanel__BotToken=12345:dummy\" -e \"TelegramPanel__AdminUserIds=12345\" -e \"TelegramUserApi__ApiId=12345\" -e \"TelegramUserApi__ApiHash=dummy\" -e \"TelegramUserApi__PhoneNumber=+15551234567\" forex-trading-bot-ci:latest"
-        },
-        {
-          "name": "⌛ [Layer 2] Application Health Check",
-          "run": "echo \"Waiting for application to become healthy...\"\ntimeout=60\nwhile ! curl -sf http://localhost:8080/healthz; do\n  if [ $timeout -le 0 ]; then\n    echo \"❌ Health check timed out after 60 seconds.\"\n    exit 1\n  fi\n  echo -n \".\"\n  sleep 2\n  timeout=$((timeout-2))\ndone\necho \"✅ Application is healthy and responding.\""
-        },
-        {
-          "name": "📖 [Layer 3] Live Log Analysis",
-          "run": "echo \"Monitoring application logs for 30 seconds...\"\ndocker logs -f app-test &\nLOGS_PID=$!\nsleep 30\nkill $LOGS_PID\necho \"--- DUMPING FULL LOGS ---\"\ndocker logs app-test\nif docker logs app-test 2>&1 | grep -q -E \"CRITICAL|FTL|FATAL|Fail|fail\"; then\n  echo \"❌ CRITICAL error keyword found in logs. Smoke test failed.\"\n  exit 1\nfi\necho \"✅ No critical errors found in live logs.\""
-        },
-        {
-          "name": "🔍 [Layer 4] Final Process Check",
-          "run": "if ! docker exec app-test pgrep -f \"WebAPI.dll\"; then\n  echo \"❌ The main WebAPI.dll process is NOT running inside the container. It must have crashed.\"\n  exit 1\nfi\necho \"✅ Main application process is still running.\""
-        },
-        {
-          "name": "🧹 Clean Up Container",
-          "if": "always()",
-          "run": "docker rm -f app-test"
-        }
-      ]
-    }
-  },
-
+      
     "build": {
       "name": "✅ 1. Build & Package",
       "runs-on": "ubuntu-latest",

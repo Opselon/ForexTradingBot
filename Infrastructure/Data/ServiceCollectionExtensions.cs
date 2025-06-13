@@ -91,11 +91,7 @@ namespace Infrastructure.Data
                 {
                     throw new InvalidOperationException($"FATAL: Critical DB configuration is missing. DBProvider: '{dbProvider}', ConnectionString Found: {!string.IsNullOrEmpty(connectionString)}");
                 }
-               _ = services.AddHangfire(config => config
-             .SetDataCompatibilityLevel(CompatibilityLevel.Version_180) // تنظیم سطح سازگاری داده
-             .UseSimpleAssemblyNameTypeSerializer() // استفاده از سریالایزر ساده برای نام اسمبلی‌ها
-             .UseRecommendedSerializerSettings() // استفاده از تنظیمات سریالایزر توصیه شده
-             .UseSqlServerStorage(connectionString)); // پیکربندی Hangfire برای استفاده از SQL Server به عنوان ذخیره‌ساز
+
                 switch (dbProvider)
                 {
                     case "sqlserver":
@@ -108,8 +104,13 @@ namespace Infrastructure.Data
                                     maxRetryDelay: TimeSpan.FromSeconds(30),
                                     errorNumbersToAdd: null);
                             }));
+                        services.AddHangfire(config => config
+                            .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+                            .UseSimpleAssemblyNameTypeSerializer()
+                            .UseRecommendedSerializerSettings()
+                            .UseSqlServerStorage(connectionString));
                         break;
-
+                      
                     case "postgres":
                     case "postgresql":
                         _ = services.AddDbContext<AppDbContext>(opts =>

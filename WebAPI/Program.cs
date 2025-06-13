@@ -9,6 +9,7 @@ using Application.Features.Forwarding.Extensions;
 // using Application.Interfaces;          // معمولاً اینترفیس‌های Application مستقیماً اینجا نیاز نیستند مگر برای موارد خاص
 // using Application.Services;            // و نه پیاده‌سازی‌های آن
 using BackgroundTasks;                    // برای متد توسعه‌دهنده AddBackgroundTasksServices (اگر تعریف کرده‌اید)
+using BackgroundTasks.Services;
 using Hangfire;                             // برای پیکربندی‌های Hangfire مانند CompatibilityLevel, RecurringJob, Cron
 using Hangfire.Dashboard;                   // برای DashboardOptions, IDashboardAuthorizationFilter
 using Hangfire.SqlServer;
@@ -73,7 +74,7 @@ try
     #endregion
 
     #region Add Core ASP.NET Core Services
-
+    _ = builder.Services.AddHostedService<IdleNewsMonitorService>();
     _ = builder.Services.AddWindowsService(options =>
     {
         options.ServiceName = "ForexTradingBotAPI";
@@ -206,49 +207,58 @@ try
     // We check for the actual secrets required for this feature to run.
     var apiId = builder.Configuration["TelegramUserApi:ApiId"];
     var apiHash = builder.Configuration["TelegramUserApi:ApiHash"];
-
-    if (!string.IsNullOrEmpty(apiId) && !string.IsNullOrEmpty(apiHash))
+    try
     {
-        Log.Information("✅ Auto-Forwarding feature ENABLED (ApiId and ApiHash were found). Registering all related services...");
+        if (!string.IsNullOrEmpty(apiId) && !string.IsNullOrEmpty(apiHash))
+        {
+            Log.Information("✅ Auto-Forwarding feature ENABLED (ApiId and ApiHash were found). Registering all related services...");
 
-        // 1. Configure the settings object
-        builder.Services.Configure<Infrastructure.Settings.TelegramUserApiSettings>(builder.Configuration.GetSection("TelegramUserApi"));
+            // 1. Configure the settings object
+            builder.Services.Configure<Infrastructure.Settings.TelegramUserApiSettings>(builder.Configuration.GetSection("TelegramUserApi"));
 
-        // 2. Register the API client itself
-        builder.Services.AddSingleton<ITelegramUserApiClient, TelegramUserApiClient>();
+            // 2. Register the API client itself
+            builder.Services.AddSingleton<ITelegramUserApiClient, TelegramUserApiClient>();
 
-        // 3. Register the background service that initializes the client
-        builder.Services.AddHostedService<TelegramUserApiInitializationService>();
+            // 3. Register the background service that initializes the client
+            builder.Services.AddHostedService<TelegramUserApiInitializationService>();
 
-        // 4. Register all the other forwarding services from the other projects
-        builder.Services.AddForwardingInfrastructure();
-        builder.Services.AddForwardingServices();
-        builder.Services.AddForwardingOrchestratorServices();
+            // 4. Register all the other forwarding services from the other projects
+            builder.Services.AddForwardingInfrastructure();
+            builder.Services.AddForwardingServices();
+            builder.Services.AddForwardingOrchestratorServices();
 
-        Log.Information("All Auto-Forwarding services have been successfully registered.");
+            Log.Information("All Auto-Forwarding services have been successfully registered.");
+        }
+        else
+        {
+            // If the secrets are missing, we skip ALL related services.
+            Log.Information("ℹ️ Auto-Forwarding feature DISABLED (ApiId or ApiHash not found in configuration).");
+        }
+
+
+        // --- Universal Conditional Feature: CryptoPay (Example) ---
+        // The same robust pattern is applied here.
+        var cryptoPayToken = builder.Configuration["CryptoPay:ApiToken"];
+        var cryptoPayApiKey = builder.Configuration["CryptoPay:ApiKey"]; // Assuming you have this key too
+
+        if (!string.IsNullOrEmpty(cryptoPayToken) && !string.IsNullOrEmpty(cryptoPayApiKey))
+        {
+            // Here you would register your CryptoPay specific services.
+            // builder.Services.AddCryptoPayServices(builder.Configuration);
+            Log.Information("✅ CryptoPay feature ENABLED (ApiToken and ApiKey were found in configuration).");
+        }
+        else
+        {
+            Log.Information("ℹ️ CryptoPay feature DISABLED (CryptoPay secrets not found in configuration).");
+        }
+
     }
-    else
+    catch
     {
         // If the secrets are missing, we skip ALL related services.
         Log.Information("ℹ️ Auto-Forwarding feature DISABLED (ApiId or ApiHash not found in configuration).");
     }
 
-
-    // --- Universal Conditional Feature: CryptoPay (Example) ---
-    // The same robust pattern is applied here.
-    var cryptoPayToken = builder.Configuration["CryptoPay:ApiToken"];
-    var cryptoPayApiKey = builder.Configuration["CryptoPay:ApiKey"]; // Assuming you have this key too
-
-    if (!string.IsNullOrEmpty(cryptoPayToken) && !string.IsNullOrEmpty(cryptoPayApiKey))
-    {
-        // Here you would register your CryptoPay specific services.
-        // builder.Services.AddCryptoPayServices(builder.Configuration);
-        Log.Information("✅ CryptoPay feature ENABLED (ApiToken and ApiKey were found in configuration).");
-    }
-    else
-    {
-        Log.Information("ℹ️ CryptoPay feature DISABLED (CryptoPay secrets not found in configuration).");
-    }
 
 
 

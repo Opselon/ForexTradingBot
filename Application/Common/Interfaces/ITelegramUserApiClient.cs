@@ -49,6 +49,9 @@ namespace Application.Common.Interfaces
             bool noForwards = false);
 
 
+        bool IsConnected { get; }
+
+
         Task<TL.User?> GetSelfAsync(CancellationToken cancellationToken);
 
         Task<TL.InputPeer?> ResolvePeerAsync(long peerId, CancellationToken cancellationToken);

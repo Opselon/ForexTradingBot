@@ -8,6 +8,7 @@ using Domain.Features.Forwarding.Entities;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using StackExchange.Redis;
 using Telegram.Bot;
 using TelegramPanel.Application.CommandHandlers.Entry;
 using TelegramPanel.Application.CommandHandlers.Features.Analysis;
@@ -58,7 +59,18 @@ namespace TelegramPanel.Extensions
             _ = services.AddScoped<IDirectMessageSender, DirectTelegramMessageSender>();
 
             // 7. Register ITelegramUpdateJobService for Hangfire
-            _ = services.AddSingleton<ITelegramUpdateChannel, TelegramUpdateChannel>();
+            _ = services.AddSingleton<ITelegramUpdateChannel, RedisUpdateChannel>();
+
+
+            services.AddSingleton<IConnectionMultiplexer>(sp =>
+            {
+                var config = sp.GetRequiredService<IConfiguration>();
+                var connectionString = config.GetConnectionString("Redis");
+                var options = ConfigurationOptions.Parse(connectionString);
+                options.AbortOnConnectFail = false; // For startup resiliency
+                return ConnectionMultiplexer.Connect(options);
+            });
+
 
             // 8. Register ITelegramUpdateJobService for Hangfire
             _ = services.AddScoped<IMarketDataService, MarketDataService>();

@@ -21,6 +21,7 @@ namespace Infrastructure.Services
     /// </summary>
     public class TelegramUserApiClient : ITelegramUserApiClient
     {
+        public bool IsConnected { get; private set; } = false;
         #region Private Readonly Fields
         private readonly ILogger<TelegramUserApiClient> _logger;
         private readonly TelegramUserApiSettings _settings;
@@ -807,6 +808,9 @@ namespace Infrastructure.Services
         /// </summary>
         public async Task ConnectAndLoginAsync(CancellationToken cancellationToken)
         {
+
+
+            IsConnected = true;
             // Level 3: Use a SemaphoreSlim to prevent multiple concurrent connection attempts.
             // This ensures only one login process runs at a time.
             _logger.LogTrace("ConnectAndLoginAsync: Attempting to acquire connection lock.");

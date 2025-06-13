@@ -81,11 +81,14 @@ namespace BackgroundTasks.Services
 
             try
             {
+                // 1. Retrieve User ID from Redis Cache
                 long targetUserId = await GetUserIdFromCacheAsync(userListCacheKey, userIndex);
-                if (targetUserId == -1) return;
+                if (targetUserId == -1) return; // Error logged in helper, job stops.
 
                 _logger.LogInformation("Processing job for UserID: {UserId}", targetUserId);
 
+                // 2. Safeguard: Final Rate-Limiting Check
+                // We check the user's level to apply the correct limit.
                 var userDto = await _userService.GetUserByTelegramIdAsync(targetUserId.ToString(), CancellationToken.None);
                 if (userDto == null)
                 {
@@ -93,7 +96,6 @@ namespace BackgroundTasks.Services
                     return;
                 }
 
-                // Corrected UserLevel check
                 int limit = userDto.Level == UserLevel.Bronze ? VipUserHourlyLimit : RegularUserHourlyLimit;
                 if (await _rateLimiter.IsUserOverLimitAsync(targetUserId, limit, LimitPeriod))
                 {
@@ -102,27 +104,31 @@ namespace BackgroundTasks.Services
                     return;
                 }
 
+                // 3. Fetch News Data
                 var newsItem = await _newsItemRepository.GetByIdAsync(newsItemId, CancellationToken.None);
                 if (newsItem == null) throw new InvalidOperationException($"NewsItem {newsItemId} not found.");
 
+                // 4. Build Final Payload
                 var payload = new NotificationJobPayload
                 {
                     TargetTelegramUserId = targetUserId,
-                    MessageText = BuildMessageText(newsItem), // Call the single, clean helper
+                    MessageText = BuildMessageText(newsItem), // Use internal helper
                     UseMarkdown = true,
                     ImageUrl = newsItem.ImageUrl,
-                    Buttons = BuildSimpleNotificationButtons(newsItem),
+                    Buttons = BuildSimpleNotificationButtons(newsItem), // Use internal helper
                     NewsItemId = newsItemId
                 };
 
+                // 5. Send to Telegram
                 await SendToTelegramAsync(payload, CancellationToken.None);
             }
             catch (Exception ex)
             {
                 _logger.LogCritical(ex, "A critical failure occurred during a cached notification job.");
-                throw;
+                throw; // Re-throw to ensure Hangfire marks the job as "Failed".
             }
         }
+
 
         #region Private Helpers
 
@@ -143,6 +149,16 @@ namespace BackgroundTasks.Services
             return allUserIds[index];
         }
 
+        private InlineKeyboardMarkup? BuildTelegramKeyboard(List<NotificationButton>? buttons)
+        {
+            if (buttons == null || !buttons.Any()) return null;
+            var inlineButtons = buttons.Select(b =>
+                b.IsUrl
+                ? InlineKeyboardButton.WithUrl(b.Text, b.CallbackDataOrUrl)
+                : InlineKeyboardButton.WithCallbackData(b.Text, b.CallbackDataOrUrl));
+            return new InlineKeyboardMarkup(inlineButtons);
+        }
+
         // The "last mile" sender. Contains only Telegram API logic and self-healing.
         private async Task SendToTelegramAsync(NotificationJobPayload payload, CancellationToken cancellationToken)
         {
@@ -161,8 +177,8 @@ namespace BackgroundTasks.Services
             }
             catch (ApiRequestException apiEx) when (apiEx.ErrorCode == 403 || apiEx.Message.Contains("chat not found"))
             {
-
-                throw; // Re-throw to fail the job in Hangfire
+                _logger.LogWarning(apiEx, "Permanent Send Failure (bot blocked). Marking user {UserId} as unreachable.", payload.TargetTelegramUserId);
+ 
             }
             catch (Exception ex)
             {
@@ -202,16 +218,7 @@ namespace BackgroundTasks.Services
             return buttons;
         }
 
-        private InlineKeyboardMarkup? BuildTelegramKeyboard(List<NotificationButton>? buttons)
-        {
-            if (buttons == null || !buttons.Any()) return null;
-            var inlineButtons = buttons.Select(b =>
-                b.IsUrl
-                ? InlineKeyboardButton.WithUrl(b.Text, b.CallbackDataOrUrl)
-                : InlineKeyboardButton.WithCallbackData(b.Text, b.CallbackDataOrUrl));
-            return new InlineKeyboardMarkup(inlineButtons);
-        }
-
+       
         public Task SendNotificationAsync(NotificationJobPayload payload, CancellationToken cancellationToken)
         {
             throw new NotImplementedException();

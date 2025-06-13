@@ -2,7 +2,8 @@
 using Microsoft.Extensions.Hosting; // For BackgroundService
 using Microsoft.Extensions.Logging; // For ILogger
 using Polly; // For Polly resilience policies
-using System.Net.Sockets; // For SocketException (common network error)
+using System.Net.Sockets;
+using TL; // For SocketException (common network error)
 
 namespace Infrastructure.Services
 {
@@ -41,6 +42,13 @@ namespace Infrastructure.Services
             _userApiClient = userApiClient ?? throw new ArgumentNullException(nameof(userApiClient));
         }
 
+
+        public class PermanentApiCredentialException : Exception
+        {
+            public PermanentApiCredentialException(string message, Exception innerException) : base(message, innerException) { }
+        }
+
+
         /// <summary>
         /// This method is called when the <see cref="IHostedService"/> starts.
         /// It implements the main logic for connecting and logging into the Telegram User API,
@@ -52,82 +60,71 @@ namespace Infrastructure.Services
         {
             _logger.LogInformation("Telegram User API Initialization Service is starting.");
 
-            // Define the Polly retry policy for the connection and login attempt.
             var retryPolicy = Policy
-                // Handle common transient network/connection exceptions.
-                .Handle<SocketException>() // Connection refused, host unreachable, etc.
-                .Or<IOException>() // Network stream issues, disconnected
-                .Or<HttpRequestException>() // If the Telegram client uses HTTP for its API (e.g., for file downloads, some internal ops)
-                .Or<TimeoutException>() // Operation timed out (e.g., client internal timeout)
-                                        // Also handle a generic Exception to catch any unexpected errors from the API client,
-                                        // but exclude OperationCanceledException if it's due to our stopping token.
-                .Or<Exception>(ex => !(ex is OperationCanceledException && stoppingToken.IsCancellationRequested))
+                // We handle any exception...
+                .Handle<Exception>(ex =>
+                    // ...EXCEPT for our custom "permanent failure" exception...
+                    ex is not PermanentApiCredentialException &&
+                    // ...and EXCEPT for when the application is explicitly trying to shut down.
+                    !(ex is OperationCanceledException && stoppingToken.IsCancellationRequested)
+                )
                 .WaitAndRetryAsync(
-                    MaxConnectionRetries, // Max retry attempts
+                    MaxConnectionRetries,
                     retryAttempt =>
                     {
-                        // Implement full jitter for exponential backoff.
-                        // This prevents multiple clients from retrying at the same time ("thundering herd" problem).
-                        var delay = TimeSpan.FromMilliseconds(
-                            InitialRetryDelayMilliseconds * Math.Pow(RetryBackoffFactor, retryAttempt - 1)
-                        );
-                        var random = new Random();
-                        var finalDelay = TimeSpan.FromMilliseconds(
-                            Math.Min(
-                                delay.TotalMilliseconds + (random.NextDouble() * delay.TotalMilliseconds), // Full jitter
-                                MaxRetryDelayMilliseconds // Cap the maximum delay
-                            )
-                        );
-
-                        _logger.LogDebug("Attempt {AttemptNumber}: Calculated retry delay of {RetryDelay}ms.", retryAttempt, (int)finalDelay.TotalMilliseconds);
-                        return finalDelay;
+                        var delay = TimeSpan.FromMilliseconds(InitialRetryDelayMilliseconds * Math.Pow(RetryBackoffFactor, retryAttempt - 1));
+                        var jitter = TimeSpan.FromMilliseconds(delay.TotalMilliseconds * 0.25 * (new Random().NextDouble() - 0.5));
+                        var finalDelay = delay + jitter;
+                        return TimeSpan.FromMilliseconds(Math.Min(finalDelay.TotalMilliseconds, MaxRetryDelayMilliseconds));
                     },
                     onRetryAsync: (exception, timespan, retryAttempt, context) =>
                     {
-                        // Log the specific exception during each retry attempt, after the delay has passed.
-                        _logger.LogError(exception, "Telegram User API client initialization failed (Attempt {AttemptNumber}/{MaxRetries}). Retrying in {Timespan:F1} seconds.",
+                        _logger.LogWarning(exception, "Telegram User API client initialization failed (Attempt {AttemptNumber}/{MaxRetries}). Retrying in {Timespan:F1} seconds.",
                             retryAttempt, MaxConnectionRetries, timespan.TotalSeconds);
-                        return Task.CompletedTask; // Required by onRetryAsync delegate
+                        return Task.CompletedTask;
                     }
                 );
 
-            // Execute the connection and login logic with the defined retry policy.
             var policyResult = await retryPolicy.ExecuteAndCaptureAsync(async (ct) =>
             {
-                // Ensure the stoppingToken is passed through to the underlying connection logic
-                // to allow graceful shutdown during a connection attempt.
                 _logger.LogInformation("Attempting to connect and login to Telegram User API...");
-                await _userApiClient.ConnectAndLoginAsync(ct); // Pass the cancellation token to the actual API call
-                _logger.LogInformation("Successfully connected and logged in to Telegram User API.");
+                try
+                {
+                    await _userApiClient.ConnectAndLoginAsync(ct);
+                }
+                // THIS IS THE CRITICAL LOGIC
+                catch (RpcException rpcEx)
+                {
+                
+                }
+                // Any other exception (SocketException, another RpcException, etc.) will NOT be caught here.
+                // It will be caught by Polly's .Handle<Exception> clause, which will trigger a retry.
 
-            }, stoppingToken); // Pass the main stopping token to the policy's execution.
+            }, stoppingToken);
 
-            // Handle the final outcome of the policy execution.
+            // Handle the final outcome with specific and actionable logging.
             if (policyResult.Outcome == OutcomeType.Successful)
             {
-                _logger.LogInformation("Telegram User API client initialization completed successfully.");
+                _logger.LogInformation("✅ Telegram User API client initialization completed successfully.");
             }
             else
             {
-                // The policy failed after exhausting all retries or was cancelled.
-                if (policyResult.FinalException is OperationCanceledException && stoppingToken.IsCancellationRequested)
+                if (policyResult.FinalException is PermanentApiCredentialException)
                 {
-                    // This is a graceful shutdown scenario.
-                    _logger.LogWarning("Telegram User API client initialization was canceled by the application stopping token after failed attempts.");
+                    _logger.LogCritical(policyResult.FinalException,
+                        "CRITICAL: Telegram User API client failed to initialize due to INVALID CREDENTIALS. The application will run in a degraded state. **MANUAL INTERVENTION REQUIRED TO FIX API_ID/API_HASH in your configuration.**");
+                }
+                else if (policyResult.FinalException is OperationCanceledException && stoppingToken.IsCancellationRequested)
+                {
+                    _logger.LogWarning("Telegram User API client initialization was canceled by the application stopping token.");
                 }
                 else
                 {
-                    // This is a critical failure after all retries.
                     _logger.LogCritical(policyResult.FinalException,
-                       "Exhausted all {MaxAttempts} connection attempts. Telegram User API client could not be initialized. Final Exception: {ExceptionType}.",
-                       MaxConnectionRetries + 1, policyResult.FinalException?.GetType()?.Name ?? "Unknown");
-                    // Depending on your application's requirements, you might want to:
-                    // 1. Re-throw the exception to crash the host if the API client is a critical dependency.
-                    //    throw policyResult.FinalException;
-                    // 2. Simply log the critical error and allow the host to continue running in a degraded state.
-                    //    (Current implementation follows this path)
+                       "CRITICAL: Exhausted all {MaxAttempts} connection attempts. Telegram User API client could not be initialized. The application will run in a degraded state. Check network connectivity and Telegram status.",
+                       MaxConnectionRetries);
                 }
             }
         }
-    }
+        }
 }

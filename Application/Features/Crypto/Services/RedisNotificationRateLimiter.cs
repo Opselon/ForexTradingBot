@@ -1,17 +1,16 @@
-﻿// Place this in your Infrastructure/Services or a similar folder
-// You will need to add the StackExchange.Redis NuGet package.
-using StackExchange.Redis;
-using System.Threading.Tasks;
-using System;
+﻿// File: Infrastructure/Services/RedisNotificationRateLimiter.cs
+
 using Microsoft.Extensions.Logging;
+using StackExchange.Redis;
+using System;
+using System.Threading.Tasks;
 
 public class RedisNotificationRateLimiter : INotificationRateLimiter
 {
     private readonly IConnectionMultiplexer _redis;
     private readonly ILogger<RedisNotificationRateLimiter> _logger;
 
-    // This is the raw Lua script string. It is sent with every request.
-    // It is still highly efficient on the Redis side.
+    // This Lua script is atomic and highly efficient.
     private const string RateLimiterScript =
         @"local count = redis.call('INCR', KEYS[1])
           if tonumber(count) == 1 then
@@ -25,13 +24,16 @@ public class RedisNotificationRateLimiter : INotificationRateLimiter
         _logger = logger;
     }
 
+    /// <summary>
+    /// Atomically checks if a user is over their notification limit using a fixed time window.
+    /// </summary>
     public async Task<bool> IsUserOverLimitAsync(long telegramUserId, int limit, TimeSpan period)
     {
         var db = _redis.GetDatabase();
 
-        // ✅✅ IMPROVEMENT: Create a key that is unique for the user AND the current time window.
-        // This makes the count automatically reset when the time window passes. For an hourly limit,
-        // a key like "notif_limit:12345:2023-10-27-15" will be used. At 16:00, a new key will be used.
+        // ✅ IMPROVEMENT: Create a key that is unique for the user AND the current calendar hour.
+        // This makes the count automatically reset at the start of the next hour.
+        // Example key for user 123 at 3:45 PM on Oct 27, 2023 -> "notif_limit:123:2023-10-27-15"
         string timeWindow = DateTime.UtcNow.ToString("yyyy-MM-dd-HH");
         string key = $"notif_limit:{telegramUserId}:{timeWindow}";
 
@@ -40,14 +42,14 @@ public class RedisNotificationRateLimiter : INotificationRateLimiter
             var result = await db.ScriptEvaluateAsync(
                 RateLimiterScript,
                 new RedisKey[] { key },
-                // The expiration should be slightly longer than the window to prevent premature expiry.
-                // For a 1-hour window, expiring after 2 hours is safe.
+                // The expiration is set to be longer than the window to prevent premature expiry.
+                // For a 1-hour window, expiring after 2 hours is very safe.
                 new RedisValue[] { (long)period.TotalSeconds + 3600 }
             );
 
             if (result.IsNull)
             {
-                _logger.LogWarning("Redis script evaluation returned null for key {Key}. Allowing notification to pass.", key);
+                _logger.LogWarning("Redis script returned null for key {Key}. Allowing notification as a failsafe.", key);
                 return false;
             }
 
@@ -57,7 +59,7 @@ public class RedisNotificationRateLimiter : INotificationRateLimiter
             {
                 _logger.LogInformation("User {UserId} is over the limit for time window {TimeWindow}. Count: {Count}, Limit: {Limit}",
                     telegramUserId, timeWindow, currentCount, limit);
-                return true;
+                return true; // Is over limit
             }
         }
         catch (Exception ex)
@@ -66,6 +68,6 @@ public class RedisNotificationRateLimiter : INotificationRateLimiter
             return false;
         }
 
-        return false;
+        return false; // Not over limit
     }
 }

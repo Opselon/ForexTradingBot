@@ -6,13 +6,12 @@ using Telegram.Bot.Types;
 
 namespace TelegramPanel.Queue
 {
+    // No change needed for ITelegramUpdateChannel.cs
     public interface ITelegramUpdateChannel
     {
         ValueTask WriteAsync(Update update, CancellationToken cancellationToken = default);
-        ValueTask<Update> ReadAsync(CancellationToken cancellationToken = default);
         IAsyncEnumerable<Update> ReadAllAsync(CancellationToken cancellationToken = default);
     }
-
     public class TelegramUpdateChannel : ITelegramUpdateChannel
     {
         private readonly Channel<Update> _channel;

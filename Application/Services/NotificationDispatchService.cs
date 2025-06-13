@@ -6,6 +6,8 @@ using Application.DTOs.Notifications;
 using Application.Interfaces;
 using Domain.Entities;
 using Microsoft.Extensions.Logging;
+using Polly;
+using Polly.CircuitBreaker;
 using StackExchange.Redis;
 
 // using Shared.Extensions; // Assuming TruncateWithEllipsis is a local method
@@ -27,27 +29,41 @@ namespace Application.Services
         private readonly INewsItemRepository _newsItemRepository;
         private readonly StackExchange.Redis.IDatabase _redisDb;
         private readonly INotificationRateLimiter _rateLimiter;
+        private readonly AsyncCircuitBreakerPolicy _redisCircuitBreaker;
         #endregion
 
         #region Constructor
         public NotificationDispatchService(
-            INewsItemRepository newsItemRepository,
-            IUserRepository userRepository,
-            INotificationJobScheduler jobScheduler,
-            ILogger<NotificationDispatchService> logger,
-            IConnectionMultiplexer redisConnection,   // It receives this...
-            INotificationRateLimiter rateLimiter)      // and this.
+             INewsItemRepository newsItemRepository,
+             IUserRepository userRepository,
+             INotificationJobScheduler jobScheduler,
+             ILogger<NotificationDispatchService> logger,
+             IConnectionMultiplexer redisConnection,
+             INotificationRateLimiter rateLimiter)
         {
-            // Assign all the dependencies you receive.
             _newsItemRepository = newsItemRepository ?? throw new ArgumentNullException(nameof(newsItemRepository));
             _userRepository = userRepository ?? throw new ArgumentNullException(nameof(userRepository));
             _jobScheduler = jobScheduler ?? throw new ArgumentNullException(nameof(jobScheduler));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-
-            _rateLimiter = rateLimiter ?? throw new ArgumentNullException(nameof(rateLimiter)); // ✅ ASSIGN the rate limiter
+            _rateLimiter = rateLimiter ?? throw new ArgumentNullException(nameof(rateLimiter));
 
             if (redisConnection == null) throw new ArgumentNullException(nameof(redisConnection));
-            _redisDb = redisConnection.GetDatabase(); // ✅ ASSIGN the Redis DB instance
+            _redisDb = redisConnection.GetDatabase();
+
+            // ✅✅ NEW: Initialize the Circuit Breaker policy ✅✅
+            // If 3 consecutive Redis operations fail, the circuit will "break" (stop trying) for 1 minute.
+            _redisCircuitBreaker = Policy
+                .Handle<RedisException>() // It will trigger on any Redis-specific exception
+                .CircuitBreakerAsync(
+                    exceptionsAllowedBeforeBreaking: 3,
+                    durationOfBreak: TimeSpan.FromMinutes(1),
+                    onBreak: (exception, timespan) =>
+                    {
+                        _logger.LogCritical(exception, "Redis Circuit Breaker opened for {BreakDuration}. All dispatch operations will fail fast until the circuit resets.", timespan);
+                    },
+                    onReset: () => _logger.LogInformation("Redis Circuit Breaker has been reset. Resuming normal dispatch operations."),
+                    onHalfOpen: () => _logger.LogWarning("Redis Circuit Breaker is now half-open. The next dispatch will test the connection.")
+                );
         }
         #endregion
 
@@ -59,25 +75,38 @@ namespace Application.Services
         /// Fetches users, caches their IDs in Redis, and enqueues a lightweight job for each user.
         /// This method does NOT build the final message content.
         /// </summary>
+        /// <summary>
+        /// Fetches users, caches their IDs in Redis, and enqueues a lightweight job for each user.
+        /// This method does NOT build the final message content.
+        /// </summary>
+        /// <summary>
+        /// Orchestrates a large-scale notification dispatch. It fetches all eligible users,
+        //  caches their IDs in Redis using a Circuit Breaker for resilience, and then enqueues
+        /// a lightweight job for each user.
+        /// </summary>
         public Task DispatchNewsNotificationAsync(Guid newsItemId, CancellationToken cancellationToken = default)
         {
-            var delayBetweenJobs = TimeSpan.FromMilliseconds(40); // 25 jobs/sec
+            var delayBetweenJobs = TimeSpan.FromMilliseconds(40);
 
             return Task.Run(async () =>
             {
+                // ✅✅ NEW: Check the circuit state BEFORE doing any work ✅✅
+                if (_redisCircuitBreaker.CircuitState == CircuitState.Open)
+                {
+                    _logger.LogWarning("Dispatch for NewsItem {NewsItemId} skipped because the Redis circuit breaker is open.", newsItemId);
+                    return; // Fail fast without hitting the database
+                }
+
                 try
                 {
-                    // 1. Fetch the news item to get its properties for filtering.
                     NewsItem? newsItem = await _newsItemRepository.GetByIdAsync(newsItemId, cancellationToken);
                     if (newsItem == null)
                     {
                         _logger.LogWarning("NewsItem {Id} not found. Cannot dispatch.", newsItemId);
                         return;
                     }
-
                     _logger.LogInformation("Dispatching for NewsItem: {Title}", newsItem.Title);
 
-                    // 2. Fetch all eligible user IDs from the database ONCE.
                     IEnumerable<User> targetUsers = await _userRepository.GetUsersForNewsNotificationAsync(
                         newsItem.AssociatedSignalCategoryId, newsItem.IsVipOnly, cancellationToken);
 
@@ -91,40 +120,58 @@ namespace Application.Services
                         return;
                     }
 
-                    // 3. Cache the list of user IDs in Redis (The "Claim Check" pattern).
+                    // ✅✅ NEW: Execute the Redis operation within the Circuit Breaker policy ✅✅
                     var userListCacheKey = $"dispatch:users:{newsItemId}";
-                    var serializedUserIds = JsonSerializer.Serialize(validTelegramIds);
-                    await _redisDb.StringSetAsync(userListCacheKey, serializedUserIds, TimeSpan.FromHours(24));
+                    await _redisCircuitBreaker.ExecuteAsync(async () =>
+                    {
+                        var serializedUserIds = JsonSerializer.Serialize(validTelegramIds);
+                        await _redisDb.StringSetAsync(userListCacheKey, serializedUserIds, TimeSpan.FromHours(24));
+                    });
+
                     _logger.LogInformation("Cached {Count} user IDs to Redis key: {Key}", validTelegramIds.Count, userListCacheKey);
 
-                    // 4. Loop and create a lightweight job for each user.
+                    // --- Job Enqueueing Loop (largely unchanged) ---
                     int enqueuedCount = 0;
                     for (int i = 0; i < validTelegramIds.Count; i++)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
                         long userId = validTelegramIds[i];
 
-                        if (await _rateLimiter.IsUserOverLimitAsync(userId, 10, TimeSpan.FromHours(1)))
+                        if (await _rateLimiter.IsUserOverLimitAsync(userId, 15, TimeSpan.FromHours(1)))
                         {
+                            _logger.LogTrace("User {UserId} is over rate limit. Skipping job enqueue.", userId);
                             continue;
                         }
 
                         _jobScheduler.Enqueue<INotificationSendingService>(
                             service => service.ProcessNotificationFromCacheAsync(newsItemId, userListCacheKey, i));
-
                         enqueuedCount++;
 
-                        // The delay is now unconditional within the loop, which is simpler.
-                        // The cancellation token will automatically throw if triggered during the delay.
-                        await Task.Delay(delayBetweenJobs, cancellationToken);
+                        if (i < validTelegramIds.Count - 1)
+                        {
+                            await Task.Delay(delayBetweenJobs, cancellationToken);
+                        }
                     }
                     _logger.LogInformation("Dispatch orchestration complete. {Count} jobs enqueued.", enqueuedCount);
                 }
-                catch (OperationCanceledException) { _logger.LogWarning("Dispatch orchestration was cancelled."); }
-                catch (Exception ex) { _logger.LogCritical(ex, "A critical error occurred during dispatch orchestration."); }
+                catch (BrokenCircuitException) // ✅ NEW: Specific catch
+                {
+                    _logger.LogWarning("Dispatch for NewsItem {NewsItemId} failed because the Redis circuit is open.", newsItemId);
+                }
+                catch (RedisException redisEx) // ✅ NEW: Specific catch
+                {
+                    _logger.LogError(redisEx, "A Redis error occurred during dispatch orchestration for NewsItem {NewsItemId}. The circuit breaker may have tripped.", newsItemId);
+                }
+                catch (OperationCanceledException)
+                {
+                    _logger.LogWarning("Dispatch orchestration was cancelled.");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogCritical(ex, "A critical, unhandled error occurred during dispatch orchestration for NewsItem {NewsItemId}.", newsItemId);
+                }
             }, cancellationToken);
         }
-
 
         /// <summary>
         /// Builds the main text content for a news notification.

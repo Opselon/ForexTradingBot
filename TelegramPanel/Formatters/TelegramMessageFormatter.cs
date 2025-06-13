@@ -4,7 +4,8 @@
 // -----------------
 
 using System.Text;
-using System; // For ArgumentNullException (best practice though not strictly used in these methods)
+using System;
+using System.Text.RegularExpressions; // For ArgumentNullException (best practice though not strictly used in these methods)
 
 namespace TelegramPanel.Formatters
 {
@@ -20,6 +21,10 @@ namespace TelegramPanel.Formatters
         // This list is curated for a 'prettier' output with less clutter from escaping common punctuation,
         // relying on Telegram client leniency.
         private static readonly char[] LessAggressiveMarkdownV2SpecialChars = { '_', '*', '[', ']', '~', '`', '>', '|', '\\' };
+        private static readonly Regex _markdownV2EscapeRegex =
+        new Regex(@"([_\[\]()~`>#\+\-=|{}.!*])", RegexOptions.Compiled);
+        private static readonly Regex _markdownV1EscapeRegex =
+       new Regex(@"([_*`\[])", RegexOptions.Compiled);
 
         /// <summary>
         /// Escapes characters in a plain text string that have special meaning in
@@ -30,6 +35,7 @@ namespace TelegramPanel.Formatters
         /// </summary>
         /// <param name="text">The plain text string to escape.</param>
         /// <returns>The escaped string, safe to be included within Markdown V2 formatting or as standalone text.</returns>
+
         public static string EscapeMarkdownV2(string text)
         {
             if (string.IsNullOrEmpty(text))
@@ -37,30 +43,7 @@ namespace TelegramPanel.Formatters
                 return string.Empty;
             }
 
-            var sb = new StringBuilder(text.Length);
-            foreach (char c in text)
-            {
-                bool requiresEscape = false;
-                foreach (var specialChar in LessAggressiveMarkdownV2SpecialChars)
-                {
-                    if (c == specialChar)
-                    {
-                        requiresEscape = true;
-                        break;
-                    }
-                }
-
-                if (requiresEscape)
-                {
-                    // Append escape character and then the original character
-                    sb.Append('\\').Append(c);
-                }
-                else
-                {
-                    sb.Append(c); // Append character as is
-                }
-            }
-            return sb.ToString();
+            return _markdownV2EscapeRegex.Replace(text, @"\$1");
         }
 
         /// <summary>

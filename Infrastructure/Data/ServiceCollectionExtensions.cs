@@ -6,6 +6,7 @@ using Application.Features.Crypto.Services.CoinGecko;
 using Application.Interfaces;             // اینترفیس‌های سرویس‌های کاربردی (لایه Application)
 using Application.Services;               // پیاده‌سازی سرویس‌ها (لایه Application)
 using Hangfire;                           // برای مدیریت وظایف پس‌زمینه
+using Hangfire.MemoryStorage;
 using Infrastructure.Caching;
 using Infrastructure.ExternalServices;    // سرویس‌های خارجی (لایه Infrastructure)
 using Infrastructure.Hangfire;            // پیاده‌سازی سرویس‌های Hangfire (لایه Infrastructure)
@@ -20,7 +21,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Polly;
 using Polly.Extensions.Http;
 using StackExchange.Redis; // برای افزودن سرویس‌ها به کانتینر DI
-
 namespace Infrastructure.Data
 {
     /// <summary>
@@ -40,6 +40,8 @@ namespace Infrastructure.Data
             this IServiceCollection services,
             IConfiguration configuration)
         {
+
+     
             _ = services.AddMemoryCache();
             _ = services.AddSingleton(typeof(IMemoryCacheService<>), typeof(MemoryCacheService<>));
 
@@ -54,6 +56,81 @@ namespace Infrastructure.Data
                        Console.WriteLine($"--> Polly: Retrying API request... Delaying for {timespan.TotalSeconds}s, then making retry {retryAttempt}");
                    });
 
+            var dbProviderSection = configuration.GetSection("DatabaseSettings");
+            var dbProvider = dbProviderSection.GetValue<string>("DatabaseProvider")?.ToLowerInvariant();
+
+            // 2. Read the connection string
+            var connectionString = configuration.GetConnectionString("DefaultConnection");
+
+            // --- ✅ Conditional Configuration based on Environment ---
+            bool isSmokeTest = configuration.GetValue<bool>("IsSmokeTest");
+
+            if (isSmokeTest)
+            {
+
+                // --- SMOKE TEST ENVIRONMENT SETUP ---
+                // In a smoke test, we only need to register the bare minimum for the app to start.
+                // We don't need real database connections.
+
+                // Use a fast, in-memory database that requires no external connection.
+                services.AddDbContext<AppDbContext>(options =>
+                {
+                    // Ensure the following line is present in the method where the error occurs.  
+                    // This resolves the CS1061 error by ensuring the 'UseInMemoryDatabase' extension method is available.  
+                    options.UseInMemoryDatabase("SmokeTestDatabase");
+                });
+
+                // Configure Hangfire to use in-memory storage for the test.
+                services.AddHangfire(config => config.UseMemoryStorage());
+            }
+            else
+            {
+
+                // Your excellent diagnostic check for production configurations.
+                if (string.IsNullOrEmpty(dbProvider) || string.IsNullOrEmpty(connectionString))
+                {
+                    throw new InvalidOperationException($"FATAL: Critical DB configuration is missing. DBProvider: '{dbProvider}', ConnectionString Found: {!string.IsNullOrEmpty(connectionString)}");
+                }
+               _ = services.AddHangfire(config => config
+             .SetDataCompatibilityLevel(CompatibilityLevel.Version_180) // تنظیم سطح سازگاری داده
+             .UseSimpleAssemblyNameTypeSerializer() // استفاده از سریالایزر ساده برای نام اسمبلی‌ها
+             .UseRecommendedSerializerSettings() // استفاده از تنظیمات سریالایزر توصیه شده
+             .UseSqlServerStorage(connectionString)); // پیکربندی Hangfire برای استفاده از SQL Server به عنوان ذخیره‌ساز
+                switch (dbProvider)
+                {
+                    case "sqlserver":
+                        _ = services.AddDbContext<AppDbContext>(opts =>
+                            opts.UseSqlServer(connectionString, sql =>
+                            {
+                                _ = sql.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName);
+                                _ = sql.EnableRetryOnFailure(
+                                    maxRetryCount: 5,
+                                    maxRetryDelay: TimeSpan.FromSeconds(30),
+                                    errorNumbersToAdd: null);
+                            }));
+                        break;
+
+                    case "postgres":
+                    case "postgresql":
+                        _ = services.AddDbContext<AppDbContext>(opts =>
+                            opts.UseNpgsql(connectionString, npgsql =>
+                            {
+                                _ = npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName);
+                                _ = npgsql.EnableRetryOnFailure(
+                                    maxRetryCount: 5,
+                                    maxRetryDelay: TimeSpan.FromSeconds(30),
+                                    errorCodesToAdd: null);
+                            }));
+                        break;
+
+                    default:
+                        // Now, even this error will be more informative.
+                        var detailedUnsupportedError = $"Unsupported DatabaseProvider: '{dbProvider}'. Please check your configuration. " +
+                                                     $"Available keys in 'DatabaseSettings': {string.Join(", ", dbProviderSection.GetChildren().Select(c => c.Key))}";
+                        throw new NotSupportedException(detailedUnsupportedError);
+                }
+            }
+
             var redisConnectionString = configuration.GetConnectionString("Redis");
             var options = ConfigurationOptions.Parse(redisConnectionString);
             options.AbortOnConnectFail = false; // Make it resilient
@@ -64,12 +141,9 @@ namespace Infrastructure.Data
 
             // 1. Read the DatabaseProvider setting
             // var dbProvider = configuration.GetValue<string>("DatabaseSettings:DatabaseProvider")?.ToLowerInvariant();
-            var dbProviderSection = configuration.GetSection("DatabaseSettings");
-            var dbProvider = dbProviderSection.GetValue<string>("DatabaseProvider")?.ToLowerInvariant();
+    
 
 
-            // 2. Read the connection string
-            var connectionString = configuration.GetConnectionString("DefaultConnection");
 
             // 3. THROW A DETAILED EXCEPTION IF ANYTHING IS WRONG
             // This is our new, intelligent error reporting.
@@ -111,39 +185,7 @@ namespace Infrastructure.Data
 
 
             // The rest of your code remains UNCHANGED as it is correct.
-            switch (dbProvider)
-            {
-                case "sqlserver":
-                    _ = services.AddDbContext<AppDbContext>(opts =>
-                        opts.UseSqlServer(connectionString, sql =>
-                        {
-                            _ = sql.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName);
-                            _ = sql.EnableRetryOnFailure(
-                                maxRetryCount: 5,
-                                maxRetryDelay: TimeSpan.FromSeconds(30),
-                                errorNumbersToAdd: null);
-                        }));
-                    break;
-
-                case "postgres":
-                case "postgresql":
-                    _ = services.AddDbContext<AppDbContext>(opts =>
-                        opts.UseNpgsql(connectionString, npgsql =>
-                        {
-                            _ = npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName);
-                            _ = npgsql.EnableRetryOnFailure(
-                                maxRetryCount: 5,
-                                maxRetryDelay: TimeSpan.FromSeconds(30),
-                                errorCodesToAdd: null);
-                        }));
-                    break;
-
-                default:
-                    // Now, even this error will be more informative.
-                    var detailedUnsupportedError = $"Unsupported DatabaseProvider: '{dbProvider}'. Please check your configuration. " +
-                                                 $"Available keys in 'DatabaseSettings': {string.Join(", ", dbProviderSection.GetChildren().Select(c => c.Key))}";
-                    throw new NotSupportedException(detailedUnsupportedError);
-            }
+          
 
             // 4. رجیستر <see cref="IAppDbContext"/> به عنوان یک سرویس Scoped
             // این امکان را فراهم می‌کند که <see cref="AppDbContext"/> از طریق اینترفیس در لایه Application تزریق شود،
@@ -153,11 +195,7 @@ namespace Infrastructure.Data
 
             // افزودن سرویس‌های Hangfire برای مدیریت و پردازش وظایف پس‌زمینه.
             // Hangfire به برنامه اجازه می‌دهد تا وظایف را خارج از چرخه درخواست اصلی انجام دهد (مثلاً ارسال ایمیل، پردازش فایل).
-            _ = services.AddHangfire(config => config
-                .SetDataCompatibilityLevel(CompatibilityLevel.Version_180) // تنظیم سطح سازگاری داده
-                .UseSimpleAssemblyNameTypeSerializer() // استفاده از سریالایزر ساده برای نام اسمبلی‌ها
-                .UseRecommendedSerializerSettings() // استفاده از تنظیمات سریالایزر توصیه شده
-                .UseSqlServerStorage(connectionString)); // پیکربندی Hangfire برای استفاده از SQL Server به عنوان ذخیره‌ساز
+         
 
             // افزودن سرور پردازش Hangfire به عنوان یک سرویس میزبانی شده (IHostedService).
             // این سرور مسئول اجرای وظایف زمان‌بندی شده Hangfire است.

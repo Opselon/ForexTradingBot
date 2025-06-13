@@ -11,11 +11,13 @@ using Domain.Enums; // For UserLevel enum
 using Hangfire;
 using Polly;
 using Polly.Retry;
+using Shared.Extensions;
 using StackExchange.Redis;
 using System.Text;
 using System.Text.Json;
 // Telegram.Bot
 using Telegram.Bot.Exceptions;
+using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
 using TelegramPanel.Formatters; // For TelegramMessageFormatter
@@ -68,6 +70,87 @@ namespace BackgroundTasks.Services
                 .WaitAndRetryAsync(3, retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)));
         }
         #endregion
+
+
+        [Obsolete("This method is deprecated. Use the cache-first dispatch pattern instead.", true)]
+        public Task SendBatchNotificationAsync(List<long> targetTelegramUserIdList, string messageText, string? imageUrl, List<NotificationButton> buttons, Guid newsItemId, Guid? newsItemSignalCategoryId, string? newsItemSignalCategoryName, CancellationToken jobCancellationToken)
+        {
+            _logger.LogWarning("Obsolete method SendBatchNotificationAsync was called and will do nothing.");
+            // This method now does nothing and completes immediately.
+            return Task.CompletedTask;
+        }
+
+
+        [AutomaticRetry(Attempts = 0)]
+        [JobDisplayName("Send Batch of {1.Count} News Items to User: {0}")]
+        public async Task ProcessBatchNotificationForUserAsync(long targetUserId, List<Guid> newsItemIds)
+        {
+            try
+            {
+                if (newsItemIds == null || !newsItemIds.Any())
+                {
+                    _logger.LogWarning("Job for user {UserId} received an empty list of news IDs.", targetUserId);
+                    return;
+                }
+
+                // 1. Fetch all news item entities from the database.
+                var newsItems = new List<NewsItem>();
+                foreach (var id in newsItemIds)
+                {
+                    var item = await _newsItemRepository.GetByIdAsync(id, CancellationToken.None);
+                    if (item != null)
+                    {
+                        newsItems.Add(item);
+                    }
+                }
+
+                if (!newsItems.Any())
+                {
+                    _logger.LogWarning("No valid news items found for batch send to user {UserId}. Aborting job.", targetUserId);
+                    return;
+                }
+
+                // 2. Build ONE consolidated message from all the news items.
+                var messageBuilder = new StringBuilder();
+                messageBuilder.AppendLine($"*{newsItems.Count} new updates for you:*");
+                messageBuilder.AppendLine();
+
+                // To keep the message from getting too long, we'll only show details for the first few.
+                foreach (var item in newsItems.Take(5))
+                {
+                    messageBuilder.AppendLine($"▫️ *{TelegramMessageFormatter.EscapeMarkdownV2(item.Title)}*");
+                    if (!string.IsNullOrWhiteSpace(item.Summary))
+                    {
+                        var summary = TelegramMessageFormatter.EscapeMarkdownV2(item.Summary.Truncate(120));
+                        messageBuilder.AppendLine($"  _{summary}_");
+                    }
+                    messageBuilder.AppendLine();
+                }
+
+                if (newsItems.Count > 5)
+                {
+                    messageBuilder.AppendLine($"...and {newsItems.Count - 5} more articles.");
+                }
+
+                // 3. Prepare the final payload for the sender method.
+                var payload = new NotificationJobPayload
+                {
+                    TargetTelegramUserId = targetUserId,
+                    MessageText = messageBuilder.ToString(),
+                    Buttons = new List<NotificationButton>() // Batch notifications usually don't have specific buttons.
+                };
+
+                // 4. Call the final "sender" helper to send the message to the Telegram API.
+                await ProcessSingleNotification(payload, CancellationToken.None);
+
+                _logger.LogInformation("Successfully sent a batch of {Count} news items to user {UserId}", newsItems.Count, targetUserId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogCritical(ex, "Failed to process batch notification for user {UserId}", targetUserId);
+                throw; // Re-throw so Hangfire marks the job as Failed.
+            }
+        }
 
         /// <summary>
         /// The primary Hangfire job method. Implements safeguards before sending a notification.
@@ -187,6 +270,59 @@ namespace BackgroundTasks.Services
             }
         }
 
+
+        private async Task ProcessSingleNotification(NotificationJobPayload payload, CancellationToken cancellationToken)
+        {
+            using var logScope = _logger.BeginScope(new Dictionary<string, object?>
+            {
+                ["TargetTelegramUserId"] = payload.TargetTelegramUserId
+            });
+
+            try
+            {
+                var pollyContext = new Context($"NotificationTo_{payload.TargetTelegramUserId}");
+
+                await _telegramApiRetryPolicy.ExecuteAsync(async (ctx) =>
+                {
+                    // For simplicity, we assume no buttons for batch messages.
+                    // This can be expanded later.
+                    InlineKeyboardMarkup? finalKeyboard = null;
+
+                    await _telegramMessageSender.SendTextMessageAsync(
+                        payload.TargetTelegramUserId,
+                        payload.MessageText,
+                        ParseMode.MarkdownV2,
+                        finalKeyboard,
+                        cancellationToken,
+                        new LinkPreviewOptions { IsDisabled = true });
+                }, pollyContext);
+
+                _logger.LogInformation("Message sent successfully via Telegram API.");
+            }
+            catch (ApiRequestException apiEx) when (apiEx.ErrorCode == 403 || apiEx.Message.Contains("chat not found"))
+            {
+                _logger.LogWarning(apiEx, "Permanent Send Failure: Bot blocked or user deleted chat.");
+                try
+                {
+                    // Self-healing logic: Mark the user as unreachable in your database.
+                    await _userService.MarkUserAsUnreachableAsync(payload.TargetTelegramUserId.ToString(), "BotBlockedOrChatNotFound", CancellationToken.None);
+                }
+                catch (Exception markEx)
+                {
+                    _logger.LogError(markEx, "A non-critical error occurred while marking user as unreachable.");
+                }
+                throw; // Re-throw to fail the job.
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "An unhandled exception occurred during the final notification send.");
+                throw;
+            }
+        }
+
+
+
+
         // The single, definitive method for building the message text.
         private string BuildMessageText(NewsItem newsItem)
         {
@@ -224,10 +360,7 @@ namespace BackgroundTasks.Services
             throw new NotImplementedException();
         }
 
-        public Task SendBatchNotificationAsync(List<long> targetTelegramUserIds, string messageText, string? imageUrl, List<NotificationButton> buttons, Guid newsItemId, Guid? newsItemSignalCategoryId, string? newsItemSignalCategoryName, CancellationToken jobCancellationToken)
-        {
-            throw new NotImplementedException();
-        }
+      
 
         #endregion
     }

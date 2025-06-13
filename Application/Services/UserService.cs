@@ -266,6 +266,54 @@ namespace Application.Services // ✅ Namespace صحیح برای پیاده‌�
             }
         }
 
+
+
+
+
+
+        // ✅✅ ADD THE FULL IMPLEMENTATION OF THE NEW METHOD ✅✅
+        public async Task MarkUserAsUnreachableAsync(string telegramId, string reason, CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                _logger.LogInformation("Marking user {TelegramId} as unreachable. Reason: {Reason}", telegramId, reason);
+
+                // 1. Find the user by their Telegram ID.
+                var user = await _userRepository.GetByTelegramIdAsync(telegramId, cancellationToken);
+                if (user == null)
+                {
+                    _logger.LogWarning("Could not mark user as unreachable: User with Telegram ID {TelegramId} not found.", telegramId);
+                    return;
+                }
+
+                // 2. Change their notification settings.
+                // This is a "soft delete" - we keep the user but stop sending them messages.
+                user.EnableGeneralNotifications = false;
+                user.EnableRssNewsNotifications = false;
+                user.EnableVipSignalNotifications = false;
+                user.UpdatedAt = DateTime.UtcNow; // Update the timestamp
+
+                // 3. Save the changes to the database.
+                await _userRepository.UpdateAsync(user, cancellationToken);
+
+                // 4. IMPORTANT: Invalidate the user's cache!
+                string cacheKey = $"user:telegram_id:{telegramId}";
+                await _cacheService.RemoveAsync(cacheKey);
+
+                _logger.LogInformation("Successfully marked user {TelegramId} as unreachable and invalidated cache.", telegramId);
+            }
+            catch (Exception ex)
+            {
+                // This is a background, non-critical operation. We should log the error but not let it crash the calling process.
+                _logger.LogError(ex, "An error occurred while trying to mark user {TelegramId} as unreachable.", telegramId);
+            }
+        }
+
+
+
+
+
+
         /// <summary>
         /// Registers a new user in the system, including creating their token wallet.
         /// Handles business validation (uniqueness checks) and potential data access/mapping errors.

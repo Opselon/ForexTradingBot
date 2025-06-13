@@ -71,6 +71,66 @@ namespace Application.Services
 
         private readonly TimeSpan _delayBetweenJobEnqueues = TimeSpan.FromMilliseconds(50); // Configurable
 
+
+
+        // In NotificationDispatchService.cs implementation:
+        public Task DispatchBatchNewsNotificationAsync(List<Guid> newsItemIds, CancellationToken cancellationToken = default)
+        {
+            if (newsItemIds == null || !newsItemIds.Any())
+            {
+                return Task.CompletedTask;
+            }
+
+            return Task.Run(async () =>
+            {
+                try
+                {
+                    _logger.LogInformation("Initiating BATCH dispatch for {Count} news items.", newsItemIds.Count);
+
+                    // Fetch all eligible users ONCE. We assume they are all for the same category/Vip status.
+                    // If not, you need to group newsItemIds by category first.
+                    var firstNewsItem = await _newsItemRepository.GetByIdAsync(newsItemIds.First(), cancellationToken);
+                    if (firstNewsItem == null) return; // Cannot determine target users
+
+                    IEnumerable<User> targetUsers = await _userRepository.GetUsersForNewsNotificationAsync(
+                        firstNewsItem.AssociatedSignalCategoryId, firstNewsItem.IsVipOnly, cancellationToken);
+
+                    var validTelegramIds = targetUsers.Select(u => long.TryParse(u.TelegramId, out var id) ? (long?)id : null)
+                        .Where(id => id.HasValue).Select(id => id.Value).ToList();
+
+                    if (!validTelegramIds.Any())
+                    {
+                        _logger.LogInformation("No eligible users found for this batch dispatch.");
+                        return;
+                    }
+
+                    // Create ONE job per user.
+                    foreach (var userId in validTelegramIds)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+
+                        // Check the user's rate limit for BATCH notifications.
+                        // We use a different key to track batch sends vs single sends if needed.
+                        if (await _rateLimiter.IsUserOverLimitAsync(userId, 1, TimeSpan.FromHours(1))) // Limit to 1 batch per hour
+                        {
+                            _logger.LogTrace("User {UserId} is over the batch notification rate limit. Skipping.", userId);
+                            continue;
+                        }
+
+                        // Enqueue a job with the LIST of news item IDs.
+                        _jobScheduler.Enqueue<INotificationSendingService>(
+                            service => service.ProcessBatchNotificationForUserAsync(userId, newsItemIds));
+                    }
+                    _logger.LogInformation("Completed enqueuing batch jobs for {UserCount} users.", validTelegramIds.Count);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogCritical(ex, "A critical error occurred during BATCH dispatch orchestration.");
+                }
+            }, cancellationToken);
+        }
+
+
         /// <summary>
         /// Fetches users, caches their IDs in Redis, and enqueues a lightweight job for each user.
         /// This method does NOT build the final message content.

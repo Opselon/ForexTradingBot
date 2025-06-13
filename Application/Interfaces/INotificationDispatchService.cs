@@ -11,6 +11,8 @@ namespace Application.Interfaces
     /// </summary>
     public interface INotificationDispatchService
     {
+
+        Task DispatchBatchNewsNotificationAsync(List<Guid> newsItemIds, CancellationToken cancellationToken = default);
         /// <summary>
         /// Identifies target users for a given news item based on their notification preferences
         /// and active subscriptions (if applicable for VIP news), then enqueues a notification job

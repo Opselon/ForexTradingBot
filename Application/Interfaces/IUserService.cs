@@ -23,6 +23,11 @@ namespace Application.Interfaces // ✅ Namespace صحیح برای اینترف
         /// <returns>لیستی از UserDto.</returns>
         Task<List<UserDto>> GetAllUsersAsync(CancellationToken cancellationToken = default); // تغییر نام برای وضوح
 
+
+
+        Task MarkUserAsUnreachableAsync(string telegramId, string reason, CancellationToken cancellationToken = default);
+
+
         /// <summary>
         /// یک کاربر را بر اساس شناسه آن به صورت ناهمزمان پیدا می‌کند.
         /// </summary>

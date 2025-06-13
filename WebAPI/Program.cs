@@ -308,26 +308,26 @@ try
 
 
 
-    bool isSmokeTest = builder.Configuration.GetValue<bool>("IsSmokeTest");
+    // This is more reliable than GetValue<bool> for environment variables.
+    string smokeTestFlag = builder.Configuration["IsSmokeTest"];
+    bool isSmokeTest = "true".Equals(smokeTestFlag, StringComparison.OrdinalIgnoreCase);
 
     if (isSmokeTest)
     {
         // --- SMOKE TEST CONFIGURATION ---
-        Log.Information("Smoke Test environment detected. Configuring Hangfire with In-Memory storage.");
+        Log.Information("✅ Smoke Test environment detected. Configuring Hangfire with In-Memory storage.");
 
-        // Use in-memory storage. This requires no external database and is perfect for testing.
         builder.Services.AddHangfire(config => config
             .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
             .UseSimpleAssemblyNameTypeSerializer()
             .UseRecommendedSerializerSettings()
-            .UseMemoryStorage()); // Use In-Memory Storage
+            .UseMemoryStorage());
     }
     else
     {
         // --- PRODUCTION / REAL DEVELOPMENT CONFIGURATION ---
         Log.Information("Configuring Hangfire with SQL Server for production/development.");
 
-        // Use the robust SQL Server storage provider.
         builder.Services.AddHangfire(config => config
             .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
             .UseSimpleAssemblyNameTypeSerializer()
@@ -341,14 +341,9 @@ try
                 DisableGlobalLocks = true,
                 SchemaName = "HangFire"
             }));
-
-        _ = builder.Services.AddHangfireServer();
-        Log.Information("Hangfire services (with SQL Server for production) added.");
-
-        _ = builder.Services.AddHangfireCleaner();
-
     }
-
+    _ = builder.Services.AddHangfireCleaner();
+    _ = builder.Services.AddHangfireServer();
 
 
     Log.Information("Hangfire cleaner service added.");

@@ -63,34 +63,26 @@ namespace Infrastructure.Data
             var connectionString = configuration.GetConnectionString("DefaultConnection");
 
             // --- ✅ Conditional Configuration based on Environment ---
-            bool isSmokeTest = configuration.GetValue<bool>("IsSmokeTest");
+            string smokeTestFlag = configuration["IsSmokeTest"];
+            bool isSmokeTest = "true".Equals(smokeTestFlag, StringComparison.OrdinalIgnoreCase);
 
             if (isSmokeTest)
             {
-
-                // --- SMOKE TEST ENVIRONMENT SETUP ---
-                // In a smoke test, we only need to register the bare minimum for the app to start.
-                // We don't need real database connections.
-
-                // Use a fast, in-memory database that requires no external connection.
+                // --- SMOKE TEST CONFIGURATION ---
                 services.AddDbContext<AppDbContext>(options =>
                 {
-                    // Ensure the following line is present in the method where the error occurs.  
-                    // This resolves the CS1061 error by ensuring the 'UseInMemoryDatabase' extension method is available.  
                     options.UseInMemoryDatabase("SmokeTestDatabase");
                 });
-
-                // Configure Hangfire to use in-memory storage for the test.
-                services.AddHangfire(config => config.UseMemoryStorage());
+                // We no longer configure Hangfire here, as it's done in Program.cs
             }
             else
             {
-
-                // Your excellent diagnostic check for production configurations.
+           
                 if (string.IsNullOrEmpty(dbProvider) || string.IsNullOrEmpty(connectionString))
                 {
-                    throw new InvalidOperationException($"FATAL: Critical DB configuration is missing. DBProvider: '{dbProvider}', ConnectionString Found: {!string.IsNullOrEmpty(connectionString)}");
+                    throw new InvalidOperationException($"FATAL: Critical DB configuration is missing...");
                 }
+
 
                 switch (dbProvider)
                 {

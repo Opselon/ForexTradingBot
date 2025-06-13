@@ -183,14 +183,14 @@ try
     // این متدها باید در فایل‌های DependencyInjection.cs (یا ServiceCollectionExtensions.cs) هر لایه تعریف شده باشند.
     // ترتیب فراخوانی: ابتدا لایه‌های پایه (Application, Infrastructure)، سپس لایه‌های Presentation یا خاص (TelegramPanel, BackgroundTasks).
 
+
+
+
     _ = builder.Services.AddApplicationServices();
     Log.Information("Application services registered.");
 
     _ = builder.Services.AddInfrastructureServices(builder.Configuration);
     Log.Information("Infrastructure services registered.");
-
-    _ = builder.Services.AddForwardingInfrastructure();
-    Log.Information("Forwarding infrastructure services registered.");
 
 
     _ = builder.Services.AddTelegramPanelServices(builder.Configuration);
@@ -199,11 +199,60 @@ try
     _ = builder.Services.AddBackgroundTasksServices();
     Log.Information("Background tasks services registered.");
 
-    _ = builder.Services.AddForwardingServices();
-    Log.Information("Forwarding services registered.");
 
-    _ = builder.Services.AddForwardingOrchestratorServices();
-    Log.Information("Forwarding orchestrator services registered.");
+
+
+    // --- Universal Conditional Feature: Auto-Forwarding ---
+    // We check for the actual secrets required for this feature to run.
+    var apiId = builder.Configuration["TelegramUserApi:ApiId"];
+    var apiHash = builder.Configuration["TelegramUserApi:ApiHash"];
+
+    if (!string.IsNullOrEmpty(apiId) && !string.IsNullOrEmpty(apiHash))
+    {
+        Log.Information("✅ Auto-Forwarding feature ENABLED (ApiId and ApiHash were found). Registering all related services...");
+
+        // 1. Configure the settings object
+        builder.Services.Configure<Infrastructure.Settings.TelegramUserApiSettings>(builder.Configuration.GetSection("TelegramUserApi"));
+
+        // 2. Register the API client itself
+        builder.Services.AddSingleton<ITelegramUserApiClient, TelegramUserApiClient>();
+
+        // 3. Register the background service that initializes the client
+        builder.Services.AddHostedService<TelegramUserApiInitializationService>();
+
+        // 4. Register all the other forwarding services from the other projects
+        builder.Services.AddForwardingInfrastructure();
+        builder.Services.AddForwardingServices();
+        builder.Services.AddForwardingOrchestratorServices();
+
+        Log.Information("All Auto-Forwarding services have been successfully registered.");
+    }
+    else
+    {
+        // If the secrets are missing, we skip ALL related services.
+        Log.Information("ℹ️ Auto-Forwarding feature DISABLED (ApiId or ApiHash not found in configuration).");
+    }
+
+
+    // --- Universal Conditional Feature: CryptoPay (Example) ---
+    // The same robust pattern is applied here.
+    var cryptoPayToken = builder.Configuration["CryptoPay:ApiToken"];
+    var cryptoPayApiKey = builder.Configuration["CryptoPay:ApiKey"]; // Assuming you have this key too
+
+    if (!string.IsNullOrEmpty(cryptoPayToken) && !string.IsNullOrEmpty(cryptoPayApiKey))
+    {
+        // Here you would register your CryptoPay specific services.
+        // builder.Services.AddCryptoPayServices(builder.Configuration);
+        Log.Information("✅ CryptoPay feature ENABLED (ApiToken and ApiKey were found in configuration).");
+    }
+    else
+    {
+        Log.Information("ℹ️ CryptoPay feature DISABLED (CryptoPay secrets not found in configuration).");
+    }
+
+
+
+
 
     _ = builder.Services.AddWindowsService();
     var isRunningInContainer = Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER") == "true";

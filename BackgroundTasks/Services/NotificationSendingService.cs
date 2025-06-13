@@ -15,6 +15,8 @@ using Shared.Extensions;
 using StackExchange.Redis;
 using System.Text;
 using System.Text.Json;
+using Telegram.Bot;
+
 // Telegram.Bot
 using Telegram.Bot.Exceptions;
 using Telegram.Bot.Types;
@@ -40,6 +42,7 @@ namespace BackgroundTasks.Services
         private readonly IDatabase _redisDb;
         private readonly INotificationRateLimiter _rateLimiter;
         private readonly AsyncRetryPolicy _telegramApiRetryPolicy;
+        private readonly ITelegramBotClient _botClient;
         private const int FreeUserRssHourlyLimit = 20; // As per your new requirement
         private const int VipUserRssHourlyLimit = 100;  // Example: VIP users get a higher limi
         private const int RegularUserHourlyLimit = 5;
@@ -51,12 +54,14 @@ namespace BackgroundTasks.Services
         #region Constructor
         public NotificationSendingService(
             ILogger<NotificationSendingService> logger,
+             ITelegramBotClient botClient, 
             ITelegramMessageSender telegramMessageSender,
             IUserService userService,
             INewsItemRepository newsItemRepository,
             IConnectionMultiplexer redisConnection,
             INotificationRateLimiter rateLimiter)
         {
+            _botClient = botClient ?? throw new ArgumentNullException(nameof(botClient));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _telegramMessageSender = telegramMessageSender ?? throw new ArgumentNullException(nameof(telegramMessageSender));
             _userService = userService ?? throw new ArgumentNullException(nameof(userService));
@@ -163,52 +168,74 @@ namespace BackgroundTasks.Services
         [AutomaticRetry(Attempts = 0)]
         public async Task ProcessNotificationFromCacheAsync(Guid newsItemId, string userListCacheKey, int userIndex)
         {
-            using var logScope = _logger.BeginScope(new Dictionary<string, object?> { ["NewsItemId"] = newsItemId, ["UserIndex"] = userIndex });
+            // --- Configuration: Define business rules for this job ---
+            const int freeUserRssHourlyLimit = 20;
+            const int vipUserRssHourlyLimit = 100;
+            var rssLimitPeriod = TimeSpan.FromHours(1);
+
+            // Initialize targetUserId to a known invalid state for better error logging in the final catch block.
+            long targetUserId = -1;
+
+            // Use a logging scope to automatically add these details to all logs within this method.
+            using var logScope = _logger.BeginScope(new Dictionary<string, object?>
+            {
+                ["NewsItemId"] = newsItemId,
+                ["UserIndex"] = userIndex,
+                ["CacheKey"] = userListCacheKey
+            });
 
             try
             {
-                // 1. Retrieve User ID from Redis Cache
-                long targetUserId = await GetUserIdFromCacheAsync(userListCacheKey, userIndex);
-                if (targetUserId == -1) return; // Error is logged in the helper
+                // STEP 1: Retrieve this job's assigned User ID from the Redis cache.
+                // This logic is now self-contained and clear.
+                var serializedUserIds = await _redisDb.StringGetAsync(userListCacheKey);
+                if (!serializedUserIds.HasValue)
+                {
+                    _logger.LogError("Job aborted: Cache key not found. It may have expired or was never set.");
+                    return; // Gracefully stop the job.
+                }
 
-                _logger.LogInformation("Processing RSS job for UserID: {UserId}", targetUserId);
+                var allUserIds = JsonSerializer.Deserialize<List<long>>(serializedUserIds);
+                if (allUserIds == null || userIndex >= allUserIds.Count)
+                {
+                    _logger.LogError("Job aborted: User index is out of bounds for the cached list (Size: {ListSize}).", allUserIds?.Count ?? 0);
+                    return; // Gracefully stop the job.
+                }
 
-                // 2. Fetch the user's data to check their level. THIS MUST BE DONE BEFORE THE RATE LIMIT CHECK.
-                // We use our cache-aside user service to make this fast.
+                targetUserId = allUserIds[userIndex];
+                _logger.LogInformation("Processing job for UserID: {TargetUserId}", targetUserId);
+
+                // STEP 2: Fetch the user's full profile to determine their level for rate limiting.
+                // This call is fast because UserService uses its own Redis cache (Cache-Aside pattern).
                 var userDto = await _userService.GetUserByTelegramIdAsync(targetUserId.ToString(), CancellationToken.None);
                 if (userDto == null)
                 {
-                    _logger.LogWarning("User {UserId} was in dispatch cache but not found in DB. Skipping.", targetUserId);
+                    _logger.LogWarning("Job skipped: User {TargetUserId} was in the dispatch cache but no longer exists in the database.", targetUserId);
                     return;
                 }
 
-                // 3. Determine the correct limit based on the user's level.
-                int applicableLimit;
+                // STEP 3: Apply the correct rate limit based on the user's level.
+                int applicableLimit = (userDto.Level == UserLevel.Platinum || userDto.Level == UserLevel.Bronze)
+                    ? vipUserRssHourlyLimit
+                    : freeUserRssHourlyLimit;
 
-                // Check for specific VIP/Premium levels. All others are treated as Free.
-                if (userDto.Level == UserLevel.Platinum || userDto.Level == UserLevel.Platinum) // Adjust enum names as needed
+                if (await _rateLimiter.IsUserOverLimitAsync(targetUserId, applicableLimit, rssLimitPeriod))
                 {
-                    applicableLimit = VipUserRssHourlyLimit;
-                }
-                else
-                {
-                    applicableLimit = FreeUserRssHourlyLimit;
-                }
-
-                // 4. Safeguard: Perform the final rate-limiting check with the correct limit.
-                if (await _rateLimiter.IsUserOverLimitAsync(targetUserId, applicableLimit, RssLimitPeriod))
-                {
-                    _logger.LogWarning("FAST SKIP: User {UserId} (Level: {UserLevel}) is over the hourly RSS limit of {Limit}.",
+                    _logger.LogInformation("FAST SKIP: User {TargetUserId} (Level: {UserLevel}) has exceeded the hourly RSS limit of {Limit}.",
                         targetUserId, userDto.Level, applicableLimit);
-                    // This is a successful outcome (we correctly prevented a spam message), so we just return.
-                    return;
+                    return; // This is a successful, intentional stop.
                 }
 
-                // 5. Fetch News Data
+                // STEP 4: Fetch the news article data. This is the only required database hit for content.
                 var newsItem = await _newsItemRepository.GetByIdAsync(newsItemId, CancellationToken.None);
-                if (newsItem == null) throw new InvalidOperationException($"NewsItem {newsItemId} not found.");
+                if (newsItem == null)
+                {
+                    // If the news item was deleted between dispatch and execution, we can't proceed.
+                    _logger.LogError("Job failed: NewsItem with ID {NewsItemId} could not be found.", newsItemId);
+                    throw new InvalidOperationException($"NewsItem {newsItemId} not found.");
+                }
 
-                // 6. Build Final Payload
+                // STEP 5: Build the final, fully-formed payload.
                 var payload = new NotificationJobPayload
                 {
                     TargetTelegramUserId = targetUserId,
@@ -219,16 +246,31 @@ namespace BackgroundTasks.Services
                     NewsItemId = newsItemId
                 };
 
-                // 7. Send to Telegram
-                await ProcessSingleNotification(payload, CancellationToken.None); // Assuming this is your final sender helper
+                // STEP 6: Hand off to the final sender method.
+                await SendToTelegramAsync(payload, CancellationToken.None);
+            }
+            catch (ApiRequestException apiEx) when (apiEx.ErrorCode == 403 || apiEx.Message.Contains("chat not found"))
+            {
+                // This catch block specifically handles permanent "user blocked" errors from the Telegram API.
+                _logger.LogWarning(apiEx, "Permanent Send Failure for User {TargetUserId}: Bot was blocked or chat deleted. Initiating self-healing.", targetUserId);
+                try
+                {
+                    await _userService.MarkUserAsUnreachableAsync(targetUserId.ToString(), "BotBlockedOrChatNotFound", CancellationToken.None);
+                }
+                catch (Exception markEx)
+                {
+                    _logger.LogError(markEx, "Failed to mark user {TargetUserId} as unreachable after send failure.", targetUserId);
+                }
+                // We DO NOT re-throw here. The job has successfully handled the error condition.
             }
             catch (Exception ex)
             {
-                _logger.LogCritical(ex, "A critical failure occurred during a cached notification job.");
-                throw; // Re-throw to ensure Hangfire marks the job as "Failed".
+                // This is a catch-all for any other unexpected error (e.g., Redis timeout, DB error, serialization issue).
+                _logger.LogCritical(ex, "A critical failure occurred during the cached notification job for User {TargetUserId}.", targetUserId);
+                // We re-throw here to ensure Hangfire marks the job as "Failed" for manual inspection.
+                throw;
             }
         }
-
 
         #region Private Helpers
 
@@ -262,29 +304,33 @@ namespace BackgroundTasks.Services
         // The "last mile" sender. Contains only Telegram API logic and self-healing.
         private async Task SendToTelegramAsync(NotificationJobPayload payload, CancellationToken cancellationToken)
         {
-            try
+            var pollyContext = new Context($"NotificationTo_{payload.TargetTelegramUserId}");
+            var finalKeyboard = BuildTelegramKeyboard(payload.Buttons);
+
+            await _telegramApiRetryPolicy.ExecuteAsync(async (ctx) =>
             {
-                await _telegramApiRetryPolicy.ExecuteAsync(async () =>
+                if (!string.IsNullOrWhiteSpace(payload.ImageUrl))
                 {
-                    var finalKeyboard = BuildTelegramKeyboard(payload.Buttons);
-                    var parseMode = payload.UseMarkdown ? ParseMode.MarkdownV2 : ParseMode.Html;
-                    if (!string.IsNullOrWhiteSpace(payload.ImageUrl))
-                        await _telegramMessageSender.SendPhotoAsync(payload.TargetTelegramUserId, payload.ImageUrl, payload.MessageText, parseMode, finalKeyboard, cancellationToken);
-                    else
-                        await _telegramMessageSender.SendTextMessageAsync(payload.TargetTelegramUserId, payload.MessageText, parseMode, finalKeyboard, cancellationToken);
-                });
-                _logger.LogInformation("Notification successfully sent to UserID {UserId}.", payload.TargetTelegramUserId);
-            }
-            catch (ApiRequestException apiEx) when (apiEx.ErrorCode == 403 || apiEx.Message.Contains("chat not found"))
-            {
-                _logger.LogWarning(apiEx, "Permanent Send Failure (bot blocked). Marking user {UserId} as unreachable.", payload.TargetTelegramUserId);
- 
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "An unhandled exception occurred during the final send to UserID {UserId}.", payload.TargetTelegramUserId);
-                throw;
-            }
+                    await _botClient.SendPhoto(
+                        chatId: payload.TargetTelegramUserId,
+                        photo: InputFile.FromUri(payload.ImageUrl),
+                        caption: payload.MessageText,
+                        parseMode: ParseMode.MarkdownV2,
+                        replyMarkup: finalKeyboard,
+                        cancellationToken: cancellationToken);
+                }
+                else
+                {
+                    await _botClient.SendMessage(
+                        chatId: payload.TargetTelegramUserId,
+                        text: payload.MessageText,
+                        parseMode: ParseMode.MarkdownV2,
+                        replyMarkup: finalKeyboard,
+                        linkPreviewOptions: new LinkPreviewOptions { IsDisabled = true },
+                        cancellationToken: cancellationToken);
+                }
+            }, pollyContext);
+            _logger.LogInformation("Notification sent successfully to User {UserId}", payload.TargetTelegramUserId);
         }
 
 
@@ -371,13 +417,13 @@ namespace BackgroundTasks.Services
             return buttons;
         }
 
-       
         public Task SendNotificationAsync(NotificationJobPayload payload, CancellationToken cancellationToken)
         {
             throw new NotImplementedException();
         }
 
-      
+
+
 
         #endregion
     }

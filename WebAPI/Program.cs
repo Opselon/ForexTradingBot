@@ -12,6 +12,7 @@ using BackgroundTasks;                    // برای متد توسعه‌دهن
 using BackgroundTasks.Services;
 using Hangfire;                             // برای پیکربندی‌های Hangfire مانند CompatibilityLevel, RecurringJob, Cron
 using Hangfire.Dashboard;                   // برای DashboardOptions, IDashboardAuthorizationFilter
+using Hangfire.MemoryStorage;
 using Hangfire.SqlServer;
 using Infrastructure.Data;
 
@@ -307,26 +308,48 @@ try
 
 
 
-    _ = builder.Services.AddHangfire(config => config
-        .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
-        .UseSimpleAssemblyNameTypeSerializer()
-        .UseRecommendedSerializerSettings()
-        .UseSqlServerStorage(builder.Configuration.GetConnectionString("DefaultConnection"), new SqlServerStorageOptions // ✅ CHANGED: Added SqlServerStorageOptions
-        {
-            CommandBatchMaxTimeout = TimeSpan.FromMinutes(5),
-            SlidingInvisibilityTimeout = TimeSpan.FromMinutes(5),
-            QueuePollInterval = TimeSpan.FromSeconds(15), // How often to check for new jobs (adjust as needed)
-            UseRecommendedIsolationLevel = true,
-            DisableGlobalLocks = true, // Set to true if using Azure SQL Database or similar cloud environments
-            SchemaName = "HangFire" // Optional: Specify a custom schema name if you don't want the default "HangFire"
-        }));
+    bool isSmokeTest = builder.Configuration.GetValue<bool>("IsSmokeTest");
+
+    if (isSmokeTest)
+    {
+        // --- SMOKE TEST CONFIGURATION ---
+        Log.Information("Smoke Test environment detected. Configuring Hangfire with In-Memory storage.");
+
+        // Use in-memory storage. This requires no external database and is perfect for testing.
+        builder.Services.AddHangfire(config => config
+            .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+            .UseSimpleAssemblyNameTypeSerializer()
+            .UseRecommendedSerializerSettings()
+            .UseMemoryStorage()); // Use In-Memory Storage
+    }
+    else
+    {
+        // --- PRODUCTION / REAL DEVELOPMENT CONFIGURATION ---
+        Log.Information("Configuring Hangfire with SQL Server for production/development.");
+
+        // Use the robust SQL Server storage provider.
+        builder.Services.AddHangfire(config => config
+            .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+            .UseSimpleAssemblyNameTypeSerializer()
+            .UseRecommendedSerializerSettings()
+            .UseSqlServerStorage(builder.Configuration.GetConnectionString("DefaultConnection"), new SqlServerStorageOptions
+            {
+                CommandBatchMaxTimeout = TimeSpan.FromMinutes(5),
+                SlidingInvisibilityTimeout = TimeSpan.FromMinutes(5),
+                QueuePollInterval = TimeSpan.FromSeconds(15),
+                UseRecommendedIsolationLevel = true,
+                DisableGlobalLocks = true,
+                SchemaName = "HangFire"
+            }));
+
+        _ = builder.Services.AddHangfireServer();
+        Log.Information("Hangfire services (with SQL Server for production) added.");
+
+        _ = builder.Services.AddHangfireCleaner();
+
+    }
 
 
-
-    _ = builder.Services.AddHangfireServer();
-    Log.Information("Hangfire services (with SQL Server for production) added.");
-
-    _ = builder.Services.AddHangfireCleaner();
 
     Log.Information("Hangfire cleaner service added.");
 

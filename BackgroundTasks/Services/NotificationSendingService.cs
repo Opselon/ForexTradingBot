@@ -40,10 +40,12 @@ namespace BackgroundTasks.Services
         private readonly IDatabase _redisDb;
         private readonly INotificationRateLimiter _rateLimiter;
         private readonly AsyncRetryPolicy _telegramApiRetryPolicy;
-
+        private const int FreeUserRssHourlyLimit = 20; // As per your new requirement
+        private const int VipUserRssHourlyLimit = 100;  // Example: VIP users get a higher limi
         private const int RegularUserHourlyLimit = 5;
         private const int VipUserHourlyLimit = 20;
         private static readonly TimeSpan LimitPeriod = TimeSpan.FromHours(1);
+        private static readonly TimeSpan RssLimitPeriod = TimeSpan.FromHours(1);
         #endregion
 
         #region Constructor
@@ -155,8 +157,9 @@ namespace BackgroundTasks.Services
         /// <summary>
         /// The primary Hangfire job method. Implements safeguards before sending a notification.
         /// </summary>
+        // ✅✅ THIS IS THE METHOD TO FIX ✅✅
         [DisableConcurrentExecution(timeoutInSeconds: 600)]
-        [JobDisplayName("Process Notification (Secure): News {0}, UserIndex {2}")]
+        [JobDisplayName("Process RSS Notification: News {0}, UserIndex {2}")]
         [AutomaticRetry(Attempts = 0)]
         public async Task ProcessNotificationFromCacheAsync(Guid newsItemId, string userListCacheKey, int userIndex)
         {
@@ -166,44 +169,58 @@ namespace BackgroundTasks.Services
             {
                 // 1. Retrieve User ID from Redis Cache
                 long targetUserId = await GetUserIdFromCacheAsync(userListCacheKey, userIndex);
-                if (targetUserId == -1) return; // Error logged in helper, job stops.
+                if (targetUserId == -1) return; // Error is logged in the helper
 
-                _logger.LogInformation("Processing job for UserID: {UserId}", targetUserId);
+                _logger.LogInformation("Processing RSS job for UserID: {UserId}", targetUserId);
 
-                // 2. Safeguard: Final Rate-Limiting Check
-                // We check the user's level to apply the correct limit.
+                // 2. Fetch the user's data to check their level. THIS MUST BE DONE BEFORE THE RATE LIMIT CHECK.
+                // We use our cache-aside user service to make this fast.
                 var userDto = await _userService.GetUserByTelegramIdAsync(targetUserId.ToString(), CancellationToken.None);
                 if (userDto == null)
                 {
-                    _logger.LogWarning("User {UserId} not found in database. Skipping.", targetUserId);
+                    _logger.LogWarning("User {UserId} was in dispatch cache but not found in DB. Skipping.", targetUserId);
                     return;
                 }
 
-                int limit = userDto.Level == UserLevel.Bronze ? VipUserHourlyLimit : RegularUserHourlyLimit;
-                if (await _rateLimiter.IsUserOverLimitAsync(targetUserId, limit, LimitPeriod))
+                // 3. Determine the correct limit based on the user's level.
+                int applicableLimit;
+
+                // Check for specific VIP/Premium levels. All others are treated as Free.
+                if (userDto.Level == UserLevel.Platinum || userDto.Level == UserLevel.Platinum) // Adjust enum names as needed
                 {
-                    _logger.LogWarning("FAST SKIP: User {UserId} (Level: {UserLevel}) is over the hourly limit of {Limit}.",
-                        targetUserId, userDto.Level, limit);
+                    applicableLimit = VipUserRssHourlyLimit;
+                }
+                else
+                {
+                    applicableLimit = FreeUserRssHourlyLimit;
+                }
+
+                // 4. Safeguard: Perform the final rate-limiting check with the correct limit.
+                if (await _rateLimiter.IsUserOverLimitAsync(targetUserId, applicableLimit, RssLimitPeriod))
+                {
+                    _logger.LogWarning("FAST SKIP: User {UserId} (Level: {UserLevel}) is over the hourly RSS limit of {Limit}.",
+                        targetUserId, userDto.Level, applicableLimit);
+                    // This is a successful outcome (we correctly prevented a spam message), so we just return.
                     return;
                 }
 
-                // 3. Fetch News Data
+                // 5. Fetch News Data
                 var newsItem = await _newsItemRepository.GetByIdAsync(newsItemId, CancellationToken.None);
                 if (newsItem == null) throw new InvalidOperationException($"NewsItem {newsItemId} not found.");
 
-                // 4. Build Final Payload
+                // 6. Build Final Payload
                 var payload = new NotificationJobPayload
                 {
                     TargetTelegramUserId = targetUserId,
-                    MessageText = BuildMessageText(newsItem), // Use internal helper
+                    MessageText = BuildMessageText(newsItem),
                     UseMarkdown = true,
                     ImageUrl = newsItem.ImageUrl,
-                    Buttons = BuildSimpleNotificationButtons(newsItem), // Use internal helper
+                    Buttons = BuildSimpleNotificationButtons(newsItem),
                     NewsItemId = newsItemId
                 };
 
-                // 5. Send to Telegram
-                await SendToTelegramAsync(payload, CancellationToken.None);
+                // 7. Send to Telegram
+                await ProcessSingleNotification(payload, CancellationToken.None); // Assuming this is your final sender helper
             }
             catch (Exception ex)
             {

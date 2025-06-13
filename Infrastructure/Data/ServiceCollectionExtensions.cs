@@ -41,30 +41,11 @@ namespace Infrastructure.Data
             IConfiguration configuration , bool isSmokeTest)
         {
 
-     
-            _ = services.AddMemoryCache();
-            _ = services.AddSingleton(typeof(IMemoryCacheService<>), typeof(MemoryCacheService<>));
-
-            var retryPolicy = HttpPolicyExtensions
-               .HandleTransientHttpError() // Handles HttpRequestException, 5xx, and 408
-               .OrResult(msg => msg.StatusCode == System.Net.HttpStatusCode.TooManyRequests) // Also handle 429
-               .WaitAndRetryAsync(3, retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)), // Exponential backoff: 2, 4, 8 seconds
-                   onRetry: (outcome, timespan, retryAttempt, context) =>
-                   {
-                       // Log the retry attempt. This is great for diagnostics.
-                       // You would need to inject ILogger into this scope or use a static logger.
-                       Console.WriteLine($"--> Polly: Retrying API request... Delaying for {timespan.TotalSeconds}s, then making retry {retryAttempt}");
-                   });
-
             var dbProviderSection = configuration.GetSection("DatabaseSettings");
             var dbProvider = dbProviderSection.GetValue<string>("DatabaseProvider")?.ToLowerInvariant();
 
-            // 2. Read the connection string
             var connectionString = configuration.GetConnectionString("DefaultConnection");
-
-            // --- ✅ Conditional Configuration based on Environment ---
-            string smokeTestFlag = configuration["IsSmokeTest"];
-
+            string smokeTestFlag = configuration["IsSmokeTest"] ?? string.Empty;
             if (isSmokeTest)
             {
                 // --- SMOKE TEST CONFIGURATION ---
@@ -123,6 +104,25 @@ namespace Infrastructure.Data
                 }
             }
 
+
+
+            _ = services.AddMemoryCache();
+            _ = services.AddSingleton(typeof(IMemoryCacheService<>), typeof(MemoryCacheService<>));
+
+            var retryPolicy = HttpPolicyExtensions
+               .HandleTransientHttpError() // Handles HttpRequestException, 5xx, and 408
+               .OrResult(msg => msg.StatusCode == System.Net.HttpStatusCode.TooManyRequests) // Also handle 429
+               .WaitAndRetryAsync(3, retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)), // Exponential backoff: 2, 4, 8 seconds
+                   onRetry: (outcome, timespan, retryAttempt, context) =>
+                   {
+                       // Log the retry attempt. This is great for diagnostics.
+                       // You would need to inject ILogger into this scope or use a static logger.
+                       Console.WriteLine($"--> Polly: Retrying API request... Delaying for {timespan.TotalSeconds}s, then making retry {retryAttempt}");
+                   });
+
+
+            // 2. Read the connection string
+         
             var redisConnectionString = configuration.GetConnectionString("Redis");
             if (string.IsNullOrEmpty(redisConnectionString))
             {

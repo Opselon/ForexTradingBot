@@ -84,8 +84,8 @@ namespace Application // ✅ Namespace ریشه پروژه Application
             // Singleton برای سرویس‌هایی که در طول عمر برنامه فقط یک نمونه از آن‌ها کافی است و thread-safe هستند.
             _ = services.AddScoped<IFmpService, FmpService>();
 
-
-            services.AddScoped<INotificationDispatchService, NotificationDispatchService>();
+            _ = services.AddSingleton<ICacheService, CacheService>();
+            _ = services.AddScoped<INotificationDispatchService, NotificationDispatchService>();
             // سرویس مدیریت کاربران
             _ = services.AddScoped<IUserService, UserService>();
             // Comment: Registers UserService for handling user-related business logic.

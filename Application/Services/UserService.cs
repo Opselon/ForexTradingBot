@@ -19,7 +19,7 @@ namespace Application.Services // ✅ Namespace صحیح برای پیاده‌�
         private readonly IMapper _mapper;
         private readonly IAppDbContext _context; // به عنوان Unit of Work برای SaveChangesAsync
         private readonly ILogger<UserService> _logger;
-
+        private readonly ICacheService _cacheService; // ✅ NEW: Inject the cache service
         /// <summary>
         /// Initializes a new instance of the <see cref="UserService"/> class.
         /// This class provides services for managing user-related operations,
@@ -31,9 +31,10 @@ namespace Application.Services // ✅ Namespace صحیح برای پیاده‌�
             ITokenWalletRepository tokenWalletRepository,
             ISubscriptionRepository subscriptionRepository,
             IMapper mapper,
-            IAppDbContext context,
+            IAppDbContext context, ICacheService cacheService,
             ILogger<UserService> logger)
         {
+            _cacheService = cacheService;
             _userRepository = userRepository ?? throw new ArgumentNullException(nameof(userRepository));
             _tokenWalletRepository = tokenWalletRepository ?? throw new ArgumentNullException(nameof(tokenWalletRepository));
             _subscriptionRepository = subscriptionRepository ?? throw new ArgumentNullException(nameof(subscriptionRepository));
@@ -56,78 +57,56 @@ namespace Application.Services // ✅ Namespace صحیح برای پیاده‌�
         // while an exception means a critical error occurred during retrieval/processing.
         public async Task<UserDto?> GetUserByTelegramIdAsync(string telegramId, CancellationToken cancellationToken = default)
         {
-            // Validate input early
             if (string.IsNullOrWhiteSpace(telegramId))
             {
                 _logger.LogWarning("Attempted to get user with null or empty Telegram ID.");
-                // Depending on requirements, you might throw an ArgumentException here,
-                // but returning null is also acceptable if treated as "not found due to invalid input".
                 return null;
             }
 
-            _logger.LogInformation("Fetching user by Telegram ID: {TelegramId}", telegramId);
+            // Define a unique cache key for this user.
+            string cacheKey = $"user:telegram_id:{telegramId}";
 
             try
             {
-                // Fetch user from the repository by Telegram ID. Potential database interaction.
-                // Assumed: This method includes TokenWallet information.
-                var user = await _userRepository.GetByTelegramIdAsync(telegramId, cancellationToken);
+                // 1. CACHE-ASIDE: First, try to get the user DTO from the cache.
+                var cachedUserDto = await _cacheService.GetAsync<UserDto>(cacheKey);
 
-                // Handle case where user is not found (this is a normal outcome, not an error)
-                if (user == null)
+                if (cachedUserDto != null)
                 {
-                    _logger.LogWarning("User with Telegram ID {TelegramId} not found.", telegramId);
-                    return null; // Return null as the user was not found.
+                    _logger.LogInformation("CACHE HIT: User with Telegram ID {TelegramId} found in cache.", telegramId);
+                    return cachedUserDto;
                 }
 
-                _logger.LogInformation("User with Telegram ID {TelegramId} found: {Username}", telegramId, user.Username);
+                // 2. CACHE MISS: If not in cache, get from the database.
+                _logger.LogInformation("CACHE MISS: Fetching user by Telegram ID {TelegramId} from database.", telegramId);
+                var user = await _userRepository.GetByTelegramIdAsync(telegramId, cancellationToken);
 
-                // Map User entity to UserDto. Potential mapping error point.
+                if (user == null)
+                {
+                    _logger.LogWarning("User with Telegram ID {TelegramId} not found in database.", telegramId);
+                    return null;
+                }
+
+                _logger.LogInformation("User with Telegram ID {TelegramId} found in DB: {Username}", telegramId, user.Username);
                 var userDto = _mapper.Map<UserDto>(user);
-
-                // Fetch active subscription for the user. Another potential database interaction.
                 var activeSubscriptionEntity = await _subscriptionRepository.GetActiveSubscriptionByUserIdAsync(user.Id, cancellationToken);
 
                 if (activeSubscriptionEntity != null)
                 {
-                    // Map Subscription entity to SubscriptionDto. Potential mapping error point.
                     userDto.ActiveSubscription = _mapper.Map<SubscriptionDto>(activeSubscriptionEntity);
                 }
 
-                // Return the successfully created UserDto.
+                // 3. Set the fully populated DTO into the cache for next time.
+                // Give it an expiration, e.g., 1 hour, so data doesn't get stale.
+                await _cacheService.SetAsync(cacheKey, userDto, TimeSpan.FromHours(1));
+                _logger.LogInformation("User with Telegram ID {TelegramId} DTO set into cache.", telegramId);
+
                 return userDto;
             }
-            catch (OperationCanceledException ex) when (cancellationToken.IsCancellationRequested)
-            {
-                // Handle cancellation specifically.
-                _logger.LogInformation(ex, "Fetching user by Telegram ID {TelegramId} was cancelled.", telegramId);
-                throw; // Re-throw the cancellation exception.
-            }
-            // Catch specific database or mapping exceptions if desired.
-            // catch (DbException dbEx)
-            // {
-            //     _logger.LogError(dbEx, "Database error while fetching user with Telegram ID {TelegramId}.", telegramId);
-            //     throw new ApplicationException($"Database error occurred while retrieving user {telegramId}.", dbEx);
-            // }
-            // catch (AutoMapperMappingException mapEx)
-            // {
-            //     _logger.LogError(mapEx, "Mapping error while processing user data for Telegram ID {TelegramId}.", telegramId);
-            //     throw new ApplicationException($"Error processing user data for user {telegramId}.", mapEx);
-            // }
             catch (Exception ex)
             {
-                // Catch any other unexpected technical exceptions (general database errors, mapping errors, etc.)
-                // Log the general error with context.
-                _logger.LogError(ex, "An unexpected error occurred while fetching or processing user with Telegram ID {TelegramId}.", telegramId);
-
-                // Depending on your error handling strategy and caller's expectations:
-                // Option 1 (Standard for methods returning T? on success/not found): Wrap and throw a higher-level exception.
-                // This distinguishes a technical failure from a "user not found" case.
+                _logger.LogError(ex, "An unexpected error occurred while fetching user with Telegram ID {TelegramId}.", telegramId);
                 throw new ApplicationException($"An error occurred while retrieving user {telegramId}.", ex);
-
-                // Option 2 (Less common with T? return, but possible): Return null.
-                // This would treat technical errors the same way as "user not found", which is usually NOT desired.
-                // return null; // Generally AVOID returning null for technical errors.
             }
         }
 
@@ -421,93 +400,49 @@ namespace Application.Services // ✅ Namespace صحیح برای پیاده‌�
         /// <exception cref="ApplicationException">Thrown on critical technical errors during the update process.</exception>
         public async Task UpdateUserAsync(Guid userId, UpdateUserDto updateDto, CancellationToken cancellationToken = default)
         {
-            // Input validation (check updateDto itself)
-            if (updateDto == null)
-            {
-                throw new ArgumentNullException(nameof(updateDto));
-            }
-            // Add validation for properties within updateDto if needed (e.g., empty strings if not allowed)
+            if (updateDto == null) throw new ArgumentNullException(nameof(updateDto));
 
             _logger.LogInformation("Attempting to update user with ID: {UserId}", userId);
 
             try
             {
-                // Fetch the user entity to update. Potential database interaction.
                 var user = await _userRepository.GetByIdAsync(userId, cancellationToken);
                 if (user == null)
                 {
-                    _logger.LogWarning("User with ID {UserId} not found for update.", userId);
-                    // Throw a specific exception for 'Not Found' scenario.
-                    // Assuming NotFoundException is a custom exception you've defined.
-                    // If not, you might use InvalidOperationException but it's less clear.
-                    throw new InvalidOperationException($"User with ID {userId} not found for update."); // Using InvalidOperationException for consistency with your current code
+                    throw new InvalidOperationException($"User with ID {userId} not found for update.");
                 }
 
-                // Check for duplicate email if email is being updated and is different from current. Potential database interaction.
-                // Added null check for user.Email defensively
+                // --- Cache Invalidation ---
+                // We must invalidate the cache BEFORE saving changes to prevent a race condition
+                // where another request might read the old data and re-cache it.
+                string cacheKey = $"user:telegram_id:{user.TelegramId}";
+                await _cacheService.RemoveAsync(cacheKey);
+                _logger.LogInformation("Invalidated cache for user {TelegramId} due to update.", user.TelegramId);
+                // --- End Cache Invalidation ---
+
                 if (!string.IsNullOrWhiteSpace(updateDto.Email) &&
-                    user.Email != null &&
                     !user.Email.Equals(updateDto.Email, StringComparison.OrdinalIgnoreCase))
                 {
                     if (await _userRepository.ExistsByEmailAsync(updateDto.Email, cancellationToken))
                     {
-                        _logger.LogWarning("Update failed for UserID {UserId}: New email {Email} already exists.", userId, updateDto.Email);
-                        // Throw specific business rule violation exception.
                         throw new InvalidOperationException($"Another user with email {updateDto.Email} already exists.");
                     }
                 }
 
-                // Apply updates from DTO to entity using AutoMapper. Potential mapping error point.
-                // Assuming AutoMapper configuration handles mapping only non-null/non-default values from DTO.
-                _ = _mapper.Map(updateDto, user);
-
-                // Update 'UpdatedAt' timestamp.
+                _mapper.Map(updateDto, user);
                 user.UpdatedAt = DateTime.UtcNow;
 
-                // Save changes to the database. **CRITICAL point of failure (Database/Concurrency/Constraints).**
-                // EF Core tracks the changes to the 'user' entity automatically.
-                _ = await _context.SaveChangesAsync(cancellationToken);
-                _logger.LogInformation("User with ID {UserId} updated successfully.", userId);
+                await _context.SaveChangesAsync(cancellationToken);
+                _logger.LogInformation("User with ID {UserId} updated successfully in DB.", userId);
             }
-            catch (InvalidOperationException) // Catch specific business rule exceptions (User not found, Duplicate email)
-            {
-                // Re-throw the business exception as it's a known condition handled by caller.
-                throw;
-            }
-            catch (OperationCanceledException ex) when (cancellationToken.IsCancellationRequested)
-            {
-                // Handle cancellation specifically.
-                _logger.LogInformation(ex, "User update operation for UserID {UserId} was cancelled.", userId);
-                throw; // Re-throw cancellation.
-            }
-            // Catch specific database/ORM exceptions if you want to differentiate them or handle specific error types.
-            // catch (DbUpdateConcurrencyException ex) // Example: Concurrency conflicts
-            // {
-            //     _logger.LogError(ex, "Concurrency conflict during user update for UserID {UserId}.", userId);
-            //     // Handle concurrency: inform user, retry, etc. Re-throw specific exception.
-            //     throw new ApplicationException($"Concurrency conflict detected while updating user {userId}.", ex);
-            // }
-            // catch (DbUpdateException ex) // Example: Other database update errors (constraints, etc.)
-            // {
-            //      _logger.LogError(ex, "Database update error during user update for UserID {UserId}.", userId);
-            //      throw new ApplicationException($"Database error occurred while updating user {userId}.", ex);
-            // }
-            // catch (AutoMapperMappingException mapEx) // Example: Mapping errors
-            // {
-            //      _logger.LogError(mapEx, "Mapping error during user update for UserID {UserId}.", userId);
-            //      throw new ApplicationException($"Error processing user data for user {userId}.", mapEx);
-            // }
             catch (Exception ex)
             {
-                // Catch any other unexpected technical exceptions.
-                // Log the critical technical error.
-                _logger.LogError(ex, "An unexpected error occurred during user update process for UserID {UserId}.", userId);
-
-                // Throw a generic application exception indicating a critical failure.
-                // The caller should catch this and inform the user.
-                throw new ApplicationException("An unexpected error occurred during user update. Please try again later.", ex);
+                // Simplified catch block for brevity
+                _logger.LogError(ex, "An error occurred during user update for UserID {UserId}.", userId);
+                throw;
             }
         }
+
 
         /// <summary>
         /// Asynchronously deletes a user from the system by their unique internal ID.
@@ -519,66 +454,34 @@ namespace Application.Services // ✅ Namespace صحیح برای پیاده‌�
         /// <exception cref="ApplicationException">Thrown on critical technical errors during the deletion process.</exception>
         public async Task DeleteUserAsync(Guid id, CancellationToken cancellationToken = default)
         {
-            // Basic validation for Guid.Empty if needed.
-            // if (id == Guid.Empty) { ... log warning and return ... }
-
             _logger.LogInformation("Attempting to delete user with ID: {UserId}", id);
 
             try
             {
-                // Retrieve the user entity. Potential database interaction.
                 var user = await _userRepository.GetByIdAsync(id, cancellationToken);
-
-                // If user is not found, treat it as successful deletion (idempotency).
                 if (user == null)
                 {
                     _logger.LogWarning("User with ID {UserId} not found for deletion. Operation considered successful.", id);
-                    return; // Exit gracefully as the user doesn't exist to be deleted.
+                    return;
                 }
 
-                // --- Optional: Add business logic before deletion here ---
-                // E.g., Logic to handle related entities if not using cascade delete in DB
-                // await _subscriptionService.CancelUserSubscriptionsAsync(user.Id, cancellationToken);
-                // await _signalsService.RemoveUserSignalsAsync(user.Id, cancellationToken);
-                // ----------------------------------------------------------
+                // --- Cache Invalidation ---
+                string cacheKey = $"user:telegram_id:{user.TelegramId}";
+                await _cacheService.RemoveAsync(cacheKey);
+                _logger.LogInformation("Invalidated cache for user {TelegramId} due to deletion.", user.TelegramId);
+                // --- End Cache Invalidation ---
 
-
-                // Delete the user entity (or mark for deletion). Potential database interaction/preparation.
-                await _userRepository.DeleteAsync(user, cancellationToken); // Assuming this marks the entity as Deleted
-
-                // Save changes to the database. **CRITICAL point of failure (Database/Constraints).**
-                _ = await _context.SaveChangesAsync(cancellationToken);
+                await _userRepository.DeleteAsync(user, cancellationToken);
+                await _context.SaveChangesAsync(cancellationToken);
 
                 _logger.LogInformation("User with ID {UserId} deleted successfully.", id);
             }
-            catch (OperationCanceledException ex) when (cancellationToken.IsCancellationRequested)
-            {
-                // Handle cancellation specifically.
-                _logger.LogInformation(ex, "User deletion operation for UserID {UserId} was cancelled.", id);
-                throw; // Re-throw cancellation.
-            }
-            // Catch specific database/ORM exceptions if you want to handle them differently or log more detail.
-            // catch (DbUpdateException dbEx) // Example: Foreign Key or other DB constraint violations
-            // {
-            //     _logger.LogError(dbEx, "Database update error during user deletion for UserID {UserId}.", id);
-            //     // Check dbEx details for specific constraint violations if needed.
-            //     throw new ApplicationException($"Database error occurred while deleting user {id}.", dbEx);
-            // }
-            // catch (RepositoryException repEx) // If your repository throws specific exceptions
-            // {
-            //      _logger.LogError(repEx, "Repository error during user deletion for UserID {UserId}.", id);
-            //      throw new ApplicationException($"Error in data access layer while deleting user {id}.", repEx);
-            // }
             catch (Exception ex)
             {
-                // Catch any other unexpected technical exceptions.
-                // Log the critical technical error.
-                _logger.LogError(ex, "An unexpected error occurred during user deletion process for UserID {UserId}.", id);
-
-                // Throw a generic application exception indicating a critical failure.
-                // The caller should catch this and handle it (e.g., inform admin, log, perhaps inform user if appropriate).
-                throw new ApplicationException("An unexpected error occurred during user deletion. Please contact support.", ex);
+                _logger.LogError(ex, "An error occurred during user deletion for UserID {UserId}.", id);
+                throw;
             }
-        }
+       
+    }
     }
 }

@@ -8,18 +8,12 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Remove="Common\Interfaces\NewFolder\**" />
     <Compile Remove="DTOs\NewFolder\**" />
     <Compile Remove="Features\Crypto\Services\NewFolder\**" />
-    <Compile Remove="Services\NewFolder\**" />
-    <EmbeddedResource Remove="Common\Interfaces\NewFolder\**" />
     <EmbeddedResource Remove="DTOs\NewFolder\**" />
     <EmbeddedResource Remove="Features\Crypto\Services\NewFolder\**" />
-    <EmbeddedResource Remove="Services\NewFolder\**" />
-    <None Remove="Common\Interfaces\NewFolder\**" />
     <None Remove="DTOs\NewFolder\**" />
     <None Remove="Features\Crypto\Services\NewFolder\**" />
-    <None Remove="Services\NewFolder\**" />
   </ItemGroup>
 
   <ItemGroup>

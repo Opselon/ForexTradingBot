@@ -191,7 +191,7 @@ try
     _ = builder.Services.AddApplicationServices();
     Log.Information("Application services registered.");
 
-    _ = builder.Services.AddInfrastructureServices(builder.Configuration);
+    _ = builder.Services.AddInfrastructureServices(builder.Configuration, isSmokeTest);
     Log.Information("Infrastructure services registered.");
 
 

@@ -38,7 +38,7 @@ namespace Infrastructure.Data
         /// <returns>همان <see cref="IServiceCollection"/>، برای امکان زنجیره‌ای کردن متدها.</returns>
         public static IServiceCollection AddInfrastructureServices(
             this IServiceCollection services,
-            IConfiguration configuration)
+            IConfiguration configuration , bool isSmokeTest)
         {
 
      
@@ -64,7 +64,6 @@ namespace Infrastructure.Data
 
             // --- ✅ Conditional Configuration based on Environment ---
             string smokeTestFlag = configuration["IsSmokeTest"];
-            bool isSmokeTest = "true".Equals(smokeTestFlag, StringComparison.OrdinalIgnoreCase);
 
             if (isSmokeTest)
             {

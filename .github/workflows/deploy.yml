@@ -67,13 +67,14 @@
           "uses": "docker/setup-buildx-action@v3"
         },
         {
-          "name": "🛠️ [Test] Build a Temporary Test Image",
+          "name": "🛠️ [Test] Build and Load Test Image",
           "uses": "docker/build-push-action@v5",
           "with": {
             "context": ".",
             "file": "./Dockerfile",
             "push": false,
-            "tags": "forex-trading-bot-test:latest"
+            "tags": "forex-trading-bot-test:latest",
+            "load": true 
           }
         },
         {
@@ -94,6 +95,7 @@
         }
       ]
     },
+  
   
 
     "build": {

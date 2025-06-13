@@ -163,9 +163,6 @@ try
     // این کلاس می‌تواند شامل تنظیمات عمومی تلگرام مانند AdminUserId باشد.
     _ = builder.Services.Configure<Domain.Settings.TelegramSettings>(builder.Configuration.GetSection("TelegramSettings"));
     // Configure TelegramUserApiSettings
-    _ = builder.Services.Configure<Infrastructure.Settings.TelegramUserApiSettings>(builder.Configuration.GetSection("TelegramUserApi"));
-    _ = builder.Services.AddSingleton<Application.Common.Interfaces.ITelegramUserApiClient, Infrastructure.Services.TelegramUserApiClient>();
-    _ = builder.Services.AddHostedService<Infrastructure.Services.TelegramUserApiInitializationService>();
     // مپ کردن بخش CryptoPaySettings.SectionName (که "CryptoPay" است) از appsettings.json به کلاس Shared.Settings.CryptoPaySettings
     _ = builder.Services.Configure<CryptoPaySettings>(builder.Configuration.GetSection(CryptoPaySettings.SectionName));
 
@@ -199,7 +196,7 @@ try
 
     _ = builder.Services.AddBackgroundTasksServices();
     Log.Information("Background tasks services registered.");
-
+    builder.Services.AddHealthChecks();
 
 
 
@@ -483,6 +480,7 @@ try
     #endregion
 
     #region Map Controllers & Run Application
+    app.MapHealthChecks("/healthz");
     // ------------------- مپ کردن کنترلرها و اجرای برنامه -------------------
     _ = app.MapControllers(); //  مسیردهی درخواست‌ها به Action های کنترلرها
     programLogger.LogInformation("Application setup complete. Starting web host now...");
@@ -496,11 +494,11 @@ try
         var orchestrator = scope.ServiceProvider.GetRequiredService<UserApiForwardingOrchestrator>();
         // Use orchestrator if needed
     }
-    // In the service registration section
-    builder.Services.AddHealthChecks();
+ 
+
 
     // In the middleware pipeline section (before app.Run())
-    app.MapHealthChecks("/healthz");
+
     app.Run(); //  شروع به گوش دادن به درخواست‌های HTTP و اجرای برنامه
     #endregion
 }

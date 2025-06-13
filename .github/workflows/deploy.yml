@@ -24,33 +24,42 @@
     "SESSION_FOLDER": "Session"
   },
   "jobs": {
-    "docker_build_check": {
-      "name": "🐳 Docker Build Check (Production Image)",
+    "docker_build_and_save": {
+      "name": "🐳 Build & Save Docker Image",
       "runs-on": "ubuntu-latest",
       "steps": [
         {
-          "name": "📥 [Docker] Checkout Repository",
+          "name": "📥 Checkout Repository",
           "uses": "actions/checkout@v4"
         },
         {
-          "name": "🐳 [Docker] Set up Docker Buildx",
+          "name": "🐳 Set up Docker Buildx",
           "uses": "docker/setup-buildx-action@v3"
         },
         {
-          "name": "🛠️ [Docker] Build Image for Validation",
+          "name": "🛠️ Build image",
           "uses": "docker/build-push-action@v5",
           "with": {
             "context": ".",
             "file": "./Dockerfile",
             "push": false,
-            "tags": "forex-trading-bot-ci:latest"
+            "tags": "forex-trading-bot-ci:latest",
+            "outputs": "type=docker,dest=/tmp/forex-bot-image.tar" 
+          }
+        },
+        {
+          "name": "📤 Upload image artifact",
+          "uses": "actions/upload-artifact@v4",
+          "with": {
+            "name": "docker-image",
+            "path": "/tmp/forex-bot-image.tar"
           }
         }
       ]
     },
-    "docker_smoke_test": {
+   "docker_smoke_test": {
       "name": "🔥 Docker Startup & Health Test",
-      "needs": "docker_build_check",
+      "needs": "docker_build_and_save",
       "runs-on": "ubuntu-latest",
       "services": {
         "redis-test": {
@@ -59,6 +68,18 @@
         }
       },
       "steps": [
+        {
+          "name": "📥 Download image artifact",
+          "uses": "actions/download-artifact@v4",
+          "with": {
+            "name": "docker-image",
+            "path": "/tmp"
+          }
+        },
+        {
+          "name": "💿 Load image into Docker",
+          "run": "docker load --input /tmp/forex-bot-image.tar"
+        },
         {
           "name": "🚀 [Test] Start Application Container",
           "run": "docker run -d --name app-test --network ${{ job.services.redis-test.network }} -p 8080:80 -e \"ASPNETCORE_URLS=http://+:80\" -e \"ASPNETCORE_ENVIRONMENT=Development\" -e \"IsSmokeTest=true\" -e \"ConnectionStrings__Redis=redis-test:6379,abortConnect=false\" -e \"TelegramUserApi__ApiId=12345\" -e \"TelegramUserApi__ApiHash=d41d8cd98f00b204e9800998ecf8427e\" forex-trading-bot-ci:latest"
@@ -72,9 +93,7 @@
           "run": "docker rm -f app-test"
         }
       ]
-    },
-
-  
+   },
   
 
     "build": {
@@ -209,7 +228,7 @@
       "name": "✅ Set Deployment to Success",
       "needs": [
   "register_service",
-  "create_deployment","docker_build_check"],
+  "create_deployment"],
       "if": "${{ success() }}",
       "runs-on": "ubuntu-latest",
       "steps": [

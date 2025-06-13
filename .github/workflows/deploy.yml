@@ -49,6 +49,7 @@
       ]
     },
     "independent_smoke_test": {
+    "needs":"docker_build_check",
     "name": "🔥 Independent Docker Smoke Test",
     "runs-on": "ubuntu-latest",
     "services": {

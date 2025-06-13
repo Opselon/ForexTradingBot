@@ -52,6 +52,9 @@ try
     var builder = WebApplication.CreateBuilder(args);
     _ = builder.WebHost.UseKestrel();
 
+    // This is more reliable than GetValue<bool> for environment variables.
+    string smokeTestFlag = builder.Configuration["IsSmokeTest"];
+    bool isSmokeTest = "true".Equals(smokeTestFlag, StringComparison.OrdinalIgnoreCase);
     #region Configure Serilog Logging
     // ------------------- ۱. پیکربندی Serilog با تنظیمات از appsettings.json -------------------
     // این بخش Serilog را به عنوان سیستم لاگینگ اصلی برنامه تنظیم می‌کند.
@@ -308,9 +311,6 @@ try
 
 
 
-    // This is more reliable than GetValue<bool> for environment variables.
-    string smokeTestFlag = builder.Configuration["IsSmokeTest"];
-    bool isSmokeTest = "true".Equals(smokeTestFlag, StringComparison.OrdinalIgnoreCase);
 
     if (isSmokeTest)
     {

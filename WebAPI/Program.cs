@@ -496,6 +496,11 @@ try
         var orchestrator = scope.ServiceProvider.GetRequiredService<UserApiForwardingOrchestrator>();
         // Use orchestrator if needed
     }
+    // In the service registration section
+    builder.Services.AddHealthChecks();
+
+    // In the middleware pipeline section (before app.Run())
+    app.MapHealthChecks("/healthz");
     app.Run(); //  شروع به گوش دادن به درخواست‌های HTTP و اجرای برنامه
     #endregion
 }

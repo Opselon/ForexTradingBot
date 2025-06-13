@@ -56,152 +56,75 @@ namespace Application.Services
         private readonly TimeSpan _delayBetweenJobEnqueues = TimeSpan.FromMilliseconds(50); // Configurable
 
         /// <summary>
-        /// Asynchronously dispatches notifications for a specified news item to eligible users.
-        /// This method enqueues one job per user with a delay between each enqueue operation
-        /// to manage load and respect potential rate limits at the job scheduling level.
-        /// </summary>
-        /// <param name="newsItemId">The unique identifier of the news item to dispatch notifications for.</param>
-        /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
-        /// <summary>
-        /// Dispatches notifications using a hyper-resilient, memory-efficient streaming algorithm
-        /// equipped with a multi-layer "Hang Shield" to ensure application stability.
+        /// Fetches users, caches their IDs in Redis, and enqueues a lightweight job for each user.
+        /// This method does NOT build the final message content.
         /// </summary>
         public Task DispatchNewsNotificationAsync(Guid newsItemId, CancellationToken cancellationToken = default)
         {
-            #region --- Hang Shield & Algorithm Configuration ---
-            var TotalDispatchTimeout = TimeSpan.FromHours(3);
-            var PerEnqueueTimeout = TimeSpan.FromSeconds(10);
-            const int DispatchChunkSize = 100;
-            const double TargetJobsPerSecond = 25.0;
-            const double JitterFactor = 0.2;
-            const int CircuitBreakerThreshold = 15;
-            const int ProgressLoggingInterval = 5000;
-            #endregion
+            var delayBetweenJobs = TimeSpan.FromMilliseconds(40); // 25 jobs/sec
 
             return Task.Run(async () =>
             {
-                using var dispatchTimeoutCts = new CancellationTokenSource(TotalDispatchTimeout);
-                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, dispatchTimeoutCts.Token);
-                var masterToken = linkedCts.Token;
-
                 try
                 {
-                    NewsItem? newsItem = await _newsItemRepository.GetByIdAsync(newsItemId, masterToken);
+                    // 1. Fetch the news item to get its properties for filtering.
+                    NewsItem? newsItem = await _newsItemRepository.GetByIdAsync(newsItemId, cancellationToken);
                     if (newsItem == null)
                     {
-                        _logger.LogWarning("News item with ID {Id} not found. Cannot dispatch.", newsItemId);
+                        _logger.LogWarning("NewsItem {Id} not found. Cannot dispatch.", newsItemId);
                         return;
                     }
 
-                    using (_logger.BeginScope(new Dictionary<string, object?> { ["NewsItemId"] = newsItem.Id }))
+                    _logger.LogInformation("Dispatching for NewsItem: {Title}", newsItem.Title);
+
+                    // 2. Fetch all eligible user IDs from the database ONCE.
+                    IEnumerable<User> targetUsers = await _userRepository.GetUsersForNewsNotificationAsync(
+                        newsItem.AssociatedSignalCategoryId, newsItem.IsVipOnly, cancellationToken);
+
+                    var validTelegramIds = targetUsers
+                        .Select(u => long.TryParse(u.TelegramId, out var id) ? (long?)id : null)
+                        .Where(id => id.HasValue).Select(id => id.Value).ToList();
+
+                    if (!validTelegramIds.Any())
                     {
-                        _logger.LogInformation("Initiating CACHE-FIRST dispatch orchestration...");
-                        _logger.LogInformation("Fetching all eligible users from the database...");
-                        IEnumerable<User> targetUsersStream = await _userRepository.GetUsersForNewsNotificationAsync(
-                            newsItem.AssociatedSignalCategoryId, newsItem.IsVipOnly, masterToken);
-
-                        var validTelegramIds = targetUsersStream?
-                            .Select(u => long.TryParse(u.TelegramId, out long id) ? (long?)id : null)
-                            .Where(id => id.HasValue)
-                            .Select(id => id.Value)
-                            .ToList() ?? [];
-
-                        if (!validTelegramIds.Any())
-                        {
-                            _logger.LogWarning("No eligible users found for this dispatch. Aborting.");
-                            return;
-                        }
-                        _logger.LogInformation("Found {UserCount} eligible users.", validTelegramIds.Count);
-
-                        var userListCacheKey = $"dispatch:users:{newsItemId}";
-                        var serializedUserIds = JsonSerializer.Serialize(validTelegramIds);
-                        bool cacheSet = await _redisDb.StringSetAsync(userListCacheKey, serializedUserIds, TimeSpan.FromHours(24));
-                        if (!cacheSet)
-                        {
-                            _logger.LogCritical("Failed to set user list in Redis cache. Aborting dispatch.");
-                            return;
-                        }
-                        _logger.LogInformation("Successfully cached {UserCount} user IDs in Redis. Key: {CacheKey}", validTelegramIds.Count, userListCacheKey);
-
-                        int totalUsersEnqueued = 0;
-                        int processedInChunk = 0;
-                        int consecutiveFailures = 0;
-                        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-
-                        for (int i = 0; i < validTelegramIds.Count; i++)
-                        {
-                            masterToken.ThrowIfCancellationRequested();
-                            long userId = validTelegramIds[i];
-                            int userIndex = i;
-
-                            if (await _rateLimiter.IsUserOverLimitAsync(userId, 15, TimeSpan.FromHours(1)))
-                            {
-                                _logger.LogTrace("User {UserId} is over rate limit. Skipping job enqueue.", userId);
-                                continue;
-                            }
-
-                            try
-                            {
-                                await Task.Run(() =>
-                                {
-                                    // --- ✅ FIX 4: ENSURE THIS METHOD EXISTS ON THE INTERFACE ---
-                                    // We will define this method in the next step.
-                                    _jobScheduler.Enqueue<INotificationSendingService>(
-                                        service => service.ProcessNotificationFromCacheAsync(
-                                            newsItemId,
-                                            userListCacheKey,
-                                            userIndex
-                                        )
-                                    );
-                                }, new CancellationTokenSource(PerEnqueueTimeout).Token);
-                                totalUsersEnqueued++;
-                                consecutiveFailures = 0;
-                            }
-                            catch (Exception ex)
-                            {
-                                consecutiveFailures++;
-                                _logger.LogError(ex, "Failed to enqueue job for user index {Index}. Consecutive failures: {FailureCount}", userIndex, consecutiveFailures);
-                            }
-
-                            if (consecutiveFailures >= CircuitBreakerThreshold)
-                            {
-                                _logger.LogCritical("CIRCUIT BREAKER TRIPPED. Aborting dispatch.", consecutiveFailures);
-                                return;
-                            }
-
-                            processedInChunk++;
-                            if (processedInChunk >= DispatchChunkSize)
-                            {
-                                await Task.Yield();
-                                stopwatch.Stop();
-                                var delayNeeded = TimeSpan.FromSeconds(DispatchChunkSize / TargetJobsPerSecond) - stopwatch.Elapsed;
-                                if (delayNeeded > TimeSpan.Zero)
-                                {
-                                    var jitter = TimeSpan.FromMilliseconds(delayNeeded.TotalMilliseconds * JitterFactor * (Random.Shared.NextDouble() - 0.5) * 2.0);
-                                    await Task.Delay(delayNeeded + jitter, masterToken);
-                                }
-                                processedInChunk = 0;
-                                stopwatch.Restart();
-                            }
-                            if (totalUsersEnqueued > 0 && totalUsersEnqueued % ProgressLoggingInterval == 0)
-                            {
-                                _logger.LogInformation("Dispatch progress: {EnqueuedCount}/{TotalCount} jobs created.", totalUsersEnqueued, validTelegramIds.Count);
-                            }
-                        }
-                        _logger.LogInformation("Orchestration complete. Enqueued {TotalEnqueued} jobs for dispatch.", totalUsersEnqueued);
+                        _logger.LogInformation("No eligible users found for this dispatch.");
+                        return;
                     }
+
+                    // 3. Cache the list of user IDs in Redis (The "Claim Check" pattern).
+                    var userListCacheKey = $"dispatch:users:{newsItemId}";
+                    var serializedUserIds = JsonSerializer.Serialize(validTelegramIds);
+                    await _redisDb.StringSetAsync(userListCacheKey, serializedUserIds, TimeSpan.FromHours(24));
+                    _logger.LogInformation("Cached {Count} user IDs to Redis key: {Key}", validTelegramIds.Count, userListCacheKey);
+
+                    // 4. Loop and create a lightweight job for each user.
+                    int enqueuedCount = 0;
+                    for (int i = 0; i < validTelegramIds.Count; i++)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        long userId = validTelegramIds[i];
+
+                        if (await _rateLimiter.IsUserOverLimitAsync(userId, 10, TimeSpan.FromHours(1)))
+                        {
+                            continue;
+                        }
+
+                        _jobScheduler.Enqueue<INotificationSendingService>(
+                            service => service.ProcessNotificationFromCacheAsync(newsItemId, userListCacheKey, i));
+
+                        enqueuedCount++;
+
+                        // The delay is now unconditional within the loop, which is simpler.
+                        // The cancellation token will automatically throw if triggered during the delay.
+                        await Task.Delay(delayBetweenJobs, cancellationToken);
+                    }
+                    _logger.LogInformation("Dispatch orchestration complete. {Count} jobs enqueued.", enqueuedCount);
                 }
-                catch (OperationCanceledException)
-                {
-                    if (dispatchTimeoutCts.IsCancellationRequested) _logger.LogCritical("DISPATCH ABORTED due to master timeout.");
-                    else _logger.LogWarning("Dispatch was cancelled externally.");
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogCritical(ex, "An unhandled exception occurred during dispatch orchestration.");
-                }
+                catch (OperationCanceledException) { _logger.LogWarning("Dispatch orchestration was cancelled."); }
+                catch (Exception ex) { _logger.LogCritical(ex, "A critical error occurred during dispatch orchestration."); }
             }, cancellationToken);
         }
+
 
         /// <summary>
         /// Builds the main text content for a news notification.

@@ -29,24 +29,25 @@ public class RedisNotificationRateLimiter : INotificationRateLimiter
     {
         var db = _redis.GetDatabase();
 
-        string key = $"notif_limit:{telegramUserId}";
+        // ✅✅ IMPROVEMENT: Create a key that is unique for the user AND the current time window.
+        // This makes the count automatically reset when the time window passes. For an hourly limit,
+        // a key like "notif_limit:12345:2023-10-27-15" will be used. At 16:00, a new key will be used.
+        string timeWindow = DateTime.UtcNow.ToString("yyyy-MM-dd-HH");
+        string key = $"notif_limit:{telegramUserId}:{timeWindow}";
 
         try
         {
-            // =========================================================================
-            //  FINAL CORRECTED SCRIPT EVALUATION CALL
-            //  We are now passing the raw script string, which matches the expected signature.
-            // =========================================================================
             var result = await db.ScriptEvaluateAsync(
-                RateLimiterScript, // The raw Lua script string
+                RateLimiterScript,
                 new RedisKey[] { key },
-                new RedisValue[] { (long)period.TotalSeconds }
+                // The expiration should be slightly longer than the window to prevent premature expiry.
+                // For a 1-hour window, expiring after 2 hours is safe.
+                new RedisValue[] { (long)period.TotalSeconds + 3600 }
             );
-            // =========================================================================
 
             if (result.IsNull)
             {
-                _logger.LogWarning("Redis script evaluation returned null for key {Key}. Allowing notification to pass as failsafe.", key);
+                _logger.LogWarning("Redis script evaluation returned null for key {Key}. Allowing notification to pass.", key);
                 return false;
             }
 
@@ -54,8 +55,9 @@ public class RedisNotificationRateLimiter : INotificationRateLimiter
 
             if (currentCount > limit)
             {
-                _logger.LogInformation("User {UserId} is over the limit. Current count: {Count}, Limit: {Limit}", telegramUserId, currentCount, limit);
-                return true; // Is over limit
+                _logger.LogInformation("User {UserId} is over the limit for time window {TimeWindow}. Count: {Count}, Limit: {Limit}",
+                    telegramUserId, timeWindow, currentCount, limit);
+                return true;
             }
         }
         catch (Exception ex)
@@ -64,6 +66,6 @@ public class RedisNotificationRateLimiter : INotificationRateLimiter
             return false;
         }
 
-        return false; // Not over limit
+        return false;
     }
 }

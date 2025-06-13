@@ -125,17 +125,16 @@ namespace Infrastructure.Data
             }
 
             var redisConnectionString = configuration.GetConnectionString("Redis");
+            if (string.IsNullOrEmpty(redisConnectionString))
+            {
+                throw new InvalidOperationException("FATAL: Redis connection string is missing or empty.");
+            }
             var options = ConfigurationOptions.Parse(redisConnectionString);
             options.AbortOnConnectFail = false; // Make it resilient
             services.AddSingleton<IConnectionMultiplexer>(ConnectionMultiplexer.Connect(options));
 
             var allConfig = configuration.AsEnumerable().ToDictionary(x => x.Key, x => x.Value);
             var allConfigString = string.Join(Environment.NewLine, allConfig.Select(kv => $"  - Key: '{kv.Key}', Value: '{kv.Value}'"));
-
-            // 1. Read the DatabaseProvider setting
-            // var dbProvider = configuration.GetValue<string>("DatabaseSettings:DatabaseProvider")?.ToLowerInvariant();
-    
-
 
 
             // 3. THROW A DETAILED EXCEPTION IF ANYTHING IS WRONG

@@ -317,17 +317,19 @@ try
         // --- SMOKE TEST CONFIGURATION ---
         Log.Information("✅ Smoke Test environment detected. Configuring Hangfire with In-Memory storage.");
 
+        // Use in-memory storage. This requires the Hangfire.MemoryStorage NuGet package.
         builder.Services.AddHangfire(config => config
             .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
             .UseSimpleAssemblyNameTypeSerializer()
             .UseRecommendedSerializerSettings()
-            .UseMemoryStorage());
+            .UseMemoryStorage()); // Use In-Memory Storage for the test
     }
     else
     {
         // --- PRODUCTION / REAL DEVELOPMENT CONFIGURATION ---
         Log.Information("Configuring Hangfire with SQL Server for production/development.");
 
+        // Use the robust SQL Server storage provider with your detailed options.
         builder.Services.AddHangfire(config => config
             .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
             .UseSimpleAssemblyNameTypeSerializer()
@@ -342,6 +344,7 @@ try
                 SchemaName = "HangFire"
             }));
     }
+
     _ = builder.Services.AddHangfireCleaner();
     _ = builder.Services.AddHangfireServer();
 

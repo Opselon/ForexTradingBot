@@ -23,22 +23,21 @@
     "REMOTE_TEMP_PATH": "C:\\Apps\\Temp",
     "SESSION_FOLDER": "Session"
   },
- "jobs": {
+  "jobs": {
     "docker_build_check": {
-      "name": "🐳 Docker Build Check",
+      "name": "🐳 Docker Build Check (Production Image)",
       "runs-on": "ubuntu-latest",
       "steps": [
         {
-          "name": "📥 Checkout Repository",
+          "name": "📥 [Docker] Checkout Repository",
           "uses": "actions/checkout@v4"
         },
         {
-          "name": "🐳 Set up Docker Buildx",
+          "name": "🐳 [Docker] Set up Docker Buildx",
           "uses": "docker/setup-buildx-action@v3"
         },
         {
-          "name": "🛠️ Build Image for Validation",
-          "id": "docker_build",
+          "name": "🛠️ [Docker] Build Image for Validation",
           "uses": "docker/build-push-action@v5",
           "with": {
             "context": ".",
@@ -49,9 +48,8 @@
         }
       ]
     },
-    "docker_smoke_test": {
-      "name": "🔥 Docker Integration & Smoke Test",
-      "needs": "docker_build_check",
+    "independent_smoke_test": {
+      "name": "🔥 Independent Docker Smoke Test",
       "runs-on": "ubuntu-latest",
       "services": {
         "redis-test": {
@@ -59,7 +57,45 @@
           "options": "--health-cmd \"redis-cli ping\" --health-interval 10s --health-timeout 5s --health-retries 5"
         }
       },
-      
+      "steps": [
+        {
+          "name": "📥 Checkout Repository",
+          "uses": "actions/checkout@v4"
+        },
+        {
+          "name": "🐳 Set up Docker Buildx",
+          "uses": "docker/setup-buildx-action@v3"
+        },
+        {
+          "name": "🛠️ [Test] Build a Temporary Test Image",
+          "uses": "docker/build-push-action@v5",
+          "with": {
+            "context": ".",
+            "file": "./Dockerfile",
+            "push": false,
+            "tags": "forex-trading-bot-test:latest"
+          }
+        },
+        {
+          "name": "🚀 [Test] Start Application Container",
+          "run": "docker run -d --name app-test --network ${{ job.services.redis-test.network }} -e \"ConnectionStrings__Redis=redis-test:6379,abortConnect=false\" -e \"ASPNETCORE_ENVIRONMENT=Development\" -e \"ASPNETCORE_URLS=http://+:80\" -p 8080:80 -e \"ConnectionStrings__DefaultConnection=Server=dummy-db;Database=dummy;User Id=sa;Password=dummy;\" -e \"TelegramPanel__BotToken=12345:dummy\" -e \"TelegramUserApi__ApiId=12345\" -e \"TelegramUserApi__ApiHash=dummy\" forex-trading-bot-test:latest"
+        },
+        {
+          "name": "⌛ [Test] Application Health Check",
+          "run": "echo \"Waiting for application to become healthy...\"\ntimeout=60\nwhile ! curl -sf http://localhost:8080/healthz; do\n  if [ $timeout -le 0 ]; then\n    echo \"❌ Health check timed out.\"\n    docker logs app-test\n    exit 1\n  fi\n  echo -n \".\"\n  sleep 2\n  timeout=$((timeout-2))\ndone\necho \"✅ Application is healthy.\""
+        },
+        {
+          "name": "📖 [Test] Final Log Check for Errors",
+          "run": "sleep 10 # Let app run for 10 more seconds\nif docker logs app-test 2>&1 | grep -q -E \"CRITICAL|FTL|FATAL|Fail|fail\"; then\n  echo \"❌ CRITICAL error keyword found in logs.\"\n  docker logs app-test\n  exit 1\nfi\necho \"✅ No critical errors found in logs.\""
+        },
+        {
+          "name": "🧹 [Test] Clean Up Container",
+          "run": "docker rm -f app-test"
+        }
+      ]
+    },
+  
+
     "build": {
       "name": "✅ 1. Build & Package",
       "runs-on": "ubuntu-latest",

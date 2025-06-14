@@ -57,6 +57,7 @@ namespace Shared.Extensions
         /// <exception cref="OverflowException"><paramref name="value"/> is outside the range of the underlying type of <typeparamref name="T"/>.</exception>
         public static T ToEnum<T>(this string value, bool ignoreCase = true) where T : struct, Enum
         {
+            // No changes needed here, as the input 'value' is non-nullable 'string'.
             return value.IsNullOrWhiteSpace()
                 ? throw new ArgumentException("Value cannot be null or whitespace for enum conversion.", nameof(value))
                 : (T)Enum.Parse(typeof(T), value, ignoreCase);
@@ -79,8 +80,8 @@ namespace Shared.Extensions
         /// </returns>
         public static bool TryToEnum<T>(this string? value, out T enumValue, bool ignoreCase = true) where T : struct, Enum
         {
-            // Use IsNullOrWhiteSpace here for robustness before parsing
-            if (value.IsNullOrWhiteSpace())
+            // No changes needed here, code is already robust.
+            if (string.IsNullOrWhiteSpace(value))
             {
                 enumValue = default; // Assign default value as per TryParse contract
                 return false;
@@ -97,7 +98,9 @@ namespace Shared.Extensions
         /// <returns>A 64-character hexadecimal string representing the SHA256 hash of the input, or an empty string if input is null/empty.</returns>
         public static string ToSha256(this string? value)
         {
-            if (value.IsNullOrEmpty())
+            // FIX (CS8604): Use the BCL static method string.IsNullOrEmpty.
+            // The C# static analyzer understands its behavior and knows 'value' is non-null after this check.
+            if (string.IsNullOrEmpty(value))
             {
                 return string.Empty;
             }
@@ -122,9 +125,12 @@ namespace Shared.Extensions
         /// <returns>The specified string in Title Case, or the original string if it was null or whitespace.</returns>
         public static string ToTitleCase(this string? value)
         {
-            if (value.IsNullOrWhiteSpace())
+            // FIX (CS8602): Use the BCL static method string.IsNullOrWhiteSpace to help the analyzer.
+            // FIX (Logic): Return 'value ?? string.Empty' to satisfy the non-nullable 'string' return type
+            // when the input 'value' is null. This also makes the 'value' variable non-null for the next line.
+            if (string.IsNullOrWhiteSpace(value))
             {
-                return value;
+                return value ?? string.Empty;
             }
             // It's often recommended to convert to lower first for consistency across cultures
             // and then apply TitleCase. Use InvariantCulture for lower if the input source is invariant.
@@ -142,7 +148,9 @@ namespace Shared.Extensions
         /// <returns>The input string with HTML tags removed, or an empty string if the input was null or empty.</returns>
         public static string StripHtml(this string? value)
         {
-            if (value.IsNullOrEmpty())
+            // FIX (CS8604): Use the BCL static method string.IsNullOrEmpty.
+            // The C# static analyzer understands its behavior and knows 'value' is non-null after this check.
+            if (string.IsNullOrEmpty(value))
             {
                 return string.Empty;
             }
@@ -166,7 +174,10 @@ namespace Shared.Extensions
         /// </returns>
         public static string Truncate(this string? value, int maxLength, string truncationSuffix = "...")
         {
-            if (value.IsNullOrEmpty() || value.Length <= maxLength)
+            // FIX (CS8602): Use the BCL static method string.IsNullOrEmpty.
+            // The analyzer now knows that if this check is false, 'value' is non-null,
+            // making the subsequent access to 'value.Length' safe.
+            if (string.IsNullOrEmpty(value) || value.Length <= maxLength)
             {
                 return value ?? string.Empty; // Return empty string for null input if not truncated
             }

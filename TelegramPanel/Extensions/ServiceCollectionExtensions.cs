@@ -7,7 +7,9 @@ using Application.Services.FredApi;
 using Domain.Features.Forwarding.Entities;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Serilog;
 using StackExchange.Redis;
 using Telegram.Bot;
 using TelegramPanel.Application.CommandHandlers.Entry;
@@ -59,15 +61,49 @@ namespace TelegramPanel.Extensions
             _ = services.AddScoped<IDirectMessageSender, DirectTelegramMessageSender>();
 
             // 7. Register ITelegramUpdateJobService for Hangfire
-            _ = services.AddSingleton<ITelegramUpdateChannel, RedisUpdateChannel>();
+            _ = services.AddSingleton<ITelegramUpdateChannel>(serviceProvider =>
+            {
+                // 1. Get the necessary services from the DI container.
+                var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
 
+                // 2. Try to get the Redis connection. Use GetService, which returns null
+                // if the service is not registered, preventing a crash.
+                var redisConnection = serviceProvider.GetService<IConnectionMultiplexer>();
 
+                // 3. The DECISION LOGIC.
+                if (redisConnection != null && redisConnection.IsConnected)
+                {
+                    // --- Strategy 1: Redis is available and connected ---
+                    var redisLogger = loggerFactory.CreateLogger<RedisUpdateChannel>();
+                    Log.Information("✅ Redis connection is active. Registering RedisUpdateChannel for the queue.");
+
+                    // Create and return the Redis-based implementation.
+                    return new RedisUpdateChannel(redisConnection, redisLogger);
+                }
+                else
+                {
+                    // --- Strategy 2: Redis is not available, fall back to in-memory ---
+                    var inMemoryLogger = loggerFactory.CreateLogger<TelegramUpdateChannel>();
+                    Log.Warning("⚠️ Redis connection is NOT active or not registered. Falling back to In-Memory queue. Note: Updates will be lost on application restart.");
+
+                    // Create and return the original, in-memory implementation.
+                    return new TelegramUpdateChannel(inMemoryLogger);
+                }
+            });
+
+            // 7. Register IConnectionMultiplexer for Redis
             services.AddSingleton<IConnectionMultiplexer>(sp =>
             {
                 var config = sp.GetRequiredService<IConfiguration>();
                 var connectionString = config.GetConnectionString("Redis");
+
+                if (string.IsNullOrWhiteSpace(connectionString))
+                {
+                    throw new InvalidOperationException("Redis connection string is not configured.");
+                }
+
                 var options = ConfigurationOptions.Parse(connectionString);
-                options.AbortOnConnectFail = false; // For startup resiliency
+                options.AbortOnConnectFail = false; // For startup resiliency  
                 return ConnectionMultiplexer.Connect(options);
             });
 

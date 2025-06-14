@@ -7,6 +7,7 @@ using Application.Interfaces;             // اینترفیس‌های سروی�
 using Application.Services;               // پیاده‌سازی سرویس‌ها (لایه Application)
 using Hangfire;                           // برای مدیریت وظایف پس‌زمینه
 using Hangfire.MemoryStorage;
+using Hangfire.PostgreSql;
 using Infrastructure.Caching;
 using Infrastructure.ExternalServices;    // سرویس‌های خارجی (لایه Infrastructure)
 using Infrastructure.Hangfire;            // پیاده‌سازی سرویس‌های Hangfire (لایه Infrastructure)
@@ -88,16 +89,15 @@ namespace Infrastructure.Data
                         break;
                       
                     case "postgres":
-                    case "postgresql":
-                        _ = services.AddDbContext<AppDbContext>(opts =>
-                            opts.UseNpgsql(connectionString, npgsql =>
-                            {
-                                _ = npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName);
-                                _ = npgsql.EnableRetryOnFailure(
-                                    maxRetryCount: 5,
-                                    maxRetryDelay: TimeSpan.FromSeconds(30),
-                                    errorCodesToAdd: null);
-                            }));
+                        services.AddDbContext<AppDbContext>(opts =>
+            opts.UseNpgsql(configuration.GetConnectionString("PostgresConnection"), npgsql =>
+            {
+                npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName);
+            }));
+
+                        // Also update Hangfire if you use it with Postgres
+                        services.AddHangfire(config => config
+                            .UsePostgreSqlStorage(options => options.UseNpgsqlConnection(configuration.GetConnectionString("PostgresConnection"))));
                         break;
 
                     default:

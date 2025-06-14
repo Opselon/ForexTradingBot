@@ -57,28 +57,35 @@ namespace Application.Services // ✅ Namespace صحیح برای پیاده‌�
         // while an exception means a critical error occurred during retrieval/processing.
         public async Task<UserDto?> GetUserByTelegramIdAsync(string telegramId, CancellationToken cancellationToken = default)
         {
-            if (string.IsNullOrWhiteSpace(telegramId))
-            {
-                _logger.LogWarning("Attempted to get user with null or empty Telegram ID.");
-                return null;
-            }
+            if (string.IsNullOrWhiteSpace(telegramId)) return null;
 
-            // Define a unique cache key for this user.
             string cacheKey = $"user:telegram_id:{telegramId}";
 
+            // --- STRATEGY 1: ATTEMPT TO USE CACHE IF AVAILABLE ---
+            if (_cacheService != null)
+            {
+                try
+                {
+                    // 1a. Try to get the user DTO from the cache.
+                    var cachedUserDto = await _cacheService.GetAsync<UserDto>(cacheKey);
+                    if (cachedUserDto != null)
+                    {
+                        _logger.LogInformation("CACHE HIT: User with Telegram ID {TelegramId} found in cache.", telegramId);
+                        return cachedUserDto;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // If caching fails, log it but don't crash. Fall back to the database.
+                    _logger.LogError(ex, "Cache read failed for key {CacheKey}. Falling back to database.", cacheKey);
+                }
+            }
+
+            // --- STRATEGY 2: FALLBACK TO DATABASE ---
+            // This block runs on a cache miss OR if the cache service is unavailable/failed.
             try
             {
-                // 1. CACHE-ASIDE: First, try to get the user DTO from the cache.
-                var cachedUserDto = await _cacheService.GetAsync<UserDto>(cacheKey);
-
-                if (cachedUserDto != null)
-                {
-                    _logger.LogInformation("CACHE HIT: User with Telegram ID {TelegramId} found in cache.", telegramId);
-                    return cachedUserDto;
-                }
-
-                // 2. CACHE MISS: If not in cache, get from the database.
-                _logger.LogInformation("CACHE MISS: Fetching user by Telegram ID {TelegramId} from database.", telegramId);
+                _logger.LogInformation("DATABASE FETCH: Getting user by Telegram ID {TelegramId} from database.", telegramId);
                 var user = await _userRepository.GetByTelegramIdAsync(telegramId, cancellationToken);
 
                 if (user == null)
@@ -87,29 +94,36 @@ namespace Application.Services // ✅ Namespace صحیح برای پیاده‌�
                     return null;
                 }
 
-                _logger.LogInformation("User with Telegram ID {TelegramId} found in DB: {Username}", telegramId, user.Username);
                 var userDto = _mapper.Map<UserDto>(user);
                 var activeSubscriptionEntity = await _subscriptionRepository.GetActiveSubscriptionByUserIdAsync(user.Id, cancellationToken);
-
                 if (activeSubscriptionEntity != null)
                 {
                     userDto.ActiveSubscription = _mapper.Map<SubscriptionDto>(activeSubscriptionEntity);
                 }
 
-                // 3. Set the fully populated DTO into the cache for next time.
-                // Give it an expiration, e.g., 1 hour, so data doesn't get stale.
-                await _cacheService.SetAsync(cacheKey, userDto, TimeSpan.FromHours(1));
-                _logger.LogInformation("User with Telegram ID {TelegramId} DTO set into cache.", telegramId);
+                // --- Attempt to write to cache if it's available ---
+                if (_cacheService != null)
+                {
+                    try
+                    {
+                        await _cacheService.SetAsync(cacheKey, userDto, TimeSpan.FromHours(1));
+                        _logger.LogInformation("CACHE WRITE: User {TelegramId} DTO set into cache.", telegramId);
+                    }
+                    catch (Exception ex)
+                    {
+                        // Log the cache write failure but don't let it fail the entire operation.
+                        _logger.LogError(ex, "Cache write failed for key {CacheKey}. The user data was still fetched successfully.", cacheKey);
+                    }
+                }
 
                 return userDto;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "An unexpected error occurred while fetching user with Telegram ID {TelegramId}.", telegramId);
+                _logger.LogError(ex, "An unexpected database or mapping error occurred while fetching user with Telegram ID {TelegramId}.", telegramId);
                 throw new ApplicationException($"An error occurred while retrieving user {telegramId}.", ex);
             }
         }
-
         /// <summary>
         /// Asynchronously retrieves all users from the system and maps them to DTOs.
         /// Includes active subscription information for each user.

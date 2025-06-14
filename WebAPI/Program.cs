@@ -13,6 +13,7 @@ using BackgroundTasks.Services;
 using Hangfire;                             // برای پیکربندی‌های Hangfire مانند CompatibilityLevel, RecurringJob, Cron
 using Hangfire.Dashboard;                   // برای DashboardOptions, IDashboardAuthorizationFilter
 using Hangfire.MemoryStorage;
+using Hangfire.PostgreSql;
 using Hangfire.SqlServer;
 using Infrastructure.Data;
 
@@ -307,42 +308,63 @@ try
 
     #region Configure Hangfire
 
-    // ------------------- ۵. پیکربندی Hangfire برای اجرای کارهای پس‌زمینه -------------------
-
-
-
+    // =========================================================================
+    // ✅✅ CORRECTED HANGFIRE CONFIGURATION (PROVIDER-AWARE) ✅✅
+    // =========================================================================
 
     if (isSmokeTest)
     {
         // --- SMOKE TEST CONFIGURATION ---
-        Log.Information("✅ Smoke Test environment detected. Configuring Hangfire with In-Memory storage.");
+        Log.Information("✅ Smoke Test: Configuring Hangfire with In-Memory storage.");
 
-        // Use in-memory storage. This requires the Hangfire.MemoryStorage NuGet package.
         builder.Services.AddHangfire(config => config
             .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
             .UseSimpleAssemblyNameTypeSerializer()
             .UseRecommendedSerializerSettings()
-            .UseMemoryStorage()); // Use In-Memory Storage for the test
+            .UseMemoryStorage());
     }
     else
     {
         // --- PRODUCTION / REAL DEVELOPMENT CONFIGURATION ---
-        Log.Information("Configuring Hangfire with SQL Server for production/development.");
+        // Read the database provider from configuration.
+        var dbProvider = builder.Configuration.GetValue<string>("DatabaseSettings:DatabaseProvider")?.ToLowerInvariant();
 
-        // Use the robust SQL Server storage provider with your detailed options.
-        builder.Services.AddHangfire(config => config
-            .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
-            .UseSimpleAssemblyNameTypeSerializer()
-            .UseRecommendedSerializerSettings()
-            .UseSqlServerStorage(builder.Configuration.GetConnectionString("DefaultConnection"), new SqlServerStorageOptions
-            {
-                CommandBatchMaxTimeout = TimeSpan.FromMinutes(5),
-                SlidingInvisibilityTimeout = TimeSpan.FromMinutes(5),
-                QueuePollInterval = TimeSpan.FromSeconds(15),
-                UseRecommendedIsolationLevel = true,
-                DisableGlobalLocks = true,
-                SchemaName = "HangFire"
-            }));
+        Log.Information("Configuring Hangfire for production/development with '{DbProvider}' provider.", dbProvider);
+
+        switch (dbProvider)
+        {
+            case "sqlserver":
+                // Use the robust SQL Server storage provider.
+                builder.Services.AddHangfire(config => config
+                    .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+                    .UseSimpleAssemblyNameTypeSerializer()
+                    .UseRecommendedSerializerSettings()
+                    .UseSqlServerStorage(builder.Configuration.GetConnectionString("DefaultConnection"), new SqlServerStorageOptions
+                    {
+                        CommandBatchMaxTimeout = TimeSpan.FromMinutes(5),
+                        SlidingInvisibilityTimeout = TimeSpan.FromMinutes(5),
+                        QueuePollInterval = TimeSpan.FromSeconds(15),
+                        UseRecommendedIsolationLevel = true,
+                        DisableGlobalLocks = true,
+                        SchemaName = "HangFire"
+                    }));
+                break;
+
+            case "postgres":
+            case "postgresql":
+                // Use the PostgreSQL storage provider.
+                builder.Services.AddHangfire(config => config
+                    .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+                    .UseSimpleAssemblyNameTypeSerializer()
+                    .UseRecommendedSerializerSettings()
+                    .UsePostgreSqlStorage(options =>
+                        options.UseNpgsqlConnection(builder.Configuration.GetConnectionString("PostgresConnection"))
+                    ));
+                break;
+
+            default:
+                throw new NotSupportedException($"Hangfire configuration failed: Unsupported DatabaseProvider '{dbProvider}'.");
+        }
     }
 
     _ = builder.Services.AddHangfireCleaner();

@@ -9,8 +9,6 @@ using Polly.CircuitBreaker; // ✅ NEW: Required for the Circuit Breaker
 using Polly.Retry;
 using StackExchange.Redis; // ✅ NEW: Required to handle Redis exceptions
 using TelegramPanel.Application.Interfaces;
-using TelegramPanel.Infrastructure;
-using Telegram.Bot.Types; // Assuming Update type is from here
 #endregion
 
 namespace TelegramPanel.Queue

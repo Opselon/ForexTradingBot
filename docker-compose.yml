@@ -15,6 +15,8 @@ services:
       # --- Database Connection ---
       # The hostname 'db' matches the service name of the SQL Server container
       - ConnectionStrings__DefaultConnection=Server=db,1433;Database=${DB_DATABASE_NAME};User Id=sa;Password=${DB_SA_PASSWORD};TrustServerCertificate=True
+      - ConnectionStrings__PostgresConnection=Server=postgres-db;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      - ConnectionStrings__Redis=redis:6379,abortConnect=false
 
       # --- ✅✅ NEW: REDIS CONNECTION STRING ✅✅ ---
       # The hostname 'redis' matches the service name of the new Redis container
@@ -63,17 +65,45 @@ services:
   ###################################
   # ✅✅ NEW: REDIS CACHE SERVICE ✅✅
   ###################################
+  # ... other services ...
   redis:
-    image: redis:7-alpine  # Using a recent, lightweight version of Redis
+    image: redis:7-alpine
     container_name: redis-cache
     restart: always
     volumes:
-      - redis_data:/data # Persist Redis data
+      - redis_data:/data
     networks:
       - forex-bot-network
-    # You can also expose the port to your host machine for debugging with tools like RedisInsight
-    # ports:
-    #   - "6379:6379"
+    # ✅✅ THIS IS THE FIX ✅✅
+    # Map port 6379 on your Windows machine (the host) to port 6379 inside the container.
+    ports:
+      - "6379:6379"
+  #######################################
+  # ✅✅ NEW: PostgreSQL Database Service ✅✅
+  #######################################
+  postgres-db:
+    image: postgres:15-alpine  # Use a specific, recent, and lightweight version
+    container_name: postgres-db
+    restart: always
+    environment:
+      # These variables are read from your .env file
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    volumes:
+      # This persists the PostgreSQL data, so you don't lose it on restart
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - forex-bot-network
+    ports:
+      # Optional: Expose the port to your Windows machine for tools like DBeaver or pgAdmin
+      - "5432:5432"
+    healthcheck:
+      # This command checks if the database is ready to accept connections
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 # --- Docker Network ---
 networks:
@@ -84,5 +114,6 @@ networks:
 volumes:
   sqlserver_data:
   telegram_session_data:
+  postgres_data: 
   log_data:
   redis_data: # ✅ Define the volume for Redis data persistence

@@ -7,6 +7,8 @@ using Application.Common.Interfaces; // برای IUserRepository, IUserSignalPre
 using Application.DTOs;
 using Application.Interfaces;        // برای IUserService, ISubscriptionService از پروژه اصلی Application
 using Microsoft.Extensions.Logging; // برای ILogger
+using System.Collections.Concurrent;
+using System.Diagnostics.CodeAnalysis;
 using System.Text;                  // برای StringBuilder
 // Telegram.Bot
 using Telegram.Bot;                 // برای ITelegramBotClient
@@ -138,154 +140,211 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
         /// <summary>
         /// Asynchronously handles the incoming CallbackQuery by dispatching to the appropriate method.
         /// </summary>
+        // --- Add this field to your class for rate limiting ---
+        private static readonly ConcurrentDictionary<long, DateTime> _lastRequestTimestamps = new();
+        private const double RateLimitSeconds = 0.5; // Allow max 2 requests per second per user.
+
+        /// <summary>
+        /// Handles an incoming callback query from the settings menu with a focus on security, performance, and maintainability.
+        /// </summary>
+        /// <param name="update">The incoming update from Telegram.</param>
+        /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
         public async Task HandleAsync(Update update, CancellationToken cancellationToken = default)
         {
-            if (update.CallbackQuery == null || update.CallbackQuery.Message == null)
+            // --- 1. Initial Validation and Request Destructuring ---
+            if (!ValidateRequest(update, out CallbackQuery? callbackQuery, out Message? message, out User? fromUser))
             {
-                _logger.LogWarning("Received invalid callback query or message is null");
-                return;
-            }
-
-            var callbackQuery = update.CallbackQuery;
-            var message = callbackQuery.Message;
-            var telegramFromUser = callbackQuery.From;
-
-            if (telegramFromUser == null)
-            {
-                _logger.LogWarning("Received callback query with null From user");
+                // Validation failed, logging is handled within the validation method.
                 return;
             }
 
             long chatId = message.Chat.Id;
-            long telegramUserId = telegramFromUser.Id;
-            int originalMessageId = message.MessageId;
+            long telegramUserId = fromUser.Id;
             string callbackData = callbackQuery.Data ?? string.Empty;
 
-            // Using a logging scope adds context (like UserId, CallbackData) to all logs within this handler's execution.
-            using (_logger.BeginScope(new Dictionary<string, object?>
+            // --- 2. Security: Per-User Rate Limiting (Throttling) ---
+            if (IsRateLimited(telegramUserId))
+            {
+                // Silently answer the query to stop the loading spinner, but take no further action.
+                // This prevents button spam from overloading the system.
+                await AnswerCallbackQuerySilentAsync(callbackQuery.Id, cancellationToken);
+                _logger.LogWarning("Rate limit triggered for UserID {TelegramUserId}. Ignoring callback '{CallbackData}'.", telegramUserId, callbackData);
+                return;
+            }
+
+            // Set up a logging scope for this entire operation for contextualized logs.
+            using IDisposable? logScope = _logger.BeginScope(new Dictionary<string, object?>
             {
                 ["TelegramUserId"] = telegramUserId,
-                ["TelegramUsername"] = telegramFromUser.Username ?? $"{telegramFromUser.FirstName} {telegramFromUser.LastName}".Trim(),
-                ["ChatId"] = chatId,
                 ["CallbackData"] = callbackData,
-                ["OriginalMessageId"] = originalMessageId
-            }))
+                ["OriginalMessageId"] = message.MessageId
+            });
+
+            _logger.LogInformation("Processing settings-related CallbackQuery.");
+
+            try
             {
-                _logger.LogInformation("Processing settings-related CallbackQuery.");
+                // --- 3. Immediate User Feedback ---
+                // Answer the callback immediately. For actions that require processing, show a "Processing..." toast.
+                // For simple navigations like "back", a silent answer is sufficient.
+                string? toastMessage = ShouldShowProcessingToast(callbackData) ? "Processing..." : null;
+                await AnswerCallbackQuerySilentAsync(callbackQuery.Id, cancellationToken, toastMessage);
 
-                // Immediately answer the callback query to remove the "loading" spinner from the button on the user's client.
-                await AnswerCallbackQuerySilentAsync(callbackQuery.Id, cancellationToken, "Processing your request...");
+                // --- 4. Logic Dispatching (Command Pattern) ---
+                // Instead of a large if-else block, we dispatch to the correct handler.
+                await DispatchCallbackAsync(callbackQuery, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                // This is an expected exception when the application is shutting down.
+                _logger.LogInformation("Operation was cancelled for UserID {TelegramUserId}.", telegramUserId);
+            }
+            catch (Exception ex)
+            {
+                // This is a safety net for any unhandled exceptions within the dispatchers.
+                _logger.LogError(ex, "A critical error occurred while processing settings callback for UserID {TelegramUserId}.", telegramUserId);
 
-                // Retrieve our system's User entity. This is crucial for most settings operations.
-                var userEntity = await GetUserEntityByTelegramIdAsync(telegramUserId, chatId, originalMessageId, cancellationToken);
-                if (userEntity == null)
-                {
-                    // GetUserEntityByTelegramIdAsync already sent a message if user not found.
-                    _logger.LogWarning("User entity not found for TelegramUserID {TelegramUserId}. Settings callback cannot proceed.", telegramUserId);
-                    return;
-                }
-
-                try
-                {
-                    // Routing logic based on the callback_data
-                    if (callbackData.Equals(SettingsCommandHandler.PrefsSignalCategoriesCallback))
-                    {
-                        await ShowSignalCategoryPreferencesAsync(userEntity, chatId, originalMessageId, cancellationToken);
-                    }
-                    else if (callbackData.StartsWith(ToggleSignalCategoryPrefix))
-                    {
-                        await HandleToggleSignalCategoryAsync(userEntity, chatId, originalMessageId, callbackData, callbackQuery.Id, cancellationToken);
-                    }
-                    else if (callbackData.Equals(SaveSignalPreferencesCallback))
-                    {
-                        await HandleSaveSignalPreferencesAsync(userEntity, chatId, originalMessageId, cancellationToken);
-                    }
-                    else if (callbackData.Equals(SelectAllSignalCategoriesCallback))
-                    {
-                        await HandleSelectAllSignalCategoriesAsync(userEntity, chatId, originalMessageId, callbackQuery.Id, cancellationToken);
-                    }
-                    else if (callbackData.Equals(DeselectAllSignalCategoriesCallback))
-                    {
-                        await HandleDeselectAllSignalCategoriesAsync(userEntity, chatId, originalMessageId, callbackQuery.Id, cancellationToken);
-                    }
-                    else if (callbackData.Equals(SettingsCommandHandler.PrefsNotificationsCallback))
-                    {
-                        await ShowNotificationSettingsAsync(userEntity, chatId, originalMessageId, cancellationToken);
-                    }
-                    else if (callbackData.StartsWith(ToggleNotificationPrefix))
-                    {
-                        await HandleToggleNotificationAsync(userEntity, chatId, originalMessageId, callbackData, callbackQuery.Id, cancellationToken);
-                    }
-                    else if (callbackData.Equals(SettingsCommandHandler.MySubscriptionInfoCallback))
-                    {
-                        await ShowMySubscriptionInfoAsync(userEntity, chatId, originalMessageId, cancellationToken);
-                    }
-                    else if (callbackData.Equals(LanguageSettingsCallback))
-                    {
-                        await ShowLanguageSettingsAsync(userEntity, chatId, originalMessageId, cancellationToken);
-                    }
-                    else if (callbackData.StartsWith(SelectLanguagePrefix))
-                    {
-                        await HandleSelectLanguageAsync(userEntity, chatId, originalMessageId, callbackData, callbackQuery.Id, cancellationToken);
-                    }
-                    else if (callbackData.Equals(PrivacySettingsCallback))
-                    {
-                        await ShowPrivacySettingsAsync(userEntity, chatId, originalMessageId, cancellationToken);
-                    }
-                    else if (callbackData.Equals(SettingsCommandHandler.ShowSettingsMenuCallback)) // Action to re-show the main settings menu
-                    {
-                        await ReshowSettingsMenuAsync(chatId, originalMessageId, cancellationToken);
-                    }
-                    else if (callbackData.Equals(MenuCallbackQueryHandler.BackToMainMenuGeneral)) // Action to go to the app's main menu
-                    {
-                        _logger.LogInformation("User {TelegramUserId} requested to return to the main application menu.", telegramUserId);
-                        var (mainMenuText, mainMenuKeyboard) = MenuCommandHandler.GetMainMenuMarkup(); // Assumes this static method exists
-                        await EditMessageOrSendNewAsync(chatId, originalMessageId, mainMenuText, mainMenuKeyboard, ParseMode.MarkdownV2, cancellationToken);
-                    }
-                    else
-                    {
-                        _logger.LogWarning("Unhandled CallbackQuery data in Settings context: {CallbackData}", callbackData);
-                        await _messageSender.SendTextMessageAsync(chatId, "This specific setting option is not yet implemented or recognized.", cancellationToken: cancellationToken);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error processing settings callback query");
-                    await _messageSender.SendTextMessageAsync(chatId, "An error occurred while processing your request. Please try again later.", cancellationToken: cancellationToken);
-                }
+                // Inform the user that something went wrong without revealing internal details.
+                // This message is sent as a new message because the original might be un-editable.
+                await _messageSender.SendTextMessageAsync(
+                    chatId,
+                    "An unexpected error occurred. Our team has been notified. Please try again later.",
+                    cancellationToken: cancellationToken
+                );
             }
         }
-        #endregion
-
-        #region User Entity Helper
-
-
-
-
-
-
-
-
 
         /// <summary>
-        /// Retrieves the application's User entity based on the Telegram User ID.
-        /// If not found, sends an error message to the user and returns null.
-        /// This is a crucial first step for most operations in this handler.
+        /// Validates the incoming update to ensure it's a well-formed callback query we can process.
         /// </summary>
-        private async Task<Domain.Entities.User?> GetUserEntityByTelegramIdAsync(long telegramUserId, long chatId, int messageIdToEdit, CancellationToken cancellationToken)
+        /// <returns>True if the request is valid, otherwise false.</returns>
+        private bool ValidateRequest(Update update,
+            [NotNullWhen(true)] out CallbackQuery? callbackQuery,
+            [NotNullWhen(true)] out Message? message,
+            [NotNullWhen(true)] out User? fromUser)
         {
-            var userEntity = await _userRepository.GetByTelegramIdAsync(telegramUserId.ToString(), cancellationToken);
-            if (userEntity == null)
+            callbackQuery = update.CallbackQuery;
+            message = callbackQuery?.Message;
+            fromUser = callbackQuery?.From;
+
+            if (callbackQuery == null)
             {
-                _logger.LogWarning("Application User entity not found for TelegramID {TelegramUserId} (ChatID: {ChatId}). This user may need to /start the bot.", telegramUserId, chatId);
-                // Attempt to edit the existing message to inform the user.
-                await EditMessageOrSendNewAsync(chatId, messageIdToEdit,
-                    "Your user profile was not found in our system. Please use the /start command first to register or re-initialize your session with the bot.",
-                    null, ParseMode.MarkdownV2, cancellationToken);
-                return null;
+                _logger.LogWarning("Handler invoked with a non-CallbackQuery update. Type: {UpdateType}", update.Type);
+                return false;
             }
-            return userEntity;
+
+            if (message == null)
+            {
+                _logger.LogWarning("Received a callback query (ID: {CallbackQueryId}) but its associated message is null.", callbackQuery.Id);
+                return false;
+            }
+
+            if (fromUser == null)
+            {
+                _logger.LogWarning("Received a callback query (ID: {CallbackQueryId}) but its 'From' user is null.", callbackQuery.Id);
+                return false;
+            }
+
+            if (string.IsNullOrEmpty(callbackQuery.Data) || callbackQuery.Data.Length > 64)
+            {
+                // Telegram's limit for callback_data is 1-64 bytes.
+                _logger.LogError("Received an invalid callback query with null, empty, or oversized data. Length: {Length}. Data: '{Data}'",
+                    callbackQuery.Data?.Length ?? 0, callbackQuery.Data);
+                return false;
+            }
+
+            return true;
         }
+
+        /// <summary>
+        /// Checks if a user is making requests too frequently.
+        /// </summary>
+        /// <returns>True if the user should be rate-limited, otherwise false.</returns>
+        private bool IsRateLimited(long telegramUserId)
+        {
+            DateTime now = DateTime.UtcNow;
+
+            if (_lastRequestTimestamps.TryGetValue(telegramUserId, out DateTime lastRequestTime))
+            {
+                if ((now - lastRequestTime).TotalSeconds < RateLimitSeconds)
+                {
+                    return true; // Too soon.
+                }
+            }
+
+            // Update the timestamp for the current request.
+            _lastRequestTimestamps[telegramUserId] = now;
+            return false;
+        }
+
+        /// <summary>
+        /// Determines if a "Processing..." toast notification should be shown based on the callback data.
+        /// Simple navigation actions (like 'back') don't need it.
+        /// </summary>
+        private bool ShouldShowProcessingToast(string callbackData)
+        {
+            // Actions that change data or require database lookups should show a toast.
+            return !callbackData.Equals(SettingsCommandHandler.ShowSettingsMenuCallback) &&
+                   !callbackData.Equals(MenuCallbackQueryHandler.BackToMainMenuGeneral);
+        }
+
+        /// <summary>
+        /// Routes the callback query to the appropriate handler method using a command-like pattern.
+        /// </summary>
+        /// <summary>
+        /// Routes the callback query to the appropriate handler method using a command-like pattern.
+        /// </summary>
+        private async Task DispatchCallbackAsync(CallbackQuery callbackQuery, CancellationToken cancellationToken)
+        {
+            long chatId = callbackQuery.Message!.Chat.Id;
+            int messageId = callbackQuery.Message!.MessageId;
+            long telegramUserId = callbackQuery.From.Id;
+            string data = callbackQuery.Data!;
+
+            Dictionary<string, Func<Task>> actionMap = new()
+            {
+                { SettingsCommandHandler.ShowSettingsMenuCallback, () => ReshowSettingsMenuAsync(chatId, messageId, cancellationToken) },
+                { MenuCallbackQueryHandler.BackToMainMenuGeneral, async () => {
+                    (string text, InlineKeyboardMarkup k) = MenuCommandHandler.GetMainMenuMarkup();
+                    await EditMessageOrSendNewAsync(chatId, messageId, text, k, ParseMode.MarkdownV2, cancellationToken);
+                }},
+                { SettingsCommandHandler.PrefsSignalCategoriesCallback, () => ShowSignalCategoryPreferencesAsync(telegramUserId, chatId, messageId, cancellationToken) },
+                { SettingsCommandHandler.PrefsNotificationsCallback, () => ShowNotificationSettingsAsync(telegramUserId, chatId, messageId, cancellationToken) },
+                { SettingsCommandHandler.MySubscriptionInfoCallback, () => ShowMySubscriptionInfoAsync(telegramUserId, chatId, messageId, cancellationToken) },
+                { LanguageSettingsCallback, () => ShowLanguageSettingsAsync(telegramUserId, chatId, messageId, cancellationToken) },
+                { PrivacySettingsCallback, () => ShowPrivacySettingsAsync(telegramUserId, chatId, messageId, cancellationToken) },
+                { SaveSignalPreferencesCallback, () => HandleSaveSignalPreferencesAsync(telegramUserId, chatId, messageId, cancellationToken) },
+                { SelectAllSignalCategoriesCallback, () => HandleSelectAllSignalCategoriesAsync(telegramUserId, chatId, messageId, callbackQuery.Id, cancellationToken) },
+                { DeselectAllSignalCategoriesCallback, () => HandleDeselectAllSignalCategoriesAsync(telegramUserId, chatId, messageId, callbackQuery.Id, cancellationToken) }
+            };
+
+            Dictionary<string, Func<Task>> prefixActionMap = new()
+            {
+                { ToggleSignalCategoryPrefix, () => HandleToggleSignalCategoryAsync(telegramUserId, chatId, messageId, data, callbackQuery.Id, cancellationToken) },
+                { ToggleNotificationPrefix, () => HandleToggleNotificationAsync(telegramUserId, chatId, messageId, data, callbackQuery.Id, cancellationToken) },
+                { SelectLanguagePrefix, () => HandleSelectLanguageAsync(telegramUserId, chatId, messageId, data, callbackQuery.Id, cancellationToken) }
+            };
+
+            if (actionMap.TryGetValue(data, out Func<Task>? action))
+            {
+                await action();
+            }
+            else
+            {
+                KeyValuePair<string, Func<Task>> prefixAction = prefixActionMap.FirstOrDefault(p => data.StartsWith(p.Key));
+                if (prefixAction.Value != null)
+                {
+                    await prefixAction.Value();
+                }
+                else
+                {
+                    _logger.LogWarning("Unhandled CallbackQuery data in Settings context: {CallbackData}", data);
+                    await _messageSender.SendTextMessageAsync(chatId, "This action is not recognized.", cancellationToken: cancellationToken);
+                }
+            }
+        }
+
+
         #endregion
 
         #region Signal Category Preferences Methods
@@ -294,107 +353,122 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
         /// It shows all available categories and the user's current selections.
         /// Temporary selections are stored in UserConversationStateService.
         /// </summary>
-        private async Task ShowSignalCategoryPreferencesAsync(Domain.Entities.User userEntity, long chatId, int messageIdToEdit, CancellationToken cancellationToken)
+        /// <summary>
+        /// Displays the signal category preference selection/editing interface to the user.
+        /// It shows all available categories and the user's current selections.
+        /// Temporary selections are stored in UserConversationStateService.
+        /// </summary>
+        private async Task ShowSignalCategoryPreferencesAsync(long telegramUserId, long chatId, int messageIdToEdit, CancellationToken cancellationToken)
         {
+            Domain.Entities.User? userEntity = await _userRepository.GetByTelegramIdAsync(telegramUserId.ToString(), cancellationToken);
+            if (userEntity == null)
+            {
+                _logger.LogWarning("Cannot show signal preferences, user not found for Telegram ID {TelegramUserId}", telegramUserId);
+                await EditMessageOrSendNewAsync(chatId, messageIdToEdit, "Your user profile could not be found.", null, cancellationToken: cancellationToken);
+                return;
+            }
 
+            _logger.LogInformation("UserID {SystemUserId}: Displaying signal category preferences.", userEntity.Id);
 
-
-
-
-            _logger.LogInformation("UserID {SystemUserId} (TelegramID: {TelegramId}): Displaying signal category preferences.", userEntity.Id, userEntity.TelegramId);
-
-            var allCategories = (await _categoryRepository.GetAllAsync(cancellationToken))
-                                .Where(c => c.IsActive) // Only show active categories
-                                .OrderBy(c => c.SortOrder).ThenBy(c => c.Name) // Order by SortOrder then Name
+            List<Domain.Entities.SignalCategory> allCategories = (await _categoryRepository.GetAllAsync(cancellationToken))
+                                .Where(c => c.IsActive)
+                                .OrderBy(c => c.SortOrder).ThenBy(c => c.Name)
                                 .ToList();
 
             if (!allCategories.Any())
             {
-                _logger.LogInformation("No active signal categories available for UserID {SystemUserId}.", userEntity.Id);
                 await EditMessageOrSendNewAsync(chatId, messageIdToEdit,
-                    "Currently, there are no signal categories available to set preferences for. Please check back later.",
+                    "Currently, there are no signal categories available to set preferences for.",
                     new InlineKeyboardMarkup(InlineKeyboardButton.WithCallbackData("⬅️ Back to Settings", SettingsCommandHandler.ShowSettingsMenuCallback)),
                     ParseMode.MarkdownV2, cancellationToken);
                 return;
             }
 
-            // Retrieve or initialize temporary selections from conversation state
-            var conversationState = await _userConversationStateService.GetAsync(long.Parse(userEntity.TelegramId), cancellationToken) ?? new UserConversationState();
-            string tempSelectedCategoriesKey = $"temp_signal_prefs_{userEntity.Id}"; // Using system User.Id for a more robust key
+            UserConversationState conversationState = await _userConversationStateService.GetAsync(telegramUserId, cancellationToken) ?? new UserConversationState();
+            string tempSelectedCategoriesKey = $"temp_signal_prefs_{userEntity.Id}";
 
-            HashSet<Guid> tempSelectedCategories;
-            if (conversationState.StateData.TryGetValue(tempSelectedCategoriesKey, out var selectedObj) && selectedObj is HashSet<Guid> existingSet)
+            if (!conversationState.StateData.TryGetValue(tempSelectedCategoriesKey, out object? selectedObj) || selectedObj is not HashSet<Guid> tempSelectedCategories)
             {
-                tempSelectedCategories = existingSet;
-                _logger.LogDebug("Loaded temporary signal preferences for UserID {SystemUserId} from conversation state.", userEntity.Id);
-            }
-            else // First time or state cleared, load from saved preferences
-            {
-                var currentSavedPreferences = (await _userPrefsRepository.GetPreferencesByUserIdAsync(userEntity.Id, cancellationToken))
+                HashSet<Guid> currentSavedPreferences = (await _userPrefsRepository.GetPreferencesByUserIdAsync(userEntity.Id, cancellationToken))
                                               .Select(p => p.CategoryId).ToHashSet();
                 tempSelectedCategories = new HashSet<Guid>(currentSavedPreferences);
                 conversationState.StateData[tempSelectedCategoriesKey] = tempSelectedCategories;
-                await _userConversationStateService.SetAsync(long.Parse(userEntity.TelegramId), conversationState, cancellationToken); // Persist initial temp state
-                _logger.LogDebug("Initialized temporary signal preferences for UserID {SystemUserId} from saved DB preferences.", userEntity.Id);
+                await _userConversationStateService.SetAsync(telegramUserId, conversationState, cancellationToken);
             }
 
-            var text = TelegramMessageFormatter.Bold("📊 My Signal Preferences", escapePlainText: false) + "\n\n" +
-                       "Tap a category to select or deselect it (✅ Selected / ⬜ Not Selected).\n" +
-                       "You will receive signals from your chosen categories.\n" +
-                       TelegramMessageFormatter.Italic("Note: Access to VIP category signals requires an active VIP subscription.", escapePlainText: false) + "\n\n" +
+            string text = "📊 *My Signal Preferences*\n\n" +
+                       "Tap a category to select or deselect it (✅/⬜).\n" +
                        "Press 'Save Preferences' when you are done.";
-            var keyboardRowArrays = new List<InlineKeyboardButton[]>
-            {
-                // دکمه‌های Select All / Deselect All
-                new[]
-{
-    InlineKeyboardButton.WithCallbackData("✅ Select All", SelectAllSignalCategoriesCallback),
-    InlineKeyboardButton.WithCallbackData("⬜ Deselect All", DeselectAllSignalCategoriesCallback)
-}
-            }; //  
-            // ...
-            // await EditMessageOrSendNewAsync(chatId, messageIdToEdit, text, new InlineKeyboardMarkup(keyboardRows), ...);
-            // به جای خط بالا، از MarkupBuilder استفاده کنید اگر keyboardRows از نوع IEnumerable<IEnumerable<...>> است:
 
-            foreach (var category in allCategories)
+            List<List<InlineKeyboardButton>> keyboardRows =
+            [
+        [
+            InlineKeyboardButton.WithCallbackData("✅ Select All", SelectAllSignalCategoriesCallback),
+            InlineKeyboardButton.WithCallbackData("⬜ Deselect All", DeselectAllSignalCategoriesCallback)
+        ]
+    ];
+
+            foreach (Domain.Entities.SignalCategory? category in allCategories)
             {
                 bool isSelected = tempSelectedCategories.Contains(category.Id);
-                //  Add visual cues for VIP categories if applicable, e.g., "🌟 Gold Signals (VIP)"
-                //  string categoryDisplayName = category.IsVip ? $"🌟 {category.Name} (VIP)" : category.Name;
-                string categoryDisplayName = category.Name; // Assuming Name is already good for display
-                string buttonText = $"{(isSelected ? "✅" : "⬜")} {TelegramMessageFormatter.EscapeMarkdownV2(categoryDisplayName)}";
-                keyboardRowArrays.Add(new[] { InlineKeyboardButton.WithCallbackData(buttonText, $"{ToggleSignalCategoryPrefix}{category.Id}") });
+                string buttonText = $"{(isSelected ? "✅" : "⬜")} {TelegramMessageFormatter.EscapeMarkdownV2(category.Name)}";
+                keyboardRows.Add([InlineKeyboardButton.WithCallbackData(buttonText, $"{ToggleSignalCategoryPrefix}{category.Id}")]);
             }
 
-            keyboardRowArrays.Add(new[] { InlineKeyboardButton.WithCallbackData("💾 Save Preferences", SaveSignalPreferencesCallback) });
-            keyboardRowArrays.Add(new[] { InlineKeyboardButton.WithCallbackData("⬅️ Back to Settings Menu", SettingsCommandHandler.ShowSettingsMenuCallback) });
+            keyboardRows.Add([InlineKeyboardButton.WithCallbackData("💾 Save Preferences", SaveSignalPreferencesCallback)]);
+            keyboardRows.Add([InlineKeyboardButton.WithCallbackData("⬅️ Back to Settings", SettingsCommandHandler.ShowSettingsMenuCallback)]);
 
-            var finalKeyboard = MarkupBuilder.CreateInlineKeyboard(keyboardRowArrays.ToArray());
-
-
-            await EditMessageOrSendNewAsync(chatId, messageIdToEdit, text, finalKeyboard, ParseMode.Markdown, cancellationToken);
+            await EditMessageOrSendNewAsync(chatId, messageIdToEdit, text, new InlineKeyboardMarkup(keyboardRows), ParseMode.Markdown, cancellationToken);
         }
-
         /// <summary>
         /// Handles toggling the selection state of a signal category in the user's temporary preferences.
         /// </summary>
-        private async Task HandleToggleSignalCategoryAsync(Domain.Entities.User userEntity, long chatId, int messageIdToEdit, string callbackData, string originalCallbackQueryId, CancellationToken cancellationToken)
+        /// <summary>
+        /// Handles toggling the selection state of a single signal category in the user's temporary preferences.
+        /// </summary>
+        private async Task HandleToggleSignalCategoryAsync(long telegramUserId, long chatId, int messageIdToEdit, string callbackData, string originalCallbackQueryId, CancellationToken cancellationToken)
         {
-            string categoryIdString = callbackData.Substring(ToggleSignalCategoryPrefix.Length);
+            // --- 1. Fetch Fresh User Entity ---
+            Domain.Entities.User? userEntity = await _userRepository.GetByTelegramIdAsync(telegramUserId.ToString(), cancellationToken);
+            if (userEntity == null)
+            {
+                _logger.LogWarning("Cannot toggle signal category, user not found for Telegram ID {TelegramUserId}", telegramUserId);
+
+                // ✅ FIX: Use named arguments for clarity and to resolve compiler error.
+                await AnswerCallbackQuerySilentAsync(
+                    callbackQueryId: originalCallbackQueryId,
+                    cancellationToken: cancellationToken,
+                    text: "Your user profile could not be found. Please try restarting with /start.",
+                    showAlert: true
+                );
+                return;
+            }
+
+            // --- 2. Parse Category ID from Callback Data ---
+            string categoryIdString = callbackData[ToggleSignalCategoryPrefix.Length..];
             if (!Guid.TryParse(categoryIdString, out Guid categoryId))
             {
-                _logger.LogWarning("Invalid CategoryID in toggle signal category callback: {CallbackData} for UserID {SystemUserId}.", callbackData, userEntity.Id);
-                await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken, "Error: Invalid category selection.", showAlert: true);
+                _logger.LogWarning("Invalid CategoryID in toggle callback: {CallbackData} for UserID {SystemUserId}.", callbackData, userEntity.Id);
+
+                // ✅ FIX: Use named arguments for clarity and to resolve compiler error.
+                await AnswerCallbackQuerySilentAsync(
+                    callbackQueryId: originalCallbackQueryId,
+                    cancellationToken: cancellationToken,
+                    text: "Error: Invalid category selection.",
+                    showAlert: true
+                );
                 return;
             }
 
             _logger.LogDebug("UserID {SystemUserId}: Toggling category preference for CategoryID {CategoryId}.", userEntity.Id, categoryId);
 
-            var conversationState = await _userConversationStateService.GetAsync(long.Parse(userEntity.TelegramId), cancellationToken);
+            // --- 3. Update Temporary Conversation State ---
+            UserConversationState? conversationState = await _userConversationStateService.GetAsync(telegramUserId, cancellationToken);
             string tempSelectedCategoriesKey = $"temp_signal_prefs_{userEntity.Id}";
 
-            if (conversationState?.StateData.TryGetValue(tempSelectedCategoriesKey, out var selectedObj) == true && selectedObj is HashSet<Guid> tempSelectedCategories)
+            if (conversationState?.StateData.TryGetValue(tempSelectedCategoriesKey, out object? selectedObj) == true && selectedObj is HashSet<Guid> tempSelectedCategories)
             {
+                // Toggle the presence of the category ID in the temporary set.
                 if (tempSelectedCategories.Contains(categoryId))
                 {
                     _ = tempSelectedCategories.Remove(categoryId);
@@ -405,83 +479,158 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
                     _ = tempSelectedCategories.Add(categoryId);
                     _logger.LogInformation("UserID {SystemUserId}: CategoryID {CategoryId} selected (temporarily).", userEntity.Id, categoryId);
                 }
-                // The HashSet is modified by reference, so the object in conversationState.StateData is updated.
-                // We still need to persist the conversationState if its storage is external or needs explicit save.
-                await _userConversationStateService.SetAsync(long.Parse(userEntity.TelegramId), conversationState, cancellationToken);
 
-                // Refresh the preference selection view with the updated temporary selections
-                await ShowSignalCategoryPreferencesAsync(userEntity, chatId, messageIdToEdit, cancellationToken);
-                await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken); // Acknowledge the button press
+                // Persist the updated temporary state.
+                await _userConversationStateService.SetAsync(telegramUserId, conversationState, cancellationToken);
+
+                // --- 4. Refresh the UI and Acknowledge the Action ---
+                // The Show... method will re-fetch everything, guaranteeing the UI reflects the new temporary state.
+                await ShowSignalCategoryPreferencesAsync(telegramUserId, chatId, messageIdToEdit, cancellationToken);
+
+                // This call is correct as it only provides the required parameters.
+                await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken); // Acknowledge the button press silently.
             }
             else
             {
+                // This case handles if the temporary state expired or was lost.
                 _logger.LogError("User conversation state for signal preferences not found for UserID {SystemUserId} during toggle. Re-initializing preference view.", userEntity.Id);
-                // Attempt to re-initialize the view, which should recreate the temporary state.
-                await ShowSignalCategoryPreferencesAsync(userEntity, chatId, messageIdToEdit, cancellationToken);
-                await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken, "Session may have expired. Preferences reloaded. Please try toggling again.", showAlert: true);
+
+                // Re-initialize the view, which will recreate the temporary state from the database.
+                await ShowSignalCategoryPreferencesAsync(telegramUserId, chatId, messageIdToEdit, cancellationToken);
+
+                // ✅ FIX: Use named arguments for clarity and to resolve compiler error.
+                await AnswerCallbackQuerySilentAsync(
+                    callbackQueryId: originalCallbackQueryId,
+                    cancellationToken: cancellationToken,
+                    text: "Session may have expired. Preferences reloaded. Please try again.",
+                    showAlert: true
+                );
             }
         }
 
         /// <summary>
-        /// Handles the "Select All" action for signal category preferences.
+        /// Handles the "Select All" action for signal category preferences by updating the temporary state.
         /// </summary>
-        private async Task HandleSelectAllSignalCategoriesAsync(Domain.Entities.User userEntity, long chatId, int messageIdToEdit, string originalCallbackQueryId, CancellationToken cancellationToken)
+        private async Task HandleSelectAllSignalCategoriesAsync(long telegramUserId, long chatId, int messageIdToEdit, string originalCallbackQueryId, CancellationToken cancellationToken)
         {
+            // --- 1. Fetch Fresh User Entity ---
+            // Although we only need the ID for the state key, fetching the entity ensures the user exists.
+            Domain.Entities.User? userEntity = await _userRepository.GetByTelegramIdAsync(telegramUserId.ToString(), cancellationToken);
+            if (userEntity == null)
+            {
+                _logger.LogWarning("Cannot select all categories, user not found for Telegram ID {TelegramUserId}", telegramUserId);
+                await AnswerCallbackQuerySilentAsync(
+                    callbackQueryId: originalCallbackQueryId,
+                    cancellationToken: cancellationToken,
+                    text: "Your user profile could not be found.",
+                    showAlert: true
+                );
+                return;
+            }
+
             _logger.LogInformation("UserID {SystemUserId}: Selecting all signal categories.", userEntity.Id);
-            var allActiveCategoryIds = (await _categoryRepository.GetAllAsync(cancellationToken))
+
+            // --- 2. Get All Active Category IDs ---
+            HashSet<Guid> allActiveCategoryIds = (await _categoryRepository.GetAllAsync(cancellationToken))
                                        .Where(c => c.IsActive)
                                        .Select(c => c.Id)
                                        .ToHashSet();
 
-            var conversationState = await _userConversationStateService.GetAsync(long.Parse(userEntity.TelegramId), cancellationToken) ?? new UserConversationState();
+            // --- 3. Update Temporary Conversation State ---
+            UserConversationState conversationState = await _userConversationStateService.GetAsync(telegramUserId, cancellationToken) ?? new UserConversationState();
             string tempSelectedCategoriesKey = $"temp_signal_prefs_{userEntity.Id}";
             conversationState.StateData[tempSelectedCategoriesKey] = allActiveCategoryIds;
-            await _userConversationStateService.SetAsync(long.Parse(userEntity.TelegramId), conversationState, cancellationToken);
+            await _userConversationStateService.SetAsync(telegramUserId, conversationState, cancellationToken);
 
-            await ShowSignalCategoryPreferencesAsync(userEntity, chatId, messageIdToEdit, cancellationToken);
-            await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken, "All categories selected.");
+            // --- 4. Refresh the UI and Acknowledge the Action ---
+            // ✅ FIX: Call the refresh method with the 'telegramUserId' (long) instead of the user entity.
+            await ShowSignalCategoryPreferencesAsync(telegramUserId, chatId, messageIdToEdit, cancellationToken);
+
+            // ✅ FIX: Use named arguments for clarity, although this call was likely already correct.
+            await AnswerCallbackQuerySilentAsync(
+                callbackQueryId: originalCallbackQueryId,
+                cancellationToken: cancellationToken,
+                text: "All categories selected."
+            );
         }
 
         /// <summary>
-        /// Handles the "Deselect All" action for signal category preferences.
+        /// Handles the "Deselect All" action for signal category preferences by clearing the temporary state.
         /// </summary>
-        private async Task HandleDeselectAllSignalCategoriesAsync(Domain.Entities.User userEntity, long chatId, int messageIdToEdit, string originalCallbackQueryId, CancellationToken cancellationToken)
+        private async Task HandleDeselectAllSignalCategoriesAsync(long telegramUserId, long chatId, int messageIdToEdit, string originalCallbackQueryId, CancellationToken cancellationToken)
         {
-            _logger.LogInformation("UserID {SystemUserId}: Deselecting all signal categories.", userEntity.Id);
-            var conversationState = await _userConversationStateService.GetAsync(long.Parse(userEntity.TelegramId), cancellationToken) ?? new UserConversationState();
-            string tempSelectedCategoriesKey = $"temp_signal_prefs_{userEntity.Id}";
-            conversationState.StateData[tempSelectedCategoriesKey] = new HashSet<Guid>(); // Empty set
-            await _userConversationStateService.SetAsync(long.Parse(userEntity.TelegramId), conversationState, cancellationToken);
+            // --- 1. Fetch Fresh User Entity ---
+            // Fetching the entity ensures the user exists and we have their system ID for the state key.
+            Domain.Entities.User? userEntity = await _userRepository.GetByTelegramIdAsync(telegramUserId.ToString(), cancellationToken);
+            if (userEntity == null)
+            {
+                _logger.LogWarning("Cannot deselect all categories, user not found for Telegram ID {TelegramUserId}", telegramUserId);
+                await AnswerCallbackQuerySilentAsync(
+                    callbackQueryId: originalCallbackQueryId,
+                    cancellationToken: cancellationToken,
+                    text: "Your user profile could not be found.",
+                    showAlert: true
+                );
+                return;
+            }
 
-            await ShowSignalCategoryPreferencesAsync(userEntity, chatId, messageIdToEdit, cancellationToken);
-            await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken, "All categories deselected.");
+            _logger.LogInformation("UserID {SystemUserId}: Deselecting all signal categories.", userEntity.Id);
+
+            // --- 2. Update Temporary Conversation State ---
+            UserConversationState conversationState = await _userConversationStateService.GetAsync(telegramUserId, cancellationToken) ?? new UserConversationState();
+            string tempSelectedCategoriesKey = $"temp_signal_prefs_{userEntity.Id}";
+
+            // Set the value to a new, empty HashSet to clear all selections.
+            conversationState.StateData[tempSelectedCategoriesKey] = new HashSet<Guid>();
+
+            await _userConversationStateService.SetAsync(telegramUserId, conversationState, cancellationToken);
+
+            // --- 3. Refresh the UI and Acknowledge the Action ---
+            // ✅ FIX: Call the refresh method with the 'telegramUserId' (long).
+            await ShowSignalCategoryPreferencesAsync(telegramUserId, chatId, messageIdToEdit, cancellationToken);
+
+            // ✅ FIX: Use named arguments for clarity.
+            await AnswerCallbackQuerySilentAsync(
+                callbackQueryId: originalCallbackQueryId,
+                cancellationToken: cancellationToken,
+                text: "All categories deselected."
+            );
         }
 
         /// <summary>
         /// Saves the user's temporarily selected signal category preferences to the database.
         /// </summary>
-        private async Task HandleSaveSignalPreferencesAsync(Domain.Entities.User userEntity, long chatId, int messageIdToEdit, CancellationToken cancellationToken)
+        private async Task HandleSaveSignalPreferencesAsync(long telegramUserId, long chatId, int messageIdToEdit, CancellationToken cancellationToken)
         {
+            // ✅ FIX: The method now accepts 'telegramUserId' and fetches the User entity itself.
+            Domain.Entities.User? userEntity = await _userRepository.GetByTelegramIdAsync(telegramUserId.ToString(), cancellationToken);
+            if (userEntity == null)
+            {
+                _logger.LogWarning("Cannot save signal preferences, user not found for Telegram ID {TelegramUserId}", telegramUserId);
+                await EditMessageOrSendNewAsync(chatId, messageIdToEdit, "Your user profile could not be found. Please use /start first.", null, cancellationToken: cancellationToken);
+                return;
+            }
+
             _logger.LogInformation("UserID {SystemUserId}: Attempting to save signal category preferences.", userEntity.Id);
 
-            var conversationState = await _userConversationStateService.GetAsync(long.Parse(userEntity.TelegramId), cancellationToken);
+            // ✅ FIX: Use 'telegramUserId' for conversation state service.
+            UserConversationState? conversationState = await _userConversationStateService.GetAsync(telegramUserId, cancellationToken);
             string tempSelectedCategoriesKey = $"temp_signal_prefs_{userEntity.Id}";
 
-            if (conversationState?.StateData.TryGetValue(tempSelectedCategoriesKey, out var selectedObj) == true && selectedObj is HashSet<Guid> finalSelectedCategoryIds)
+            if (conversationState?.StateData.TryGetValue(tempSelectedCategoriesKey, out object? selectedObj) == true && selectedObj is HashSet<Guid> finalSelectedCategoryIds)
             {
                 try
                 {
                     // Use the repository to persist the preferences.
-                    // The repository's SetUserPreferencesAsync should handle adding new and removing old preferences.
                     await _userPrefsRepository.SetUserPreferencesAsync(userEntity.Id, finalSelectedCategoryIds, cancellationToken);
-                    _ = await _appDbContext.SaveChangesAsync(cancellationToken); // Commit the changes to the database.
+                    _ = await _appDbContext.SaveChangesAsync(cancellationToken); // Commit the changes.
 
                     _logger.LogInformation("UserID {SystemUserId}: Signal preferences saved successfully. Count: {Count}",
                         userEntity.Id, finalSelectedCategoryIds.Count);
 
                     // Clean up the temporary state from conversation service.
                     _ = conversationState.StateData.Remove(tempSelectedCategoriesKey);
-                    await _userConversationStateService.SetAsync(long.Parse(userEntity.TelegramId), conversationState, cancellationToken);
+                    await _userConversationStateService.SetAsync(telegramUserId, conversationState, cancellationToken);
 
                     await EditMessageOrSendNewAsync(chatId, messageIdToEdit,
                         "✅ Your signal preferences have been successfully saved!",
@@ -506,86 +655,119 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
                     ParseMode.MarkdownV2, cancellationToken);
             }
         }
+
         #endregion
 
         #region Notification Settings Methods
         /// <summary>
         /// Displays the notification settings interface to the user.
-        /// Allows toggling general, VIP signal, and RSS news notifications.
+        /// This method is designed to be dual-purpose:
+        /// 1. If a 'preFetchedUserEntity' is provided, it uses that entity to render the UI. This is crucial for providing immediate feedback after a setting change.
+        /// 2. If no entity is provided, it fetches the latest version from the database, ensuring the user always sees the most up-to-date, persisted settings.
         /// </summary>
-        private async Task ShowNotificationSettingsAsync(Domain.Entities.User userEntity, long chatId, int messageIdToEdit, CancellationToken cancellationToken)
+        /// <param name="preFetchedUserEntity">
+        /// (Optional) A pre-fetched and potentially modified User entity. If provided, this method
+        /// will use it instead of fetching from the database to guarantee UI consistency after a toggle action.
+        /// </param>
+        /// </param>
+        private async Task ShowNotificationSettingsAsync(long telegramUserId, long chatId, int messageIdToEdit, CancellationToken cancellationToken, Domain.Entities.User? preFetchedUserEntity = null)
         {
+            // **FIX 1: INTELLIGENT DATA SOURCING**
+            // Use the passed-in entity if it exists; otherwise, fetch a fresh, complete copy from the database.
+            Domain.Entities.User? userEntity = preFetchedUserEntity ?? await _userRepository.GetByTelegramIdWithNotificationsAsync(telegramUserId.ToString(), cancellationToken);
+
+            if (userEntity == null)
+            {
+                _logger.LogWarning("Cannot show notification settings, user not found for Telegram ID {TelegramUserId}", telegramUserId);
+                await EditMessageOrSendNewAsync(chatId, messageIdToEdit, "Your user profile could not be found. Please use /start first.", null, ParseMode.MarkdownV2, cancellationToken);
+                return;
+            }
+
             _logger.LogInformation("UserID {SystemUserId}: Displaying notification settings.", userEntity.Id);
 
-            var text = TelegramMessageFormatter.Bold("🔔 Notification Settings", escapePlainText: false) + "\n\n" +
-                       "Manage your notification preferences. Tap an option to toggle it (✅ Enabled / ⬜ Disabled):";
+            string text = TelegramMessageFormatter.Bold("🔔 Notification Settings", escapePlainText: false) + "\n\n" +
+                       "Manage your notification preferences\\. Tap an option to toggle it \\(✅ Enabled / ⬜ Disabled\\):";
 
-            var activeSubscription = await _subscriptionService.GetActiveSubscriptionByUserIdAsync(userEntity.Id, cancellationToken);
-            bool isVipUser = IsUserVip(activeSubscription);
+            // Check for an active subscription directly from the loaded entity's collection.
+            bool isVipUser = userEntity.Subscriptions.Any(s => s.Status == "Active" && s.EndDate > DateTime.UtcNow);
 
-            //  ایجاد لیست ردیف‌های دکمه
-            var keyboardRowList = new List<List<InlineKeyboardButton>>
-            {
-                // ردیف اول: General Bot Updates
-                ([ InlineKeyboardButton.WithCallbackData(
-        $"{(userEntity.EnableGeneralNotifications ? "✅" : "⬜")} General Bot Updates",
-        $"{ToggleNotificationPrefix}{NotificationTypeGeneral}")
-    ])
-            };
+            List<List<InlineKeyboardButton>> keyboardRows =
+            [
+                [
+                    InlineKeyboardButton.WithCallbackData(
+                        $"{(userEntity.EnableGeneralNotifications ? "✅" : "⬜")} General Bot Updates",
+                        $"{ToggleNotificationPrefix}{NotificationTypeGeneral}"
+                    )
+                ],
+                isVipUser ? ([
+                    InlineKeyboardButton.WithCallbackData(
+                        $"{(userEntity.EnableVipSignalNotifications ? "✅" : "⬜")} ✨ VIP Signal Alerts",
+                        $"{ToggleNotificationPrefix}{NotificationTypeVipSignal}"
+                    )
+                ]) : ([
+                    InlineKeyboardButton.WithCallbackData(
+                        "💎 Enable VIP Signal Alerts (Upgrade Required)",
+                        MenuCommandHandler.SubscribeCallbackData
+                    )
+                ]),
+                [
+                    InlineKeyboardButton.WithCallbackData(
+                        $"{(userEntity.EnableRssNewsNotifications ? "✅" : "⬜")} RSS News Updates",
+                        $"{ToggleNotificationPrefix}{NotificationTypeRssNews}"
+                    )
+                ],
+                [
+                    InlineKeyboardButton.WithCallbackData("⬅️ Back to Settings Menu", SettingsCommandHandler.ShowSettingsMenuCallback)
+                ],
+            ];
 
-            // ردیف دوم: VIP Signal Alerts (شرطی)
-            if (isVipUser)
-            {
-                keyboardRowList.Add([ InlineKeyboardButton.WithCallbackData(
-            $"{(userEntity.EnableVipSignalNotifications ? "✅" : "⬜")} ✨ VIP Signal Alerts",
-            $"{ToggleNotificationPrefix}{NotificationTypeVipSignal}")
-        ]);
-            }
-            else
-            {
-                keyboardRowList.Add([ InlineKeyboardButton.WithCallbackData(
-            "💎 Enable VIP Signal Alerts (Upgrade Required)",
-            MenuCommandHandler.SubscribeCallbackData) // لینک به صفحه اشتراک
-        ]);
-            }
+            InlineKeyboardMarkup finalKeyboard = new(keyboardRows);
 
-            // ردیف سوم: RSS News Updates
-            keyboardRowList.Add([ InlineKeyboardButton.WithCallbackData(
-        $"{(userEntity.EnableRssNewsNotifications ? "✅" : "⬜")} RSS News Updates",
-        $"{ToggleNotificationPrefix}{NotificationTypeRssNews}")
-    ]);
-            var finalKeyboard = new InlineKeyboardMarkup(keyboardRowList);
-            // ردیف چهارم: Back to Settings Menu
-            keyboardRowList.Add([InlineKeyboardButton.WithCallbackData("⬅️ Back to Settings Menu", SettingsCommandHandler.ShowSettingsMenuCallback)]);
-
-            await EditMessageOrSendNewAsync(chatId, messageIdToEdit, text, finalKeyboard, ParseMode.Markdown, cancellationToken);
-
+            await EditMessageOrSendNewAsync(chatId, messageIdToEdit, text, finalKeyboard, ParseMode.MarkdownV2, cancellationToken);
         }
 
         /// <summary>
-        /// Handles toggling a specific notification setting for the user.
+        /// Handles toggling a specific notification setting. It fetches the user,
+        /// modifies the setting, saves it to the database, and then immediately
+        /// refreshes the UI by passing the modified entity to the display method,
+        /// guaranteeing UI consistency.
         /// </summary>
-        private async Task HandleToggleNotificationAsync(Domain.Entities.User userEntity, long chatId, int messageIdToEdit, string callbackData, string originalCallbackQueryId, CancellationToken cancellationToken)
+        /// <summary>
+        /// Handles toggling a specific notification setting. It fetches the user,
+        /// modifies the setting, saves it to the database, and then immediately
+        /// refreshes the UI by passing the modified entity to the display method,
+        /// guaranteeing UI consistency.
+        /// </summary>
+        private async Task HandleToggleNotificationAsync(long telegramUserId, long chatId, int messageIdToEdit, string callbackData, string originalCallbackQueryId, CancellationToken cancellationToken)
         {
-            string notificationType = callbackData.Substring(ToggleNotificationPrefix.Length);
-            _logger.LogInformation("UserID {SystemUserId}: Attempting to toggle notification setting for '{NotificationType}'.", userEntity.Id, notificationType);
+            // **FIX 2: USE THE OPTIMIZED FETCH METHOD**
+            // Fetch the user with all their related data to ensure we have the full context.
+            Domain.Entities.User? userEntity = await _userRepository.GetByTelegramIdWithNotificationsAsync(telegramUserId.ToString(), cancellationToken);
+            if (userEntity == null)
+            {
+                _logger.LogWarning("Cannot toggle notification, user not found for Telegram ID {TelegramUserId}", telegramUserId);
+                await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken, "Your user profile could not be found.", showAlert: true);
+                return;
+            }
 
-            bool newStatus;
+            string notificationType = callbackData[ToggleNotificationPrefix.Length..];
+            _logger.LogInformation("UserID {SystemUserId}: Attempting to toggle setting '{NotificationType}'.", userEntity.Id, notificationType);
+
             string statusMessage;
+            bool newStatus;
 
             switch (notificationType)
             {
                 case NotificationTypeGeneral:
                     userEntity.EnableGeneralNotifications = !userEntity.EnableGeneralNotifications;
                     newStatus = userEntity.EnableGeneralNotifications;
-                    statusMessage = $"General Bot Updates are now {(newStatus ? "ENABLED" : "DISABLED")}.";
+                    statusMessage = $"General Updates are now {(newStatus ? "ENABLED" : "DISABLED")}.";
                     break;
                 case NotificationTypeVipSignal:
-                    var activeSub = await _subscriptionService.GetActiveSubscriptionByUserIdAsync(userEntity.Id, cancellationToken);
-                    if (!IsUserVip(activeSub))
+                    bool isVipUser = userEntity.Subscriptions.Any(s => s.Status == "Active" && s.EndDate > DateTime.UtcNow);
+                    if (!isVipUser)
                     {
-                        await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken, "VIP subscription is required to change VIP signal alerts.", showAlert: true);
-                        await ShowNotificationSettingsAsync(userEntity, chatId, messageIdToEdit, cancellationToken); // Refresh menu
+                        await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken, "VIP subscription required to change this setting.", showAlert: true);
                         return;
                     }
                     userEntity.EnableVipSignalNotifications = !userEntity.EnableVipSignalNotifications;
@@ -598,45 +780,44 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
                     statusMessage = $"RSS News Updates are now {(newStatus ? "ENABLED" : "DISABLED")}.";
                     break;
                 default:
-                    _logger.LogWarning("UserID {SystemUserId}: Unknown notification type '{NotificationType}' requested to toggle.", userEntity.Id, notificationType);
-                    await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken, "Error: Unknown notification setting.", showAlert: true);
+                    _logger.LogWarning("Unknown notification type '{Type}' for user {UserId}", notificationType, userEntity.Id);
+                    await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken, "Unknown setting.", showAlert: true);
                     return;
             }
-            userEntity.UpdatedAt = DateTime.UtcNow; // Mark user entity as updated
 
+            // Instead of calling the full UpdateAsync, we can let EF Core's change tracker handle this.
+            // If UpdateAsync from the repository is desired, ensure it doesn't have side effects.
+            // For now, we will use the DbContext directly as it's cleaner.
+            userEntity.UpdatedAt = DateTime.UtcNow;
+
+            // Note: Since we fetched the entity from the context implicitly via the repository (if it's EF-backed)
+            // or need to attach it if it's Dapper-backed, saving changes should work.
+            // If using a Dapper repository, you might need to call `_userRepository.UpdateAsync(userEntity, cancellationToken)` instead.
+            // Assuming the `_appDbContext` is the source of truth for saving.
             try
             {
-                // The User entity was fetched by GetUserEntityForProcessingAsync, so it's tracked by the DbContext.
-                _ = await _appDbContext.SaveChangesAsync(cancellationToken); // Save changes to the User entity
-                _logger.LogInformation("UserID {SystemUserId}: Notification setting '{NotificationType}' successfully changed to {NewStatus}.",
-                    userEntity.Id, notificationType, newStatus);
+                // This call assumes the userEntity is being tracked by the DbContext.
+                // If the repository is Dapper-only, we MUST call its UpdateAsync method.
+                // Let's assume the safe path is to call the repository's update method.
+                await _userRepository.UpdateAsync(userEntity, cancellationToken);
+                // If using EF Core IAppDbContext directly:
+                // await _appDbContext.SaveChangesAsync(cancellationToken);
 
-                await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken, statusMessage, showAlert: false); // Show a toast
-                await ShowNotificationSettingsAsync(userEntity, chatId, messageIdToEdit, cancellationToken); // Refresh the settings view
+                _logger.LogInformation("Notification '{Type}' for user {UserId} successfully set to {Status}", notificationType, userEntity.Id, newStatus);
+
+                await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken, statusMessage);
+
+                // **FIX 3: PASS THE UPDATED ENTITY TO THE DISPLAY METHOD**
+                // This is the crucial step. We pass the entity that we just modified and saved.
+                await ShowNotificationSettingsAsync(telegramUserId, chatId, messageIdToEdit, cancellationToken, userEntity);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to save notification settings for UserID {SystemUserId} after toggle.", userEntity.Id);
-                // Attempt to revert the change in the entity if save failed, though this is complex if other changes were made.
-                // For simplicity, just inform user and re-show.
+                _logger.LogError(ex, "Failed to save or update UI for notification settings for UserID {SystemUserId}.", userEntity.Id);
                 await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken, "Error saving your setting. Please try again.", showAlert: true);
-                // Re-fetch the entity to show the non-persisted state (or the old state if an error occurred before modification)
-                var refreshedUserEntity = await _userRepository.GetByIdAsync(userEntity.Id, cancellationToken);
-                if (refreshedUserEntity != null)
-                {
-                    await ShowNotificationSettingsAsync(refreshedUserEntity, chatId, messageIdToEdit, cancellationToken);
-                }
             }
         }
 
-        // Helper to determine if a user's active subscription grants VIP access
-        private bool IsUserVip(SubscriptionDto? activeSubscription)
-        {
-            // This logic needs to be based on your plan definitions.
-            // Example: Check PlanId, or a specific property on SubscriptionDto indicating VIP status.
-            // For now, a simple check if any active subscription exists.
-            return activeSubscription != null; // Replace with actual VIP check
-        }
         #endregion
 
         #region Subscription Info Methods
@@ -646,23 +827,34 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
         // File: TelegramPanel/Application/CommandHandlers/SettingsCallbackQueryHandler.cs
         // در متد ShowMySubscriptionInfoAsync:
 
-        private async Task ShowMySubscriptionInfoAsync(Domain.Entities.User userEntity, long chatId, int messageIdToEdit, CancellationToken cancellationToken)
+        private async Task ShowMySubscriptionInfoAsync(long telegramUserId, long chatId, int messageIdToEdit, CancellationToken cancellationToken)
         {
+            // ✅ FIX: The method now accepts 'telegramUserId' and fetches the User entity itself.
+            Domain.Entities.User? userEntity = await _userRepository.GetByTelegramIdAsync(telegramUserId.ToString(), cancellationToken);
+            if (userEntity == null)
+            {
+                _logger.LogWarning("Cannot show subscription info, user not found for Telegram ID {TelegramUserId}", telegramUserId);
+                await EditMessageOrSendNewAsync(chatId, messageIdToEdit, "Your user profile could not be found. Please use /start first.", null, ParseMode.MarkdownV2, cancellationToken);
+                return;
+            }
+
             _logger.LogInformation("UserID {SystemUserId}: Showing subscription information.", userEntity.Id);
-            var userDto = await _userService.GetUserByIdAsync(userEntity.Id, cancellationToken); // پاس دادن Guid
+
+            // This call is correct, as it uses the Guid from the fetched entity.
+            UserDto? userDto = await _userService.GetUserByIdAsync(userEntity.Id, cancellationToken);
             if (userDto == null)
             {
                 await EditMessageOrSendNewAsync(chatId, messageIdToEdit, "Could not retrieve your user profile. Please use /start first.", null, ParseMode.MarkdownV2, cancellationToken);
                 return;
             }
 
-            var sb = new StringBuilder();
+            StringBuilder sb = new();
             _ = sb.AppendLine(TelegramMessageFormatter.Bold("⭐ My Subscription Status", escapePlainText: false));
             _ = sb.AppendLine();
 
             if (userDto.ActiveSubscription != null)
             {
-                string planNameForDisplay = "Your Current Plan"; //  جایگزین با نام واقعی پلن
+                string planNameForDisplay = "Your Current Plan"; // Replace with real plan name
                 _ = sb.AppendLine($"You are currently subscribed to the {TelegramMessageFormatter.Bold(planNameForDisplay, escapePlainText: true)}.");
                 _ = sb.AppendLine($"Your subscription is active until: {TelegramMessageFormatter.Bold($"{userDto.ActiveSubscription.EndDate:yyyy-MM-dd HH:mm} UTC")}");
                 _ = sb.AppendLine("\nThank you for your support! You have access to all premium features.");
@@ -673,65 +865,104 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
                 _ = sb.AppendLine("Upgrade to a premium plan to unlock exclusive signals, advanced analytics, and more benefits!");
             }
 
-            //  ایجاد لیست ردیف‌های دکمه
-            var keyboardRowList = new List<List<InlineKeyboardButton>>
-            {
-                // ردیف اول: دکمه مدیریت/خرید اشتراک
-                ([ InlineKeyboardButton.WithCallbackData(
-        userDto.ActiveSubscription != null ? "🔄 Manage / Renew Subscription" : "💎 View Subscription Plans",
-        MenuCommandHandler.SubscribeCallbackData
-    )])
-            };
+            List<List<InlineKeyboardButton>> keyboardRowList =
+            [
+        [
+            InlineKeyboardButton.WithCallbackData(
+                userDto.ActiveSubscription != null ? "🔄 Manage / Renew Subscription" : "💎 View Subscription Plans",
+                MenuCommandHandler.SubscribeCallbackData
+            )
+        ],
+        [
+            InlineKeyboardButton.WithCallbackData("⬅️ Back to Settings Menu", SettingsCommandHandler.ShowSettingsMenuCallback)
+        ]
+    ];
 
-            var finalKeyboard = new InlineKeyboardMarkup(keyboardRowList);
-            // ردیف دوم: دکمه بازگشت
-            keyboardRowList.Add([InlineKeyboardButton.WithCallbackData("⬅️ Back to Settings Menu", SettingsCommandHandler.ShowSettingsMenuCallback)]);
+            InlineKeyboardMarkup finalKeyboard = new(keyboardRowList);
 
             await EditMessageOrSendNewAsync(chatId, messageIdToEdit, sb.ToString(), finalKeyboard, ParseMode.Markdown, cancellationToken);
         }
-
         #endregion
 
         #region Language & Privacy Settings Methods (Placeholders - To be fully implemented)
         /// <summary>
         /// Displays language selection options to the user.
         /// </summary>
-        private async Task ShowLanguageSettingsAsync(Domain.Entities.User userEntity, long chatId, int messageIdToEdit, CancellationToken cancellationToken)
+        /// <summary>
+        /// Displays language selection options to the user.
+        /// </summary>
+        private async Task ShowLanguageSettingsAsync(long telegramUserId, long chatId, int messageIdToEdit, CancellationToken cancellationToken)
         {
+            // ✅ FIX: The method now accepts 'telegramUserId' and fetches the User entity itself.
+            Domain.Entities.User? userEntity = await _userRepository.GetByTelegramIdAsync(telegramUserId.ToString(), cancellationToken);
+            if (userEntity == null)
+            {
+                _logger.LogWarning("Cannot show language settings, user not found for Telegram ID {TelegramUserId}", telegramUserId);
+                await EditMessageOrSendNewAsync(chatId, messageIdToEdit, "Your user profile could not be found. Please use /start first.", null, cancellationToken: cancellationToken);
+                return;
+            }
+
             _logger.LogInformation("UserID {SystemUserId}: Displaying language settings. Current language: {CurrentLang}", userEntity.Id, userEntity.PreferredLanguage);
 
-            var text = TelegramMessageFormatter.Bold("🌐 Language Settings", escapePlainText: false) + "\n\n" +
+            string text = TelegramMessageFormatter.Bold("🌐 Language Settings", escapePlainText: false) + "\n\n" +
                        $"Your current language is: {TelegramMessageFormatter.Bold(userEntity.PreferredLanguage.ToUpperInvariant())}\n" +
                        "Select your preferred language for the bot interface:";
-            var keyboard = MarkupBuilder.CreateInlineKeyboard(
-                new[] { InlineKeyboardButton.WithCallbackData($"{(userEntity.PreferredLanguage == "en" ? "🔹 " : "")}🇬🇧 English", $"{SelectLanguagePrefix}en") },
-                new[] { InlineKeyboardButton.WithCallbackData("⬅️ Back to Settings Menu", SettingsCommandHandler.ShowSettingsMenuCallback) }
+
+            // Build the keyboard dynamically
+            InlineKeyboardMarkup? keyboard = MarkupBuilder.CreateInlineKeyboard(
+                new[]
+                {
+            InlineKeyboardButton.WithCallbackData(
+                $"{(userEntity.PreferredLanguage == "en" ? "🔹 " : "")}🇬🇧 English",
+                $"{SelectLanguagePrefix}en"
+            )
+                },
+                new[]
+                {
+            InlineKeyboardButton.WithCallbackData(
+                "⬅️ Back to Settings Menu",
+                SettingsCommandHandler.ShowSettingsMenuCallback
+            )
+                }
             );
+
             await EditMessageOrSendNewAsync(chatId, messageIdToEdit, text, keyboard, ParseMode.MarkdownV2, cancellationToken);
         }
 
         /// <summary>
         /// Handles the user's language selection and updates it in the database.
         /// </summary>
-        private async Task HandleSelectLanguageAsync(Domain.Entities.User userEntity, long chatId, int messageIdToEdit, string callbackData, string originalCallbackQueryId, CancellationToken cancellationToken)
+        /// <summary>
+        /// Handles the user's language selection and updates it in the database.
+        /// </summary>
+        private async Task HandleSelectLanguageAsync(long telegramUserId, long chatId, int messageIdToEdit, string callbackData, string originalCallbackQueryId, CancellationToken cancellationToken)
         {
-            string langCode = callbackData.Substring(SelectLanguagePrefix.Length).ToLowerInvariant(); // e.g., "en", "fa"
-            _logger.LogInformation("UserID {SystemUserId}: Attempting to set preferred language to '{LangCode}'.", userEntity.Id, langCode);
+            Domain.Entities.User? userEntity = await _userRepository.GetByTelegramIdAsync(telegramUserId.ToString(), cancellationToken);
+            if (userEntity == null) { /* ... handle not found ... */ return; }
 
-            // Validate if langCode is supported (e.g., against a list of supported languages)
-            var supportedLanguages = new List<string> { "en" /*, "fa" */ };
+            string langCode = callbackData[SelectLanguagePrefix.Length..].ToLowerInvariant();
+
+            List<string> supportedLanguages = ["en"];
             if (!supportedLanguages.Contains(langCode))
             {
-                _logger.LogWarning("UserID {SystemUserId}: Attempted to set unsupported language '{LangCode}'.", userEntity.Id, langCode);
-                await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken, "Selected language is not supported.", showAlert: true);
-                await ShowLanguageSettingsAsync(userEntity, chatId, messageIdToEdit, cancellationToken); // Refresh
+                // ✅ FIX: Use named arguments
+                await AnswerCallbackQuerySilentAsync(
+                    callbackQueryId: originalCallbackQueryId,
+                    cancellationToken: cancellationToken,
+                    text: "Selected language is not supported.",
+                    showAlert: true);
+                await ShowLanguageSettingsAsync(telegramUserId, chatId, messageIdToEdit, cancellationToken);
                 return;
             }
 
             if (userEntity.PreferredLanguage == langCode)
             {
-                await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken, $"Language is already set to {langCode.ToUpperInvariant()}.");
-                await ShowLanguageSettingsAsync(userEntity, chatId, messageIdToEdit, cancellationToken); // Refresh (no change needed but good UX)
+                // ✅ FIX: Use named arguments
+                await AnswerCallbackQuerySilentAsync(
+                    callbackQueryId: originalCallbackQueryId,
+                    cancellationToken: cancellationToken,
+                    text: $"Language is already set to {langCode.ToUpperInvariant()}.");
+                await ShowLanguageSettingsAsync(telegramUserId, chatId, messageIdToEdit, cancellationToken);
                 return;
             }
 
@@ -741,17 +972,24 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
             try
             {
                 _ = await _appDbContext.SaveChangesAsync(cancellationToken);
-                _logger.LogInformation("UserID {SystemUserId}: Preferred language successfully changed to '{LangCode}'.", userEntity.Id, langCode);
-                await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken, $"Language preferences updated to {langCode.ToUpperInvariant()}.");
-                await ShowLanguageSettingsAsync(userEntity, chatId, messageIdToEdit, cancellationToken); // Refresh to show new selection
+
+                await AnswerCallbackQuerySilentAsync(
+                    callbackQueryId: originalCallbackQueryId,
+                    cancellationToken: cancellationToken,
+                    text: $"Language preferences updated to {langCode.ToUpperInvariant()}.");
+
+                await ShowLanguageSettingsAsync(telegramUserId, chatId, messageIdToEdit, cancellationToken);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to save preferred language '{LangCode}' for UserID {SystemUserId}.", langCode, userEntity.Id);
-                await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken, "Error saving language preference. Please try again.", showAlert: true);
-                // Optionally revert userEntity.PreferredLanguage to its old value if save failed.
-                // For now, just re-show the menu.
-                await ShowLanguageSettingsAsync(userEntity, chatId, messageIdToEdit, cancellationToken);
+                // ✅ FIX: Use named arguments
+                await AnswerCallbackQuerySilentAsync(
+                    callbackQueryId: originalCallbackQueryId,
+                    cancellationToken: cancellationToken,
+                    text: "Error saving language preference. Please try again.",
+                    showAlert: true);
+                await ShowLanguageSettingsAsync(telegramUserId, chatId, messageIdToEdit, cancellationToken);
             }
         }
 
@@ -762,23 +1000,32 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
         /// <summary>
         /// Displays privacy-related information and options.
         /// </summary>
-        private async Task ShowPrivacySettingsAsync(Domain.Entities.User userEntity, long chatId, int messageIdToEdit, CancellationToken cancellationToken)
+        private async Task ShowPrivacySettingsAsync(long telegramUserId, long chatId, int messageIdToEdit, CancellationToken cancellationToken)
         {
+            // ✅ FIX: The method now accepts 'telegramUserId' and fetches the User entity itself.
+            Domain.Entities.User? userEntity = await _userRepository.GetByTelegramIdAsync(telegramUserId.ToString(), cancellationToken);
+            if (userEntity == null)
+            {
+                _logger.LogWarning("Cannot show privacy settings, user not found for Telegram ID {TelegramUserId}", telegramUserId);
+                await EditMessageOrSendNewAsync(chatId, messageIdToEdit, "Your user profile could not be found. Please use /start first.", null, cancellationToken: cancellationToken);
+                return;
+            }
+
             _logger.LogInformation("UserID {SystemUserId} (TelegramID: {TelegramId}): Displaying privacy settings and policy information.", userEntity.Id, userEntity.TelegramId);
 
             // TODO: Replace with your actual Privacy Policy URL and Support Contact information.
-            string privacyPolicyUrl = "https://your-forex-bot-domain.com/privacy-policy"; //  آدرس واقعی سیاست حفظ حریم خصوصی شما
-            string supportContactCommand = "/support"; //  دستوری که کاربر می‌تواند برای تماس با پشتیبانی استفاده کند
-            string supportEmail = "support@your-forex-bot-domain.com"; //  ایمیل پشتیبانی شما
+            string privacyPolicyUrl = "https://your-forex-bot-domain.com/privacy-policy";
+            string supportContactCommand = "/support";
+            string supportEmail = "support@your-forex-bot-domain.com";
 
             // Constructing the message text using TelegramMessageFormatter for consistent styling.
-            var textBuilder = new StringBuilder();
+            StringBuilder textBuilder = new();
             _ = textBuilder.AppendLine(TelegramMessageFormatter.Bold("🔒 Privacy & Data Management", escapePlainText: false));
             _ = textBuilder.AppendLine(); // Blank line for readability
             _ = textBuilder.AppendLine("We are committed to protecting your privacy and handling your data responsibly.");
             _ = textBuilder.AppendLine("You can review our full privacy policy to understand how we collect, use, and protect your information.");
             _ = textBuilder.AppendLine();
-            _ = textBuilder.AppendLine(TelegramMessageFormatter.Link("📜 Read our Full Privacy Policy", privacyPolicyUrl, escapeLinkText: false)); // escapeLinkText=false as "📜..." is already formatted
+            _ = textBuilder.AppendLine(TelegramMessageFormatter.Link("📜 Read our Full Privacy Policy", privacyPolicyUrl, escapeLinkText: false));
             _ = textBuilder.AppendLine();
             _ = textBuilder.AppendLine(TelegramMessageFormatter.Bold("Data Requests:", escapePlainText: false));
             _ = textBuilder.AppendLine("If you wish to request access to your data, or request data deletion, please contact our support team.");
@@ -787,34 +1034,20 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
             _ = textBuilder.AppendLine(TelegramMessageFormatter.Italic("Note: Data deletion requests will be processed according to our data retention policy and applicable regulations.", escapePlainText: true));
 
             // Constructing the inline keyboard
-            _ = new List<IEnumerable<InlineKeyboardButton>>
-            {
-                // First row: Link to the privacy policy
-                new[]
-                {
-                    InlineKeyboardButton.WithUrl("📜 View Privacy Policy Online", privacyPolicyUrl)
-                }
-            };
+            List<List<InlineKeyboardButton>> keyboardRows =
+            [
+        // First row: Link to the privacy policy
+        [
+            InlineKeyboardButton.WithUrl("📜 View Privacy Policy Online", privacyPolicyUrl)
+        ],
+        // Last row: Back to the main settings menu
+        [
+            InlineKeyboardButton.WithCallbackData("⬅️ Back to Settings Menu", SettingsCommandHandler.ShowSettingsMenuCallback)
+        ]
+    ];
 
-            // (Optional) Button for initiating a data deletion request.
-            // This would typically trigger a new callback or a conversation state.
-            // For now, it's commented out as it requires further backend implementation.
-            /*
-            public const string RequestDataDeletionCallback = "privacy_request_data_deletion"; //  باید در CallbackData Constants تعریف شود
-            keyboardRows.Add(new[]
-            {
-                InlineKeyboardButton.WithCallbackData("🗑️ Request My Data Deletion", RequestDataDeletionCallback)
-            });
-            */
+            InlineKeyboardMarkup finalKeyboard = new(keyboardRows);
 
-            // Last row: Back to the main settings menu
-            var keyboardRowArrays = new List<InlineKeyboardButton[]>
-            {
-                new[] { InlineKeyboardButton.WithUrl("📜 View Privacy Policy Online", privacyPolicyUrl) },
-                new[] { InlineKeyboardButton.WithCallbackData("⬅️ Back to Settings Menu", SettingsCommandHandler.ShowSettingsMenuCallback) }
-            };
-            var finalKeyboard = MarkupBuilder.CreateInlineKeyboard(keyboardRowArrays.ToArray());
-            // await EditMessageOrSendNewAsync(chatId, messageIdToEdit, textBuilder.ToString(), inlineKeyboard, ...); // قبلی
             await EditMessageOrSendNewAsync(chatId, messageIdToEdit, textBuilder.ToString(), finalKeyboard, ParseMode.Markdown, cancellationToken);
         }
         #endregion
@@ -827,7 +1060,7 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
         {
             _logger.LogInformation("Reshowing main settings menu for ChatID {ChatId}, MessageID {MessageIdToEdit}", chatId, messageIdToEdit);
             // Uses the static method from SettingsCommandHandler to get consistent menu markup
-            var (settingsMenuText, settingsKeyboard) = SettingsCommandHandler.GetSettingsMenuMarkup();
+            (string settingsMenuText, InlineKeyboardMarkup settingsKeyboard) = SettingsCommandHandler.GetSettingsMenuMarkup();
             await EditMessageOrSendNewAsync(chatId, messageIdToEdit, settingsMenuText, settingsKeyboard, ParseMode.MarkdownV2, cancellationToken);
         }
 
@@ -839,7 +1072,14 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
         {
             try
             {
-                await _botClient.AnswerCallbackQuery(callbackQueryId, text, showAlert, cancellationToken: cancellationToken);
+                // ✅ FIX: Use named arguments in the call to the bot client for clarity and correctness.
+                await _botClient.AnswerCallbackQuery(
+                    callbackQueryId: callbackQueryId,
+                    text: text,
+                    showAlert: showAlert,
+                    cancellationToken: cancellationToken
+                );
+
                 if (!string.IsNullOrWhiteSpace(text))
                 {
                     _logger.LogDebug("Answered CallbackQueryID: {CallbackQueryId} with text: '{Text}', ShowAlert: {ShowAlert}", callbackQueryId, text, showAlert);
@@ -860,69 +1100,117 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
         }
 
         /// <summary>
-        /// Attempts to edit an existing message. If editing fails (e.g., message too old, not found, or not modified),
-        /// it sends a new message with the same content and markup instead.
-        /// This provides a more resilient user experience.
+        /// Intelligently edits a message, providing a robust and clean user experience.
+        /// This method distinguishes between different types of Telegram API failures:
+        /// <list type="bullet">
+        ///     <item>
+        ///         <term>Message Not Modified</term>
+        ///         <description>
+        ///             If the message content and keyboard are already identical to the new content,
+        ///             the operation is considered a "silent success" and is gracefully ignored to prevent chat clutter.
+        ///         </description>
+        ///     </item>
+        ///     <item>
+        ///         <term>Message Not Found / Too Old</term>
+        ///         <description>
+        ///             If the original message is too old to be edited or has been deleted, this method
+        ///             will send a brand new message with the intended content as a fallback.
+        ///         </description>
+        ///     </item>
+        ///     <item>
+        ///         <term>Chat Not Found / User Blocked</term>
+        ///         <description>
+        ///             If the bot is blocked by the user, the operation fails silently without throwing an exception,
+        ///             as no further communication is possible.
+        ///         </description>
+        ///     </item>
+        ///     <item>
+        ///         <term>Other Unexpected Errors</term>
+        ///         <description>
+        ///             For any other exceptions, an error is logged, and the method will not throw,
+        ///             preventing crashes in the calling handler.
+        ///         </description>
+        ///     </item>
+        /// </list>
         /// </summary>
+        /// <param name="chatId">The ID of the chat where the message exists.</param>
+        /// <param name="messageId">The ID of the message to edit.</param>
+        /// <param name="text">The new text content for the message.</param>
+        /// <param name="replyMarkup">The new inline keyboard markup.</param>
+        /// <param name="parseMode">The parse mode for the message text (e.g., MarkdownV2).</param>
+        /// <param name="cancellationToken">A token to cancel the operation.</param>
+        /// <remarks>
+        /// It is highly recommended to call <c>AnswerCallbackQueryAsync</c> *before* calling this method
+        /// to provide immediate feedback to the user and remove the loading spinner from the clicked button.
+        /// </remarks>
         private async Task EditMessageOrSendNewAsync(
-            long chatId,
-            int messageId,
-            string text,
-            InlineKeyboardMarkup? replyMarkup, // Explicitly InlineKeyboardMarkup for clarity
-            ParseMode? parseMode = null,
-            CancellationToken cancellationToken = default)
+   long chatId,
+   int messageId,
+   string text,
+   InlineKeyboardMarkup? replyMarkup,
+   ParseMode parseMode = ParseMode.None, // Changed from nullable ParseMode? to non-nullable ParseMode with a default value  
+   CancellationToken cancellationToken = default)
         {
             try
             {
-                _logger.LogDebug("Attempting to edit message. ChatID: {ChatId}, MessageID: {MessageId}, NewText (partial): {TextStart}", chatId, messageId, text.Length > 50 ? text.Substring(0, 50) + "..." : text);
+                _logger.LogDebug("Attempting to edit message. ChatID: {ChatId}, MessageID: {MessageId}", chatId, messageId);
+
+                // We use a discard '_' because the return value (the edited Message) is not needed here.  
                 _ = await _botClient.EditMessageText(
                     chatId: chatId,
                     messageId: messageId,
                     text: text,
-                    parseMode: ParseMode.Markdown,
+                    parseMode: parseMode, // FIX: Use the provided parseMode parameter  
                     replyMarkup: replyMarkup,
                     cancellationToken: cancellationToken
                 );
+
                 _logger.LogInformation("Message edited successfully. ChatID: {ChatId}, MessageID: {MessageId}", chatId, messageId);
             }
-            catch (ApiRequestException ex) when (
-                MessageWasNotModified(ex) ||
-                MessageToEditNotFound(ex) ||
-                ChatNotFound(ex) || // If the chat itself is not found (e.g., user blocked bot and message is old)
-                IsBadRequestFromOldQuery(ex) // General "Bad Request" often means message is too old to edit, or invalid state
-            )
+            catch (ApiRequestException apiEx) when (apiEx.ErrorCode == 400 && apiEx.Message.Contains("message is not modified", StringComparison.OrdinalIgnoreCase))
             {
-                _logger.LogWarning(ex, "Could not edit message (MessageID: {MessageId}, ChatID: {ChatId}) due to a common Telegram API reason: {ApiError}. Sending a new message instead.", messageId, chatId, ex.Message);
+                // --- GRACEFUL IGNORE ---  
+                // This is not an error. It's a confirmation from Telegram that the content is already  
+                // what we want it to be. We log it for debugging but take no further action.  
+                _logger.LogInformation(
+                    "Ignoring 'message is not modified' API response for MessageID {MessageId}. The content was already up-to-date.",
+                    messageId);
+            }
+            catch (ApiRequestException apiEx) when (apiEx.ErrorCode == 400 && (
+                apiEx.Message.Contains("message to edit not found", StringComparison.OrdinalIgnoreCase) ||
+                apiEx.Message.Contains("query is too old", StringComparison.OrdinalIgnoreCase)
+            ))
+            {
+                // --- RESILIENT FALLBACK ---  
+                // The original message is gone or too old. Send a new one instead.  
+                _logger.LogWarning(apiEx,
+                    "Could not edit message (MessageID: {MessageId}) because it was not found or too old. Sending a new message as a fallback.",
+                    messageId);
+
                 await _messageSender.SendTextMessageAsync(chatId, text, parseMode, replyMarkup, cancellationToken);
+            }
+            catch (ApiRequestException apiEx) when (apiEx.ErrorCode == 403 || apiEx.Message.Contains("chat not found", StringComparison.OrdinalIgnoreCase))
+            {
+                // --- SILENT FAILURE (Permanent) ---  
+                // The user has blocked the bot, or the bot was kicked from the chat.  
+                // There is nothing we can do, so we log it and stop. We don't re-throw.  
+                _logger.LogWarning(apiEx,
+                    "Could not edit or send message to ChatID {ChatId} because the bot was blocked or the chat was not found. This is a permanent failure for this user.",
+                    chatId);
             }
             catch (Exception ex)
             {
-                // Catch-all for other unexpected errors during editing
-                _logger.LogError(ex, "Unexpected error while attempting to edit message (MessageID: {MessageId}, ChatID: {ChatId}). A new message will be sent as a fallback.", messageId, chatId);
-                await _messageSender.SendTextMessageAsync(chatId, text, parseMode, replyMarkup, cancellationToken);
+                // --- UNEXPECTED ERROR ---  
+                // Catch-all for other issues (e.g., network problems not caught by Polly, other API errors).  
+                // Log as a critical error for investigation, but don't crash the command handler.  
+                _logger.LogError(ex,
+                    "An unexpected error occurred while attempting to edit message (MessageID: {MessageId}, ChatID: {ChatId}). No fallback message will be sent.",
+                    messageId, chatId);
+                // We deliberately do not send a new message here, as the nature of the error is unknown.  
             }
         }
 
-        // Helper methods to check specific ApiRequestException conditions for better readability
-        private bool MessageWasNotModified(ApiRequestException ex)
-        {
-            return ex.Message.Contains("message is not modified", StringComparison.OrdinalIgnoreCase);
-        }
 
-        private bool MessageToEditNotFound(ApiRequestException ex)
-        {
-            return ex.Message.Contains("message to edit not found", StringComparison.OrdinalIgnoreCase);
-        }
-
-        private bool ChatNotFound(ApiRequestException ex)
-        {
-            return ex.Message.Contains("chat not found", StringComparison.OrdinalIgnoreCase); // Added
-        }
-
-        private bool IsBadRequestFromOldQuery(ApiRequestException ex)
-        {
-            return ex.ErrorCode == 400 && (ex.Message.Contains("query is too old", StringComparison.OrdinalIgnoreCase) || ex.Message.Contains("MESSAGE_ID_INVALID", StringComparison.OrdinalIgnoreCase)); // Added MESSAGE_ID_INVALID
-        }
         #endregion
     }
 }

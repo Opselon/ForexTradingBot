@@ -17,6 +17,9 @@ namespace Application.Common.Interfaces
         /// <returns>موجودیت کاربر در صورت یافتن؛ در غیر این صورت null.</returns>
         Task<User?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default);
 
+
+        Task<User?> GetByTelegramIdWithNotificationsAsync(string telegramId, CancellationToken cancellationToken = default);
+
         /// <summary>
         /// یک کاربر را بر اساس شناسه تلگرام آن به صورت ناهمزمان پیدا می‌کند.
         /// </summary>

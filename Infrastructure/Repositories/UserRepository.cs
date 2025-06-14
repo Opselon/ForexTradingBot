@@ -727,6 +727,84 @@ namespace Infrastructure.Repositories
                 throw;
             }
         }
+        public async Task<User?> GetByTelegramIdWithNotificationsAsync(string telegramId, CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(telegramId))
+            {
+                _logger.LogWarning("UserRepository: GetByTelegramIdWithNotificationsAsync called with null or empty telegramId.");
+                return null;
+            }
+
+            _logger.LogTrace("UserRepository: Fetching user with notifications and related entities by TelegramID: {TelegramId}", telegramId);
+
+            // This single query fetches the user, their notification settings, and all related entities in one go.
+            const string combinedSql = @"
+                -- 1. Main user with all notification flags
+                SELECT Id, Username, TelegramId, Email, Level, CreatedAt, UpdatedAt, 
+                       EnableGeneralNotifications, EnableVipSignalNotifications, EnableRssNewsNotifications, PreferredLanguage
+                FROM Users 
+                WHERE TelegramId = @TelegramId;
+
+                -- 2. User's wallet
+                SELECT w.Id, w.UserId, w.Balance, w.IsActive, w.CreatedAt, w.UpdatedAt
+                FROM TokenWallets w
+                INNER JOIN Users u ON w.UserId = u.Id
+                WHERE u.TelegramId = @TelegramId;
+
+                -- 3. User's subscriptions
+                SELECT s.Id, s.UserId, s.StartDate, s.EndDate, s.Status, s.ActivatingTransactionId, s.CreatedAt, s.UpdatedAt
+                FROM Subscriptions s
+                INNER JOIN Users u ON s.UserId = u.Id
+                WHERE u.TelegramId = @TelegramId;
+
+                -- 4. User's signal preferences
+                SELECT p.Id, p.UserId, p.CategoryId, p.CreatedAt
+                FROM UserSignalPreferences p
+                INNER JOIN Users u ON p.UserId = u.Id
+                WHERE u.TelegramId = @TelegramId;";
+
+            try
+            {
+                var combinedPolicy = _timeoutPolicy.WrapAsync(_retryPolicy);
+
+                return await combinedPolicy.ExecuteAsync(async (ct) =>
+                {
+                    using var connection = CreateConnection();
+                    await connection.OpenAsync(ct);
+
+                    using var multi = await connection.QueryMultipleAsync(new CommandDefinition(combinedSql, new { TelegramId = telegramId }, cancellationToken: ct));
+
+                    var userDto = await multi.ReadFirstOrDefaultAsync<UserDbDto>();
+                    if (userDto == null)
+                    {
+                        _logger.LogTrace("User with TelegramID {TelegramId} not found.", telegramId);
+                        return null;
+                    }
+
+                    var user = userDto.ToDomainEntity();
+                    var walletDto = await multi.ReadFirstOrDefaultAsync<TokenWalletDbDto>();
+                    user.TokenWallet = walletDto?.ToDomainEntity() ?? TokenWallet.Create(user.Id);
+
+                    user.Subscriptions = (await multi.ReadAsync<SubscriptionDbDto>()).Select(s => s.ToDomainEntity()).ToList();
+                    user.Preferences = (await multi.ReadAsync<UserSignalPreferenceDbDto>()).Select(usp => usp.ToDomainEntity()).ToList();
+                    user.Transactions = []; // Not fetched in this query
+
+                    _logger.LogDebug("Successfully fetched user {UserId} (TelegramID: {TelegramId}) with all related entities.", user.Id, telegramId);
+                    return user;
+
+                }, cancellationToken);
+            }
+            catch (TimeoutRejectedException ex)
+            {
+                _logger.LogError(ex, "UserRepository: Operation timed out while fetching user by TelegramID {TelegramId}.", telegramId);
+                throw new RepositoryException($"The operation to fetch user by TelegramID {telegramId} timed out.", ex);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to get user by TelegramID {TelegramId} after retries.", telegramId);
+                throw new RepositoryException($"An error occurred while fetching user by TelegramID: {telegramId}", ex);
+            }
+        }
 
         /// <inheritdoc />
         public async Task DeleteAsync(User user, CancellationToken cancellationToken = default)

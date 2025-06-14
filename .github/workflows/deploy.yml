@@ -82,7 +82,7 @@
         },
         {
           "name": "🚀 [Test] Start Application Container",
-          "run": "docker run -d --name app-test --network ${{ job.services.redis-test.network }} -p 8080:80 -e \"ASPNETCORE_URLS=http://+:80\" -e \"ASPNETCORE_ENVIRONMENT=Development\" -e \"IsSmokeTest=true\" -e \"ConnectionStrings__Redis=redis-test:6379,abortConnect=false\" -e \"TelegramUserApi__ApiId=12345\" -e \"TelegramUserApi__ApiHash=d41d8cd98f00b204e9800998ecf8427e\" forex-trading-bot-ci:latest"
+         "run": "docker run -d --name app-test --network ${{ job.services.redis-test.network }} -p 8080:80 \\\n  -e \"ASPNETCORE_URLS=http://+:80\" \\\n  -e \"ASPNETCORE_ENVIRONMENT=Development\" \\\n  -e \"IsSmokeTest=true\" \\\n  -e \"ConnectionStrings__Redis=redis-test:6379,abortConnect=false\" \\\n  -e \"TelegramUserApi__ApiId=12345\" \\\n  -e \"TelegramUserApi__ApiHash=d41d8cd98f00b204e9800998ecf8427e\" \\\n  forex-trading-bot-ci:latest"
         },
         {
           "name": "⌛ [Test] Application Health Check",

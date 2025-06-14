@@ -40,31 +40,35 @@ namespace Infrastructure.Data
             this IServiceCollection services,
             IConfiguration configuration , bool isSmokeTest)
         {
-
-            var dbProviderSection = configuration.GetSection("DatabaseSettings");
-            var dbProvider = dbProviderSection.GetValue<string>("DatabaseProvider")?.ToLowerInvariant();
-
-            var connectionString = configuration.GetConnectionString("DefaultConnection");
-            string smokeTestFlag = configuration["IsSmokeTest"] ?? string.Empty;
+
             if (isSmokeTest)
             {
-                // --- SMOKE TEST CONFIGURATION ---
+                // --- SMOKE TEST: Use In-Memory Providers ---
                 services.AddDbContext<AppDbContext>(options =>
-                {
-                    options.UseInMemoryDatabase("SmokeTestDatabase");
-                });
-                // We no longer configure Hangfire here, as it's done in Program.cs
+                    options.UseInMemoryDatabase("SmokeTestDatabase"));
             }
             else
             {
-           
+
+                var dbProviderSection = configuration.GetSection("DatabaseSettings");
+                var dbProvider = configuration.GetValue<string>("DatabaseSettings:DatabaseProvider");
+                var connectionString = configuration.GetConnectionString("DefaultConnection");
+
+                // ✅ THE DIAGNOSTIC CHECK IS NOW INSIDE THE 'ELSE' BLOCK
                 if (string.IsNullOrEmpty(dbProvider) || string.IsNullOrEmpty(connectionString))
                 {
-                    throw new InvalidOperationException($"FATAL: Critical DB configuration is missing...");
+                    // This now only runs in a real environment, where these values are required.
+                    throw new InvalidOperationException($"FATAL: Critical DB configuration is missing for a non-test environment.");
+                }
+
+                if (string.IsNullOrEmpty(dbProvider) || string.IsNullOrEmpty(connectionString))
+                {
+                    // This now only runs in a real environment, where these values are required.
+                    throw new InvalidOperationException($"FATAL: Critical DB configuration is missing for a non-test environment.");
                 }
 
 
-                switch (dbProvider)
+                switch (dbProvider.ToLowerInvariant())
                 {
                     case "sqlserver":
                         _ = services.AddDbContext<AppDbContext>(opts =>
@@ -102,6 +106,45 @@ namespace Infrastructure.Data
                                                      $"Available keys in 'DatabaseSettings': {string.Join(", ", dbProviderSection.GetChildren().Select(c => c.Key))}";
                         throw new NotSupportedException(detailedUnsupportedError);
                 }
+
+                // 3. THROW A DETAILED EXCEPTION IF ANYTHING IS WRONG
+                // This is our new, intelligent error reporting.
+                if (string.IsNullOrEmpty(dbProvider) || string.IsNullOrEmpty(connectionString))
+                {
+                    var errorMessage = "FATAL: Critical configuration is missing." + Environment.NewLine;
+                    errorMessage += "------------------- DIAGNOSTIC REPORT -------------------" + Environment.NewLine;
+
+                    // Report on dbProvider
+                    if (string.IsNullOrEmpty(dbProvider))
+                    {
+                        errorMessage += "❌ Error: 'DatabaseSettings:DatabaseProvider' is NULL or EMPTY." + Environment.NewLine;
+                        errorMessage += $"   - Raw value from GetValue: '{configuration.GetValue<string>("DatabaseSettings:DatabaseProvider")}'" + Environment.NewLine;
+                        errorMessage += $"   - Path exists check: {dbProviderSection.Exists()}" + Environment.NewLine;
+                    }
+                    else
+                    {
+                        errorMessage += $"✅ OK: DatabaseProvider was found: '{dbProvider}'" + Environment.NewLine;
+                    }
+
+                    // Report on ConnectionString
+                    if (string.IsNullOrEmpty(connectionString))
+                    {
+                        errorMessage += "❌ Error: 'ConnectionStrings:DefaultConnection' is NULL or EMPTY." + Environment.NewLine;
+                    }
+                    else
+                    {
+                        errorMessage += "✅ OK: ConnectionString was found (value is hidden for security)." + Environment.NewLine;
+                    }
+                    var allConfig = configuration.AsEnumerable().ToDictionary(x => x.Key, x => x.Value);
+                    var allConfigString = string.Join(Environment.NewLine, allConfig.Select(kv => $"  - Key: '{kv.Key}', Value: '{kv.Value}'"));
+
+                    errorMessage += "------------------- FULL CONFIGURATION DUMP -------------------" + Environment.NewLine;
+                    errorMessage += allConfigString + Environment.NewLine;
+                    errorMessage += "-------------------------------------------------------------" + Environment.NewLine;
+
+                    // Throw the new, super-detailed exception.
+                    throw new InvalidOperationException(errorMessage);
+                }
             }
 
 
@@ -132,46 +175,8 @@ namespace Infrastructure.Data
             options.AbortOnConnectFail = false; // Make it resilient
             services.AddSingleton<IConnectionMultiplexer>(ConnectionMultiplexer.Connect(options));
 
-            var allConfig = configuration.AsEnumerable().ToDictionary(x => x.Key, x => x.Value);
-            var allConfigString = string.Join(Environment.NewLine, allConfig.Select(kv => $"  - Key: '{kv.Key}', Value: '{kv.Value}'"));
+          
 
-
-            // 3. THROW A DETAILED EXCEPTION IF ANYTHING IS WRONG
-            // This is our new, intelligent error reporting.
-            if (string.IsNullOrEmpty(dbProvider) || string.IsNullOrEmpty(connectionString))
-            {
-                var errorMessage = "FATAL: Critical configuration is missing." + Environment.NewLine;
-                errorMessage += "------------------- DIAGNOSTIC REPORT -------------------" + Environment.NewLine;
-
-                // Report on dbProvider
-                if (string.IsNullOrEmpty(dbProvider))
-                {
-                    errorMessage += "❌ Error: 'DatabaseSettings:DatabaseProvider' is NULL or EMPTY." + Environment.NewLine;
-                    errorMessage += $"   - Raw value from GetValue: '{configuration.GetValue<string>("DatabaseSettings:DatabaseProvider")}'" + Environment.NewLine;
-                    errorMessage += $"   - Path exists check: {dbProviderSection.Exists()}" + Environment.NewLine;
-                }
-                else
-                {
-                    errorMessage += $"✅ OK: DatabaseProvider was found: '{dbProvider}'" + Environment.NewLine;
-                }
-
-                // Report on ConnectionString
-                if (string.IsNullOrEmpty(connectionString))
-                {
-                    errorMessage += "❌ Error: 'ConnectionStrings:DefaultConnection' is NULL or EMPTY." + Environment.NewLine;
-                }
-                else
-                {
-                    errorMessage += "✅ OK: ConnectionString was found (value is hidden for security)." + Environment.NewLine;
-                }
-
-                errorMessage += "------------------- FULL CONFIGURATION DUMP -------------------" + Environment.NewLine;
-                errorMessage += allConfigString + Environment.NewLine;
-                errorMessage += "-------------------------------------------------------------" + Environment.NewLine;
-
-                // Throw the new, super-detailed exception.
-                throw new InvalidOperationException(errorMessage);
-            }
             // ========================= END OF DIAGNOSTIC BLOCK =========================
 
 

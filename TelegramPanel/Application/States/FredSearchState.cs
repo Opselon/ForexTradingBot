@@ -68,8 +68,12 @@ namespace TelegramPanel.Application.States
                 }
                 return Name;
             }
-
-            // FIX: Use the 'chatId' variable declared at the top of the method.
+            // ADD THIS BLOCK TO FIX ALL CS8629 WARNINGS
+            if (!chatId.HasValue)
+            {
+                _logger.LogError("FredSearchState: Could not determine ChatID from the update. Aborting.");
+                return null; // Exit state
+            }
             var message = update.Message;
             var userId = message.From!.Id;
             var searchText = message.Text.Trim();

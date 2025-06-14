@@ -198,8 +198,13 @@ namespace BackgroundTasks.Services
                     _logger.LogError("Job aborted: Cache key not found. It may have expired or was never set.");
                     return; // Gracefully stop the job.
                 }
+                if (!serializedUserIds.HasValue || serializedUserIds.IsNullOrEmpty)
+                {
+                    _logger.LogError("Job aborted: Cache key not found or empty. It may have expired or was never set.");
+                    return; // Gracefully stop the job.
+                }
 
-                List<long>? allUserIds = JsonSerializer.Deserialize<List<long>>(serializedUserIds);
+                List<long>? allUserIds = JsonSerializer.Deserialize<List<long>>(serializedUserIds.ToString());
                 if (allUserIds == null || userIndex >= allUserIds.Count)
                 {
                     _logger.LogError("Job aborted: User index is out of bounds for the cached list (Size: {ListSize}).", allUserIds?.Count ?? 0);
@@ -277,23 +282,6 @@ namespace BackgroundTasks.Services
         }
 
         #region Private Helpers
-
-        private async Task<long> GetUserIdFromCacheAsync(string cacheKey, int index)
-        {
-            RedisValue serializedUserIds = await _redisDb.StringGetAsync(cacheKey);
-            if (!serializedUserIds.HasValue)
-            {
-                _logger.LogError("Cache key {CacheKey} not found.", cacheKey);
-                return -1;
-            }
-            List<long>? allUserIds = JsonSerializer.Deserialize<List<long>>(serializedUserIds);
-            if (allUserIds == null || index >= allUserIds.Count)
-            {
-                _logger.LogError("User index {Index} is out of bounds for cache key {CacheKey}.", index, cacheKey);
-                return -1;
-            }
-            return allUserIds[index];
-        }
 
         private InlineKeyboardMarkup? BuildTelegramKeyboard(List<NotificationButton>? buttons)
         {

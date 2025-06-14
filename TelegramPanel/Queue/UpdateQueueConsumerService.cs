@@ -20,7 +20,7 @@ namespace TelegramPanel.Queue
         private readonly ITelegramUpdateChannel _updateChannel;
         private readonly IServiceScopeFactory _scopeFactory;
         private readonly AsyncRetryPolicy _processingRetryPolicy;
-
+        private readonly TimeSpan _redisBreakDuration = TimeSpan.FromMinutes(1); // ✅ NEW: Centralized duration field
         // ✅✅ NEW: A resilience policy to protect against a failing Redis connection ✅✅
         private readonly AsyncCircuitBreakerPolicy _redisCircuitBreaker;
         #endregion
@@ -62,6 +62,18 @@ namespace TelegramPanel.Queue
                         _logger.LogWarning(exception, "PollyRetry: Processing update {UpdateId} failed. Retrying in {TimeSpan} (attempt {RetryAttempt}).",
                             updateId, timeSpan, retryAttempt);
                     });
+            _redisCircuitBreaker = Policy
+               .Handle<RedisException>() // It triggers on any Redis-specific exception.
+               .CircuitBreakerAsync(
+                   exceptionsAllowedBeforeBreaking: 3,
+                   durationOfBreak: _redisBreakDuration, // ✅ MODIFIED: Use the field here
+                   onBreak: (exception, timespan) =>
+                   {
+                       _logger.LogCritical(exception, "Redis Circuit Breaker OPENED for {BreakDuration}. Halting all queue consumption.", timespan);
+                   },
+                   onReset: () => _logger.LogInformation("Redis Circuit Breaker RESET. Resuming normal queue consumption."),
+                   onHalfOpen: () => _logger.LogWarning("Redis Circuit Breaker is now HALF-OPEN. The next read will test the connection.")
+               );
         }
         #endregion
 
@@ -98,9 +110,10 @@ namespace TelegramPanel.Queue
                 {
                     // This is the expected, "graceful failure" state when Redis is down.
                     // The circuit is open. We log a warning and the while loop will pause.
-                    _logger.LogWarning("Skipping consumption cycle because the Redis circuit is open. Will try again after the break duration ({BreakDuration}).");
+                    // ✅ MODIFIED: Update the log message to use the field, fixing the warning.
+                    _logger.LogWarning("Skipping consumption cycle because the Redis circuit is open. Will try again after the break duration ({BreakDuration}).", _redisBreakDuration);
                     // Wait for the duration of the break before trying again to avoid spamming logs.
-           
+
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
@@ -116,8 +129,6 @@ namespace TelegramPanel.Queue
                     await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken);
                 }
             }
-
-            _logger.LogInformation("Update Queue Consumer Service has stopped.");
         }
         #endregion
 
@@ -152,7 +163,7 @@ namespace TelegramPanel.Queue
         }
         #endregion
 
-        #region Service Lifecycle
+            #region Service Lifecycle
         public override async Task StopAsync(CancellationToken cancellationToken)
         {
             _logger.LogInformation("Update Queue Consumer Service stop requested.");

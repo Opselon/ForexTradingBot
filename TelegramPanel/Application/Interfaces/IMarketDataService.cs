@@ -35,7 +35,7 @@ namespace TelegramPanel.Application.Interfaces
         /// <summary>
         /// The symbol for which the data was fetched (e.g., "EURUSD", "XAUUSD").
         /// </summary>
-        public string Symbol { get; set; }
+        public required string Symbol { get; set; }
 
         /// <summary>
         /// User-friendly name of the currency or asset (e.g., "Euro/US Dollar", "Gold (XAU/USD)").

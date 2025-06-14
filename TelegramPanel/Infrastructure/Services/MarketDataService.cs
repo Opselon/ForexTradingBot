@@ -35,6 +35,7 @@ namespace TelegramPanel.Infrastructure.Services
             IOptions<CurrencyInfoSettings> currencySettingsOptions, // Keep this for currency specific info
             IOptions<MarketDataSettings> marketDataSettingsOptions) // Inject IOptions<MarketDataSettings>
         {
+            _marketDataSettings = marketDataSettingsOptions.Value ?? new MarketDataSettings();
             _logger = logger;
             _httpClientFactory = httpClientFactory;
             _currencySettings = currencySettingsOptions.Value ?? new CurrencyInfoSettings { Currencies = new Dictionary<string, CurrencyDetails>(StringComparer.OrdinalIgnoreCase) };
@@ -542,7 +543,7 @@ namespace TelegramPanel.Infrastructure.Services
             public decimal Amount { get; set; }
             public string Base { get; set; }
             public DateTime Date { get; set; }
-            public Dictionary<string, decimal> Rates { get; set; }
+            public Dictionary<string, decimal> Rates { get; set; } = new();
         }
 
         public class MarketDataException : Exception

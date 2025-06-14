@@ -173,7 +173,7 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
       }
   );
 
-            return (text, keyboard);
+            return (text, keyboard!);
         }
         #endregion
 

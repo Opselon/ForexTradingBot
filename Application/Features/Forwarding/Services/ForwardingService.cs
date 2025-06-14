@@ -529,7 +529,7 @@ namespace Application.Features.Forwarding.Services
             string cacheKey = $"Rules_SourceChannel_{sourceChannelIdForMatching}";
 
             // This part already calls GetRulesBySourceChannelAsync, which now uses Polly
-            if (!_memoryCache.TryGetValue(cacheKey, out IEnumerable<ForwardingRule> rules))
+            if (!_memoryCache.TryGetValue(cacheKey, out IEnumerable<ForwardingRule>? rules))
             {
                 rules = await GetRulesBySourceChannelAsync(sourceChannelIdForMatching, cancellationToken); // This call is now protected by Polly
                 _ = _memoryCache.Set(cacheKey, rules, new MemoryCacheEntryOptions()
@@ -543,7 +543,7 @@ namespace Application.Features.Forwarding.Services
             }
 
 
-            List<ForwardingRule> activeRules = rules.Where(r => r.IsEnabled).ToList();
+            List<ForwardingRule> activeRules = (rules ?? Enumerable.Empty<ForwardingRule>()).Where(r => r.IsEnabled).ToList();
 
             if (!activeRules.Any())
             {

@@ -220,8 +220,9 @@ namespace Application.Services
                     _logger.LogWarning("Could not retrieve status or invoice not found for CryptoPay InvoiceID {InvoiceId}. Errors: {Errors}",
                         invoiceId, string.Join(", ", result.Errors ?? ["No specific errors reported by API client."]));
 
-                    // Return a failure result with errors from the API client or a default message.
-                    return Result<CryptoPayInvoiceDto>.Failure(result.Errors.Any() ? result.Errors : ["Invoice not found or failed to retrieve status."]);
+                    // FIX (CS8604): Add a null check before calling .Any() to prevent a NullReferenceException.
+                    // This ensures that if Errors is null, we fall back to the default message.
+                    return Result<CryptoPayInvoiceDto>.Failure(result.Errors != null && result.Errors.Any() ? result.Errors : ["Invoice not found or failed to retrieve status."]);
                 }
             }
             catch (OperationCanceledException ex) when (cancellationToken.IsCancellationRequested)

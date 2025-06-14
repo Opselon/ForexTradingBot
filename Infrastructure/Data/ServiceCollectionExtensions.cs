@@ -18,6 +18,7 @@ using Infrastructure.Services.Fmp;
 using Microsoft.EntityFrameworkCore;      // Entity Framework Core
 using Microsoft.Extensions.Configuration; // برای خواندن تنظیمات از فایل پیکربندی
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Polly;
 using Polly.Extensions.Http;
 using StackExchange.Redis; // برای افزودن سرویس‌ها به کانتینر DI
@@ -202,18 +203,27 @@ namespace Infrastructure.Data
             // IHttpClientFactory به مدیریت بهینه نمونه‌های HttpClient کمک می‌کند (مثل مدیریت Pool و Lifetime).
             _ = services.AddHttpClient<ICryptoPayApiClient, CryptoPayApiClient>(); // برای ارتباط با CryptoPay API
             _ = services.AddScoped<IRssFetchingCoordinatorService, RssFetchingCoordinatorService>(); // هماهنگ کننده برای خواندن RSS
+                                                                                                     // This line reads the "RssReaderService" section from your appsettings.json
+            services.Configure<RssReaderServiceSettings>(
+                configuration.GetSection(RssReaderServiceSettings.ConfigurationSectionName)
+            );
 
             // رجیستر کردن یک HttpClient نام‌گذاری شده برای سرویس <see cref="RssReaderService"/>.
             // این رویکرد امکان پیکربندی خاص برای HttpClient‌های مختلف را فراهم می‌کند.
-            _ = services.AddHttpClient(RssReaderService.HttpClientNamedClient, client =>
+            services.AddHttpClient(RssReaderService.HttpClientNamedClient, (serviceProvider, client) =>
             {
-                client.DefaultRequestHeaders.UserAgent.ParseAdd(RssReaderService.DefaultUserAgent); // تنظیم User-Agent پیش‌فرض برای درخواست‌ها
-                client.Timeout = TimeSpan.FromSeconds(RssReaderService.DefaultHttpClientTimeoutSeconds); // تنظیم مهلت زمانی (timeout) برای درخواست‌های HTTP
-            })
-                // می‌توانید Handlerهای بیشتری برای Polly (مثلاً سیاست‌های تلاش مجدد یا قطع مدار) یا موارد دیگر در اینجا اضافه کنید.
-                // .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = true, AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate })
-                // .AddPolicyHandler(GetRetryPolicy()); //  مثال: افزودن سیاست تلاش مجدد با Polly
-                ;
+                // Get the strongly-typed settings from the DI container.
+                var settings = serviceProvider.GetRequiredService<IOptions<RssReaderServiceSettings>>().Value;
+
+                // Set the User-Agent from the centralized settings class.
+                client.DefaultRequestHeaders.UserAgent.ParseAdd(settings.UserAgent);
+
+                // Timeout is handled per-request inside RssReaderService, so we do not set it here.
+            });
+            // می‌توانید Handlerهای بیشتری برای Polly (مثلاً سیاست‌های تلاش مجدد یا قطع مدار) یا موارد دیگر در اینجا اضافه کنید.
+            // .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = true, AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate })
+            // .AddPolicyHandler(GetRetryPolicy()); //  مثال: افزودن سیاست تلاش مجدد با Polly
+            ;
 
 
             // Register the CoinGecko API client with the retry policy

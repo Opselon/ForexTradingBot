@@ -847,7 +847,7 @@ namespace Application.Features.Forwarding.Services
                             continue;
                         }
 
-                        string originalSegment = GetSubstringSafe(initialText, entity.Offset, entity.Length);
+                        string originalSegment = GetSubstringSafe(initialText ?? string.Empty, entity.Offset, entity.Length);
                         if (!string.IsNullOrEmpty(originalSegment))
                         {
                             // Find the segment in the *new* currentText

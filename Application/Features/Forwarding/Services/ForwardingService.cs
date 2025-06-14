@@ -108,7 +108,7 @@ namespace Application.Features.Forwarding.Services
             try
             {
                 // Fetch the rule from the repository. Potential database interaction.
-                var rule = await _ruleRepository.GetByIdAsync(ruleName, cancellationToken);
+                ForwardingRule? rule = await _ruleRepository.GetByIdAsync(ruleName, cancellationToken);
 
                 // Handle case where rule is not found (normal outcome).
                 if (rule == null)
@@ -158,7 +158,7 @@ namespace Application.Features.Forwarding.Services
             try
             {
                 // Fetch all rules from the repository. Potential database interaction.
-                var rules = await _ruleRepository.GetAllAsync(cancellationToken);
+                IEnumerable<ForwardingRule>? rules = await _ruleRepository.GetAllAsync(cancellationToken);
 
                 // The repository should return an empty collection or null if no rules exist.
                 // Returning the result directly is usually fine.
@@ -215,11 +215,11 @@ namespace Application.Features.Forwarding.Services
             {
                 // Execute the repository call within the Polly retry policy.
                 // This handles transient database errors and retries.
-                var rules = await _ruleRetrievalRetryPolicy.ExecuteAsync(async () =>
+                IEnumerable<ForwardingRule>? rules = await _ruleRetrievalRetryPolicy.ExecuteAsync(async () =>
                 {
                     // This lambda is the actual work being retried by Polly.
                     _logger.LogTrace("Polly Execute: Retrieving rules for source channel {SourceChannelId}.", sourceChannelId);
-                    var repoRules = await _ruleRepository.GetBySourceChannelAsync(sourceChannelId, cancellationToken);
+                    IEnumerable<ForwardingRule> repoRules = await _ruleRepository.GetBySourceChannelAsync(sourceChannelId, cancellationToken);
                     _logger.LogTrace("Polly Execute: Successfully retrieved {RuleCount} rules from repository for source channel {SourceChannelId}.", repoRules.Count(), sourceChannelId);
                     return repoRules;
                 }).ConfigureAwait(false); // Use ConfigureAwait(false) if not strictly needing context
@@ -292,7 +292,7 @@ namespace Application.Features.Forwarding.Services
             try
             {
                 // Business validation: Check if a rule with this name already exists. Potential database interaction.
-                var existingRule = await _ruleRepository.GetByIdAsync(rule.RuleName, cancellationToken);
+                ForwardingRule? existingRule = await _ruleRepository.GetByIdAsync(rule.RuleName, cancellationToken);
                 if (existingRule != null)
                 {
                     _logger.LogWarning("Rule creation failed: A rule with name '{RuleName}' already exists.", rule.RuleName);
@@ -377,7 +377,7 @@ namespace Application.Features.Forwarding.Services
             try
             {
                 // Retrieve the existing rule to ensure it exists. Potential database interaction.
-                var existingRule = await _ruleRepository.GetByIdAsync(rule.RuleName, cancellationToken);
+                ForwardingRule? existingRule = await _ruleRepository.GetByIdAsync(rule.RuleName, cancellationToken);
                 if (existingRule == null)
                 {
                     _logger.LogWarning("Update failed: Rule with name '{RuleName}' not found.", rule.RuleName);
@@ -458,7 +458,7 @@ namespace Application.Features.Forwarding.Services
             try
             {
                 // Retrieve the existing rule to ensure it exists before attempting deletion. Potential database interaction.
-                var existingRule = await _ruleRepository.GetByIdAsync(ruleName, cancellationToken);
+                ForwardingRule? existingRule = await _ruleRepository.GetByIdAsync(ruleName, cancellationToken);
                 if (existingRule == null)
                 {
                     _logger.LogWarning("Deletion failed: Rule with name '{RuleName}' not found.", ruleName);
@@ -543,7 +543,7 @@ namespace Application.Features.Forwarding.Services
             }
 
 
-            var activeRules = rules.Where(r => r.IsEnabled).ToList();
+            List<ForwardingRule> activeRules = rules.Where(r => r.IsEnabled).ToList();
 
             if (!activeRules.Any())
             {
@@ -551,7 +551,7 @@ namespace Application.Features.Forwarding.Services
                 return;
             }
 
-            foreach (var rule in activeRules)
+            foreach (ForwardingRule? rule in activeRules)
             {
                 try
                 {

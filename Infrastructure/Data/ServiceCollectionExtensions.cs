@@ -6,7 +6,6 @@ using Application.Features.Crypto.Services.CoinGecko;
 using Application.Interfaces;             // اینترفیس‌های سرویس‌های کاربردی (لایه Application)
 using Application.Services;               // پیاده‌سازی سرویس‌ها (لایه Application)
 using Hangfire;                           // برای مدیریت وظایف پس‌زمینه
-using Hangfire.MemoryStorage;
 using Hangfire.PostgreSql;
 using Infrastructure.Caching;
 using Infrastructure.ExternalServices;    // سرویس‌های خارجی (لایه Infrastructure)
@@ -39,21 +38,22 @@ namespace Infrastructure.Data
         /// <returns>همان <see cref="IServiceCollection"/>، برای امکان زنجیره‌ای کردن متدها.</returns>
         public static IServiceCollection AddInfrastructureServices(
             this IServiceCollection services,
-            IConfiguration configuration , bool isSmokeTest)
+            IConfiguration configuration, bool isSmokeTest)
         {
-
+
+
             if (isSmokeTest)
             {
                 // --- SMOKE TEST: Use In-Memory Providers ---
-                services.AddDbContext<AppDbContext>(options =>
+                _ = services.AddDbContext<AppDbContext>(options =>
                     options.UseInMemoryDatabase("SmokeTestDatabase"));
             }
             else
             {
 
-                var dbProviderSection = configuration.GetSection("DatabaseSettings");
-                var dbProvider = configuration.GetValue<string>("DatabaseSettings:DatabaseProvider");
-                var connectionString = configuration.GetConnectionString("DefaultConnection");
+                IConfigurationSection dbProviderSection = configuration.GetSection("DatabaseSettings");
+                string? dbProvider = configuration.GetValue<string>("DatabaseSettings:DatabaseProvider");
+                string? connectionString = configuration.GetConnectionString("DefaultConnection");
 
                 // ✅ THE DIAGNOSTIC CHECK IS NOW INSIDE THE 'ELSE' BLOCK
                 if (string.IsNullOrEmpty(dbProvider) || string.IsNullOrEmpty(connectionString))
@@ -81,28 +81,28 @@ namespace Infrastructure.Data
                                     maxRetryDelay: TimeSpan.FromSeconds(30),
                                     errorNumbersToAdd: null);
                             }));
-                        services.AddHangfire(config => config
+                        _ = services.AddHangfire(config => config
                             .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
                             .UseSimpleAssemblyNameTypeSerializer()
                             .UseRecommendedSerializerSettings()
                             .UseSqlServerStorage(connectionString));
                         break;
-                      
+
                     case "postgres":
-                        services.AddDbContext<AppDbContext>(opts =>
+                        _ = services.AddDbContext<AppDbContext>(opts =>
             opts.UseNpgsql(configuration.GetConnectionString("PostgresConnection"), npgsql =>
             {
-                npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName);
+                _ = npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName);
             }));
 
                         // Also update Hangfire if you use it with Postgres
-                        services.AddHangfire(config => config
+                        _ = services.AddHangfire(config => config
                             .UsePostgreSqlStorage(options => options.UseNpgsqlConnection(configuration.GetConnectionString("PostgresConnection"))));
                         break;
 
                     default:
                         // Now, even this error will be more informative.
-                        var detailedUnsupportedError = $"Unsupported DatabaseProvider: '{dbProvider}'. Please check your configuration. " +
+                        string detailedUnsupportedError = $"Unsupported DatabaseProvider: '{dbProvider}'. Please check your configuration. " +
                                                      $"Available keys in 'DatabaseSettings': {string.Join(", ", dbProviderSection.GetChildren().Select(c => c.Key))}";
                         throw new NotSupportedException(detailedUnsupportedError);
                 }
@@ -111,7 +111,7 @@ namespace Infrastructure.Data
                 // This is our new, intelligent error reporting.
                 if (string.IsNullOrEmpty(dbProvider) || string.IsNullOrEmpty(connectionString))
                 {
-                    var errorMessage = "FATAL: Critical configuration is missing." + Environment.NewLine;
+                    string errorMessage = "FATAL: Critical configuration is missing." + Environment.NewLine;
                     errorMessage += "------------------- DIAGNOSTIC REPORT -------------------" + Environment.NewLine;
 
                     // Report on dbProvider
@@ -135,8 +135,8 @@ namespace Infrastructure.Data
                     {
                         errorMessage += "✅ OK: ConnectionString was found (value is hidden for security)." + Environment.NewLine;
                     }
-                    var allConfig = configuration.AsEnumerable().ToDictionary(x => x.Key, x => x.Value);
-                    var allConfigString = string.Join(Environment.NewLine, allConfig.Select(kv => $"  - Key: '{kv.Key}', Value: '{kv.Value}'"));
+                    Dictionary<string, string?> allConfig = configuration.AsEnumerable().ToDictionary(x => x.Key, x => x.Value);
+                    string allConfigString = string.Join(Environment.NewLine, allConfig.Select(kv => $"  - Key: '{kv.Key}', Value: '{kv.Value}'"));
 
                     errorMessage += "------------------- FULL CONFIGURATION DUMP -------------------" + Environment.NewLine;
                     errorMessage += allConfigString + Environment.NewLine;
@@ -152,7 +152,7 @@ namespace Infrastructure.Data
             _ = services.AddMemoryCache();
             _ = services.AddSingleton(typeof(IMemoryCacheService<>), typeof(MemoryCacheService<>));
 
-            var retryPolicy = HttpPolicyExtensions
+            Polly.Retry.AsyncRetryPolicy<HttpResponseMessage> retryPolicy = HttpPolicyExtensions
                .HandleTransientHttpError() // Handles HttpRequestException, 5xx, and 408
                .OrResult(msg => msg.StatusCode == System.Net.HttpStatusCode.TooManyRequests) // Also handle 429
                .WaitAndRetryAsync(3, retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)), // Exponential backoff: 2, 4, 8 seconds
@@ -165,23 +165,23 @@ namespace Infrastructure.Data
 
 
             // 2. Read the connection string
-         
-            var redisConnectionString = configuration.GetConnectionString("Redis");
+
+            string? redisConnectionString = configuration.GetConnectionString("Redis");
             if (string.IsNullOrEmpty(redisConnectionString))
             {
                 throw new InvalidOperationException("FATAL: Redis connection string is missing or empty.");
             }
-            var options = ConfigurationOptions.Parse(redisConnectionString);
+            ConfigurationOptions options = ConfigurationOptions.Parse(redisConnectionString);
             options.AbortOnConnectFail = false; // Make it resilient
-            services.AddSingleton<IConnectionMultiplexer>(ConnectionMultiplexer.Connect(options));
+            _ = services.AddSingleton<IConnectionMultiplexer>(ConnectionMultiplexer.Connect(options));
 
-          
+
 
             // ========================= END OF DIAGNOSTIC BLOCK =========================
 
 
             // The rest of your code remains UNCHANGED as it is correct.
-          
+
 
             // 4. رجیستر <see cref="IAppDbContext"/> به عنوان یک سرویس Scoped
             // این امکان را فراهم می‌کند که <see cref="AppDbContext"/> از طریق اینترفیس در لایه Application تزریق شود،
@@ -191,7 +191,7 @@ namespace Infrastructure.Data
 
             // افزودن سرویس‌های Hangfire برای مدیریت و پردازش وظایف پس‌زمینه.
             // Hangfire به برنامه اجازه می‌دهد تا وظایف را خارج از چرخه درخواست اصلی انجام دهد (مثلاً ارسال ایمیل، پردازش فایل).
-         
+
 
             // افزودن سرور پردازش Hangfire به عنوان یک سرویس میزبانی شده (IHostedService).
             // این سرور مسئول اجرای وظایف زمان‌بندی شده Hangfire است.

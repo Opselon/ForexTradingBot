@@ -816,14 +816,16 @@ namespace Infrastructure.Repositories
 
         /// <inheritdoc />
         public async Task<IEnumerable<User>> GetUsersWithNotificationSettingAsync(
-            Expression<Func<User, bool>> notificationPredicate,
-            CancellationToken cancellationToken = default)
+    Expression<Func<User, bool>> notificationPredicate,
+    CancellationToken cancellationToken = default)
         {
             _logger.LogError("UserRepository: GetUsersWithNotificationSettingAsync with Expression<Func<User, bool>> is NOT SUPPORTED by Dapper directly. " +
                              "This method will throw a NotSupportedException.");
-            throw new NotSupportedException("Arbitrary LINQ Expression predicates are not supported by this Dapper repository for notification settings. " +
-                                            "Please replace calls to this method with specific SQL queries or dedicated methods like GetUsersForNewsNotificationAsync, " +
-                                            "or pass raw SQL conditions from the calling layer.");
+            return await Task.FromException<IEnumerable<User>>(
+                new NotSupportedException("Arbitrary LINQ Expression predicates are not supported by this Dapper repository for notification settings. " +
+                                           "Please replace calls to this method with specific SQL queries or dedicated methods like GetUsersForNewsNotificationAsync, " +
+                                           "or pass raw SQL conditions from the calling layer.")
+            );
         }
 
         // --- Private Helper Method for Deletion (to encapsulate transaction and retry logic) ---

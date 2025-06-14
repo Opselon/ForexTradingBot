@@ -47,7 +47,11 @@ namespace Application.Services
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _rateLimiter = rateLimiter ?? throw new ArgumentNullException(nameof(rateLimiter));
 
-            if (redisConnection == null) throw new ArgumentNullException(nameof(redisConnection));
+            if (redisConnection == null)
+            {
+                throw new ArgumentNullException(nameof(redisConnection));
+            }
+
             _redisDb = redisConnection.GetDatabase();
 
             // ✅✅ NEW: Initialize the Circuit Breaker policy ✅✅
@@ -76,12 +80,9 @@ namespace Application.Services
         // In NotificationDispatchService.cs implementation:
         public Task DispatchBatchNewsNotificationAsync(List<Guid> newsItemIds, CancellationToken cancellationToken = default)
         {
-            if (newsItemIds == null || !newsItemIds.Any())
-            {
-                return Task.CompletedTask;
-            }
-
-            return Task.Run(async () =>
+            return newsItemIds == null || !newsItemIds.Any()
+                ? Task.CompletedTask
+                : Task.Run(async () =>
             {
                 try
                 {
@@ -89,13 +90,16 @@ namespace Application.Services
 
                     // Fetch all eligible users ONCE. We assume they are all for the same category/Vip status.
                     // If not, you need to group newsItemIds by category first.
-                    var firstNewsItem = await _newsItemRepository.GetByIdAsync(newsItemIds.First(), cancellationToken);
-                    if (firstNewsItem == null) return; // Cannot determine target users
+                    NewsItem? firstNewsItem = await _newsItemRepository.GetByIdAsync(newsItemIds.First(), cancellationToken);
+                    if (firstNewsItem == null)
+                    {
+                        return; // Cannot determine target users
+                    }
 
                     IEnumerable<User> targetUsers = await _userRepository.GetUsersForNewsNotificationAsync(
                         firstNewsItem.AssociatedSignalCategoryId, firstNewsItem.IsVipOnly, cancellationToken);
 
-                    var validTelegramIds = targetUsers.Select(u => long.TryParse(u.TelegramId, out var id) ? (long?)id : null)
+                    List<long> validTelegramIds = targetUsers.Select(u => long.TryParse(u.TelegramId, out long id) ? (long?)id : null)
                         .Where(id => id.HasValue).Select(id => id.Value).ToList();
 
                     if (!validTelegramIds.Any())
@@ -105,7 +109,7 @@ namespace Application.Services
                     }
 
                     // Create ONE job per user.
-                    foreach (var userId in validTelegramIds)
+                    foreach (long userId in validTelegramIds)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
 
@@ -118,7 +122,7 @@ namespace Application.Services
                         }
 
                         // Enqueue a job with the LIST of news item IDs.
-                        _jobScheduler.Enqueue<INotificationSendingService>(
+                        _ = _jobScheduler.Enqueue<INotificationSendingService>(
                             service => service.ProcessBatchNotificationForUserAsync(userId, newsItemIds));
                     }
                     _logger.LogInformation("Completed enqueuing batch jobs for {UserCount} users.", validTelegramIds.Count);
@@ -146,7 +150,7 @@ namespace Application.Services
         /// </summary>
         public Task DispatchNewsNotificationAsync(Guid newsItemId, CancellationToken cancellationToken = default)
         {
-            var delayBetweenJobs = TimeSpan.FromMilliseconds(40);
+            TimeSpan delayBetweenJobs = TimeSpan.FromMilliseconds(40);
 
             return Task.Run(async () =>
             {
@@ -170,8 +174,8 @@ namespace Application.Services
                     IEnumerable<User> targetUsers = await _userRepository.GetUsersForNewsNotificationAsync(
                         newsItem.AssociatedSignalCategoryId, newsItem.IsVipOnly, cancellationToken);
 
-                    var validTelegramIds = targetUsers
-                        .Select(u => long.TryParse(u.TelegramId, out var id) ? (long?)id : null)
+                    List<long> validTelegramIds = targetUsers
+                        .Select(u => long.TryParse(u.TelegramId, out long id) ? (long?)id : null)
                         .Where(id => id.HasValue).Select(id => id.Value).ToList();
 
                     if (!validTelegramIds.Any())
@@ -181,11 +185,11 @@ namespace Application.Services
                     }
 
                     // ✅✅ NEW: Execute the Redis operation within the Circuit Breaker policy ✅✅
-                    var userListCacheKey = $"dispatch:users:{newsItemId}";
+                    string userListCacheKey = $"dispatch:users:{newsItemId}";
                     await _redisCircuitBreaker.ExecuteAsync(async () =>
                     {
-                        var serializedUserIds = JsonSerializer.Serialize(validTelegramIds);
-                        await _redisDb.StringSetAsync(userListCacheKey, serializedUserIds, TimeSpan.FromHours(24));
+                        string serializedUserIds = JsonSerializer.Serialize(validTelegramIds);
+                        _ = await _redisDb.StringSetAsync(userListCacheKey, serializedUserIds, TimeSpan.FromHours(24));
                     });
 
                     _logger.LogInformation("Cached {Count} user IDs to Redis key: {Key}", validTelegramIds.Count, userListCacheKey);
@@ -203,7 +207,7 @@ namespace Application.Services
                             continue;
                         }
 
-                        _jobScheduler.Enqueue<INotificationSendingService>(
+                        _ = _jobScheduler.Enqueue<INotificationSendingService>(
                             service => service.ProcessNotificationFromCacheAsync(newsItemId, userListCacheKey, i));
                         enqueuedCount++;
 
@@ -245,7 +249,7 @@ namespace Application.Services
                 throw new ArgumentNullException(nameof(newsItem));
             }
 
-            var messageTextBuilder = new StringBuilder();
+            StringBuilder messageTextBuilder = new();
 
             string title = EscapeTextForTelegramMarkup(newsItem.Title?.Trim() ?? "Untitled News");
             string sourceName = EscapeTextForTelegramMarkup(newsItem.SourceName?.Trim() ?? "Unknown Source");
@@ -286,7 +290,7 @@ namespace Application.Services
                 throw new ArgumentNullException(nameof(newsItem));
             }
 
-            var buttons = new List<NotificationButton>();
+            List<NotificationButton> buttons = new();
             if (!string.IsNullOrWhiteSpace(newsItem.Link) && Uri.TryCreate(newsItem.Link, UriKind.Absolute, out _))
             {
                 buttons.Add(new NotificationButton { Text = "Read More", CallbackDataOrUrl = newsItem.Link, IsUrl = true });
@@ -299,7 +303,7 @@ namespace Application.Services
         /// </summary>
         private string? TruncateWithEllipsis(string? text, int maxLength)
         {
-            return string.IsNullOrWhiteSpace(text) ? text : text.Length <= maxLength ? text : text.Substring(0, maxLength - 3) + "...";
+            return string.IsNullOrWhiteSpace(text) ? text : text.Length <= maxLength ? text : text[..(maxLength - 3)] + "...";
         }
 
         /// <summary>
@@ -314,7 +318,7 @@ namespace Application.Services
                 return string.Empty;
             }
 
-            var sb = new StringBuilder(text.Length + 10);
+            StringBuilder sb = new(text.Length + 10);
             foreach (char c in text)
             {
                 switch (c)

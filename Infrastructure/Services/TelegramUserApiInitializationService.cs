@@ -95,7 +95,8 @@ namespace Infrastructure.Services
                 // THIS IS THE CRITICAL LOGIC
                 catch (RpcException rpcEx)
                 {
-                
+                    _logger.LogError(rpcEx, "An RPC exception occurred while attempting to connect and login to Telegram User API. Code: {Code}, Message: {Message}", rpcEx.Code, rpcEx.Message);
+                    throw; // Re-throw the exception to allow Polly to handle it.  
                 }
                 // Any other exception (SocketException, another RpcException, etc.) will NOT be caught here.
                 // It will be caught by Polly's .Handle<Exception> clause, which will trigger a retry.

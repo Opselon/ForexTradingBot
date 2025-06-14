@@ -67,7 +67,7 @@ namespace Application.Services
             try
             {
                 // Fetch the user to ensure they exist and get details for description. Potential database interaction.
-                var user = await _userRepository.GetByIdAsync(userId, cancellationToken);
+                User? user = await _userRepository.GetByIdAsync(userId, cancellationToken);
                 if (user == null)
                 {
                     _logger.LogWarning("User not found for UserID: {UserId} during invoice creation.", userId);
@@ -90,7 +90,7 @@ namespace Application.Services
                 string internalOrderId = $"SUB-{planId}-{userId}-{DateTime.UtcNow.Ticks}"; // Unique internal order ID
 
                 // Prepare the invoice creation request payload. Potential serialization error point.
-                var invoiceRequest = new CreateCryptoPayInvoiceRequestDto
+                CreateCryptoPayInvoiceRequestDto invoiceRequest = new()
                 {
                     Asset = selectedCryptoAsset,
                     Amount = planPrice.ToString("F2"), // Format to 2 decimal places
@@ -102,7 +102,7 @@ namespace Application.Services
                 };
 
                 // Call the CryptoPay API to create the invoice. **CRITICAL point of failure (Network/API).**
-                var invoiceResult = await _cryptoPayApiClient.CreateInvoiceAsync(invoiceRequest, cancellationToken);
+                Result<CryptoPayInvoiceDto> invoiceResult = await _cryptoPayApiClient.CreateInvoiceAsync(invoiceRequest, cancellationToken);
 
                 // Handle the functional result from the CryptoPay API client.
                 if (invoiceResult.Succeeded && invoiceResult.Data != null)
@@ -111,7 +111,7 @@ namespace Application.Services
                         invoiceResult.Data.InvoiceId, invoiceResult.Data.BotInvoiceUrl, internalOrderId);
 
                     // Create a pending transaction record in your system.
-                    var pendingTransaction = new Transaction
+                    Transaction pendingTransaction = new()
                     {
                         Id = Guid.NewGuid(),
                         UserId = userId,
@@ -201,16 +201,16 @@ namespace Application.Services
             try
             {
                 // Prepare the request to get invoice(s) by ID.
-                var request = new GetCryptoPayInvoicesRequestDto { InvoiceIds = invoiceId.ToString() };
+                GetCryptoPayInvoicesRequestDto request = new() { InvoiceIds = invoiceId.ToString() };
 
                 // Call the CryptoPay API to get invoice information. **CRITICAL point of failure (Network/API/Parsing).**
-                var result = await _cryptoPayApiClient.GetInvoicesAsync(request, cancellationToken);
+                Result<IEnumerable<CryptoPayInvoiceDto>> result = await _cryptoPayApiClient.GetInvoicesAsync(request, cancellationToken);
 
                 // Handle the functional result from the CryptoPay API client.
                 if (result.Succeeded && result.Data != null && result.Data.Any())
                 {
                     // If successful and data found, return the first invoice (should be the one requested).
-                    var invoice = result.Data.First();
+                    CryptoPayInvoiceDto invoice = result.Data.First();
                     _logger.LogInformation("Status for CryptoPay InvoiceID {InvoiceId} is {Status}", invoiceId, invoice.Status);
                     return Result<CryptoPayInvoiceDto>.Success(invoice);
                 }

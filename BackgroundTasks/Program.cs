@@ -1,4 +1,4 @@
-﻿var builder = Host.CreateApplicationBuilder(args);
+﻿HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
 
 builder.Services.AddStrongWorker(options =>
 {
@@ -6,5 +6,5 @@ builder.Services.AddStrongWorker(options =>
     // اما فعلاً از مقادیر پیش‌فرض استفاده می‌شود که کافی است.
 });
 builder.Services.AddLogging(configure => configure.AddConsole());
-var host = builder.Build();
+IHost host = builder.Build();
 host.Run();

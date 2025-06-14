@@ -50,16 +50,16 @@ namespace Infrastructure.Features.Forwarding.Repositories
             // Initialize the Polly policy for retrying transient database errors.
             // This policy handles any DbException (like SqlException, NpgsqlException, etc.),
             _retryPolicy = Policy
-                .Handle<DbException>(ex => !(ex is DbUpdateConcurrencyException)) // Handles database errors, except concurrency errors
-                .WaitAndRetryAsync(
-                    retryCount: 3, // Maximum 3 retries
-                    sleepDurationProvider: retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)), // Exponential backoff: 2s, 4s, 8s
-                    onRetry: (exception, timeSpan, retryAttempt, context) =>
-                    {
-                        _logger.LogWarning(exception,
-                            "ForwardingRuleRepository: Transient database error encountered. Retrying in {TimeSpan} for attempt {RetryAttempt}. Error: {Message}",
-                            timeSpan, retryAttempt, exception.Message);
-                    });
+               .Handle<DbException>(ex => ex.GetType() != typeof(DbUpdateConcurrencyException)) // Handles database errors, except concurrency errors  
+               .WaitAndRetryAsync(
+                   retryCount: 3, // Maximum 3 retries  
+                   sleepDurationProvider: retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)), // Exponential backoff: 2s, 4s, 8s  
+                   onRetry: (exception, timeSpan, retryAttempt, context) =>
+                   {
+                       _logger.LogWarning(exception,
+                           "ForwardingRuleRepository: Transient database error encountered. Retrying in {TimeSpan} for attempt {RetryAttempt}. Error: {Message}",
+                           timeSpan, retryAttempt, exception.Message);
+                   });
         }
         #region Internal DTOs for Dapper Mapping
 

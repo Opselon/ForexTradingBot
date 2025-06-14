@@ -1,15 +1,10 @@
 ﻿// File: BackgroundTasks/Services/IdleNewsMonitorService.cs
 
 using Application.Interfaces;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
-using Polly.CircuitBreaker;
 using Polly;
+using Polly.CircuitBreaker;
 using StackExchange.Redis;
-using System;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace BackgroundTasks.Services
 {
@@ -60,7 +55,7 @@ namespace BackgroundTasks.Services
                     await _circuitBreakerPolicy.ExecuteAsync(async () =>
                     {
                         // ✅ REVISED LOGIC: Simple, robust queue length check.
-                        var queueLength = await _redisDb.ListLengthAsync(NewsQueueKey);
+                        long queueLength = await _redisDb.ListLengthAsync(NewsQueueKey);
                         if (queueLength > 0)
                         {
                             _logger.LogInformation("Idle Monitor found {QueueLength} items in the system news queue. Processing one.", queueLength);
@@ -91,16 +86,22 @@ namespace BackgroundTasks.Services
         private async Task ProcessNewsItemFromQueue(CancellationToken stoppingToken)
         {
             // This internal logic remains largely the same.
-            var newsJson = await _redisDb.ListRightPopAsync(NewsQueueKey);
-            if (!newsJson.HasValue) return;
+            RedisValue newsJson = await _redisDb.ListRightPopAsync(NewsQueueKey);
+            if (!newsJson.HasValue)
+            {
+                return;
+            }
 
-            var newsItem = JsonSerializer.Deserialize<SystemNewsItem>(newsJson);
-            if (newsItem == null) return;
+            SystemNewsItem? newsItem = JsonSerializer.Deserialize<SystemNewsItem>(newsJson);
+            if (newsItem == null)
+            {
+                return;
+            }
 
             _logger.LogInformation("Processing news item '{Title}' from queue.", newsItem.Title);
 
-            using var scope = _serviceProvider.CreateScope();
-            var dispatcher = scope.ServiceProvider.GetRequiredService<INotificationDispatchService>();
+            using IServiceScope scope = _serviceProvider.CreateScope();
+            INotificationDispatchService dispatcher = scope.ServiceProvider.GetRequiredService<INotificationDispatchService>();
             await dispatcher.DispatchNewsNotificationAsync(newsItem.Id, stoppingToken);
         }
     }
@@ -109,7 +110,7 @@ namespace BackgroundTasks.Services
     public class SystemNewsItem
     {
         public Guid Id { get; set; } = Guid.NewGuid();
-        public string Title { get; set; }
-        public string Message { get; set; }
+        public required string Title { get; set; }
+        public required string Message { get; set; }
     }
 }

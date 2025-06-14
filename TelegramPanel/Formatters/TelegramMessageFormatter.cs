@@ -1,10 +1,5 @@
-﻿// -----------------
-// FINAL CLEANED FILE: TelegramPanel/Formatters/TelegramMessageFormatter.cs
-// Robust MarkdownV2 Formatter
-// -----------------
-
+﻿
 using System.Text;
-using System;
 using System.Text.RegularExpressions; // For ArgumentNullException (best practice though not strictly used in these methods)
 
 namespace TelegramPanel.Formatters
@@ -22,9 +17,9 @@ namespace TelegramPanel.Formatters
         // relying on Telegram client leniency.
         private static readonly char[] LessAggressiveMarkdownV2SpecialChars = { '_', '*', '[', ']', '~', '`', '>', '|', '\\' };
         private static readonly Regex _markdownV2EscapeRegex =
-        new Regex(@"([_\[\]()~`>#\+\-=|{}.!*])", RegexOptions.Compiled);
+        new(@"([_\[\]()~`>#\+\-=|{}.!*])", RegexOptions.Compiled);
         private static readonly Regex _markdownV1EscapeRegex =
-       new Regex(@"([_*`\[])", RegexOptions.Compiled);
+       new(@"([_*`\[])", RegexOptions.Compiled);
 
         /// <summary>
         /// Escapes characters in a plain text string that have special meaning in
@@ -38,12 +33,7 @@ namespace TelegramPanel.Formatters
 
         public static string EscapeMarkdownV2(string text)
         {
-            if (string.IsNullOrEmpty(text))
-            {
-                return string.Empty;
-            }
-
-            return _markdownV2EscapeRegex.Replace(text, @"\$1");
+            return string.IsNullOrEmpty(text) ? string.Empty : _markdownV2EscapeRegex.Replace(text, @"\$1");
         }
 
         /// <summary>
@@ -57,8 +47,12 @@ namespace TelegramPanel.Formatters
         /// <returns>MarkdownV2 formatted string.</returns>
         public static string Bold(string? text, bool escapePlainText = true)
         {
-            if (string.IsNullOrEmpty(text)) return string.Empty;
-            var content = escapePlainText ? EscapeMarkdownV2(text) : text;
+            if (string.IsNullOrEmpty(text))
+            {
+                return string.Empty;
+            }
+
+            string content = escapePlainText ? EscapeMarkdownV2(text) : text;
             return $"*{content}*";
         }
 
@@ -73,8 +67,12 @@ namespace TelegramPanel.Formatters
         /// <returns>MarkdownV2 formatted string.</returns>
         public static string Italic(string? text, bool escapePlainText = true)
         {
-            if (string.IsNullOrEmpty(text)) return string.Empty;
-            var content = escapePlainText ? EscapeMarkdownV2(text) : text;
+            if (string.IsNullOrEmpty(text))
+            {
+                return string.Empty;
+            }
+
+            string content = escapePlainText ? EscapeMarkdownV2(text) : text;
             return $"_{content}_";
         }
 
@@ -89,8 +87,12 @@ namespace TelegramPanel.Formatters
         /// <returns>MarkdownV2 formatted string.</returns>
         public static string Underline(string? text, bool escapePlainText = true)
         {
-            if (string.IsNullOrEmpty(text)) return string.Empty;
-            var content = escapePlainText ? EscapeMarkdownV2(text) : text;
+            if (string.IsNullOrEmpty(text))
+            {
+                return string.Empty;
+            }
+
+            string content = escapePlainText ? EscapeMarkdownV2(text) : text;
             return $"__{content}__";
         }
 
@@ -105,8 +107,12 @@ namespace TelegramPanel.Formatters
         /// <returns>MarkdownV2 formatted string.</returns>
         public static string Strikethrough(string? text, bool escapePlainText = true)
         {
-            if (string.IsNullOrEmpty(text)) return string.Empty;
-            var content = escapePlainText ? EscapeMarkdownV2(text) : text;
+            if (string.IsNullOrEmpty(text))
+            {
+                return string.Empty;
+            }
+
+            string content = escapePlainText ? EscapeMarkdownV2(text) : text;
             return $"~{content}~";
         }
 
@@ -121,8 +127,12 @@ namespace TelegramPanel.Formatters
         /// <returns>MarkdownV2 formatted string.</returns>
         public static string Spoiler(string? text, bool escapePlainText = true)
         {
-            if (string.IsNullOrEmpty(text)) return string.Empty;
-            var content = escapePlainText ? EscapeMarkdownV2(text) : text;
+            if (string.IsNullOrEmpty(text))
+            {
+                return string.Empty;
+            }
+
+            string content = escapePlainText ? EscapeMarkdownV2(text) : text;
             return $"||{content}||";
         }
 
@@ -135,7 +145,10 @@ namespace TelegramPanel.Formatters
         /// <returns>MarkdownV2 formatted string.</returns>
         public static string Code(string? text)
         {
-            if (string.IsNullOrEmpty(text)) return string.Empty;
+            if (string.IsNullOrEmpty(text))
+            {
+                return string.Empty;
+            }
             // Content inside ` ` is literal in MarkdownV2.
             // Only literal backticks (`) within the text need to be escaped with a backslash.
             return $"`{text.Replace("`", "\\`")}`";
@@ -159,24 +172,27 @@ namespace TelegramPanel.Formatters
         /// <returns>MarkdownV2 formatted string.</returns>
         public static string Pre(string? text, string? language = null)
         {
-            if (string.IsNullOrEmpty(text)) return string.Empty;
+            if (string.IsNullOrEmpty(text))
+            {
+                return string.Empty;
+            }
             // Content inside ``` ``` is literal in MarkdownV2.
             // Only literal triple backticks (```) within the text need to be escaped with a backslash (\```).
-            var escapedText = text.Replace("```", "\\`\\`\\`");
+            string escapedText = text.Replace("```", "\\`\\`\\`");
 
-            var sb = new StringBuilder();
-            sb.Append("```");
+            StringBuilder sb = new();
+            _ = sb.Append("```");
             if (!string.IsNullOrWhiteSpace(language))
             {
                 // Language tag does not need escaping, but should be trimmed and on the first line.
-                sb.AppendLine(language.Trim());
+                _ = sb.AppendLine(language.Trim());
             }
             else
             {
-                sb.AppendLine(); // Newline even if no language for correct block start
+                _ = sb.AppendLine(); // Newline even if no language for correct block start
             }
-            sb.Append(escapedText);
-            sb.Append("```");
+            _ = sb.Append(escapedText);
+            _ = sb.Append("```");
             return sb.ToString();
         }
 
@@ -191,10 +207,13 @@ namespace TelegramPanel.Formatters
         /// <returns>MarkdownV2 formatted string.</returns>
         public static string Link(string? text, string? url, bool escapeLinkText = true)
         {
-            if (string.IsNullOrEmpty(text) || string.IsNullOrEmpty(url)) return string.Empty;
+            if (string.IsNullOrEmpty(text) || string.IsNullOrEmpty(url))
+            {
+                return string.Empty;
+            }
 
             // Escape the link text content based on the flag
-            var escapedText = escapeLinkText ? EscapeMarkdownV2(text) : text;
+            string escapedText = escapeLinkText ? EscapeMarkdownV2(text) : text;
 
             // URLs in MarkdownV2 need specific escaping for '(' and ')'.
             string escapedUrl = url.Replace("(", "\\(").Replace(")", "\\)");
@@ -212,10 +231,13 @@ namespace TelegramPanel.Formatters
         /// <returns>MarkdownV2 formatted string.</returns>
         public static string TextMention(string? text, long userId, bool escapeMentionText = true)
         {
-            if (string.IsNullOrEmpty(text)) return string.Empty;
+            if (string.IsNullOrEmpty(text))
+            {
+                return string.Empty;
+            }
 
             // Escape the mention text content based on the flag
-            var escapedText = escapeMentionText ? EscapeMarkdownV2(text) : text;
+            string escapedText = escapeMentionText ? EscapeMarkdownV2(text) : text;
 
             // tg://user?id=... URL format does NOT need () escaping, userId is just numbers.
             return $"[{escapedText}](tg://user?id={userId})";
@@ -231,10 +253,13 @@ namespace TelegramPanel.Formatters
         /// <returns>MarkdownV2 formatted string.</returns>
         public static string CustomEmoji(string? text, string? emojiId, bool escapeText = true)
         {
-            if (string.IsNullOrEmpty(text) || string.IsNullOrEmpty(emojiId)) return string.Empty;
+            if (string.IsNullOrEmpty(text) || string.IsNullOrEmpty(emojiId))
+            {
+                return string.Empty;
+            }
 
             // Escape the text content based on the flag
-            var escapedText = escapeText ? EscapeMarkdownV2(text) : text;
+            string escapedText = escapeText ? EscapeMarkdownV2(text) : text;
             // emojiId should typically only contain digits. Escape it just in case.
             string escapedEmojiId = EscapeMarkdownV2(emojiId);
 

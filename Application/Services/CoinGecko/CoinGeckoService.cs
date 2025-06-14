@@ -35,7 +35,7 @@ namespace Application.Services.CoinGecko
             string cacheKey = $"CoinMarkets_Page_{page}";
 
             // 1. Try to get data from cache first
-            if (_marketsCache.TryGetValue(cacheKey, out var cachedMarkets))
+            if (_marketsCache.TryGetValue(cacheKey, out List<CoinMarketDto>? cachedMarkets))
             {
                 _logger.LogInformation("Cache HIT for coin markets on page {Page}.", page);
                 return Result<List<CoinMarketDto>>.Success(cachedMarkets!);
@@ -44,7 +44,7 @@ namespace Application.Services.CoinGecko
             _logger.LogInformation("Cache MISS for coin markets on page {Page}. Fetching from API.", page);
 
             // 2. If not in cache, fetch from API
-            var result = await _apiClient.GetCoinMarketsAsync(page, perPage, cancellationToken);
+            Result<List<CoinMarketDto>> result = await _apiClient.GetCoinMarketsAsync(page, perPage, cancellationToken);
 
             // 3. If API call was successful, store the result in cache
             if (result.Succeeded && result.Data != null)
@@ -60,7 +60,7 @@ namespace Application.Services.CoinGecko
             string cacheKey = $"CoinDetails_{id}";
 
             // 1. Try to get data from cache
-            if (_detailsCache.TryGetValue(cacheKey, out var cachedDetails))
+            if (_detailsCache.TryGetValue(cacheKey, out CoinDetailsDto? cachedDetails))
             {
                 _logger.LogInformation("Cache HIT for coin details: {Id}", id);
                 return Result<CoinDetailsDto>.Success(cachedDetails!);
@@ -69,7 +69,7 @@ namespace Application.Services.CoinGecko
             _logger.LogInformation("Cache MISS for coin details: {Id}. Fetching from API.", id);
 
             // 2. If not in cache, fetch
-            var result = await _apiClient.GetCoinDetailsAsync(id, cancellationToken);
+            Result<CoinDetailsDto> result = await _apiClient.GetCoinDetailsAsync(id, cancellationToken);
 
             // 3. If successful, cache it
             if (result.Succeeded && result.Data != null)

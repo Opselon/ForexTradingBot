@@ -57,7 +57,10 @@ namespace Application.Services // ✅ Namespace صحیح برای پیاده‌�
         // while an exception means a critical error occurred during retrieval/processing.
         public async Task<UserDto?> GetUserByTelegramIdAsync(string telegramId, CancellationToken cancellationToken = default)
         {
-            if (string.IsNullOrWhiteSpace(telegramId)) return null;
+            if (string.IsNullOrWhiteSpace(telegramId))
+            {
+                return null;
+            }
 
             string cacheKey = $"user:telegram_id:{telegramId}";
 
@@ -67,7 +70,7 @@ namespace Application.Services // ✅ Namespace صحیح برای پیاده‌�
                 try
                 {
                     // 1a. Try to get the user DTO from the cache.
-                    var cachedUserDto = await _cacheService.GetAsync<UserDto>(cacheKey);
+                    UserDto? cachedUserDto = await _cacheService.GetAsync<UserDto>(cacheKey);
                     if (cachedUserDto != null)
                     {
                         _logger.LogInformation("CACHE HIT: User with Telegram ID {TelegramId} found in cache.", telegramId);
@@ -86,7 +89,7 @@ namespace Application.Services // ✅ Namespace صحیح برای پیاده‌�
             try
             {
                 _logger.LogInformation("DATABASE FETCH: Getting user by Telegram ID {TelegramId} from database.", telegramId);
-                var user = await _userRepository.GetByTelegramIdAsync(telegramId, cancellationToken);
+                User? user = await _userRepository.GetByTelegramIdAsync(telegramId, cancellationToken);
 
                 if (user == null)
                 {
@@ -94,8 +97,8 @@ namespace Application.Services // ✅ Namespace صحیح برای پیاده‌�
                     return null;
                 }
 
-                var userDto = _mapper.Map<UserDto>(user);
-                var activeSubscriptionEntity = await _subscriptionRepository.GetActiveSubscriptionByUserIdAsync(user.Id, cancellationToken);
+                UserDto userDto = _mapper.Map<UserDto>(user);
+                Subscription? activeSubscriptionEntity = await _subscriptionRepository.GetActiveSubscriptionByUserIdAsync(user.Id, cancellationToken);
                 if (activeSubscriptionEntity != null)
                 {
                     userDto.ActiveSubscription = _mapper.Map<SubscriptionDto>(activeSubscriptionEntity);
@@ -143,16 +146,16 @@ namespace Application.Services // ✅ Namespace صحیح برای پیاده‌�
             {
                 // Fetch all users from the repository. Potential database interaction point.
                 // Assumed: This method includes TokenWallet information.
-                var users = await _userRepository.GetAllAsync(cancellationToken);
+                IEnumerable<User> users = await _userRepository.GetAllAsync(cancellationToken);
 
-                var userDtos = new List<UserDto>();
-                foreach (var user in users)
+                List<UserDto> userDtos = new();
+                foreach (User user in users)
                 {
                     // Map User entity to UserDto. Potential mapping error point.
-                    var userDto = _mapper.Map<UserDto>(user);
+                    UserDto userDto = _mapper.Map<UserDto>(user);
 
                     // Fetch active subscription for the user. Another potential database interaction point.
-                    var activeSubscriptionEntity = await _subscriptionRepository.GetActiveSubscriptionByUserIdAsync(user.Id, cancellationToken);
+                    Subscription? activeSubscriptionEntity = await _subscriptionRepository.GetActiveSubscriptionByUserIdAsync(user.Id, cancellationToken);
 
                     if (activeSubscriptionEntity != null)
                     {
@@ -222,7 +225,7 @@ namespace Application.Services // ✅ Namespace صحیح برای پیاده‌�
             {
                 // Fetch user from the repository by internal ID. Potential database interaction.
                 // Assumed: This method includes TokenWallet information.
-                var user = await _userRepository.GetByIdAsync(id, cancellationToken);
+                User? user = await _userRepository.GetByIdAsync(id, cancellationToken);
 
                 // Handle case where user is not found (normal outcome).
                 if (user == null)
@@ -234,10 +237,10 @@ namespace Application.Services // ✅ Namespace صحیح برای پیاده‌�
                 _logger.LogInformation("User with ID {UserId} found: {Username}", id, user.Username);
 
                 // Map User entity to UserDto. Potential mapping error point.
-                var userDto = _mapper.Map<UserDto>(user);
+                UserDto userDto = _mapper.Map<UserDto>(user);
 
                 // Fetch active subscription for the user. Another potential database interaction.
-                var activeSubscriptionEntity = await _subscriptionRepository.GetActiveSubscriptionByUserIdAsync(user.Id, cancellationToken);
+                Subscription? activeSubscriptionEntity = await _subscriptionRepository.GetActiveSubscriptionByUserIdAsync(user.Id, cancellationToken);
 
                 if (activeSubscriptionEntity != null)
                 {
@@ -293,7 +296,7 @@ namespace Application.Services // ✅ Namespace صحیح برای پیاده‌�
                 _logger.LogInformation("Marking user {TelegramId} as unreachable. Reason: {Reason}", telegramId, reason);
 
                 // 1. Find the user by their Telegram ID.
-                var user = await _userRepository.GetByTelegramIdAsync(telegramId, cancellationToken);
+                User? user = await _userRepository.GetByTelegramIdAsync(telegramId, cancellationToken);
                 if (user == null)
                 {
                     _logger.LogWarning("Could not mark user as unreachable: User with Telegram ID {TelegramId} not found.", telegramId);
@@ -371,7 +374,7 @@ namespace Application.Services // ✅ Namespace صحیح برای پیاده‌�
                 }
 
                 // Step 2: Create User entity and TokenWallet entity
-                var user = new User(registerDto.Username, registerDto.TelegramId, registerDto.Email)
+                User user = new(registerDto.Username, registerDto.TelegramId, registerDto.Email)
                 {
                     // Set other properties here if constructor doesn't cover all
                     Id = Guid.NewGuid(), // Assuming constructor doesn't set ID, otherwise remove
@@ -399,7 +402,7 @@ namespace Application.Services // ✅ Namespace صحیح برای پیاده‌�
 
                 // Step 5: Retrieve the created user with details (like TokenWallet included)
                 // This step itself is a potential database call and can fail.
-                var createdUserWithDetails = await _userRepository.GetByIdAsync(user.Id, cancellationToken);
+                User? createdUserWithDetails = await _userRepository.GetByIdAsync(user.Id, cancellationToken);
                 if (createdUserWithDetails == null)
                 {
                     // This is a severe consistency error. Log and throw.
@@ -408,7 +411,7 @@ namespace Application.Services // ✅ Namespace صحیح برای پیاده‌�
                 }
 
                 // Step 6: Map the entity with details to UserDto. Potential mapping error point.
-                var userDto = _mapper.Map<UserDto>(createdUserWithDetails);
+                UserDto userDto = _mapper.Map<UserDto>(createdUserWithDetails);
 
                 // Set ActiveSubscription manually as a new user has none by default.
                 userDto.ActiveSubscription = null;
@@ -462,13 +465,16 @@ namespace Application.Services // ✅ Namespace صحیح برای پیاده‌�
         /// <exception cref="ApplicationException">Thrown on critical technical errors during the update process.</exception>
         public async Task UpdateUserAsync(Guid userId, UpdateUserDto updateDto, CancellationToken cancellationToken = default)
         {
-            if (updateDto == null) throw new ArgumentNullException(nameof(updateDto));
+            if (updateDto == null)
+            {
+                throw new ArgumentNullException(nameof(updateDto));
+            }
 
             _logger.LogInformation("Attempting to update user with ID: {UserId}", userId);
 
             try
             {
-                var user = await _userRepository.GetByIdAsync(userId, cancellationToken);
+                User? user = await _userRepository.GetByIdAsync(userId, cancellationToken);
                 if (user == null)
                 {
                     throw new InvalidOperationException($"User with ID {userId} not found for update.");
@@ -491,10 +497,10 @@ namespace Application.Services // ✅ Namespace صحیح برای پیاده‌�
                     }
                 }
 
-                _mapper.Map(updateDto, user);
+                _ = _mapper.Map(updateDto, user);
                 user.UpdatedAt = DateTime.UtcNow;
 
-                await _context.SaveChangesAsync(cancellationToken);
+                _ = await _context.SaveChangesAsync(cancellationToken);
                 _logger.LogInformation("User with ID {UserId} updated successfully in DB.", userId);
             }
             catch (Exception ex)
@@ -520,7 +526,7 @@ namespace Application.Services // ✅ Namespace صحیح برای پیاده‌�
 
             try
             {
-                var user = await _userRepository.GetByIdAsync(id, cancellationToken);
+                User? user = await _userRepository.GetByIdAsync(id, cancellationToken);
                 if (user == null)
                 {
                     _logger.LogWarning("User with ID {UserId} not found for deletion. Operation considered successful.", id);
@@ -534,7 +540,7 @@ namespace Application.Services // ✅ Namespace صحیح برای پیاده‌�
                 // --- End Cache Invalidation ---
 
                 await _userRepository.DeleteAsync(user, cancellationToken);
-                await _context.SaveChangesAsync(cancellationToken);
+                _ = await _context.SaveChangesAsync(cancellationToken);
 
                 _logger.LogInformation("User with ID {UserId} deleted successfully.", id);
             }
@@ -543,7 +549,7 @@ namespace Application.Services // ✅ Namespace صحیح برای پیاده‌�
                 _logger.LogError(ex, "An error occurred during user deletion for UserID {UserId}.", id);
                 throw;
             }
-       
-    }
+
+        }
     }
 }

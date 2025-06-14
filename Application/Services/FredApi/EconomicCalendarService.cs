@@ -34,7 +34,7 @@ namespace Application.Services.FredApi
                 // Call the external FRED API client to perform the search.
                 // This is the primary point of failure requiring a try-catch for technical issues.
                 // We limit results to 10 for UI simplicity.
-                var result = await _fredApiClient.SearchEconomicSeriesAsync(searchText, 10, cancellationToken);
+                Result<FredSeriesSearchResponseDto> result = await _fredApiClient.SearchEconomicSeriesAsync(searchText, 10, cancellationToken);
 
                 // Check the functional result returned by the API client.
                 if (result.Succeeded)
@@ -94,7 +94,7 @@ namespace Application.Services.FredApi
                 // This is the primary point of failure requiring a try-catch for technical issues.
                 // The _fredApiClient method is expected to return a Result<T>, which handles
                 // functional API errors internally and packages them into the Result.
-                var result = await _fredApiClient.GetReleaseTablesAsync(releaseId, elementId, cancellationToken);
+                Result<FredReleaseTablesResponseDto> result = await _fredApiClient.GetReleaseTablesAsync(releaseId, elementId, cancellationToken);
 
                 // Directly return the result obtained from the API client.
                 // If the API client throws a technical exception (like network error),
@@ -152,7 +152,7 @@ namespace Application.Services.FredApi
             {
                 // Call the external FRED API client.
                 // This is the primary point of failure requiring a try-catch.
-                var result = await _fredApiClient.GetEconomicReleasesAsync(pageSize, offset, cancellationToken);
+                Result<FredReleasesResponseDto> result = await _fredApiClient.GetEconomicReleasesAsync(pageSize, offset, cancellationToken);
 
                 // Check the functional result from the API client's perspective.
                 if (result.Succeeded)

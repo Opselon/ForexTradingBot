@@ -155,7 +155,7 @@ namespace Application // ✅ Namespace ریشه پروژه Application
         public Task SendNotificationAsync(string recipientIdentifier, string message, bool useRichText = false, CancellationToken cancellationToken = default)
         {
             //  برای جلوگیری از نمایش کامل پیام‌های طولانی در لاگ، می‌توان آن را کوتاه کرد.
-            string messageExcerpt = message.Length > 100 ? message.Substring(0, 97) + "..." : message;
+            string messageExcerpt = message.Length > 100 ? message[..97] + "..." : message;
 
             _logger.LogInformation(
                 "[DUMMY NOTIFICATION SENT] To Recipient: {RecipientIdentifier}, RichText: {UseRichText}, Message (Excerpt): {MessageExcerpt}",

@@ -34,7 +34,7 @@ namespace Application.Features.Forwarding.Services
             _userApiClient = userApiClient ?? throw new ArgumentNullException(nameof(userApiClient));
             _logger.LogInformation("ForwardingJobActions initialized. Configured with Hangfire for job-level retries and Polly for API call-level transient error handling.");
 
-            var shortDelayAttempts = new[]
+            TimeSpan[] shortDelayAttempts = new[]
             {
                 TimeSpan.FromMilliseconds(100),
                 TimeSpan.FromMilliseconds(250),
@@ -240,7 +240,7 @@ namespace Application.Features.Forwarding.Services
             {
                 // --- 1. Resolve Source Peer ---
                 _logger.LogDebug("Job:{JobId}: Resolving FromPeer (RawSourcePeerId: {RawSourcePeerId}) for Rule: '{RuleName}'.", jobId, rawSourcePeerId, rule.RuleName);
-                var fromPeer = await _resolvePeerRetryPolicy.ExecuteAsync(
+                InputPeer? fromPeer = await _resolvePeerRetryPolicy.ExecuteAsync(
                     async (pollyContext, pollyCancellationToken) =>
                         await _userApiClient.ResolvePeerAsync(rawSourcePeerId, pollyCancellationToken),
                     new Context($"ResolveFromPeer_{rawSourcePeerId}_Rule_{rule.RuleName}"),
@@ -692,16 +692,16 @@ namespace Application.Features.Forwarding.Services
             _logger.LogDebug("Job:{JobId}: ApplyEditOptions: Initial text length: {InitialTextLength}. Options: StripFormat={StripFormatting}, RemoveLinks={RemoveLinks}, DropMediaCaptions={DropMediaCaptions}, NoForwards={NoForwards}",
                 jobId, initialText?.Length ?? 0, options.StripFormatting, options.RemoveLinks, options.DropMediaCaptions, options.NoForwards);
 
-            var currentText = initialText ?? string.Empty;
-            var currentEntities = initialEntities?.ToList();
+            string currentText = initialText ?? string.Empty;
+            List<MessageEntity>? currentEntities = initialEntities?.ToList();
 
             // Store original text length for reference
-            var originalTextLength = currentText.Length;
+            int originalTextLength = currentText.Length;
 
             // 1. Strip Formatting (HTML/Markdown)
             if (options.StripFormatting)
             {
-                var strippedText = Regex.Replace(currentText, "<.*?>", string.Empty, RegexOptions.Singleline);
+                string strippedText = Regex.Replace(currentText, "<.*?>", string.Empty, RegexOptions.Singleline);
                 _logger.LogTrace("Job:{JobId}: ApplyEditOptions: Stripping formatting. Text after HTML strip: '{StrippedTextPreview}'", jobId, TruncateString(strippedText, 50));
                 currentText = strippedText;
                 currentEntities = null; // Formatting stripped, so entities are no longer valid.
@@ -713,15 +713,15 @@ namespace Application.Features.Forwarding.Services
             {
                 _logger.LogDebug("Job:{JobId}: ApplyEditOptions: Processing {Count} custom emoji entities for removal.", jobId, currentEntities.Count(e => e is TL.MessageEntityCustomEmoji));
 
-                var tempStringBuilder = new StringBuilder();
-                var updatedEntities = new List<TL.MessageEntity>();
+                StringBuilder tempStringBuilder = new();
+                List<MessageEntity> updatedEntities = new();
                 int currentSourceIndex = 0; // Tracks position in the `currentText` (source)
                 int currentDestIndex = 0;   // Tracks position in the `tempStringBuilder` (destination)
 
                 // Sort entities by offset to process them in order
-                var sortedEntities = currentEntities.OrderBy(e => e.Offset).ToList();
+                List<MessageEntity> sortedEntities = currentEntities.OrderBy(e => e.Offset).ToList();
 
-                foreach (var entity in sortedEntities)
+                foreach (MessageEntity? entity in sortedEntities)
                 {
                     if (entity == null)
                     {
@@ -731,10 +731,10 @@ namespace Application.Features.Forwarding.Services
                     // Append text segment between currentSourceIndex and entity.Offset
                     if (entity.Offset > currentSourceIndex)
                     {
-                        var segmentLength = entity.Offset - currentSourceIndex;
+                        int segmentLength = entity.Offset - currentSourceIndex;
                         if (currentSourceIndex + segmentLength <= currentText.Length) // Defensive check
                         {
-                            var textSegment = currentText.Substring(currentSourceIndex, segmentLength);
+                            string textSegment = currentText.Substring(currentSourceIndex, segmentLength);
                             _ = tempStringBuilder.Append(textSegment);
                             currentDestIndex += textSegment.Length;
                         }
@@ -755,7 +755,7 @@ namespace Application.Features.Forwarding.Services
                     else
                     {
                         // For other entities, append their text and adjust their offset.
-                        var actualSegmentLength = Math.Min(entity.Length, currentText.Length - entity.Offset);
+                        int actualSegmentLength = Math.Min(entity.Length, currentText.Length - entity.Offset);
                         if (entity.Offset < 0 || actualSegmentLength < 0 || entity.Offset + actualSegmentLength > currentText.Length)
                         {
                             _logger.LogWarning("Job:{JobId}: ApplyEditOptions: Entity {EntityType} has invalid original offset/length ({Offset}, {Length}) for text length {TextLength}. Skipping entity from remapping.",
@@ -763,7 +763,7 @@ namespace Application.Features.Forwarding.Services
                         }
                         else
                         {
-                            var textSegment = currentText.Substring(entity.Offset, actualSegmentLength);
+                            string textSegment = currentText.Substring(entity.Offset, actualSegmentLength);
                             _ = tempStringBuilder.Append(textSegment);
 
                             // Clone and add with adjusted offset
@@ -779,7 +779,7 @@ namespace Application.Features.Forwarding.Services
                 // Append any remaining text after the last entity
                 if (currentSourceIndex < currentText.Length)
                 {
-                    _ = tempStringBuilder.Append(currentText.Substring(currentSourceIndex));
+                    _ = tempStringBuilder.Append(currentText[currentSourceIndex..]);
                 }
 
                 currentText = tempStringBuilder.ToString();
@@ -790,7 +790,7 @@ namespace Application.Features.Forwarding.Services
             // 3. Text Replacements
             if (options.TextReplacements != null && options.TextReplacements.Any())
             {
-                var textAfterReplacements = currentText;
+                string textAfterReplacements = currentText;
                 // Since text replacement can change length, we need to rebuild entities.
                 // A simple approach is to drop entities that would be invalidated.
                 // A more advanced approach would be to calculate new offsets for *all* entities,
@@ -800,7 +800,7 @@ namespace Application.Features.Forwarding.Services
                 // It's safer to discard entities if complex replacements are involved,
                 // or ensure replacements don't affect entity spans.
 
-                foreach (var rep in options.TextReplacements)
+                foreach (TextReplacement rep in options.TextReplacements)
                 {
                     if (string.IsNullOrEmpty(rep.Find))
                     {
@@ -835,19 +835,19 @@ namespace Application.Features.Forwarding.Services
 
                 if (currentEntities != null && currentEntities.Any())
                 {
-                    var remappedEntities = new List<TL.MessageEntity>();
+                    List<MessageEntity> remappedEntities = new();
                     // Re-scan entities against the *new* text.
                     // This re-mapping is brittle if the text within the entity itself was replaced.
                     // A more robust solution would re-generate entities from the new text based on its formatting.
                     // Given we don't have that, this is the best we can do without dropping all entities.
-                    foreach (var entity in currentEntities)
+                    foreach (MessageEntity? entity in currentEntities)
                     {
                         if (entity == null)
                         {
                             continue;
                         }
 
-                        var originalSegment = GetSubstringSafe(initialText, entity.Offset, entity.Length);
+                        string originalSegment = GetSubstringSafe(initialText, entity.Offset, entity.Length);
                         if (!string.IsNullOrEmpty(originalSegment))
                         {
                             // Find the segment in the *new* currentText
@@ -879,8 +879,8 @@ namespace Application.Features.Forwarding.Services
                 {
                     int offsetShift = options.PrependText.Length;
                     _logger.LogTrace("Job:{JobId}: ApplyEditOptions: Adjusting {EntitiesCount} entities by offset {OffsetShift} due to prepend.", jobId, currentEntities.Count, offsetShift);
-                    var adjustedEntities = new List<TL.MessageEntity>();
-                    foreach (var e in currentEntities)
+                    List<MessageEntity> adjustedEntities = new();
+                    foreach (MessageEntity? e in currentEntities)
                     {
                         if (e != null)
                         {
@@ -892,7 +892,7 @@ namespace Application.Features.Forwarding.Services
             }
 
             // 5. Append Text / Custom Footer
-            var textToAppend = new StringBuilder();
+            StringBuilder textToAppend = new();
             if (!string.IsNullOrEmpty(options.AppendText))
             {
                 _ = textToAppend.Append(options.AppendText);
@@ -968,7 +968,7 @@ namespace Application.Features.Forwarding.Services
 
         private string TruncateString(string? str, int maxLength)
         {
-            return string.IsNullOrEmpty(str) ? "[null_or_empty]" : str.Length <= maxLength ? str : str.Substring(0, maxLength) + "...";
+            return string.IsNullOrEmpty(str) ? "[null_or_empty]" : str.Length <= maxLength ? str : str[..maxLength] + "...";
         }
 
         private string GetInputPeerIdValueForLogging(InputPeer peer)
@@ -1030,7 +1030,7 @@ namespace Application.Features.Forwarding.Services
             try
             {
                 // Create a new instance of the exact runtime type of the entity
-                var newGenericEntity = (TL.MessageEntity)Activator.CreateInstance(oldEntity.GetType())!;
+                MessageEntity newGenericEntity = (TL.MessageEntity)Activator.CreateInstance(oldEntity.GetType())!;
                 newGenericEntity.Offset = newOffset;
                 newGenericEntity.Length = newLength;
                 return newGenericEntity;

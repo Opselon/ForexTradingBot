@@ -54,7 +54,7 @@ namespace BackgroundTasks.Services
         #region Constructor
         public NotificationSendingService(
             ILogger<NotificationSendingService> logger,
-             ITelegramBotClient botClient, 
+             ITelegramBotClient botClient,
             ITelegramMessageSender telegramMessageSender,
             IUserService userService,
             INewsItemRepository newsItemRepository,
@@ -68,7 +68,11 @@ namespace BackgroundTasks.Services
             _newsItemRepository = newsItemRepository ?? throw new ArgumentNullException(nameof(newsItemRepository));
             _rateLimiter = rateLimiter ?? throw new ArgumentNullException(nameof(rateLimiter));
 
-            if (redisConnection == null) throw new ArgumentNullException(nameof(redisConnection));
+            if (redisConnection == null)
+            {
+                throw new ArgumentNullException(nameof(redisConnection));
+            }
+
             _redisDb = redisConnection.GetDatabase();
 
             _telegramApiRetryPolicy = Policy
@@ -101,10 +105,10 @@ namespace BackgroundTasks.Services
                 }
 
                 // 1. Fetch all news item entities from the database.
-                var newsItems = new List<NewsItem>();
-                foreach (var id in newsItemIds)
+                List<NewsItem> newsItems = new();
+                foreach (Guid id in newsItemIds)
                 {
-                    var item = await _newsItemRepository.GetByIdAsync(id, CancellationToken.None);
+                    NewsItem? item = await _newsItemRepository.GetByIdAsync(id, CancellationToken.None);
                     if (item != null)
                     {
                         newsItems.Add(item);
@@ -118,33 +122,33 @@ namespace BackgroundTasks.Services
                 }
 
                 // 2. Build ONE consolidated message from all the news items.
-                var messageBuilder = new StringBuilder();
-                messageBuilder.AppendLine($"*{newsItems.Count} new updates for you:*");
-                messageBuilder.AppendLine();
+                StringBuilder messageBuilder = new();
+                _ = messageBuilder.AppendLine($"*{newsItems.Count} new updates for you:*");
+                _ = messageBuilder.AppendLine();
 
                 // To keep the message from getting too long, we'll only show details for the first few.
-                foreach (var item in newsItems.Take(5))
+                foreach (NewsItem? item in newsItems.Take(5))
                 {
-                    messageBuilder.AppendLine($"▫️ *{TelegramMessageFormatter.EscapeMarkdownV2(item.Title)}*");
+                    _ = messageBuilder.AppendLine($"▫️ *{TelegramMessageFormatter.EscapeMarkdownV2(item.Title)}*");
                     if (!string.IsNullOrWhiteSpace(item.Summary))
                     {
-                        var summary = TelegramMessageFormatter.EscapeMarkdownV2(item.Summary.Truncate(120));
-                        messageBuilder.AppendLine($"  _{summary}_");
+                        string summary = TelegramMessageFormatter.EscapeMarkdownV2(item.Summary.Truncate(120));
+                        _ = messageBuilder.AppendLine($"  _{summary}_");
                     }
-                    messageBuilder.AppendLine();
+                    _ = messageBuilder.AppendLine();
                 }
 
                 if (newsItems.Count > 5)
                 {
-                    messageBuilder.AppendLine($"...and {newsItems.Count - 5} more articles.");
+                    _ = messageBuilder.AppendLine($"...and {newsItems.Count - 5} more articles.");
                 }
 
                 // 3. Prepare the final payload for the sender method.
-                var payload = new NotificationJobPayload
+                NotificationJobPayload payload = new()
                 {
                     TargetTelegramUserId = targetUserId,
                     MessageText = messageBuilder.ToString(),
-                    Buttons = new List<NotificationButton>() // Batch notifications usually don't have specific buttons.
+                    Buttons = [] // Batch notifications usually don't have specific buttons.
                 };
 
                 // 4. Call the final "sender" helper to send the message to the Telegram API.
@@ -171,13 +175,13 @@ namespace BackgroundTasks.Services
             // --- Configuration: Define business rules for this job ---
             const int freeUserRssHourlyLimit = 20;
             const int vipUserRssHourlyLimit = 100;
-            var rssLimitPeriod = TimeSpan.FromHours(1);
+            TimeSpan rssLimitPeriod = TimeSpan.FromHours(1);
 
             // Initialize targetUserId to a known invalid state for better error logging in the final catch block.
             long targetUserId = -1;
 
             // Use a logging scope to automatically add these details to all logs within this method.
-            using var logScope = _logger.BeginScope(new Dictionary<string, object?>
+            using IDisposable? logScope = _logger.BeginScope(new Dictionary<string, object?>
             {
                 ["NewsItemId"] = newsItemId,
                 ["UserIndex"] = userIndex,
@@ -188,14 +192,14 @@ namespace BackgroundTasks.Services
             {
                 // STEP 1: Retrieve this job's assigned User ID from the Redis cache.
                 // This logic is now self-contained and clear.
-                var serializedUserIds = await _redisDb.StringGetAsync(userListCacheKey);
+                RedisValue serializedUserIds = await _redisDb.StringGetAsync(userListCacheKey);
                 if (!serializedUserIds.HasValue)
                 {
                     _logger.LogError("Job aborted: Cache key not found. It may have expired or was never set.");
                     return; // Gracefully stop the job.
                 }
 
-                var allUserIds = JsonSerializer.Deserialize<List<long>>(serializedUserIds);
+                List<long>? allUserIds = JsonSerializer.Deserialize<List<long>>(serializedUserIds);
                 if (allUserIds == null || userIndex >= allUserIds.Count)
                 {
                     _logger.LogError("Job aborted: User index is out of bounds for the cached list (Size: {ListSize}).", allUserIds?.Count ?? 0);
@@ -207,7 +211,7 @@ namespace BackgroundTasks.Services
 
                 // STEP 2: Fetch the user's full profile to determine their level for rate limiting.
                 // This call is fast because UserService uses its own Redis cache (Cache-Aside pattern).
-                var userDto = await _userService.GetUserByTelegramIdAsync(targetUserId.ToString(), CancellationToken.None);
+                Application.DTOs.UserDto? userDto = await _userService.GetUserByTelegramIdAsync(targetUserId.ToString(), CancellationToken.None);
                 if (userDto == null)
                 {
                     _logger.LogWarning("Job skipped: User {TargetUserId} was in the dispatch cache but no longer exists in the database.", targetUserId);
@@ -215,7 +219,7 @@ namespace BackgroundTasks.Services
                 }
 
                 // STEP 3: Apply the correct rate limit based on the user's level.
-                int applicableLimit = (userDto.Level == UserLevel.Platinum || userDto.Level == UserLevel.Bronze)
+                int applicableLimit = (userDto.Level is UserLevel.Platinum or UserLevel.Bronze)
                     ? vipUserRssHourlyLimit
                     : freeUserRssHourlyLimit;
 
@@ -227,7 +231,7 @@ namespace BackgroundTasks.Services
                 }
 
                 // STEP 4: Fetch the news article data. This is the only required database hit for content.
-                var newsItem = await _newsItemRepository.GetByIdAsync(newsItemId, CancellationToken.None);
+                NewsItem? newsItem = await _newsItemRepository.GetByIdAsync(newsItemId, CancellationToken.None);
                 if (newsItem == null)
                 {
                     // If the news item was deleted between dispatch and execution, we can't proceed.
@@ -236,7 +240,7 @@ namespace BackgroundTasks.Services
                 }
 
                 // STEP 5: Build the final, fully-formed payload.
-                var payload = new NotificationJobPayload
+                NotificationJobPayload payload = new()
                 {
                     TargetTelegramUserId = targetUserId,
                     MessageText = BuildMessageText(newsItem),
@@ -276,13 +280,13 @@ namespace BackgroundTasks.Services
 
         private async Task<long> GetUserIdFromCacheAsync(string cacheKey, int index)
         {
-            var serializedUserIds = await _redisDb.StringGetAsync(cacheKey);
+            RedisValue serializedUserIds = await _redisDb.StringGetAsync(cacheKey);
             if (!serializedUserIds.HasValue)
             {
                 _logger.LogError("Cache key {CacheKey} not found.", cacheKey);
                 return -1;
             }
-            var allUserIds = JsonSerializer.Deserialize<List<long>>(serializedUserIds);
+            List<long>? allUserIds = JsonSerializer.Deserialize<List<long>>(serializedUserIds);
             if (allUserIds == null || index >= allUserIds.Count)
             {
                 _logger.LogError("User index {Index} is out of bounds for cache key {CacheKey}.", index, cacheKey);
@@ -293,8 +297,12 @@ namespace BackgroundTasks.Services
 
         private InlineKeyboardMarkup? BuildTelegramKeyboard(List<NotificationButton>? buttons)
         {
-            if (buttons == null || !buttons.Any()) return null;
-            var inlineButtons = buttons.Select(b =>
+            if (buttons == null || !buttons.Any())
+            {
+                return null;
+            }
+
+            IEnumerable<InlineKeyboardButton> inlineButtons = buttons.Select(b =>
                 b.IsUrl
                 ? InlineKeyboardButton.WithUrl(b.Text, b.CallbackDataOrUrl)
                 : InlineKeyboardButton.WithCallbackData(b.Text, b.CallbackDataOrUrl));
@@ -304,14 +312,14 @@ namespace BackgroundTasks.Services
         // The "last mile" sender. Contains only Telegram API logic and self-healing.
         private async Task SendToTelegramAsync(NotificationJobPayload payload, CancellationToken cancellationToken)
         {
-            var pollyContext = new Context($"NotificationTo_{payload.TargetTelegramUserId}");
-            var finalKeyboard = BuildTelegramKeyboard(payload.Buttons);
+            Context pollyContext = new($"NotificationTo_{payload.TargetTelegramUserId}");
+            InlineKeyboardMarkup? finalKeyboard = BuildTelegramKeyboard(payload.Buttons);
 
             await _telegramApiRetryPolicy.ExecuteAsync(async (ctx) =>
             {
                 if (!string.IsNullOrWhiteSpace(payload.ImageUrl))
                 {
-                    await _botClient.SendPhoto(
+                    _ = await _botClient.SendPhoto(
                         chatId: payload.TargetTelegramUserId,
                         photo: InputFile.FromUri(payload.ImageUrl),
                         caption: payload.MessageText,
@@ -321,7 +329,7 @@ namespace BackgroundTasks.Services
                 }
                 else
                 {
-                    await _botClient.SendMessage(
+                    _ = await _botClient.SendMessage(
                         chatId: payload.TargetTelegramUserId,
                         text: payload.MessageText,
                         parseMode: ParseMode.MarkdownV2,
@@ -336,14 +344,14 @@ namespace BackgroundTasks.Services
 
         private async Task ProcessSingleNotification(NotificationJobPayload payload, CancellationToken cancellationToken)
         {
-            using var logScope = _logger.BeginScope(new Dictionary<string, object?>
+            using IDisposable? logScope = _logger.BeginScope(new Dictionary<string, object?>
             {
                 ["TargetTelegramUserId"] = payload.TargetTelegramUserId
             });
 
             try
             {
-                var pollyContext = new Context($"NotificationTo_{payload.TargetTelegramUserId}");
+                Context pollyContext = new($"NotificationTo_{payload.TargetTelegramUserId}");
 
                 await _telegramApiRetryPolicy.ExecuteAsync(async (ctx) =>
                 {
@@ -389,27 +397,31 @@ namespace BackgroundTasks.Services
         // The single, definitive method for building the message text.
         private string BuildMessageText(NewsItem newsItem)
         {
-            var messageTextBuilder = new StringBuilder();
+            StringBuilder messageTextBuilder = new();
             string title = TelegramMessageFormatter.EscapeMarkdownV2(newsItem.Title?.Trim() ?? "Untitled News");
             string sourceName = TelegramMessageFormatter.EscapeMarkdownV2(newsItem.SourceName?.Trim() ?? "Unknown Source");
             string summary = TelegramMessageFormatter.EscapeMarkdownV2(newsItem.Summary?.Trim() ?? string.Empty);
             string? link = newsItem.Link?.Trim();
 
-            messageTextBuilder.AppendLine($"*{title}*");
-            messageTextBuilder.AppendLine($"_Source: {sourceName}_");
+            _ = messageTextBuilder.AppendLine($"*{title}*");
+            _ = messageTextBuilder.AppendLine($"_Source: {sourceName}_");
 
             if (!string.IsNullOrWhiteSpace(summary))
-                messageTextBuilder.Append($"\n{summary}");
+            {
+                _ = messageTextBuilder.Append($"\n{summary}");
+            }
 
             if (!string.IsNullOrWhiteSpace(link) && Uri.TryCreate(link, UriKind.Absolute, out _))
-                messageTextBuilder.Append($"\n\n[Read Full Article]({link})");
+            {
+                _ = messageTextBuilder.Append($"\n\n[Read Full Article]({link})");
+            }
 
             return messageTextBuilder.ToString().Trim();
         }
 
         private List<NotificationButton> BuildSimpleNotificationButtons(NewsItem newsItem)
         {
-            var buttons = new List<NotificationButton>();
+            List<NotificationButton> buttons = new();
             if (!string.IsNullOrWhiteSpace(newsItem.Link) && Uri.TryCreate(newsItem.Link, UriKind.Absolute, out _))
             {
                 buttons.Add(new NotificationButton { Text = "Read More", CallbackDataOrUrl = newsItem.Link, IsUrl = true });

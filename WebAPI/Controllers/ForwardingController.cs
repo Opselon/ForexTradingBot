@@ -138,7 +138,7 @@ namespace WebAPI.Controllers
         {
             try
             {
-                var rules = await _forwardingService.GetAllRulesAsync(cancellationToken);
+                IEnumerable<ForwardingRule> rules = await _forwardingService.GetAllRulesAsync(cancellationToken);
                 return Ok(rules);
             }
             catch (Exception ex)
@@ -160,7 +160,7 @@ namespace WebAPI.Controllers
             }
             try
             {
-                var rule = await _forwardingService.GetRuleAsync(ruleName, cancellationToken);
+                ForwardingRule? rule = await _forwardingService.GetRuleAsync(ruleName, cancellationToken);
                 if (rule == null)
                 {
                     _logger.LogWarning("CONTROLLER.GetRule: Rule '{RuleName}' not found.", ruleName);
@@ -186,7 +186,7 @@ namespace WebAPI.Controllers
             }
             try
             {
-                var rules = await _forwardingService.GetRulesBySourceChannelAsync(sourceChannelId, cancellationToken);
+                IEnumerable<ForwardingRule> rules = await _forwardingService.GetRulesBySourceChannelAsync(sourceChannelId, cancellationToken);
                 return Ok(rules);
             }
             catch (Exception ex)

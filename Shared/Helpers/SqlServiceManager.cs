@@ -20,13 +20,13 @@ namespace Shared.Helpers
 
         public static void EnsureSqlServicesRunning()
         {
-            var servicesToStart = new List<string>();
+            List<string> servicesToStart = new();
 
-            foreach (var service in SqlServices)
+            foreach (string service in SqlServices)
             {
                 try
                 {
-                    var state = GetServiceState(service);
+                    string state = GetServiceState(service);
 
                     switch (state)
                     {
@@ -69,7 +69,7 @@ namespace Shared.Helpers
         {
             try
             {
-                var process = new Process
+                Process process = new()
                 {
                     StartInfo = new ProcessStartInfo
                     {
@@ -89,13 +89,11 @@ namespace Shared.Helpers
                 {
                     return "RUNNING";
                 }
-                else if (output.Contains("STOPPED"))
-                {
-                    return "STOPPED";
-                }
                 else
                 {
-                    return output.Contains("START_PENDING") ? "START_PENDING" : output.Contains("STOP_PENDING") ? "STOP_PENDING" : "UNKNOWN";
+                    return output.Contains("STOPPED")
+                        ? "STOPPED"
+                        : output.Contains("START_PENDING") ? "START_PENDING" : output.Contains("STOP_PENDING") ? "STOP_PENDING" : "UNKNOWN";
                 }
             }
             catch
@@ -112,7 +110,7 @@ namespace Shared.Helpers
                 // ساخت دستور start همه سرویس‌ها به صورت یک خط با &&
                 string allStarts = string.Join(" && ", services.Select(s => $"net start \"{s}\""));
 
-                var process = new Process
+                Process process = new()
                 {
                     StartInfo = new ProcessStartInfo
                     {

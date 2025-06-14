@@ -73,14 +73,14 @@ namespace WebAPI.Controllers
 
                 try
                 {
-                    var query = new FetchRssSourceManualQuery
+                    FetchRssSourceManualQuery query = new()
                     {
                         RssSourceId = rssSourceId,
                         ForceFetch = forceFetch
                     };
 
                     // Level 5: Proper CancellationToken propagation and ConfigureAwait(false).
-                    var result = await _mediator.Send(query, cancellationToken).ConfigureAwait(false);
+                    Shared.Results.Result<IEnumerable<Application.DTOs.News.NewsItemDto>> result = await _mediator.Send(query, cancellationToken).ConfigureAwait(false);
 
                     stopwatch.Stop(); // Level 7: Stop timer.
 
@@ -102,7 +102,7 @@ namespace WebAPI.Controllers
                     {
                         // Level 3: Granular error handling based on result.Errors content.
                         // Consider implementing ProblemDetails (RFC 7807) for richer error responses.
-                        var problemDetails = new ProblemDetails
+                        ProblemDetails problemDetails = new()
                         {
                             Instance = HttpContext.Request.Path,
                             Title = "Error processing RSS feeds",
@@ -146,7 +146,7 @@ namespace WebAPI.Controllers
                         rssSourceId?.ToString(), forceFetch, stopwatch.ElapsedMilliseconds, requestCorrelationId); // Level 2: Guid.ToString()
 
                     // Level 3: Standardized internal server error response.
-                    var problemDetails = new ProblemDetails
+                    ProblemDetails problemDetails = new()
                     {
                         Status = StatusCodes.Status500InternalServerError,
                         Title = "Internal Server Error",

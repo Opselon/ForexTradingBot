@@ -44,7 +44,7 @@ namespace WebAPI.Controllers // ✅ Namespace صحیح
             string rawRequestBody;
             Request.EnableBuffering(); //  اطمینان از فعال بودن در Program.cs
             Request.Body.Position = 0;
-            using (var reader = new StreamReader(Request.Body, Encoding.UTF8, true, 1024, true))
+            using (StreamReader reader = new(Request.Body, Encoding.UTF8, true, 1024, true))
             {
                 rawRequestBody = await reader.ReadToEndAsync(cancellationToken);
             }
@@ -69,7 +69,7 @@ namespace WebAPI.Controllers // ✅ Namespace صحیح
             {
                 _logger.LogInformation("Processing 'invoice_paid' webhook for CryptoPay InvoiceID: {InvoiceId}",
                     webhookUpdate.Payload.InvoiceId);
-                var processingResult = await _paymentConfirmationService.ProcessSuccessfulCryptoPayPaymentAsync(webhookUpdate.Payload, cancellationToken);
+                Shared.Results.Result processingResult = await _paymentConfirmationService.ProcessSuccessfulCryptoPayPaymentAsync(webhookUpdate.Payload, cancellationToken);
                 if (processingResult.Succeeded)
                 {
                     return Ok();
@@ -99,8 +99,8 @@ namespace WebAPI.Controllers // ✅ Namespace صحیح
             try
             {
                 byte[] secretKeyBytes;
-                using (var sha256 = SHA256.Create()) { secretKeyBytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(appApiToken)); }
-                using var hmac = new HMACSHA256(secretKeyBytes);
+                using (SHA256 sha256 = SHA256.Create()) { secretKeyBytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(appApiToken)); }
+                using HMACSHA256 hmac = new(secretKeyBytes);
                 byte[] bodyBytes = Encoding.UTF8.GetBytes(rawRequestBody);
                 byte[] computedHashBytes = hmac.ComputeHash(bodyBytes);
                 string computedHashHex = Convert.ToHexString(computedHashBytes).ToLowerInvariant();

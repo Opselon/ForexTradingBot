@@ -26,7 +26,7 @@ namespace WebAPI.Extensions
             // The 'UseEndpoints' method is the correct way to add a route to the pipeline.
             _ = app.UseEndpoints(endpoints =>
             {
-                var purgeEndpoint = endpoints.MapPost("/maintenance/hangfire-purge",
+                RouteHandlerBuilder purgeEndpoint = endpoints.MapPost("/maintenance/hangfire-purge",
                     (IHangfireCleaner cleaner, IConfiguration config) =>
                     {
                         string connectionString = config.GetConnectionString("DefaultConnection")!;

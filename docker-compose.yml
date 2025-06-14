@@ -15,8 +15,8 @@ services:
       # --- Database Connection ---
       # The hostname 'db' matches the service name of the SQL Server container
       - ConnectionStrings__DefaultConnection=Server=db,1433;Database=${DB_DATABASE_NAME};User Id=sa;Password=${DB_SA_PASSWORD};TrustServerCertificate=True
-      - ConnectionStrings__PostgresConnection=Server=postgres-db;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
-      - ConnectionStrings__Redis=redis:6379,abortConnect=false
+   #   - ConnectionStrings__PostgresConnection=Server=postgres-db;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+   #   - ConnectionStrings__Redis=redis:6379,abortConnect=false
 
       # --- ✅✅ NEW: REDIS CONNECTION STRING ✅✅ ---
       # The hostname 'redis' matches the service name of the new Redis container

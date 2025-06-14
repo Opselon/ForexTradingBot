@@ -1,19 +1,11 @@
-﻿// -----------------
-// FINAL CORRECTED VERSION
-// -----------------
-using Application.Common.Interfaces;
+﻿using Application.Common.Interfaces;
 using Application.DTOs.CoinGecko;
+using Application.DTOs.Crypto.Dtos;
 using Application.DTOs.Fmp;
-using Application.Features.Crypto.Dtos;
 using Application.Features.Crypto.Interfaces;
 using Application.Features.Fmp.Interfaces;
 using Microsoft.Extensions.Logging;
 using Shared.Results;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace Application.Features.Crypto.Services
 {
@@ -40,24 +32,24 @@ namespace Application.Features.Crypto.Services
 
         public async Task<Result<List<UnifiedCryptoDto>>> GetCryptoListAsync(int page, int perPage, CancellationToken cancellationToken)
         {
-            var cacheKey = $"CryptoList_Page{page}";
-            if (_cache.TryGetValue(cacheKey, out var cachedList) && cachedList is List<UnifiedCryptoDto> list) { return Result<List<UnifiedCryptoDto>>.Success(list); }
+            string cacheKey = $"CryptoList_Page{page}";
+            if (_cache.TryGetValue(cacheKey, out object? cachedList) && cachedList is List<UnifiedCryptoDto> list) { return Result<List<UnifiedCryptoDto>>.Success(list); }
 
-            var coinGeckoResult = await _coinGeckoService.GetCoinMarketsAsync(page, perPage, cancellationToken);
+            Result<List<CoinMarketDto>> coinGeckoResult = await _coinGeckoService.GetCoinMarketsAsync(page, perPage, cancellationToken);
             if (!coinGeckoResult.Succeeded || coinGeckoResult.Data == null)
             {
                 _logger.LogWarning("Orchestrator: CoinGecko list fetch failed. Attempting FMP fallback.");
-                var fmpResult = await _fmpService.GetTopCryptosAsync(20, cancellationToken);
+                Result<List<FmpQuoteDto>> fmpResult = await _fmpService.GetTopCryptosAsync(20, cancellationToken);
                 if (fmpResult.Succeeded && fmpResult.Data != null)
                 {
-                    var fmpList = fmpResult.Data.Select(c => new UnifiedCryptoDto { Id = c.Symbol, Symbol = c.Symbol.Contains("USD") ? c.Symbol.Replace("USD", "") : c.Symbol, Name = c.Name, Price = c.Price, Change24hPercentage = c.ChangesPercentage, PriceDataSource = "FMP" }).ToList();
+                    List<UnifiedCryptoDto> fmpList = fmpResult.Data.Select(c => new UnifiedCryptoDto { Id = c.Symbol, Symbol = c.Symbol.Contains("USD") ? c.Symbol.Replace("USD", "") : c.Symbol, Name = c.Name, Price = c.Price, Change24hPercentage = c.ChangesPercentage, PriceDataSource = "FMP" }).ToList();
                     _cache.Set(cacheKey, fmpList, TimeSpan.FromMinutes(2));
                     return Result<List<UnifiedCryptoDto>>.Success(fmpList);
                 }
                 return Result<List<UnifiedCryptoDto>>.Failure(coinGeckoResult.Errors.Concat(fmpResult.Errors).ToList());
             }
 
-            var unifiedList = coinGeckoResult.Data.Select(c => new UnifiedCryptoDto { Id = c.Id, Symbol = c.Symbol, Name = c.Name, ImageUrl = c.Image, MarketCapRank = c.MarketCapRank, Price = (decimal?)c.CurrentPrice, Change24hPercentage = (decimal?)c.PriceChangePercentage24h, MarketCap = c.MarketCap, PriceDataSource = "CoinGecko", IsDataStale = false }).ToList();
+            List<UnifiedCryptoDto> unifiedList = coinGeckoResult.Data.Select(c => new UnifiedCryptoDto { Id = c.Id, Symbol = c.Symbol, Name = c.Name, ImageUrl = c.Image, MarketCapRank = c.MarketCapRank, Price = (decimal?)c.CurrentPrice, Change24hPercentage = (decimal?)c.PriceChangePercentage24h, MarketCap = c.MarketCap, PriceDataSource = "CoinGecko", IsDataStale = false }).ToList();
             _cache.Set(cacheKey, unifiedList, TimeSpan.FromMinutes(2));
             return Result<List<UnifiedCryptoDto>>.Success(unifiedList);
         }
@@ -65,8 +57,8 @@ namespace Application.Features.Crypto.Services
         public async Task<Result<UnifiedCryptoDto>> GetCryptoDetailsAsync(string coinSymbol, CancellationToken cancellationToken)
         {
             // FIX: Use the coin symbol in the cache key, as the UI requests by symbol.
-            var cacheKey = $"CryptoDetails_Unified_{coinSymbol}";
-            if (_cache.TryGetValue(cacheKey, out var cachedDetails) && cachedDetails is UnifiedCryptoDto dto)
+            string cacheKey = $"CryptoDetails_Unified_{coinSymbol}";
+            if (_cache.TryGetValue(cacheKey, out object? cachedDetails) && cachedDetails is UnifiedCryptoDto dto)
             {
                 _logger.LogDebug("Serving crypto details for symbol '{CoinSymbol}' from cache.", coinSymbol);
                 return Result<UnifiedCryptoDto>.Success(dto);
@@ -130,8 +122,8 @@ namespace Application.Features.Crypto.Services
 
             // 3. Prepare FMP fetch task
             // Use the input coinSymbol to get the FMP symbol.
-            var fmpSymbol = _symbolMapper.GetFmpSymbol(coinSymbol); // <-- Use the input symbol!
-            var fmpTask = fmpSymbol != null
+            string? fmpSymbol = _symbolMapper.GetFmpSymbol(coinSymbol); // <-- Use the input symbol!
+            Task<Result<FmpQuoteDto>> fmpTask = fmpSymbol != null
                 ? _fmpService.GetCryptoDetailsAsync(fmpSymbol, cancellationToken)
                 : Task.FromResult(Result<FmpQuoteDto>.Failure($"No FMP symbol mapping available for '{coinSymbol}'."));
 
@@ -139,8 +131,8 @@ namespace Application.Features.Crypto.Services
             // --- Wait for tasks ---
             await Task.WhenAll(coinGeckoTask, fmpTask);
 
-            var coinGeckoResult = await coinGeckoTask; // Will contain the fetch result OR the mapping failure result
-            var fmpResult = await fmpTask;
+            Result<CoinDetailsDto> coinGeckoResult = await coinGeckoTask; // Will contain the fetch result OR the mapping failure result
+            Result<FmpQuoteDto> fmpResult = await fmpTask;
 
             // Check if AT LEAST one source succeeded
             if (!coinGeckoResult.Succeeded && !fmpResult.Succeeded)
@@ -152,7 +144,7 @@ namespace Application.Features.Crypto.Services
             }
 
             // --- Merge Results ---
-            var mergedDto = new UnifiedCryptoDto
+            UnifiedCryptoDto mergedDto = new()
             {
                 // FIX: Store the original symbol in the Id field, as the UI uses this for subsequent calls
                 Id = coinSymbol,
@@ -176,7 +168,7 @@ namespace Application.Features.Crypto.Services
             // Check if CoinGecko data is available before accessing it
             if (coinGeckoResult.Succeeded && coinGeckoResult.Data != null) // FIX: Add null check for Data
             {
-                var cg = coinGeckoResult.Data;
+                CoinDetailsDto cg = coinGeckoResult.Data;
 
                 // Use CG data
                 mergedDto.Symbol = cg.Symbol ?? coinSymbol; // Prefer CG symbol, fallback to requested symbol
@@ -184,30 +176,30 @@ namespace Application.Features.Crypto.Services
 
                 // Safely get description (CoinGecko description is a dictionary)
                 string? desc = null;
-                cg.Description?.TryGetValue("en", out desc); // Assuming 'en' is the desired language key
+                _ = (cg.Description?.TryGetValue("en", out desc)); // Assuming 'en' is the desired language key
                 mergedDto.Description = desc;
 
                 // Safely get market data values (CoinGecko market data values are dictionaries)
                 double? cgPrice = null;
-                cg.MarketData?.CurrentPrice?.TryGetValue("usd", out cgPrice);
+                _ = (cg.MarketData?.CurrentPrice?.TryGetValue("usd", out cgPrice));
                 mergedDto.Price = (decimal?)cgPrice;
 
                 mergedDto.Change24hPercentage = (decimal?)cg.MarketData?.PriceChangePercentage24h;
 
                 double? cgMarketCap = null;
-                cg.MarketData?.MarketCap?.TryGetValue("usd", out cgMarketCap);
+                _ = (cg.MarketData?.MarketCap?.TryGetValue("usd", out cgMarketCap));
                 mergedDto.MarketCap = (long?)cgMarketCap; // Cast to long?
 
                 double? high24 = null;
-                cg.MarketData?.High24h?.TryGetValue("usd", out high24);
+                _ = (cg.MarketData?.High24h?.TryGetValue("usd", out high24));
                 mergedDto.DayHigh = (decimal?)high24; // Cast to decimal?
 
                 double? low24 = null;
-                cg.MarketData?.Low24h?.TryGetValue("usd", out low24);
+                _ = (cg.MarketData?.Low24h?.TryGetValue("usd", out low24));
                 mergedDto.DayLow = (decimal?)low24; // Cast to decimal?
 
                 double? vol24 = null;
-                cg.MarketData?.TotalVolume?.TryGetValue("usd", out vol24);
+                _ = (cg.MarketData?.TotalVolume?.TryGetValue("usd", out vol24));
                 mergedDto.TotalVolume = (long?)vol24; // Cast to long?
 
                 mergedDto.PriceDataSource = "CoinGecko"; // Source of primary data
@@ -219,7 +211,7 @@ namespace Application.Features.Crypto.Services
             // Check fmpResult.Succeeded *before* accessing fmpResult.Data
             if (fmpResult.Succeeded && fmpResult.Data != null) // FIX: Add null check for Data
             {
-                var fmp = fmpResult.Data;
+                FmpQuoteDto fmp = fmpResult.Data;
 
                 // Overwrite/Fill in gaps from FMP if needed
                 mergedDto.Symbol ??= fmp.Symbol.Contains("USD") ? fmp.Symbol.Replace("USD", "") : fmp.Symbol;
@@ -272,8 +264,9 @@ namespace Application.Features.Crypto.Services
 
         private string MapCoinGeckoIdToFmpSymbol(string coinGeckoId)
         {
-            var map = new Dictionary<string, string> { { "bitcoin", "BTC" }, { "ethereum", "ETHUSD" }, { "staked-ether", "ETHUSD" }, { "tether", "USDTUSD" }, { "binancecoin", "BNBUSD" }, { "solana", "SOLUSD" }, { "ripple", "XRPUSD" }, { "cardano", "ADAUSD" }, { "dogecoin", "DOGEUSD" }, { "tron", "TRXUSD" } };
-            if (map.TryGetValue(coinGeckoId.ToLower(), out var fmpSymbol)) { _logger.LogInformation("Mapped CoinGecko ID '{CoinGeckoId}' to FMP Symbol '{FmpSymbol}'", coinGeckoId, fmpSymbol); return fmpSymbol; }
+            Dictionary<string, string> map = new()
+            { { "bitcoin", "BTC" }, { "ethereum", "ETHUSD" }, { "staked-ether", "ETHUSD" }, { "tether", "USDTUSD" }, { "binancecoin", "BNBUSD" }, { "solana", "SOLUSD" }, { "ripple", "XRPUSD" }, { "cardano", "ADAUSD" }, { "dogecoin", "DOGEUSD" }, { "tron", "TRXUSD" } };
+            if (map.TryGetValue(coinGeckoId.ToLower(), out string? fmpSymbol)) { _logger.LogInformation("Mapped CoinGecko ID '{CoinGeckoId}' to FMP Symbol '{FmpSymbol}'", coinGeckoId, fmpSymbol); return fmpSymbol; }
             string guessedSymbol = coinGeckoId.ToUpper() + "USD";
             _logger.LogWarning("No explicit map found for CoinGecko ID '{CoinGeckoId}'. Guessing FMP Symbol as '{GuessedSymbol}'", coinGeckoId, guessedSymbol);
             return guessedSymbol;

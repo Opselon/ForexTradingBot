@@ -13,18 +13,14 @@ public class CacheService : ICacheService
 
     public async Task<T?> GetAsync<T>(string key)
     {
-        var redisValue = await _redisDb.StringGetAsync(key);
-        if (redisValue.HasValue)
-        {
-            return JsonSerializer.Deserialize<T>(redisValue!);
-        }
-        return default;
+        RedisValue redisValue = await _redisDb.StringGetAsync(key);
+        return redisValue.HasValue ? JsonSerializer.Deserialize<T>(redisValue!) : default;
     }
 
     public async Task SetAsync<T>(string key, T value, TimeSpan? expiry = null)
     {
-        var jsonValue = JsonSerializer.Serialize(value);
-        await _redisDb.StringSetAsync(key, jsonValue, expiry);
+        string jsonValue = JsonSerializer.Serialize(value);
+        _ = await _redisDb.StringSetAsync(key, jsonValue, expiry);
     }
 
     public Task RemoveAsync(string key)

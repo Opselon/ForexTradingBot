@@ -34,7 +34,7 @@ namespace Application.Services
                 throw new ArgumentNullException(nameof(resourceKey));
             }
 
-            var format = GetString(resourceKey, cultureInfo);
+            string format = GetString(resourceKey, cultureInfo);
             return string.Format(format, arguments);
         }
 
@@ -67,7 +67,7 @@ namespace Application.Services
             }
 
             // TODO: Implement actual resource lookup
-            var format = resourceKey; // Placeholder for actual resource lookup
+            string format = resourceKey; // Placeholder for actual resource lookup
             return args.Length > 0 ? string.Format(format, args) : format;
         }
     }

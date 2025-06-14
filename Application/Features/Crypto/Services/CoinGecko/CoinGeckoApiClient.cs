@@ -44,9 +44,9 @@ namespace Application.Features.Crypto.Services.CoinGecko
                     sleepDurationProvider: retryAttempt =>
                     {
                         // Implement exponential backoff with jitter
-                        var delay = TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)); // 2, 4, 8 seconds
-                        var jitter = TimeSpan.FromMilliseconds(new Random().Next(0, 500)); // Add random jitter
-                        var finalDelay = delay + jitter;
+                        TimeSpan delay = TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)); // 2, 4, 8 seconds
+                        TimeSpan jitter = TimeSpan.FromMilliseconds(new Random().Next(0, 500)); // Add random jitter
+                        TimeSpan finalDelay = delay + jitter;
                         _logger.LogWarning("CoinGecko API call failed (attempt {Attempt}). Retrying in {Delay:F2} seconds...", retryAttempt, finalDelay.TotalSeconds);
                         return finalDelay;
                     },
@@ -64,7 +64,7 @@ namespace Application.Features.Crypto.Services.CoinGecko
                         return Task.CompletedTask; // onRetryAsync needs to return Task
                     }
                 );
-    
+
         }
 
         /// <summary>
@@ -72,31 +72,31 @@ namespace Application.Features.Crypto.Services.CoinGecko
         /// </summary>
         public async Task<Result<List<TrendingCoinDto>>> GetTrendingCoinsAsync(CancellationToken cancellationToken)
         {
-            var requestUrl = $"{BaseUrl}/search/trending";
+            string requestUrl = $"{BaseUrl}/search/trending";
             _logger.LogInformation("Requesting trending coins from CoinGecko API.");
 
             try
             {
                 // --- FIX: Use the retry policy to execute the HTTP call ---
-                var response = await _retryPolicy.ExecuteAsync(async (ct) =>
+                HttpResponseMessage response = await _retryPolicy.ExecuteAsync(async (ct) =>
                 {
                     // Use GetAsync to get HttpResponseMessage first, then read JSON
                     // This allows the retry policy to inspect the status code directly
-                    var res = await _httpClient.GetAsync(requestUrl, ct);
-                    res.EnsureSuccessStatusCode(); // Throws for non-success status codes (handled by HandleTransientHttpError)
+                    HttpResponseMessage res = await _httpClient.GetAsync(requestUrl, ct);
+                    _ = res.EnsureSuccessStatusCode(); // Throws for non-success status codes (handled by HandleTransientHttpError)
                     return res;
                 }, cancellationToken);
                 // --- END FIX ---
 
                 // Read the response body after successful execution (potentially after retries)
-                var jsonResponse = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
+                JsonElement jsonResponse = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
 
 
-                if (jsonResponse.TryGetProperty("coins", out var coinsArray))
+                if (jsonResponse.TryGetProperty("coins", out JsonElement coinsArray))
                 {
                     // Assuming Deserialize<List<TrendingCoinResult>>() maps correctly
-                    var trendingResults = jsonResponse.Deserialize<List<TrendingCoinResult>>();
-                    var trendingCoins = trendingResults?
+                    List<TrendingCoinResult>? trendingResults = jsonResponse.Deserialize<List<TrendingCoinResult>>();
+                    List<TrendingCoinDto?> trendingCoins = trendingResults?
                         .Select(r => r.Item)
                         .Where(item => item != null)
                         .ToList() ?? [];
@@ -134,22 +134,22 @@ namespace Application.Features.Crypto.Services.CoinGecko
                 return Result<CoinDetailsDto>.Failure("CoinGecko ID cannot be null or empty.");
             }
 
-            var requestUrl = $"{BaseUrl}/coins/{coinGeckoId}?localization=false&tickers=false&market_data=true&community_data=false&developer_data=false&sparkline=false";
+            string requestUrl = $"{BaseUrl}/coins/{coinGeckoId}?localization=false&tickers=false&market_data=true&community_data=false&developer_data=false&sparkline=false";
             _logger.LogInformation("Requesting coin details for ID '{CoinGeckoId}' from CoinGecko API.", coinGeckoId);
 
             try
             {
                 // --- FIX: Use the retry policy to execute the HTTP call ---
-                var response = await _retryPolicy.ExecuteAsync(async (ct) =>
+                HttpResponseMessage response = await _retryPolicy.ExecuteAsync(async (ct) =>
                 {
-                    var res = await _httpClient.GetAsync(requestUrl, ct);
-                    res.EnsureSuccessStatusCode(); // Throws for non-success status codes (handled by HandleTransientHttpError)
+                    HttpResponseMessage res = await _httpClient.GetAsync(requestUrl, ct);
+                    _ = res.EnsureSuccessStatusCode(); // Throws for non-success status codes (handled by HandleTransientHttpError)
                     return res;
                 }, cancellationToken);
                 // --- END FIX ---
 
                 // Read the response body after successful execution (potentially after retries)
-                var details = await response.Content.ReadFromJsonAsync<CoinDetailsDto>(cancellationToken: cancellationToken);
+                CoinDetailsDto? details = await response.Content.ReadFromJsonAsync<CoinDetailsDto>(cancellationToken: cancellationToken);
 
                 if (details == null)
                 {
@@ -192,22 +192,22 @@ namespace Application.Features.Crypto.Services.CoinGecko
                 return Result<List<CoinMarketDto>>.Failure("Invalid pagination parameters.");
             }
 
-            var requestUrl = $"{BaseUrl}/coins/markets?vs_currency=usd&order=market_cap_desc&per_page={perPage}&page={page}&sparkline=false";
+            string requestUrl = $"{BaseUrl}/coins/markets?vs_currency=usd&order=market_cap_desc&per_page={perPage}&page={page}&sparkline=false";
             _logger.LogInformation("Requesting coin markets from CoinGecko API. Page: {Page}, PerPage: {PerPage}", page, perPage);
 
             try
             {
                 // --- FIX: Use the retry policy to execute the HTTP call ---
-                var response = await _retryPolicy.ExecuteAsync(async (ct) =>
+                HttpResponseMessage response = await _retryPolicy.ExecuteAsync(async (ct) =>
                 {
-                    var res = await _httpClient.GetAsync(requestUrl, ct);
-                    res.EnsureSuccessStatusCode(); // Throws for non-success status codes (handled by HandleTransientHttpError)
+                    HttpResponseMessage res = await _httpClient.GetAsync(requestUrl, ct);
+                    _ = res.EnsureSuccessStatusCode(); // Throws for non-success status codes (handled by HandleTransientHttpError)
                     return res;
                 }, cancellationToken);
                 // --- END FIX ---
 
                 // Read the response body after successful execution (potentially after retries)
-                var markets = await response.Content.ReadFromJsonAsync<List<CoinMarketDto>>(cancellationToken: cancellationToken);
+                List<CoinMarketDto>? markets = await response.Content.ReadFromJsonAsync<List<CoinMarketDto>>(cancellationToken: cancellationToken);
 
                 if (markets == null)
                 {

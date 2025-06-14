@@ -1,7 +1,7 @@
 ﻿// -----------------
 // NEW FILE FOR THE UPGRADED FEATURE
 // -----------------
-namespace Application.Features.Crypto.Dtos
+namespace Application.DTOs.Crypto.Dtos
 {
     /// <summary>
     /// A unified DTO that represents the merged and most complete data available

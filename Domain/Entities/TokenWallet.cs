@@ -107,7 +107,7 @@ namespace Domain.Entities
                 throw new ArgumentOutOfRangeException(nameof(initialBalance), "Initial balance cannot be negative.");
             }
 
-            var now = DateTime.UtcNow;
+            DateTime now = DateTime.UtcNow;
             // Use the new public constructor here for consistency
             return new TokenWallet(Guid.NewGuid(), userId, initialBalance, true, now, now);
         }

@@ -14,7 +14,7 @@ namespace BackgroundTasks
             //  باید Scoped باشد و Hangfire باید برای هر Job یک Scope ایجاد کند.
             //  (Hangfire به طور پیش‌فرض این کار را با استفاده از IServiceScopeFactory انجام می‌دهد).
             _ = services.AddScoped<INotificationSendingService, NotificationSendingService>();
-                   _ = services.AddSingleton<INotificationRateLimiter, RedisNotificationRateLimiter>();
+            _ = services.AddSingleton<INotificationRateLimiter, RedisNotificationRateLimiter>();
             return services;
         }
     }

@@ -49,8 +49,8 @@ DELETE FROM DuplicateCTE
 WHERE RowNum > 1;
 ";
 
-                using var dbConnection = new SqlConnection(connectionString);
-                var duplicatesRemoved = dbConnection.Execute(sql, commandTimeout: 300);
+                using SqlConnection dbConnection = new(connectionString);
+                int duplicatesRemoved = dbConnection.Execute(sql, commandTimeout: 300);
 
                 if (duplicatesRemoved > 0)
                 {
@@ -110,10 +110,10 @@ GO
 
         public void PurgeCompletedAndFailedJobs(string connectionString)
         {
-            var monitoringApi = JobStorage.Current.GetMonitoringApi();
-            var succeeded = monitoringApi.SucceededJobs(0, int.MaxValue);
+            Hangfire.Storage.IMonitoringApi monitoringApi = JobStorage.Current.GetMonitoringApi();
+            Hangfire.Storage.Monitoring.JobList<Hangfire.Storage.Monitoring.SucceededJobDto> succeeded = monitoringApi.SucceededJobs(0, int.MaxValue);
 
-            foreach (var job in succeeded)
+            foreach (KeyValuePair<string, Hangfire.Storage.Monitoring.SucceededJobDto> job in succeeded)
             {
                 _ = BackgroundJob.Delete(job.Key);
             }

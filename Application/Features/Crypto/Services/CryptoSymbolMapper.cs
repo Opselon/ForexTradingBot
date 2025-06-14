@@ -4,9 +4,6 @@
 // -----------------
 using Application.Features.Crypto.Interfaces; // Make sure this using directive is correct
 using Microsoft.Extensions.Logging;
-using System.Collections.Generic;
-using System; // For ArgumentNullException
-using System.Linq; // For Any() (optional but good practice)
 
 namespace Application.Features.Crypto.Services // Make sure this namespace is correct
 {
@@ -112,7 +109,7 @@ namespace Application.Features.Crypto.Services // Make sure this namespace is co
                 return null;
             }
 
-            if (SymbolToCoinGeckoIdMap.TryGetValue(symbol.Trim(), out var coinGeckoId))
+            if (SymbolToCoinGeckoIdMap.TryGetValue(symbol.Trim(), out string? coinGeckoId))
             {
                 // Use LogTrace for successful mapping as this happens for every details request
                 _logger.LogTrace("Mapped Symbol '{Symbol}' to CoinGecko ID '{CoinGeckoId}'.", symbol.Trim(), coinGeckoId);
@@ -138,7 +135,7 @@ namespace Application.Features.Crypto.Services // Make sure this namespace is co
             }
 
             // FIX: Use the SymbolToFmpSymbolMap
-            if (SymbolToFmpSymbolMap.TryGetValue(symbol.Trim(), out var fmpSymbol))
+            if (SymbolToFmpSymbolMap.TryGetValue(symbol.Trim(), out string? fmpSymbol))
             {
                 // Use LogTrace for successful mapping
                 _logger.LogTrace("Mapped Symbol '{Symbol}' to FMP Symbol '{FmpSymbol}'.", symbol.Trim(), fmpSymbol);

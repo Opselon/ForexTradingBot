@@ -102,9 +102,9 @@ namespace Shared.Extensions
                 return string.Empty;
             }
 
-            using var sha256 = SHA256.Create();
+            using SHA256 sha256 = SHA256.Create();
             byte[] bytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(value));
-            StringBuilder builder = new StringBuilder();
+            StringBuilder builder = new();
             for (int i = 0; i < bytes.Length; i++)
             {
                 // "x2" formats the byte as a two-digit hexadecimal number
@@ -183,7 +183,7 @@ namespace Shared.Extensions
                 substringLength = 0; // Defensive check
             }
 
-            return value.Substring(0, substringLength) + truncationSuffix;
+            return value[..substringLength] + truncationSuffix;
         }
     }
 }

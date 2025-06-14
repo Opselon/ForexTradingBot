@@ -1,11 +1,9 @@
 ﻿// File: Infrastructure/Services/RedisNotificationRateLimiter.cs
 
-using StackExchange.Redis;
-using System.Threading.Tasks;
-using System;
 using Microsoft.Extensions.Logging;
 using Polly;
 using Polly.Retry;
+using StackExchange.Redis;
 
 public class RedisNotificationRateLimiter : INotificationRateLimiter
 {
@@ -59,8 +57,8 @@ public class RedisNotificationRateLimiter : INotificationRateLimiter
 
     public async Task<bool> IsUserOverLimitAsync(long telegramUserId, int limit, TimeSpan period)
     {
-        var db = _redis.GetDatabase();
-        var parameters = new RateLimitParams(
+        IDatabase db = _redis.GetDatabase();
+        RateLimitParams parameters = new(
             Key: $"notif_limit:v2:{telegramUserId}",
             Now: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             Window: (long)period.TotalMilliseconds,
@@ -69,7 +67,7 @@ public class RedisNotificationRateLimiter : INotificationRateLimiter
 
         try
         {
-            var result = await _redisRetryPolicy.ExecuteAsync(async () =>
+            RedisResult result = await _redisRetryPolicy.ExecuteAsync(async () =>
             {
                 // ✅✅ THE FIX IS HERE ✅✅
                 // We are now passing the raw script string `RateLimiterLuaScript` directly.

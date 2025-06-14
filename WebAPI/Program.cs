@@ -26,10 +26,8 @@ using Serilog;                              // برای Log, LoggerConfiguration
 using Shared.Helpers;
 using Shared.Maintenance;
 using Shared.Settings;                    // برای CryptoPaySettings (از پروژه Shared)
-using StackExchange.Redis;
 using TelegramPanel.Extensions;
 using TelegramPanel.Infrastructure.Services;
-using TL;
 using WebAPI.Extensions;
 #endregion
 
@@ -48,9 +46,9 @@ try
     Log.Information("Application Starting Up (Program.cs)...");
     Log.Information("--------------------------------------------------");
     int minThreads = 500; // Adjust as needed based on monitoring
-    ThreadPool.SetMinThreads(minThreads, minThreads);
+    _ = ThreadPool.SetMinThreads(minThreads, minThreads);
     Log.Information("ThreadPool minimum threads set to {MinThreads}.", minThreads);
-    var builder = WebApplication.CreateBuilder(args);
+    WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
     _ = builder.WebHost.UseKestrel();
 
     // This is more reliable than GetValue<bool> for environment variables.
@@ -102,7 +100,7 @@ try
                    .AllowCredentials();
         });
     });
-    var environment = builder.Environment;
+    IWebHostEnvironment environment = builder.Environment;
     // پیکربندی Swagger/OpenAPI برای مستندسازی API
     _ = builder.Services.AddSwaggerGen(options =>
     {
@@ -119,8 +117,8 @@ try
         });
 
         // Add XML documentation
-        var xmlFile = $"{System.Reflection.Assembly.GetExecutingAssembly().GetName().Name}.xml";
-        var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
+        string xmlFile = $"{System.Reflection.Assembly.GetExecutingAssembly().GetName().Name}.xml";
+        string xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
         if (File.Exists(xmlPath))
         {
             options.IncludeXmlComments(xmlPath);
@@ -155,7 +153,7 @@ try
         options.CustomSchemaIds(type => type.FullName);
         options.ResolveConflictingActions(apiDescriptions =>
         {
-            var first = apiDescriptions.First();
+            Microsoft.AspNetCore.Mvc.ApiExplorer.ApiDescription first = apiDescriptions.First();
             return first;
         });
     });
@@ -201,14 +199,14 @@ try
 
     _ = builder.Services.AddBackgroundTasksServices();
     Log.Information("Background tasks services registered.");
-    builder.Services.AddHealthChecks();
+    _ = builder.Services.AddHealthChecks();
 
 
 
     // --- Universal Conditional Feature: Auto-Forwarding ---
     // We check for the actual secrets required for this feature to run.
-    var apiId = builder.Configuration["TelegramUserApi:ApiId"];
-    var apiHash = builder.Configuration["TelegramUserApi:ApiHash"];
+    string? apiId = builder.Configuration["TelegramUserApi:ApiId"];
+    string? apiHash = builder.Configuration["TelegramUserApi:ApiHash"];
     try
     {
         if (!string.IsNullOrEmpty(apiId) && !string.IsNullOrEmpty(apiHash))
@@ -216,18 +214,18 @@ try
             Log.Information("✅ Auto-Forwarding feature ENABLED (ApiId and ApiHash were found). Registering all related services...");
 
             // 1. Configure the settings object
-            builder.Services.Configure<Infrastructure.Settings.TelegramUserApiSettings>(builder.Configuration.GetSection("TelegramUserApi"));
+            _ = builder.Services.Configure<Infrastructure.Settings.TelegramUserApiSettings>(builder.Configuration.GetSection("TelegramUserApi"));
 
             // 2. Register the API client itself
-            builder.Services.AddSingleton<ITelegramUserApiClient, TelegramUserApiClient>();
+            _ = builder.Services.AddSingleton<ITelegramUserApiClient, TelegramUserApiClient>();
 
             // 3. Register the background service that initializes the client
-            builder.Services.AddHostedService<TelegramUserApiInitializationService>();
+            _ = builder.Services.AddHostedService<TelegramUserApiInitializationService>();
 
             // 4. Register all the other forwarding services from the other projects
-            builder.Services.AddForwardingInfrastructure();
-            builder.Services.AddForwardingServices();
-            builder.Services.AddForwardingOrchestratorServices();
+            _ = builder.Services.AddForwardingInfrastructure();
+            _ = builder.Services.AddForwardingServices();
+            _ = builder.Services.AddForwardingOrchestratorServices();
 
             Log.Information("All Auto-Forwarding services have been successfully registered.");
         }
@@ -240,8 +238,8 @@ try
 
         // --- Universal Conditional Feature: CryptoPay (Example) ---
         // The same robust pattern is applied here.
-        var cryptoPayToken = builder.Configuration["CryptoPay:ApiToken"];
-        var cryptoPayApiKey = builder.Configuration["CryptoPay:ApiKey"]; // Assuming you have this key too
+        string? cryptoPayToken = builder.Configuration["CryptoPay:ApiToken"];
+        string? cryptoPayApiKey = builder.Configuration["CryptoPay:ApiKey"]; // Assuming you have this key too
 
         if (!string.IsNullOrEmpty(cryptoPayToken) && !string.IsNullOrEmpty(cryptoPayApiKey))
         {
@@ -267,7 +265,7 @@ try
 
 
     _ = builder.Services.AddWindowsService();
-    var isRunningInContainer = Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER") == "true";
+    bool isRunningInContainer = Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER") == "true";
     if (OperatingSystem.IsWindows() && !isRunningInContainer)
     {
         try
@@ -317,7 +315,7 @@ try
         // --- SMOKE TEST CONFIGURATION ---
         Log.Information("✅ Smoke Test: Configuring Hangfire with In-Memory storage.");
 
-        builder.Services.AddHangfire(config => config
+        _ = builder.Services.AddHangfire(config => config
             .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
             .UseSimpleAssemblyNameTypeSerializer()
             .UseRecommendedSerializerSettings()
@@ -327,44 +325,34 @@ try
     {
         // --- PRODUCTION / REAL DEVELOPMENT CONFIGURATION ---
         // Read the database provider from configuration.
-        var dbProvider = builder.Configuration.GetValue<string>("DatabaseSettings:DatabaseProvider")?.ToLowerInvariant();
+        string? dbProvider = builder.Configuration.GetValue<string>("DatabaseSettings:DatabaseProvider")?.ToLowerInvariant();
 
         Log.Information("Configuring Hangfire for production/development with '{DbProvider}' provider.", dbProvider);
 
-        switch (dbProvider)
+        _ = dbProvider switch
         {
-            case "sqlserver":
-                // Use the robust SQL Server storage provider.
-                builder.Services.AddHangfire(config => config
-                    .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
-                    .UseSimpleAssemblyNameTypeSerializer()
-                    .UseRecommendedSerializerSettings()
-                    .UseSqlServerStorage(builder.Configuration.GetConnectionString("DefaultConnection"), new SqlServerStorageOptions
-                    {
-                        CommandBatchMaxTimeout = TimeSpan.FromMinutes(5),
-                        SlidingInvisibilityTimeout = TimeSpan.FromMinutes(5),
-                        QueuePollInterval = TimeSpan.FromSeconds(15),
-                        UseRecommendedIsolationLevel = true,
-                        DisableGlobalLocks = true,
-                        SchemaName = "HangFire"
-                    }));
-                break;
-
-            case "postgres":
-            case "postgresql":
-                // Use the PostgreSQL storage provider.
-                builder.Services.AddHangfire(config => config
-                    .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
-                    .UseSimpleAssemblyNameTypeSerializer()
-                    .UseRecommendedSerializerSettings()
-                    .UsePostgreSqlStorage(options =>
-                        options.UseNpgsqlConnection(builder.Configuration.GetConnectionString("PostgresConnection"))
-                    ));
-                break;
-
-            default:
-                throw new NotSupportedException($"Hangfire configuration failed: Unsupported DatabaseProvider '{dbProvider}'.");
-        }
+            "sqlserver" => builder.Services.AddHangfire(config => config
+                                .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+                                .UseSimpleAssemblyNameTypeSerializer()
+                                .UseRecommendedSerializerSettings()
+                                .UseSqlServerStorage(builder.Configuration.GetConnectionString("DefaultConnection"), new SqlServerStorageOptions
+                                {
+                                    CommandBatchMaxTimeout = TimeSpan.FromMinutes(5),
+                                    SlidingInvisibilityTimeout = TimeSpan.FromMinutes(5),
+                                    QueuePollInterval = TimeSpan.FromSeconds(15),
+                                    UseRecommendedIsolationLevel = true,
+                                    DisableGlobalLocks = true,
+                                    SchemaName = "HangFire"
+                                })),// Use the robust SQL Server storage provider.
+            "postgres" or "postgresql" => builder.Services.AddHangfire(config => config
+                                .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+                                .UseSimpleAssemblyNameTypeSerializer()
+                                .UseRecommendedSerializerSettings()
+                                .UsePostgreSqlStorage(options =>
+                                    options.UseNpgsqlConnection(builder.Configuration.GetConnectionString("PostgresConnection"))
+                                )),// Use the PostgreSQL storage provider.
+            _ => throw new NotSupportedException($"Hangfire configuration failed: Unsupported DatabaseProvider '{dbProvider}'."),
+        };
     }
 
     _ = builder.Services.AddHangfireCleaner();
@@ -386,7 +374,7 @@ try
     #endregion
 
     // ------------------- ساخت WebApplication instance -------------------
-    var app = builder.Build(); //  ساخت برنامه با تمام سرویس‌های پیکربندی شده
+    WebApplication app = builder.Build(); //  ساخت برنامه با تمام سرویس‌های پیکربندی شده
     Log.Information("Application host built. Performing mandatory startup tasks...");
 
     // The application will now start INSTANTLY.
@@ -399,9 +387,9 @@ try
         try
         {
             // We get the necessary services from the application's root service provider.
-            var backgroundJobClient = app.Services.GetRequiredService<IBackgroundJobClient>();
-            var configuration = app.Services.GetRequiredService<IConfiguration>();
-            var connectionString = configuration.GetConnectionString("DefaultConnection");
+            IBackgroundJobClient backgroundJobClient = app.Services.GetRequiredService<IBackgroundJobClient>();
+            IConfiguration configuration = app.Services.GetRequiredService<IConfiguration>();
+            string? connectionString = configuration.GetConnectionString("DefaultConnection");
 
             if (string.IsNullOrEmpty(connectionString))
             {
@@ -431,7 +419,7 @@ try
 
     // ------------------- دریافت لاگر از DI برای استفاده در ادامه Program.cs -------------------
     //  این لاگر، لاگری است که توسط UseSerilog پیکربندی شده است.
-    var programLogger = app.Services.GetRequiredService<ILogger<Program>>(); //  استفاده از ILogger<Program> برای لاگ‌های مختص Program.cs
+    ILogger<Program> programLogger = app.Services.GetRequiredService<ILogger<Program>>(); //  استفاده از ILogger<Program> برای لاگ‌های مختص Program.cs
 
     #region Configure HTTP Request Pipeline
     // ------------------- ۶. پیکربندی پایپ‌لاین پردازش درخواست‌های HTTP -------------------
@@ -479,7 +467,7 @@ try
 
     #region Configure Hangfire Dashboard & Recurring Jobs
     // ------------------- ۷. اضافه کردن داشبورد Hangfire -------------------
-    var hangfireDashboardOptions = new DashboardOptions
+    DashboardOptions hangfireDashboardOptions = new()
     {
         DashboardTitle = "Forex Trading Bot - Background Jobs Monitor",
         IgnoreAntiforgeryToken = true,
@@ -493,14 +481,14 @@ try
 
     // ------------------- ۸. زمان‌بندی Job های تکرارشونده Hangfire -------------------
     //  این Job ها پس از شروع کامل برنامه، توسط سرور Hangfire به طور خودکار اجرا خواهند شد.
-    var appLifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
+    IHostApplicationLifetime appLifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
     _ = appLifetime.ApplicationStarted.Register(() => // اجرا پس از اینکه برنامه کامل شروع شد
     {
         // آیا این لاگ را در کنسول می‌بینید؟
         programLogger.LogInformation("Application fully started. Scheduling/Updating Hangfire recurring jobs...");
         try
         {
-            var recurringJobManager = app.Services.GetRequiredService<IRecurringJobManager>();
+            IRecurringJobManager recurringJobManager = app.Services.GetRequiredService<IRecurringJobManager>();
 
             // از این روش استفاده کنیم که وابستگی‌ها را بهتر مدیریت می‌کند
             recurringJobManager.AddOrUpdate<IRssFetchingCoordinatorService>(
@@ -523,21 +511,21 @@ try
     #endregion
 
     #region Map Controllers & Run Application
-    app.MapHealthChecks("/healthz");
+    _ = app.MapHealthChecks("/healthz");
     // ------------------- مپ کردن کنترلرها و اجرای برنامه -------------------
     _ = app.MapControllers(); //  مسیردهی درخواست‌ها به Action های کنترلرها
     programLogger.LogInformation("Application setup complete. Starting web host now...");
 
     // Get the application URL from configuration or use default
-    var urls = builder.Configuration["Urls"] ?? "https://localhost:5001;http://localhost:5000";
-    var firstUrl = urls.Split(';')[0].Trim();
+    string urls = builder.Configuration["Urls"] ?? "https://localhost:5001;http://localhost:5000";
+    string firstUrl = urls.Split(';')[0].Trim();
 
-    using (var scope = app.Services.CreateScope())
+    using (IServiceScope scope = app.Services.CreateScope())
     {
-        var orchestrator = scope.ServiceProvider.GetRequiredService<UserApiForwardingOrchestrator>();
+        UserApiForwardingOrchestrator orchestrator = scope.ServiceProvider.GetRequiredService<UserApiForwardingOrchestrator>();
         // Use orchestrator if needed
     }
- 
+
 
 
     // In the middleware pipeline section (before app.Run())

@@ -97,7 +97,7 @@
         /// <summary>
         /// یک نمونه <see cref="TokenAmount"/> با مقدار صفر را برمی‌گرداند.
         /// </summary>
-        public static TokenAmount Zero => new TokenAmount(0);
+        public static TokenAmount Zero => new(0);
 
         /// <summary>
         /// اپراتور برابری برای مقایسه دو نمونه <see cref="TokenAmount"/>.

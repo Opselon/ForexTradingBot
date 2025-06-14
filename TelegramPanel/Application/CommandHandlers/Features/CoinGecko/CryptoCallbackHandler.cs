@@ -2,7 +2,7 @@
 // UPGRADED UI UX FILE - VERY PRETTY EDITION (Error Fix + Refinement)
 // -----------------
 using Application.Common.Interfaces;
-using Application.Features.Crypto.Dtos;
+using Application.DTOs.Crypto.Dtos;
 using Application.Features.Crypto.Interfaces;
 using Microsoft.Extensions.Logging;
 using System.Globalization;

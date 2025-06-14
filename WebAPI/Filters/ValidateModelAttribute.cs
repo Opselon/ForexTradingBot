@@ -22,7 +22,7 @@ namespace WebAPI.Filters
             {
                 // می‌توانید نحوه بازگرداندن خطاها را سفارشی کنید.
                 // مثال: بازگرداندن یک Result سفارشی یا یک ساختار خطای استاندارد.
-                var errors = context.ModelState
+                Dictionary<string, string[]> errors = context.ModelState
                     .Where(x => x.Value != null && x.Value.Errors.Any())
                     .ToDictionary(
                         kvp => kvp.Key,

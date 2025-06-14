@@ -31,14 +31,14 @@ namespace Application.Features.Rss.Queries
             _logger.LogInformation("Handling FetchRssSourceManualQuery. RssSourceId: {RssSourceId}, ForceFetch: {ForceFetch}",
                 request.RssSourceId?.ToString() ?? "All Active", request.ForceFetch);
 
-            var allFetchedNews = new List<NewsItemDto>();
+            List<NewsItemDto> allFetchedNews = new();
             List<string> errors = [];
 
             IEnumerable<RssSource> sourcesToFetch;
 
             if (request.RssSourceId.HasValue)
             {
-                var source = await _rssSourceRepository.GetByIdAsync(request.RssSourceId.Value, cancellationToken);
+                RssSource? source = await _rssSourceRepository.GetByIdAsync(request.RssSourceId.Value, cancellationToken);
                 if (source == null || !source.IsActive)
                 {
                     _logger.LogWarning("Specified RssSource ID {RssSourceId} not found or is not active.", request.RssSourceId.Value);
@@ -58,7 +58,7 @@ namespace Application.Features.Rss.Queries
 
             _logger.LogInformation("Found {Count} RSS source(s) to process.", sourcesToFetch.Count());
 
-            foreach (var source in sourcesToFetch)
+            foreach (RssSource source in sourcesToFetch)
             {
                 if (cancellationToken.IsCancellationRequested)
                 {
@@ -85,7 +85,7 @@ namespace Application.Features.Rss.Queries
                     //  فعلاً این روش ساده را استفاده می‌کنیم.
                 }
 
-                var result = await _rssReaderService.FetchAndProcessFeedAsync(source, cancellationToken);
+                Result<IEnumerable<NewsItemDto>> result = await _rssReaderService.FetchAndProcessFeedAsync(source, cancellationToken);
 
                 if (request.ForceFetch) // بازگرداندن مقادیر اصلی ETag و LastModified
                 {

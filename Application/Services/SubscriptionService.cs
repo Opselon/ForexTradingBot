@@ -52,7 +52,7 @@ namespace Application.Services
             try
             {
                 // Retrieve the user to ensure they exist. Potential database interaction.
-                var user = await _userRepository.GetByIdAsync(createSubscriptionDto.UserId, cancellationToken);
+                User? user = await _userRepository.GetByIdAsync(createSubscriptionDto.UserId, cancellationToken);
                 if (user == null)
                 {
                     _logger.LogWarning("User with ID {UserId} not found for creating subscription.", createSubscriptionDto.UserId);
@@ -77,7 +77,7 @@ namespace Application.Services
 
 
                 // Map DTO to Subscription entity. Potential mapping error point.
-                var subscription = _mapper.Map<Subscription>(createSubscriptionDto);
+                Subscription subscription = _mapper.Map<Subscription>(createSubscriptionDto);
                 subscription.Id = Guid.NewGuid(); // Ensure ID is set
                 subscription.CreatedAt = DateTime.UtcNow; // Set creation timestamp
 
@@ -150,7 +150,7 @@ namespace Application.Services
             try
             {
                 // Fetch active subscription from the repository. Potential database interaction.
-                var subscription = await _subscriptionRepository.GetActiveSubscriptionByUserIdAsync(userId, cancellationToken);
+                Subscription? subscription = await _subscriptionRepository.GetActiveSubscriptionByUserIdAsync(userId, cancellationToken);
 
                 // Handle case where no active subscription is found (normal outcome).
                 if (subscription == null)
@@ -213,7 +213,7 @@ namespace Application.Services
             try
             {
                 // Fetch subscriptions from the repository. Potential database interaction.
-                var subscriptions = await _subscriptionRepository.GetSubscriptionsByUserIdAsync(userId, cancellationToken);
+                IEnumerable<Subscription>? subscriptions = await _subscriptionRepository.GetSubscriptionsByUserIdAsync(userId, cancellationToken);
 
                 // If no subscriptions are found, the repository should return an empty collection or null.
                 // Mapping a null collection to IEnumerable usually results in an empty collection.
@@ -282,7 +282,7 @@ namespace Application.Services
             try
             {
                 // Fetch subscription from the repository by internal ID. Potential database interaction.
-                var subscription = await _subscriptionRepository.GetByIdAsync(subscriptionId, cancellationToken);
+                Subscription? subscription = await _subscriptionRepository.GetByIdAsync(subscriptionId, cancellationToken);
 
                 // Handle case where subscription is not found (normal outcome).
                 if (subscription == null)

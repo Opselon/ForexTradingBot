@@ -58,7 +58,7 @@ namespace Application.Services // ✅ Namespace: Application.Services
                     return Result.Failure($"Invoice status is '{paidInvoice.Status}', expected 'paid'.");
                 }
 
-                var internalTransaction = await _transactionRepository.GetByPaymentGatewayInvoiceIdAsync(paidInvoice.InvoiceId.ToString(), cancellationToken);
+                Domain.Entities.Transaction? internalTransaction = await _transactionRepository.GetByPaymentGatewayInvoiceIdAsync(paidInvoice.InvoiceId.ToString(), cancellationToken);
                 if (internalTransaction == null)
                 {
                     return Result.Failure($"Internal transaction not found for CryptoPay Invoice ID {paidInvoice.InvoiceId}.");
@@ -91,13 +91,13 @@ namespace Application.Services // ✅ Namespace: Application.Services
                 string planName = "Premium Plan (Example)"; //  باید از payloadData.PlanId تعیین شود
                 int planDurationInMonths = 1;              //  باید از payloadData.PlanId تعیین شود
 
-                var createSubscriptionDto = new CreateSubscriptionDto
+                CreateSubscriptionDto createSubscriptionDto = new()
                 {
                     UserId = payloadData.UserId,
                     StartDate = DateTime.UtcNow,
                     EndDate = DateTime.UtcNow.AddMonths(planDurationInMonths),
                 };
-                var subscriptionDto = await _subscriptionService.CreateSubscriptionAsync(createSubscriptionDto, cancellationToken);
+                SubscriptionDto subscriptionDto = await _subscriptionService.CreateSubscriptionAsync(createSubscriptionDto, cancellationToken);
                 if (subscriptionDto == null)
                 {
                     return Result.Failure("Subscription activation failed after payment confirmation.");
@@ -112,7 +112,7 @@ namespace Application.Services // ✅ Namespace: Application.Services
                 _logger.LogInformation("Database changes saved for CryptoPay InvoiceID {CryptoPayInvoiceId}.", paidInvoice.InvoiceId);
 
                 // --- ✅ ارسال نوتیفیکیشن با استفاده از INotificationService ---
-                var userForNotification = await _userService.GetUserByIdAsync(payloadData.UserId, cancellationToken);
+                UserDto? userForNotification = await _userService.GetUserByIdAsync(payloadData.UserId, cancellationToken);
                 if (userForNotification != null) //  TelegramId باید در UserDto باشد
                 {
                     //  متن پیام می‌تواند شامل Markdown پایه باشد. پیاده‌سازی INotificationService مسئول فرمت‌بندی نهایی است.

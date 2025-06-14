@@ -87,7 +87,7 @@ namespace Application.Features.Forwarding.Services
             _logger.LogInformation("MESSAGE_PROCESSING_SERVICE: Processing rule '{RuleName}' for message {OriginalMessageId} from source {SourceId}. Found {TargetCount} target channel(s).",
                 rule.RuleName, originalMessageId, sourceChannelIdForMatching, rule.TargetChannelIds.Count);
 
-            foreach (var targetChannelId in rule.TargetChannelIds)
+            foreach (long targetChannelId in rule.TargetChannelIds)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 

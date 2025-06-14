@@ -34,14 +34,14 @@ namespace Application.Services
         {
             _logger.LogInformation("Attempting to create a new signal for symbol {Symbol}", createSignalDto.Symbol);
 
-            var category = await _categoryRepository.GetByIdAsync(createSignalDto.CategoryId, cancellationToken);
+            SignalCategory? category = await _categoryRepository.GetByIdAsync(createSignalDto.CategoryId, cancellationToken);
             if (category == null)
             {
                 _logger.LogWarning("SignalCategory with ID {CategoryId} not found for creating signal.", createSignalDto.CategoryId);
                 throw new Exception($"SignalCategory with ID {createSignalDto.CategoryId} not found."); // یا NotFoundException
             }
 
-            var signal = _mapper.Map<Signal>(createSignalDto);
+            Signal signal = _mapper.Map<Signal>(createSignalDto);
             signal.Id = Guid.NewGuid();
             signal.PublishedAt = DateTime.UtcNow;
 
@@ -51,14 +51,14 @@ namespace Application.Services
             _logger.LogInformation("Signal with ID {SignalId} created successfully for symbol {Symbol}", signal.Id, signal.Symbol);
 
             // برای برگرداندن DTO با جزئیات کامل (شامل Category)
-            var createdSignalWithDetails = await _signalRepository.GetByIdWithDetailsAsync(signal.Id, cancellationToken);
+            Signal? createdSignalWithDetails = await _signalRepository.GetByIdWithDetailsAsync(signal.Id, cancellationToken);
             return _mapper.Map<SignalDto>(createdSignalWithDetails);
         }
 
         public async Task<SignalDto?> GetSignalByIdAsync(Guid id, CancellationToken cancellationToken = default)
         {
             _logger.LogDebug("Fetching signal with ID {SignalId}", id);
-            var signal = await _signalRepository.GetByIdWithDetailsAsync(id, cancellationToken); // با جزئیات برای DTO
+            Signal? signal = await _signalRepository.GetByIdWithDetailsAsync(id, cancellationToken); // با جزئیات برای DTO
             if (signal == null)
             {
                 _logger.LogWarning("Signal with ID {SignalId} not found.", id);
@@ -72,28 +72,28 @@ namespace Application.Services
             _logger.LogDebug("Fetching {Count} recent signals. IncludeCategory: {IncludeCategory}, IncludeAnalyses: {IncludeAnalyses}", count, includeCategory, includeAnalyses);
             // پیاده‌سازی این متد در Repository باید امکان انتخاب Include ها را بدهد
             // فعلاً از متد موجود Repository استفاده می‌کنیم و در صورت نیاز آن را تغییر می‌دهیم
-            var signals = await _signalRepository.GetRecentSignalsAsync(count, cancellationToken); // این متد باید Include ها را مدیریت کند یا متد جدیدی بسازیم
+            IEnumerable<Signal> signals = await _signalRepository.GetRecentSignalsAsync(count, cancellationToken); // این متد باید Include ها را مدیریت کند یا متد جدیدی بسازیم
             return _mapper.Map<IEnumerable<SignalDto>>(signals);
         }
 
         public async Task<IEnumerable<SignalDto>> GetSignalsByCategoryAsync(Guid categoryId, bool includeAnalyses = false, CancellationToken cancellationToken = default)
         {
             _logger.LogDebug("Fetching signals for CategoryID {CategoryId}. IncludeAnalyses: {IncludeAnalyses}", categoryId, includeAnalyses);
-            var signals = await _signalRepository.GetSignalsByCategoryIdAsync(categoryId, cancellationToken); // این متد باید Include ها را مدیریت کند
+            IEnumerable<Signal> signals = await _signalRepository.GetSignalsByCategoryIdAsync(categoryId, cancellationToken); // این متد باید Include ها را مدیریت کند
             return _mapper.Map<IEnumerable<SignalDto>>(signals);
         }
 
         public async Task<IEnumerable<SignalDto>> GetSignalsBySymbolAsync(string symbol, bool includeCategory = true, bool includeAnalyses = false, CancellationToken cancellationToken = default)
         {
             _logger.LogDebug("Fetching signals for Symbol {Symbol}. IncludeCategory: {IncludeCategory}, IncludeAnalyses: {IncludeAnalyses}", symbol, includeCategory, includeAnalyses);
-            var signals = await _signalRepository.GetSignalsBySymbolAsync(symbol, cancellationToken); // این متد باید Include ها را مدیریت کند
+            IEnumerable<Signal> signals = await _signalRepository.GetSignalsBySymbolAsync(symbol, cancellationToken); // این متد باید Include ها را مدیریت کند
             return _mapper.Map<IEnumerable<SignalDto>>(signals);
         }
 
         public async Task UpdateSignalAsync(Guid signalId, UpdateSignalDto updateSignalDto, CancellationToken cancellationToken = default)
         {
             _logger.LogInformation("Attempting to update signal with ID {SignalId}", signalId);
-            var signal = await _signalRepository.GetByIdAsync(signalId, cancellationToken);
+            Signal? signal = await _signalRepository.GetByIdAsync(signalId, cancellationToken);
             if (signal == null)
             {
                 _logger.LogWarning("Signal with ID {SignalId} not found for update.", signalId);
@@ -102,7 +102,7 @@ namespace Application.Services
 
             if (updateSignalDto.CategoryId.HasValue)
             {
-                var category = await _categoryRepository.GetByIdAsync(updateSignalDto.CategoryId.Value, cancellationToken);
+                SignalCategory? category = await _categoryRepository.GetByIdAsync(updateSignalDto.CategoryId.Value, cancellationToken);
                 if (category == null)
                 {
                     _logger.LogWarning("SignalCategory with ID {CategoryId} not found for updating signal {SignalId}.", updateSignalDto.CategoryId.Value, signalId);
@@ -121,7 +121,7 @@ namespace Application.Services
         public async Task DeleteSignalAsync(Guid signalId, CancellationToken cancellationToken = default)
         {
             _logger.LogInformation("Attempting to delete signal with ID {SignalId}", signalId);
-            var signal = await _signalRepository.GetByIdAsync(signalId, cancellationToken);
+            Signal? signal = await _signalRepository.GetByIdAsync(signalId, cancellationToken);
             if (signal == null)
             {
                 _logger.LogWarning("Signal with ID {SignalId} not found for deletion.", signalId);

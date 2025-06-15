@@ -161,7 +161,11 @@ namespace TelegramPanel.Infrastructure
             );
             return Task.CompletedTask;
         }
-
+        private string SanitizeSensitiveData(string input)
+        {
+            // Example: Redact email addresses
+            return System.Text.RegularExpressions.Regex.Replace(input, @"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", "[REDACTED]");
+        }
         public async Task SendTextMessageToTelegramAsync(
             long chatId,
             string text,
@@ -540,9 +544,4 @@ namespace TelegramPanel.Infrastructure
             return Task.CompletedTask;
         }
     }
-        private string SanitizeSensitiveData(string input)
-        {
-            // Example: Redact email addresses
-            return System.Text.RegularExpressions.Regex.Replace(input, @"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", "[REDACTED]");
-        }
 }

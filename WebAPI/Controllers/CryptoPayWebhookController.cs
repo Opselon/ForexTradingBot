@@ -90,7 +90,6 @@ namespace WebAPI.Controllers // ✅ Namespace صحیح
 
         private bool VerifyCryptoPaySignature(string rawRequestBody, string? signatureHeader, string appApiToken)
         {
-            // ... (کد VerifyCryptoPaySignature که قبلاً داشتیم) ...
             if (string.IsNullOrWhiteSpace(signatureHeader) || string.IsNullOrWhiteSpace(appApiToken))
             {
                 return false;
@@ -104,15 +103,34 @@ namespace WebAPI.Controllers // ✅ Namespace صحیح
                 byte[] bodyBytes = Encoding.UTF8.GetBytes(rawRequestBody);
                 byte[] computedHashBytes = hmac.ComputeHash(bodyBytes);
                 string computedHashHex = Convert.ToHexString(computedHashBytes).ToLowerInvariant();
+
                 bool isValid = computedHashHex.Equals(signatureHeader.ToLowerInvariant(), StringComparison.Ordinal);
+
                 if (!isValid)
                 {
-                    _logger.LogWarning("CryptoPay signature mismatch. Computed: {Computed}, Received: {Received}", computedHashHex, signatureHeader.ToLowerInvariant());
+                    // ==========================================================
+                    // VULNERABILITY REMEDIATION
+                    // ==========================================================
+                    // 1. Sanitize the user-provided header to prevent log forging (CRLF Injection).
+                    //    Replace newline and carriage return characters with a safe placeholder.
+                    var sanitizedSignatureHeader = signatureHeader
+                                                       .Replace(Environment.NewLine, "[NL]")
+                                                       .Replace("\n", "[NL]")
+                                                       .Replace("\r", "[CR]");
+
+                    // 2. Log the sanitized input.
+                    _logger.LogWarning("CryptoPay signature mismatch. Computed: {Computed}, Received (Sanitized): {Received}",
+                                        computedHashHex,
+                                        sanitizedSignatureHeader);
                 }
 
                 return isValid;
             }
-            catch (Exception ex) { _logger.LogError(ex, "Exception during CryptoPay signature verification."); return false; }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Exception during CryptoPay signature verification.");
+                return false;
+            }
         }
 
         [HttpGet]

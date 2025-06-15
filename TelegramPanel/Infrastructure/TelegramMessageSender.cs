@@ -172,7 +172,8 @@ namespace TelegramPanel.Infrastructure
             CancellationToken cancellationToken)
         {
             string logText = text.Length > 100 ? text.Substring(0, 100) + "..." : text;
-            _logger.LogDebug("Hangfire Job (ActualSend): Sending text message. ChatID: {ChatId}, Text (partial): '{LogText}'", chatId, logText);
+            string sanitizedLogText = SanitizeSensitiveData(logText);
+            _logger.LogDebug("Hangfire Job (ActualSend): Sending text message. ChatID: {ChatId}, Text (partial): '{LogText}'", chatId, sanitizedLogText);
 
             string telegramIdString = chatId.ToString();
 
@@ -208,7 +209,7 @@ namespace TelegramPanel.Infrastructure
                       (apiEx.ErrorCode == 403 && apiEx.Message.Contains("bot was blocked by the user", StringComparison.OrdinalIgnoreCase))
                 )
             {
-                _logger.LogWarning(apiEx, "Hangfire Job (ActualSend): Telegram API reported chat not found or user deactivated/blocked (Code: {ApiErrorCode}) for ChatID {ChatId} while sending text message. Text (partial): '{LogText}'. Attempting to remove user from local database.", apiEx.ErrorCode, chatId, logText);
+                _logger.LogWarning(apiEx, "Hangfire Job (ActualSend): Telegram API reported chat not found or user deactivated/blocked (Code: {ApiErrorCode}) for ChatID {ChatId} while sending text message. Text (partial): '{LogText}'. Attempting to remove user from local database.", apiEx.ErrorCode, chatId, sanitizedLogText);
 
                 try
                 {
@@ -539,4 +540,9 @@ namespace TelegramPanel.Infrastructure
             return Task.CompletedTask;
         }
     }
+        private string SanitizeSensitiveData(string input)
+        {
+            // Example: Redact email addresses
+            return System.Text.RegularExpressions.Regex.Replace(input, @"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", "[REDACTED]");
+        }
 }

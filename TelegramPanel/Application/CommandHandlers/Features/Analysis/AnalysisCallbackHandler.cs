@@ -10,7 +10,6 @@ using Telegram.Bot.Types.ReplyMarkups;
 using TelegramPanel.Application.CommandHandlers.MainMenu;
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Formatters;
-using TelegramPanel.Infrastructure;
 using TelegramPanel.Infrastructure.Helper;
 using static TelegramPanel.Infrastructure.ActualTelegramMessageActions;
 
@@ -65,7 +64,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                     return false;
                 }
 
-                var data = update.CallbackQuery.Data;
+                string data = update.CallbackQuery.Data;
                 return data.StartsWith(CbWatchPrefix) ||
                    data.StartsWith(SearchKeywordsCallback) ||
                    data.StartsWith(ShowCbNewsPrefix) ||
@@ -96,7 +95,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
         public async Task HandleAsync(Update update, CancellationToken cancellationToken = default)
         {
             // Using null-conditional operator and checking for null instead of null-forgiving operator (!)
-            var callbackQuery = update.CallbackQuery;
+            CallbackQuery? callbackQuery = update.CallbackQuery;
             if (callbackQuery?.Data == null || callbackQuery.Message == null)
             {
                 // Log a warning if essential callback data is missing.
@@ -106,10 +105,10 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                 return; // Exit early if essential data is missing.
             }
 
-            var data = callbackQuery.Data;
-            var chatId = callbackQuery.Message.Chat.Id;
-            var messageId = callbackQuery.Message.MessageId;
-            var userId = callbackQuery.From.Id;
+            string data = callbackQuery.Data;
+            long chatId = callbackQuery.Message.Chat.Id;
+            int messageId = callbackQuery.Message.MessageId;
+            long userId = callbackQuery.From.Id;
 
             // Log the incoming callback query for traceability
             _logger.LogInformation("Handling CallbackQuery from UserID {UserId} in ChatID {ChatId}, MessageID {MessageId}. Data: {CallbackData}",
@@ -132,7 +131,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                     await _stateMachine.ClearStateAsync(userId, cancellationToken);
 
                     // Assuming MenuCommandHandler.GetMainMenuMarkup returns (string text, InlineKeyboardMarkup keyboard)
-                    var (text, keyboard) = MenuCommandHandler.GetMainMenuMarkup();
+                    (string text, InlineKeyboardMarkup keyboard) = MenuCommandHandler.GetMainMenuMarkup();
                     // Edit the message to show the main menu. Potential Telegram API call failure.
                     await _messageSender.EditMessageTextAsync(chatId, messageId, text, ParseMode.MarkdownV2, keyboard, cancellationToken: cancellationToken);
                     _logger.LogDebug("Sent Main Menu to ChatID {ChatId}.", chatId);
@@ -145,7 +144,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                 }
                 else if (data.StartsWith(SelectSentimentCurrencyPrefix))
                 {
-                    var currencyCode = data.Substring(SelectSentimentCurrencyPrefix.Length);
+                    string currencyCode = data[SelectSentimentCurrencyPrefix.Length..];
                     _logger.LogInformation("User {UserId} selected currency '{CurrencyCode}' for sentiment.", userId, currencyCode);
                     // Call the handler for currency selection. This method might have its own try-catch.
                     await HandleSentimentCurrencySelectionAsync(chatId, messageId, currencyCode, cancellationToken);
@@ -165,7 +164,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                 }
                 else if (data.StartsWith(ShowCbNewsPrefix))
                 {
-                    var bankCode = data.Substring(ShowCbNewsPrefix.Length);
+                    string bankCode = data[ShowCbNewsPrefix.Length..];
                     _logger.LogInformation("User {UserId} triggered Central Bank News for '{BankCode}'.", userId, bankCode);
                     // Call the handler for central bank news. This method might have its own try-catch.
                     await ShowCentralBankNewsAsync(chatId, messageId, bankCode, cancellationToken);
@@ -250,7 +249,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
             {
                 _logger.LogInformation("Showing currency selection menu for sentiment analysis to ChatID {ChatId}", chatId);
 
-                var text = "📊 *Market Sentiment*\n\nPlease select a currency to analyze the sentiment of its recent news coverage.";
+                string text = "📊 *Market Sentiment*\n\nPlease select a currency to analyze the sentiment of its recent news coverage.";
 
                 // Consider handling CentralBankKeywords being null or empty.  Log a warning if so.
                 if (CentralBankKeywords == null || CentralBankKeywords.Count == 0)
@@ -261,7 +260,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                     return; // Exit the method, since there's nothing to display.
                 }
 
-                var buttons = CentralBankKeywords.Select(kvp =>
+                List<InlineKeyboardButton> buttons = CentralBankKeywords.Select(kvp =>
                     InlineKeyboardButton.WithCallbackData($"{(kvp.Key == "USD" ? "🇺🇸" : kvp.Key == "EUR" ? "🇪🇺" : kvp.Key == "GBP" ? "🇬🇧" : "🇯🇵")} {kvp.Value.Name}", $"{SelectSentimentCurrencyPrefix}{kvp.Key}")
                 ).ToList();
 
@@ -273,7 +272,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                     return; // Exit the method.
                 }
 
-                var keyboardRows = new List<List<InlineKeyboardButton>>();
+                List<List<InlineKeyboardButton>> keyboardRows = new();
                 for (int i = 0; i < buttons.Count; i += 2)
                 {
                     keyboardRows.Add(buttons.Skip(i).Take(2).ToList());
@@ -289,7 +288,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
 
                 keyboardRows.Add([InlineKeyboardButton.WithCallbackData("⬅️ Back to Analysis Menu", MenuCommandHandler.AnalysisCallbackData)]);
 
-                var keyboard = new InlineKeyboardMarkup(keyboardRows);
+                InlineKeyboardMarkup keyboard = new(keyboardRows);
 
                 await _messageSender.EditMessageTextAsync(chatId, messageId, text, ParseMode.Markdown, keyboard, cancellationToken);
             }
@@ -314,7 +313,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                     return;
                 }
 
-                if (!CentralBankKeywords.TryGetValue(currencyCode, out var currencyInfo))
+                if (!CentralBankKeywords.TryGetValue(currencyCode, out (string Name, string[] Keywords) currencyInfo))
                 {
                     _logger.LogWarning("Currency code {CurrencyCode} not found in CentralBankKeywords for ChatID {ChatId}", currencyCode, chatId);
                     await _messageSender.SendTextMessageAsync(chatId, "Invalid currency selection. Please try again.", cancellationToken: cancellationToken);
@@ -323,7 +322,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
 
                 await _messageSender.EditMessageTextAsync(chatId, messageId, $"⏳ Analyzing sentiment for the *{currencyInfo.Name}*...", ParseMode.Markdown, cancellationToken: cancellationToken);
 
-                var (sentimentText, topPositive, topNegative, positiveScore, negativeScore) = await PerformSentimentAnalysisAsync(currencyInfo.Keywords, cancellationToken);
+                (string sentimentText, List<NewsItem> topPositive, List<NewsItem> topNegative, int positiveScore, int negativeScore) = await PerformSentimentAnalysisAsync(currencyInfo.Keywords, cancellationToken);
 
                 // Handle null results from PerformSentimentAnalysisAsync (defensive programming)
                 if (sentimentText == null && topPositive == null && topNegative == null && positiveScore == 0 && negativeScore == 0) // or however the failure is represented.
@@ -333,8 +332,8 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                     return;
                 }
 
-                var message = FormatSentimentMessage(currencyInfo.Name, sentimentText, topPositive, topNegative, positiveScore, negativeScore);
-                var keyboard = MarkupBuilder.CreateInlineKeyboard(new[] {
+                string message = FormatSentimentMessage(currencyInfo.Name, sentimentText, topPositive, topNegative, positiveScore, negativeScore);
+                InlineKeyboardMarkup? keyboard = MarkupBuilder.CreateInlineKeyboard(new[] {
                 InlineKeyboardButton.WithCallbackData("⬅️ Back to Currency Selection", SentimentAnalysisCallback)
             });
 
@@ -360,7 +359,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                     return (null, null, null, 0, 0); // Indicate failure.
                 }
 
-                var (newsItems, _) = await _newsRepository.SearchNewsAsync(currencyKeywords, DateTime.UtcNow.AddDays(-3), DateTime.UtcNow, 1, 100, cancellationToken: cancellationToken);
+                (List<NewsItem> newsItems, int _) = await _newsRepository.SearchNewsAsync(currencyKeywords, DateTime.UtcNow.AddDays(-3), DateTime.UtcNow, 1, 100, cancellationToken: cancellationToken);
 
                 // Handle null or empty newsItems from the repository.
                 if (newsItems == null)
@@ -377,10 +376,10 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
 
                 int positiveScore = 0;
                 int negativeScore = 0;
-                var positiveArticles = new List<(NewsItem, int)>();
-                var negativeArticles = new List<(NewsItem, int)>();
+                List<(NewsItem, int)> positiveArticles = new();
+                List<(NewsItem, int)> negativeArticles = new();
 
-                foreach (var item in newsItems)
+                foreach (NewsItem item in newsItems)
                 {
                     // Defensive programming - check if item is null.
                     if (item == null)
@@ -400,8 +399,8 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                     }
 
 
-                    int currentPositive = BullishKeywords.Count(k => content.Contains(k));
-                    int currentNegative = BearishKeywords.Count(k => content.Contains(k));
+                    int currentPositive = BullishKeywords.Count(content.Contains);
+                    int currentNegative = BearishKeywords.Count(content.Contains);
 
                     if (currentPositive > 0)
                     {
@@ -433,8 +432,8 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                     sentiment = "Not enough data"; // Modified to be clearer.
                 }
 
-                var topPositive = positiveArticles.OrderByDescending(a => a.Item2).Take(2).Select(a => a.Item1).ToList();
-                var topNegative = negativeArticles.OrderByDescending(a => a.Item2).Take(2).Select(a => a.Item1).ToList();
+                List<NewsItem> topPositive = positiveArticles.OrderByDescending(a => a.Item2).Take(2).Select(a => a.Item1).ToList();
+                List<NewsItem> topNegative = negativeArticles.OrderByDescending(a => a.Item2).Take(2).Select(a => a.Item1).ToList();
 
                 return (sentiment, topPositive, topNegative, positiveScore, negativeScore);
             }
@@ -457,7 +456,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
         {
             try
             {
-                var sb = new StringBuilder();
+                StringBuilder sb = new();
 
                 // Handle null sentiment
                 sentiment ??= "No Sentiment Available"; // Provide a default value if sentiment is null
@@ -469,7 +468,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                 if (topPositive != null && topPositive.Any()) // Check for null and empty
                 {
                     _ = sb.AppendLine(TelegramMessageFormatter.Bold("Key Positive News:"));
-                    foreach (var item in topPositive)
+                    foreach (NewsItem item in topPositive)
                     {
                         // Defensive programming: Check for null item
                         if (item == null)
@@ -485,7 +484,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                 if (topNegative != null && topNegative.Any()) // Check for null and empty
                 {
                     _ = sb.AppendLine(TelegramMessageFormatter.Bold("Key Negative News:"));
-                    foreach (var item in topNegative)
+                    foreach (NewsItem item in topNegative)
                     {
                         // Defensive programming: Check for null item
                         if (item == null)
@@ -523,10 +522,10 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
             {
                 _logger.LogInformation("User {UserId} initiated news search by keyword.", userId);
 
-                var stateName = "WaitingForNewsKeywords";
+                string stateName = "WaitingForNewsKeywords";
                 await _stateMachine.SetStateAsync(userId, stateName, triggerUpdate, cancellationToken);
 
-                var state = _stateMachine.GetState(stateName);
+                ITelegramState? state = _stateMachine.GetState(stateName);
 
                 // Defensive programming: check for null state
                 if (state == null)
@@ -536,7 +535,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                     return;
                 }
 
-                var entryMessage = await state.GetEntryMessageAsync(chatId, triggerUpdate, cancellationToken);
+                string? entryMessage = await state.GetEntryMessageAsync(chatId, triggerUpdate, cancellationToken);
 
                 // Defensive programming: Check for null entryMessage (and handle).
                 if (entryMessage == null)
@@ -546,7 +545,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                     return;
                 }
 
-                var keyboard = MarkupBuilder.CreateInlineKeyboard(
+                InlineKeyboardMarkup? keyboard = MarkupBuilder.CreateInlineKeyboard(
                     new[] { InlineKeyboardButton.WithCallbackData("⬅️ Back to Analysis Menu", MenuCommandHandler.AnalysisCallbackData) });
 
                 await _messageSender.EditMessageTextAsync(chatId, messageId, entryMessage, ParseMode.MarkdownV2, keyboard, cancellationToken);
@@ -571,7 +570,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
             {
                 _logger.LogInformation("Showing Central Bank selection menu to ChatID {ChatId}", chatId);
 
-                var text = "🏛️ *Central Bank Watch*\n\nSelect a central bank to view the latest related news and announcements.";
+                string text = "🏛️ *Central Bank Watch*\n\nSelect a central bank to view the latest related news and announcements.";
 
                 // Input Validation - Check if CentralBankKeywords is null or empty
                 if (CentralBankKeywords == null || CentralBankKeywords.Count == 0)
@@ -581,7 +580,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                     return; // Exit the method.
                 }
 
-                var buttons = CentralBankKeywords.Select(kvp =>
+                List<InlineKeyboardButton> buttons = CentralBankKeywords.Select(kvp =>
                     InlineKeyboardButton.WithCallbackData($"🏦 {kvp.Value.Name}", $"{ShowCbNewsPrefix}{kvp.Key}")
                 ).ToList();
 
@@ -594,7 +593,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                 }
 
                 // Ensure all rows are of the same concrete type: List<InlineKeyboardButton>
-                var keyboardRows = new List<List<InlineKeyboardButton>>(); // Changed to List<List<...>> for type safety
+                List<List<InlineKeyboardButton>> keyboardRows = new(); // Changed to List<List<...>> for type safety
                 for (int i = 0; i < buttons.Count; i += 2)
                 {
                     keyboardRows.Add(buttons.Skip(i).Take(2).ToList());
@@ -613,7 +612,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                 InlineKeyboardButton.WithCallbackData("⬅️ Back to Analysis Menu", MenuCommandHandler.AnalysisCallbackData)
             ]);
 
-                var keyboard = new InlineKeyboardMarkup(keyboardRows);
+                InlineKeyboardMarkup keyboard = new(keyboardRows);
 
                 await _messageSender.EditMessageTextAsync(chatId, messageId, text, ParseMode.Markdown, keyboard, cancellationToken);
             }
@@ -638,7 +637,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
         public async Task ShowCentralBankNewsAsync(long chatId, int messageId, string bankCode, CancellationToken cancellationToken)
         {
             // Basic validation for bankCode (already present)
-            if (!CentralBankKeywords.TryGetValue(bankCode, out var bankInfo))
+            if (!CentralBankKeywords.TryGetValue(bankCode, out (string Name, string[] Keywords) bankInfo))
             {
                 _logger.LogWarning("Invalid bank code received: {BankCode}. Exiting handler for ChatID {ChatId}, MessageID {MessageId}.", bankCode, chatId, messageId);
                 // Optionally inform the user or edit the message to indicate invalid input.
@@ -662,7 +661,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
 
                 // --- Step 2: Search News ---
                 // Potential database/repository interaction failure.
-                var (results, totalCount) = await _newsRepository.SearchNewsAsync(
+                (List<NewsItem> results, int totalCount) = await _newsRepository.SearchNewsAsync(
                     keywords: bankInfo.Keywords,
                     sinceDate: DateTime.UtcNow.AddDays(-14),
                     untilDate: DateTime.UtcNow,
@@ -674,7 +673,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                 _logger.LogDebug("News search completed for {BankName}. Found {ResultCount} results out of {TotalCount}.", bankInfo.Name, results.Count(), totalCount);
 
                 // --- Step 3: Build and Send Result Message ---
-                var sb = new StringBuilder();
+                StringBuilder sb = new();
                 if (results == null || !results.Any()) // Check for null results from repository too
                 {
                     _ = sb.AppendLine($"No recent news found for the *{TelegramMessageFormatter.EscapeMarkdownV2(bankInfo.Name)}*."); // Use EscapeMarkdownV2
@@ -684,7 +683,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                     _ = sb.AppendLine($"🏛️ *Top {results.Count()} News Results for: {TelegramMessageFormatter.EscapeMarkdownV2(bankInfo.Name)}*"); // Use EscapeMarkdownV2
                     _ = sb.AppendLine();
                     // Check if any news items are null or have null properties before processing
-                    foreach (var item in results.Where(i => i != null))
+                    foreach (NewsItem? item in results.Where(i => i != null))
                     {
                         // Ensure properties are not null before using them
                         string title = item.Title?.Trim() ?? "Untitled";
@@ -696,7 +695,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                         _ = sb.AppendLine($"_{TelegramMessageFormatter.EscapeMarkdownV2(sourceName)}_ at _{publishedDate:yyyy-MM-dd HH:mm} UTC_"); // Use EscapeMarkdownV2 and correct date format
 
                         // Validate link format before creating link in Markdown
-                        if (!string.IsNullOrWhiteSpace(link) && Uri.TryCreate(link, UriKind.Absolute, out var uri))
+                        if (!string.IsNullOrWhiteSpace(link) && Uri.TryCreate(link, UriKind.Absolute, out Uri? uri))
                         {
                             // Escape parentheses in the URL itself for MarkdownV2 links
                             string escapedLink = link.Replace("(", "\\(").Replace(")", "\\)");
@@ -713,7 +712,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                 }
 
                 // Build the keyboard. Assumes MarkupBuilder and CbWatchPrefix are defined.
-                var keyboard = MarkupBuilder.CreateInlineKeyboard(new[] {
+                InlineKeyboardMarkup? keyboard = MarkupBuilder.CreateInlineKeyboard(new[] {
             InlineKeyboardButton.WithCallbackData("⬅️ Back to Bank Selection", CbWatchPrefix)
         });
 

@@ -9,7 +9,6 @@ using Telegram.Bot.Types.ReplyMarkups;
 using TelegramPanel.Application.CommandHandlers.MainMenu;
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Formatters;
-using TelegramPanel.Infrastructure;
 using TelegramPanel.Infrastructure.Helper;
 using static TelegramPanel.Infrastructure.ActualTelegramMessageActions;
 
@@ -61,11 +60,11 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
 
         private async Task HandleExploreReleaseAsync(CallbackQuery callbackQuery, CancellationToken cancellationToken)
         {
-            var chatId = callbackQuery.Message!.Chat.Id;
-            var messageId = callbackQuery.Message.MessageId;
+            long chatId = callbackQuery.Message!.Chat.Id;
+            int messageId = callbackQuery.Message.MessageId;
 
             // Callback data format: "econ_explore:{releaseId}:{elementId}:{parentName}"
-            var parts = callbackQuery.Data!.Split(':', 4);
+            string[] parts = callbackQuery.Data!.Split(':', 4);
             if (!int.TryParse(parts[1], out int releaseId) || !int.TryParse(parts[2], out int elementId))
             {
                 return;
@@ -75,7 +74,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
 
             await _messageSender.EditMessageTextAsync(chatId, messageId, "Loading data tree...", cancellationToken: cancellationToken);
 
-            var result = await _calendarService.GetReleaseTableTreeAsync(releaseId, elementId == 0 ? null : elementId, cancellationToken);
+            Shared.Results.Result<FredReleaseTablesResponseDto> result = await _calendarService.GetReleaseTableTreeAsync(releaseId, elementId == 0 ? null : elementId, cancellationToken);
 
             if (!result.Succeeded || !result.Data.Elements.Any())
             {
@@ -83,22 +82,22 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
                 return;
             }
 
-            var sb = new StringBuilder();
-            var keyboardRows = new List<List<InlineKeyboardButton>>();
+            StringBuilder sb = new();
+            List<List<InlineKeyboardButton>> keyboardRows = new();
 
-            var currentElement = result.Data.Elements.First(); // The API returns the parent as the first element
+            FredReleaseTableElementDto currentElement = result.Data.Elements.First(); // The API returns the parent as the first element
 
             _ = sb.AppendLine("🗓️ *Release Explorer*");
             _ = sb.AppendLine($"`Path: {TelegramMessageFormatter.EscapeMarkdownV2(parentName)} > {TelegramMessageFormatter.EscapeMarkdownV2(currentElement.Name)}`");
             _ = sb.AppendLine();
             _ = sb.AppendLine("Select a category or data series below:");
 
-            foreach (var child in currentElement.Children)
+            foreach (FredReleaseTableElementDto child in currentElement.Children)
             {
                 // If it's a data series, show a different button
                 if (child.Type == "series" && !string.IsNullOrWhiteSpace(child.SeriesId))
                 {
-                    var buttonText = $"📈 {child.Name}";
+                    string buttonText = $"📈 {child.Name}";
                     keyboardRows.Add([
                     InlineKeyboardButton.WithCallbackData(buttonText, $"series_details:{child.SeriesId}") // To be handled by another handler
                 ]);
@@ -106,7 +105,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
                 // If it's a group with more children, allow further drilling
                 else if (child.Type == "group" && child.Children.Any())
                 {
-                    var buttonText = $"📂 {child.Name}";
+                    string buttonText = $"📂 {child.Name}";
                     keyboardRows.Add([
                     InlineKeyboardButton.WithCallbackData(buttonText, $"{ExploreReleasePrefix}:{child.ReleaseId}:{child.ElementId}:{currentElement.Name}")
                 ]);
@@ -136,7 +135,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
         /// </summary>
         public async Task HandleAsync(Update update, CancellationToken cancellationToken = default)
         {
-            var callbackQuery = update.CallbackQuery;
+            CallbackQuery? callbackQuery = update.CallbackQuery;
             if (callbackQuery?.Message == null)
             {
                 _logger.LogWarning("EconomicCalendarCallbackHandler received an update without a valid CallbackQuery or Message.");
@@ -147,7 +146,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
             {
                 await _messageSender.AnswerCallbackQueryAsync(callbackQuery.Id, cancellationToken: cancellationToken);
 
-                var data = callbackQuery.Data!;
+                string data = callbackQuery.Data!;
 
                 if (data.StartsWith(SearchSeriesCallback))
                 {
@@ -202,8 +201,8 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
         private async Task HandleReleasesViewAsync(CallbackQuery callbackQuery, CancellationToken cancellationToken)
         {
             // Extract chat and message IDs. Using null-conditional operator for safety.
-            var chatId = callbackQuery.Message?.Chat.Id;
-            var messageId = callbackQuery.Message?.MessageId;
+            long? chatId = callbackQuery.Message?.Chat.Id;
+            int? messageId = callbackQuery.Message?.MessageId;
 
             // Ensure essential data is available before proceeding.
             if (chatId == null || messageId == null)
@@ -219,7 +218,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
             {
                 // Parse page number from callback data, e.g., "menu_econ_calendar:2"
                 // Using null-conditional operator and TryParse for safe parsing.
-                var parts = callbackQuery.Data?.Split(':');
+                string[]? parts = callbackQuery.Data?.Split(':');
                 int page = parts != null && parts.Length > 1 && int.TryParse(parts[1], out int p) ? p : 1;
 
                 // Inform the user that releases are being loaded by editing the message.
@@ -232,13 +231,13 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
 
                 // Fetch economic releases from the external service.
                 // This call is a potential point of failure (external service/database).
-                var result = await _calendarService.GetReleasesAsync(page, PageSize, cancellationToken);
+                Shared.Results.Result<List<global::Application.DTOs.Fred.FredReleaseDto>> result = await _calendarService.GetReleasesAsync(page, PageSize, cancellationToken);
 
                 // Check if fetching releases failed or returned no data.
                 if (!result.Succeeded || result.Data == null || !result.Data.Any())
                 {
                     // Build a keyboard for the error message.
-                    var errorKeyboard = GetPaginationKeyboard(page, false);
+                    InlineKeyboardMarkup errorKeyboard = GetPaginationKeyboard(page, false);
 
                     // Edit the message to show an error to the user.
                     // This EditMessageTextAsync call is another potential point of failure.
@@ -259,7 +258,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
                 }
 
                 // Build the message text using StringBuilder for efficiency.
-                var sb = new StringBuilder();
+                StringBuilder sb = new();
                 _ = sb.AppendLine("🗓️ *Upcoming Economic Releases* 📅 - *Key Indicators for Forex Trading:*"); // Changed text and added emoji and context.
                 _ = sb.AppendLine("*Impact Levels: 🔴 High | 🟠 Medium | 🟢 Low*");
                 _ = sb.AppendLine("`-----------------------------------`");
@@ -267,7 +266,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
                 // Loop through the retrieved releases and format them for the message.
                 int counter = 1 + ((page - 1) * PageSize); // Start from the correct number for pagination
                                                            // Added Where(r => r != null) for defensive check if list contains nulls
-                foreach (var release in result.Data.Where(r => r != null).ToList()) // Added ToList() if needed, or just iterate
+                foreach (global::Application.DTOs.Fred.FredReleaseDto? release in result.Data.Where(r => r != null).ToList()) // Added ToList() if needed, or just iterate
                 {
                     // Generate numeric emoji for the item number (supports up to 100).
                     string emoji = "";
@@ -359,7 +358,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
 
 
                 // Build the pagination keyboard based on whether there are more pages.
-                var releasesKeyboard = GetPaginationKeyboard(page, result.Data.Count == PageSize);
+                InlineKeyboardMarkup releasesKeyboard = GetPaginationKeyboard(page, result.Data.Count == PageSize);
 
                 // Edit the message with the generated list of releases and pagination keyboard.
                 // This is the final potential point of failure related to Telegram API.
@@ -430,9 +429,9 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
         private async Task HandleSearchSeriesInitiationAsync(CallbackQuery callbackQuery, CancellationToken cancellationToken)
         {
             // این ID ها را بیرون از try-catch می‌گیریم تا در صورت بروز خطا، بتوانیم لاگ دقیقی ثبت کنیم
-            var chatId = callbackQuery.Message?.Chat.Id;
-            var userId = callbackQuery.From.Id;
-            var messageId = callbackQuery.Message?.MessageId;
+            long? chatId = callbackQuery.Message?.Chat.Id;
+            long userId = callbackQuery.From.Id;
+            int? messageId = callbackQuery.Message?.MessageId;
 
             try
             {
@@ -444,22 +443,22 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
                     return;
                 }
 
-                var parts = callbackQuery.Data.Split(new[] { ':' }, 2);
+                string[] parts = callbackQuery.Data.Split(new[] { ':' }, 2);
                 string? prefilledSearch = parts.Length > 1 ? parts[1] : null;
 
-                var triggerUpdate = new Update { Id = 0, CallbackQuery = callbackQuery };
+                Update triggerUpdate = new() { Id = 0, CallbackQuery = callbackQuery };
                 const string stateName = "WaitingForFredSearch";
                 await _stateMachine.SetStateAsync(userId, stateName, triggerUpdate, cancellationToken);
 
-                var newState = _stateMachine.GetState(stateName);
-                var entryMessage = await newState!.GetEntryMessageAsync(chatId.Value, triggerUpdate, cancellationToken);
+                ITelegramState? newState = _stateMachine.GetState(stateName);
+                string? entryMessage = await newState!.GetEntryMessageAsync(chatId.Value, triggerUpdate, cancellationToken);
 
                 if (!string.IsNullOrWhiteSpace(prefilledSearch))
                 {
                     entryMessage += $"\n\n*Suggested search:* `{TelegramMessageFormatter.EscapeMarkdownV2(prefilledSearch)}`";
                 }
 
-                var searchKeyboard = MarkupBuilder.CreateInlineKeyboard(
+                InlineKeyboardMarkup? searchKeyboard = MarkupBuilder.CreateInlineKeyboard(
                     new[] { InlineKeyboardButton.WithCallbackData("⬅️ Back to Calendar", $"{ReleasesCallbackPrefix}:1") }
                 );
 
@@ -484,7 +483,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
         /// <returns>An <see cref="InlineKeyboardMarkup"/> for navigation.</returns>
         private InlineKeyboardMarkup GetPaginationKeyboard(int currentPage, bool hasMore)
         {
-            var paginationRow = new List<InlineKeyboardButton>();
+            List<InlineKeyboardButton> paginationRow = new();
             if (currentPage > 1)
             {
                 paginationRow.Add(InlineKeyboardButton.WithCallbackData("⬅️ Previous", $"{ReleasesCallbackPrefix}:{currentPage - 1}"));
@@ -494,7 +493,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
                 paginationRow.Add(InlineKeyboardButton.WithCallbackData("Next ➡️", $"{ReleasesCallbackPrefix}:{currentPage + 1}"));
             }
 
-            var keyboardLayout = new List<List<InlineKeyboardButton>>();
+            List<List<InlineKeyboardButton>> keyboardLayout = new();
             if (paginationRow.Any())
             {
                 keyboardLayout.Add(paginationRow);

@@ -56,22 +56,22 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
             _messageSender = messageSender ?? throw new ArgumentNullException(nameof(messageSender));
             _directMessageSender = directMessageSender ?? throw new ArgumentNullException(nameof(directMessageSender));
             _memoryCache = memoryCache ?? throw new ArgumentNullException(nameof(memoryCache));
-       
 
-        // تعریف _internalServiceRetryPolicy برای عملیات‌های داخلی (مانند دسترسی به DB از طریق StateMachine)
-        _internalServiceRetryPolicy = Policy
-                .Handle<Exception>(ex => ex is not (OperationCanceledException or TaskCanceledException))
-                .WaitAndRetryAsync(
-                    retryCount: 3,
-                    sleepDurationProvider: retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)), // تأخیر نمایی: 2s, 4s, 8s
-                    onRetry: (exception, timeSpan, retryAttempt, context) =>
-                    {
-                        var updateId = context.TryGetValue("UpdateId", out var id) ? (int?)id : null;
-                        var userId = context.TryGetValue("TelegramUserId", out var uid) ? (long?)uid : null;
-                        _logger.LogWarning(exception,
-                            "PollyRetry (InternalService): Operation failed for UpdateId {UpdateId}, UserId {UserId}. Retrying in {TimeSpan} for attempt {RetryAttempt}. Error: {Message}",
-                            updateId, userId, timeSpan, retryAttempt, exception.Message);
-                    });
+
+            // تعریف _internalServiceRetryPolicy برای عملیات‌های داخلی (مانند دسترسی به DB از طریق StateMachine)
+            _internalServiceRetryPolicy = Policy
+                    .Handle<Exception>(ex => ex is not (OperationCanceledException or TaskCanceledException))
+                    .WaitAndRetryAsync(
+                        retryCount: 3,
+                        sleepDurationProvider: retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)), // تأخیر نمایی: 2s, 4s, 8s
+                        onRetry: (exception, timeSpan, retryAttempt, context) =>
+                        {
+                            int? updateId = context.TryGetValue("UpdateId", out object? id) ? (int?)id : null;
+                            long? userId = context.TryGetValue("TelegramUserId", out object? uid) ? (long?)uid : null;
+                            _logger.LogWarning(exception,
+                                "PollyRetry (InternalService): Operation failed for UpdateId {UpdateId}, UserId {UserId}. Retrying in {TimeSpan} for attempt {RetryAttempt}. Error: {Message}",
+                                updateId, userId, timeSpan, retryAttempt, exception.Message);
+                        });
 
             // تعریف _externalApiRetryPolicy برای فراخوانی‌های API خارجی (مانند ارسال پیام تلگرام)
             _externalApiRetryPolicy = Policy
@@ -81,8 +81,8 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
                     sleepDurationProvider: retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)), // تأخیر نمایی: 2s, 4s, 8s
                     onRetry: (exception, timeSpan, retryAttempt, context) =>
                     {
-                        var updateId = context.TryGetValue("UpdateId", out var id) ? (int?)id : null;
-                        var chatId = context.TryGetValue("ChatId", out var cid) ? (long?)cid : null;
+                        int? updateId = context.TryGetValue("UpdateId", out object? id) ? (int?)id : null;
+                        long? chatId = context.TryGetValue("ChatId", out object? cid) ? (long?)cid : null;
                         _logger.LogWarning(exception,
                             "PollyRetry (ExternalAPI): API call failed for UpdateId {UpdateId}, ChatId {ChatId}. Retrying in {TimeSpan} for attempt {RetryAttempt}. Error: {Message}",
                             updateId, chatId, timeSpan, retryAttempt, exception.Message);
@@ -110,7 +110,7 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
             }
 
             // Build the middleware pipeline chain.
-            var pipeline = _middlewares.Aggregate(
+            TelegramPipelineDelegate pipeline = _middlewares.Aggregate(
                 (TelegramPipelineDelegate)finalHandlerAction,
                 (nextMiddlewareInChain, currentMiddleware) =>
                     async (upd, ct) => await currentMiddleware.InvokeAsync(upd, nextMiddlewareInChain, ct)
@@ -157,7 +157,7 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
         /// </summary>
         private async Task RouteToHandlerOrStateMachineAsync(Update update, CancellationToken cancellationToken)
         {
-            var userId = update.Message?.From?.Id ?? update.CallbackQuery?.From?.Id;
+            long? userId = update.Message?.From?.Id ?? update.CallbackQuery?.From?.Id;
             if (!userId.HasValue)
             {
                 _logger.LogWarning("Cannot route Update ID: {UpdateId}. UserID is missing.", update.Id);
@@ -166,7 +166,7 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
 
             try
             {
-                var pollyContext = CreatePollyContextForUpdate(update, userId.Value);
+                Context pollyContext = CreatePollyContextForUpdate(update, userId.Value);
 
                 await _internalServiceRetryPolicy.ExecuteAsync(
                     async (context, ct) => await ProcessUpdateInternalAsync(update, userId.Value, context, ct),
@@ -194,7 +194,7 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
 
             if (update.Type == UpdateType.Message && update.Message?.Text?.StartsWith('/') == true)
             {
-                var commandHandler = _commandHandlers.FirstOrDefault(h => h.CanHandle(update));
+                ITelegramCommandHandler? commandHandler = _commandHandlers.FirstOrDefault(h => h.CanHandle(update));
                 if (commandHandler != null)
                 {
                     _logger.LogInformation("Routing UpdateID {UpdateId} to CommandHandler: {HandlerName}", update.Id, commandHandler.GetType().Name);
@@ -204,7 +204,7 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
             }
             else if (update.Type == UpdateType.CallbackQuery)
             {
-                var callbackHandler = _callbackQueryHandlers.FirstOrDefault(h => h.CanHandle(update));
+                ITelegramCallbackQueryHandler? callbackHandler = _callbackQueryHandlers.FirstOrDefault(h => h.CanHandle(update));
                 if (callbackHandler != null)
                 {
                     _logger.LogInformation("Routing UpdateID {UpdateId} to CallbackQueryHandler: {HandlerName}", update.Id, callbackHandler.GetType().Name);
@@ -272,7 +272,7 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
             _logger.LogWarning("Attempting to clear faulty state '{StateName}' for UserID {UserId} as part of recovery.", failedStateName, userId);
             try
             {
-                var recoveryContext = new Polly.Context($"StateClearRecovery_{update.Id}", new Dictionary<string, object> { { "UserId", userId } });
+                Context recoveryContext = new($"StateClearRecovery_{update.Id}", new Dictionary<string, object> { { "UserId", userId } });
 
                 await _internalServiceRetryPolicy.ExecuteAsync(
                     async (context, ct) => await _stateMachine.ClearStateAsync(userId, ct),
@@ -307,7 +307,7 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
         {
             try
             {
-                var chatId = update.Message?.Chat?.Id ?? update.CallbackQuery?.Message?.Chat?.Id;
+                long? chatId = update.Message?.Chat?.Id ?? update.CallbackQuery?.Message?.Chat?.Id;
 
                 if (chatId.HasValue)
                 {
@@ -341,7 +341,7 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
             // This entire method runs in the background. It MUST handle all of its own exceptions.
             try
             {
-                var rateLimitCacheKey = $"unknown_command_ratelimit_{chatId}";
+                string rateLimitCacheKey = $"unknown_command_ratelimit_{chatId}";
                 if (_memoryCache.TryGetValue(rateLimitCacheKey, out _))
                 {
                     _logger.LogInformation("Rate limit triggered for ChatId {ChatId}. Suppressing 'unknown command' message.", chatId);
@@ -349,10 +349,10 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
                 }
 
                 // 4. CORRECT RETRY POLICY APPLICATION
-                var pollyContext = new Polly.Context($"EphemeralMessage_{updateId}", new Dictionary<string, object> { { "ChatId", chatId } });
+                Context pollyContext = new($"EphemeralMessage_{updateId}", new Dictionary<string, object> { { "ChatId", chatId } });
 
                 // Wrap the send operation with the retry policy.
-                var sentMessage = await _externalApiRetryPolicy.ExecuteAsync(
+                Message? sentMessage = await _externalApiRetryPolicy.ExecuteAsync(
                     async (context, ct) => await _directMessageSender.SendTextMessageAsync(
                         chatId: chatId,
                         text: "Sorry, I didn't understand that command. This message will self-destruct.",
@@ -369,7 +369,7 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
                 }
 
                 // If sending was successful, set the rate limit and plan the deletion.
-                _memoryCache.Set(rateLimitCacheKey, true, new MemoryCacheEntryOptions().SetAbsoluteExpiration(TimeSpan.FromSeconds(10)));
+                _ = _memoryCache.Set(rateLimitCacheKey, true, new MemoryCacheEntryOptions().SetAbsoluteExpiration(TimeSpan.FromSeconds(10)));
                 await Task.Delay(TimeSpan.FromSeconds(3), cancellationToken).ConfigureAwait(false);
 
                 // Wrap the delete operation with the retry policy as well.
@@ -410,7 +410,7 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
                 exception.Message);
 
             // 2. MORE COMPREHENSIVE ChatId/UserId retrieval.
-            var chatId = update.Message?.Chat?.Id
+            long? chatId = update.Message?.Chat?.Id
                       ?? update.CallbackQuery?.Message?.Chat?.Id
                       ?? update.InlineQuery?.From?.Id
                       ?? update.ChosenInlineResult?.From?.Id
@@ -419,7 +419,7 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
             if (chatId.HasValue)
             {
                 // Create a dedicated Polly Context for this specific error-handling operation.
-                var pollyContext = new Polly.Context($"ProcessingErrorMessage_{update.Id}", new Dictionary<string, object>
+                Context pollyContext = new($"ProcessingErrorMessage_{update.Id}", new Dictionary<string, object>
         {
             { "UpdateId", update.Id },
             { "ChatId", chatId.Value }
@@ -461,6 +461,6 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
                     exception.Message);
             }
         }
-            #endregion
-        }
+        #endregion
+    }
 }

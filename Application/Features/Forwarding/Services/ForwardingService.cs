@@ -107,7 +107,7 @@ namespace Application.Features.Forwarding.Services
             // ==========================================================
             // 1. Sanitize the user-controlled ruleName at the start of the method.
             //    This prevents CRLF injection (log forging).
-            var sanitizedRuleName = ruleName
+            string sanitizedRuleName = ruleName
                                         .Replace(Environment.NewLine, "[NL]")
                                         .Replace("\n", "[NL]")
                                         .Replace("\r", "[CR]");
@@ -280,7 +280,11 @@ namespace Application.Features.Forwarding.Services
         /// <exception cref="ApplicationException">Thrown on critical technical errors during the creation process.</exception>
         public async Task CreateRuleAsync(ForwardingRule rule, CancellationToken cancellationToken = default)
         {
-            if (rule == null) throw new ArgumentNullException(nameof(rule));
+            if (rule == null)
+            {
+                throw new ArgumentNullException(nameof(rule));
+            }
+
             if (string.IsNullOrWhiteSpace(rule.RuleName))
             {
                 _logger.LogWarning("Attempted to create rule with null or empty name.");
@@ -290,7 +294,7 @@ namespace Application.Features.Forwarding.Services
             // ==========================================================
             // VULNERABILITY REMEDIATION
             // ==========================================================
-            var sanitizedRuleName = rule.RuleName.Replace(Environment.NewLine, "[NL]").Replace("\n", "[NL]").Replace("\r", "[CR]");
+            string sanitizedRuleName = rule.RuleName.Replace(Environment.NewLine, "[NL]").Replace("\n", "[NL]").Replace("\r", "[CR]");
             _logger.LogInformation("Attempting to create forwarding rule: {RuleName}", sanitizedRuleName);
             // ==========================================================
 

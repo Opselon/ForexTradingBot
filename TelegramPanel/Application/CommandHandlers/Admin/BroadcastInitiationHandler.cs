@@ -5,7 +5,6 @@ using Microsoft.Extensions.Options;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using TelegramPanel.Application.Interfaces;
-using TelegramPanel.Infrastructure;
 using TelegramPanel.Settings;
 using static TelegramPanel.Infrastructure.ActualTelegramMessageActions;
 
@@ -34,7 +33,7 @@ namespace TelegramPanel.Application.CommandHandlers.Admin
 
         public async Task HandleAsync(Update update, CancellationToken cancellationToken = default)
         {
-            var callbackQuery = update.CallbackQuery!;
+            CallbackQuery callbackQuery = update.CallbackQuery!;
             await _messageSender.AnswerCallbackQueryAsync(callbackQuery.Id, "Enter broadcast mode...", showAlert: false, cancellationToken: cancellationToken);
             await _stateMachine.SetStateAsync(callbackQuery.From.Id, "WaitingForBroadcastMessage", update, cancellationToken);
         }

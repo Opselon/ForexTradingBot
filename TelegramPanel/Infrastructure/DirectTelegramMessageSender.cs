@@ -81,7 +81,7 @@ namespace TelegramPanel.Infrastructure
 
         public async Task<Message?> SendTextMessageAsync(long chatId, string text, ParseMode? parseMode = null, CancellationToken cancellationToken = default)
         {
-            var context = new Context($"DirectSend_{chatId}", new Dictionary<string, object> { { "ChatId", chatId } });
+            Context context = new($"DirectSend_{chatId}", new Dictionary<string, object> { { "ChatId", chatId } });
 
             // Use the policy that returns a Message
             return await _sendRetryPolicy.ExecuteAsync(async (ctx, ct) =>
@@ -96,7 +96,7 @@ namespace TelegramPanel.Infrastructure
 
         public async Task DeleteMessageAsync(long chatId, int messageId, CancellationToken cancellationToken = default)
         {
-            var context = new Context($"DirectDelete_{chatId}_{messageId}", new Dictionary<string, object> { { "ChatId", chatId }, { "MessageId", messageId } });
+            Context context = new($"DirectDelete_{chatId}_{messageId}", new Dictionary<string, object> { { "ChatId", chatId }, { "MessageId", messageId } });
 
             try
             {

@@ -41,7 +41,7 @@ namespace TelegramPanel.Infrastructure.Services
         {
             try
             {
-                var commands = new List<BotCommand>
+                List<BotCommand> commands = new()
                 {
                     new() { Command = StartCmd.Command, Description = StartCmd.Description },
                     new() { Command = HelpCmd.Command, Description = HelpCmd.Description },

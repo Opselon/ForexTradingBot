@@ -24,22 +24,22 @@ namespace Infrastructure.Services.Admin
 
         public async Task<(int UserCount, int NewsItemCount)> GetDashboardStatsAsync(CancellationToken cancellationToken = default)
         {
-            await using var connection = new SqlConnection(_connectionString);
-            var sql = "SELECT COUNT(1) FROM dbo.Users; SELECT COUNT(1) FROM dbo.NewsItems;";
-            using var multi = await connection.QueryMultipleAsync(new CommandDefinition(sql, cancellationToken: cancellationToken));
+            await using SqlConnection connection = new(_connectionString);
+            string sql = "SELECT COUNT(1) FROM dbo.Users; SELECT COUNT(1) FROM dbo.NewsItems;";
+            using SqlMapper.GridReader multi = await connection.QueryMultipleAsync(new CommandDefinition(sql, cancellationToken: cancellationToken));
             return (await multi.ReadSingleAsync<int>(), await multi.ReadSingleAsync<int>());
         }
 
         public async Task<List<long>> GetAllActiveUserChatIdsAsync(CancellationToken cancellationToken = default)
         {
-            await using var connection = new SqlConnection(_connectionString);
-            var sql = "SELECT TelegramId FROM dbo.Users WHERE TelegramId IS NOT NULL AND TelegramId <> '';";
-            var idsAsString = await connection.QueryAsync<string>(new CommandDefinition(sql, cancellationToken: cancellationToken));
+            await using SqlConnection connection = new(_connectionString);
+            string sql = "SELECT TelegramId FROM dbo.Users WHERE TelegramId IS NOT NULL AND TelegramId <> '';";
+            IEnumerable<string> idsAsString = await connection.QueryAsync<string>(new CommandDefinition(sql, cancellationToken: cancellationToken));
 
-            var userChatIds = new List<long>();
-            foreach (var idStr in idsAsString)
+            List<long> userChatIds = new();
+            foreach (string idStr in idsAsString)
             {
-                if (long.TryParse(idStr, out var id))
+                if (long.TryParse(idStr, out long id))
                 {
                     userChatIds.Add(id);
                 }
@@ -58,21 +58,21 @@ namespace Infrastructure.Services.Admin
         public async Task<string> ExecuteRawSqlQueryAsync(string sqlQuery, CancellationToken cancellationToken = default)
         {
             _logger.LogWarning("Admin is executing a raw SQL query: {Query}", sqlQuery);
-            await using var connection = new SqlConnection(_connectionString);
-            var response = new StringBuilder();
+            await using SqlConnection connection = new(_connectionString);
+            StringBuilder response = new();
 
             try
             {
-                var command = new CommandDefinition(sqlQuery, commandTimeout: 60, cancellationToken: cancellationToken);
+                CommandDefinition command = new(sqlQuery, commandTimeout: 60, cancellationToken: cancellationToken);
 
                 // Use QueryMultiple for flexibility, as the query could be anything.
-                using var multi = await connection.QueryMultipleAsync(command);
+                using SqlMapper.GridReader multi = await connection.QueryMultipleAsync(command);
 
                 int resultSetIndex = 1;
                 while (!multi.IsConsumed)
                 {
-                    var grid = await multi.ReadAsync();
-                    var data = grid.ToList();
+                    IEnumerable<dynamic> grid = await multi.ReadAsync();
+                    List<dynamic> data = grid.ToList();
 
                     if (!data.Any())
                     {
@@ -83,13 +83,13 @@ namespace Infrastructure.Services.Admin
 
                     _ = response.AppendLine($"-- Result Set {resultSetIndex} ({data.Count} Rows) --");
                     // Get headers from the first row (which is an IDictionary<string, object>)
-                    var headers = ((IDictionary<string, object>)data.First()).Keys;
+                    ICollection<string> headers = ((IDictionary<string, object>)data.First()).Keys;
                     _ = response.AppendLine("`" + string.Join(" | ", headers) + "`");
 
-                    foreach (var row in data)
+                    foreach (dynamic? row in data)
                     {
-                        var rowDict = (IDictionary<string, object>)row;
-                        var values = rowDict.Values.Select(v => v?.ToString() ?? "NULL");
+                        IDictionary<string, object> rowDict = (IDictionary<string, object>)row;
+                        IEnumerable<string> values = rowDict.Values.Select(v => v?.ToString() ?? "NULL");
                         _ = response.AppendLine("`" + string.Join(" | ", values) + "`");
                     }
                     _ = response.AppendLine();
@@ -110,24 +110,24 @@ namespace Infrastructure.Services.Admin
         public async Task<AdminUserDetailDto?> GetUserDetailByTelegramIdAsync(long telegramId, CancellationToken cancellationToken = default)
         {
             _logger.LogInformation("Fetching detailed profile for Telegram ID: {TelegramId}", telegramId);
-            await using var connection = new SqlConnection(_connectionString);
+            await using SqlConnection connection = new(_connectionString);
 
-            var sql = @"
+            string sql = @"
                 SELECT * FROM dbo.Users WHERE TelegramId = @TelegramIdStr;
                 SELECT Balance, UpdatedAt AS WalletLastUpdated FROM dbo.TokenWallets WHERE UserId = (SELECT Id FROM dbo.Users WHERE TelegramId = @TelegramIdStr);
                 SELECT Id AS SubscriptionId, StartDate, EndDate, Status FROM dbo.Subscriptions WHERE UserId = (SELECT Id FROM dbo.Users WHERE TelegramId = @TelegramIdStr) ORDER BY StartDate DESC;
                 SELECT TOP 10 Id AS TransactionId, Amount, Type, Status, Timestamp FROM dbo.Transactions WHERE UserId = (SELECT Id FROM dbo.Users WHERE TelegramId = @TelegramIdStr) ORDER BY Timestamp DESC;
             ";
 
-            using var multi = await connection.QueryMultipleAsync(sql, new { TelegramIdStr = telegramId.ToString() });
+            using SqlMapper.GridReader multi = await connection.QueryMultipleAsync(sql, new { TelegramIdStr = telegramId.ToString() });
 
-            var user = await multi.ReadSingleOrDefaultAsync<User>();
+            User? user = await multi.ReadSingleOrDefaultAsync<User>();
             if (user == null)
             {
                 return null;
             }
 
-            var userDetail = new AdminUserDetailDto
+            AdminUserDetailDto userDetail = new()
             {
                 UserId = user.Id,
                 Username = user.Username,
@@ -135,18 +135,18 @@ namespace Infrastructure.Services.Admin
             };
             // ... etc.
 
-            var walletInfo = await multi.ReadSingleOrDefaultAsync();
+            dynamic? walletInfo = await multi.ReadSingleOrDefaultAsync();
             if (walletInfo != null)
             {
                 userDetail.TokenBalance = walletInfo.Balance;
                 userDetail.WalletLastUpdated = walletInfo.WalletLastUpdated;
             }
 
-            var subscriptions = (await multi.ReadAsync<SubscriptionSummaryDto>()).ToList();
+            List<SubscriptionSummaryDto> subscriptions = (await multi.ReadAsync<SubscriptionSummaryDto>()).ToList();
             if (subscriptions.Any())
             {
                 userDetail.Subscriptions = subscriptions;
-                var activeSub = subscriptions.FirstOrDefault(s => s.Status == "Active" && DateTime.UtcNow >= s.StartDate && DateTime.UtcNow <= s.EndDate);
+                SubscriptionSummaryDto? activeSub = subscriptions.FirstOrDefault(s => s.Status == "Active" && DateTime.UtcNow >= s.StartDate && DateTime.UtcNow <= s.EndDate);
                 if (activeSub != null)
                 {
                     userDetail.ActiveSubscription = new ActiveSubscriptionDto { EndDate = activeSub.EndDate };
@@ -154,7 +154,7 @@ namespace Infrastructure.Services.Admin
                 }
             }
 
-            var transactions = (await multi.ReadAsync<TransactionSummaryDto>()).ToList();
+            List<TransactionSummaryDto> transactions = (await multi.ReadAsync<TransactionSummaryDto>()).ToList();
             if (transactions.Any())
             {
                 userDetail.RecentTransactions = transactions;

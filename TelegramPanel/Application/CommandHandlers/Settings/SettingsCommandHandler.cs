@@ -12,7 +12,6 @@ using TelegramPanel.Application.CommandHandlers.MainMenu;
 // Using های مربوط به پروژه TelegramPanel
 using TelegramPanel.Application.Interfaces; // برای ITelegramCommandHandler
 using TelegramPanel.Formatters;           // برای TelegramMessageFormatter (ابزار فرمت‌بندی متن)
-using TelegramPanel.Infrastructure;
 using TelegramPanel.Infrastructure.Helper;
 using static TelegramPanel.Infrastructure.ActualTelegramMessageActions;
 #endregion
@@ -111,7 +110,7 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
         public async Task HandleAsync(Update update, CancellationToken cancellationToken = default)
         {
             // استخراج پیام و اطلاعات کاربر از آپدیت
-            var message = update.Message;
+            Message? message = update.Message;
             // بررسی null بودن message و message.From برای جلوگیری از NullReferenceException و اطمینان از وجود اطلاعات لازم
             if (message?.From == null)
             {
@@ -119,14 +118,14 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
                 return; // اگر اطلاعات لازم وجود ندارد، از ادامه پردازش صرف نظر کن
             }
 
-            var chatId = message.Chat.Id;          // شناسه چتی که باید پاسخ به آن ارسال شود
-            var userId = message.From.Id;            // شناسه کاربر تلگرامی که دستور را ارسال کرده
+            long chatId = message.Chat.Id;          // شناسه چتی که باید پاسخ به آن ارسال شود
+            long userId = message.From.Id;            // شناسه کاربر تلگرامی که دستور را ارسال کرده
 
             // لاگ کردن شروع پردازش دستور
             _logger.LogInformation("Handling /settings command for UserID {TelegramUserId} in ChatID {ChatId}.", userId, chatId);
 
             // فراخوانی متد کمکی برای دریافت متن و دکمه‌های منوی تنظیمات
-            var (settingsMenuText, settingsKeyboard) = GetSettingsMenuMarkup();
+            (string settingsMenuText, InlineKeyboardMarkup settingsKeyboard) = GetSettingsMenuMarkup();
 
             // ارسال پیام منوی تنظیمات به کاربر
             // ParseMode.MarkdownV2 برای فعال کردن فرمت‌بندی Markdown در متن پیام استفاده می‌شود.
@@ -153,12 +152,12 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
         {
             // متن پیام برای منوی تنظیمات. از TelegramMessageFormatter برای فرمت‌بندی Bold استفاده شده.
             // escapePlainText: false چون متن "⚙️ User Settings" از قبل شامل کاراکترهای Markdown (ایموجی) است و نباید دوباره escape شود.
-            var text = TelegramMessageFormatter.Bold("⚙️ User Settings", escapePlainText: false) + "\n\n" +
+            string text = TelegramMessageFormatter.Bold("⚙️ User Settings", escapePlainText: false) + "\n\n" +
                        "Please choose an option below to configure your preferences or view information:";
 
             // ساخت دکمه‌های Inline برای منوی تنظیمات.
             // هر دکمه یک متن نمایشی و یک CallbackData دارد که هنگام کلیک ارسال می‌شود.
-            var keyboard = MarkupBuilder.CreateInlineKeyboard(
+            InlineKeyboardMarkup? keyboard = MarkupBuilder.CreateInlineKeyboard(
       new[] // ردیف اول
       {
             InlineKeyboardButton.WithCallbackData("📊 My Signal Preferences", PrefsSignalCategoriesCallback),

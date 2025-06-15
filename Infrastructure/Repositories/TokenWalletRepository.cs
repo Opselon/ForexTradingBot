@@ -63,7 +63,7 @@ namespace Infrastructure.Repositories
                 return false; // یا یک نتیجه مشخص برای عملیات ناموفق
             }
 
-            var wallet = await GetByUserIdAsync(userId, cancellationToken);
+            TokenWallet? wallet = await GetByUserIdAsync(userId, cancellationToken);
             if (wallet == null)
             {
                 return false; // کیف پول پیدا نشد
@@ -97,7 +97,7 @@ namespace Infrastructure.Repositories
                 return false;
             }
 
-            var wallet = await GetByUserIdAsync(userId, cancellationToken);
+            TokenWallet? wallet = await GetByUserIdAsync(userId, cancellationToken);
             if (wallet == null)
             {
                 return false; // کیف پول پیدا نشد

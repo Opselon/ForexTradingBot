@@ -6,7 +6,6 @@ using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Formatters;
-using TelegramPanel.Infrastructure;
 using static TelegramPanel.Infrastructure.ActualTelegramMessageActions;
 
 namespace TelegramPanel.Application.States
@@ -31,7 +30,7 @@ namespace TelegramPanel.Application.States
 
         public Task<string?> GetEntryMessageAsync(long chatId, Update? triggerUpdate = null, CancellationToken cancellationToken = default)
         {
-            var text = TelegramMessageFormatter.Bold("🔎 Search News by Keyword") + "\n\n" +
+            string text = TelegramMessageFormatter.Bold("🔎 Search News by Keyword") + "\n\n" +
                        "Please enter the keywords you want to search for. You can enter multiple words separated by a space or comma.\n\n" +
                        "_Example: `inflation interest rates`_";
 
@@ -64,9 +63,9 @@ namespace TelegramPanel.Application.States
             }
 
             // 3. We can now safely use the message object.
-            var message = update.Message;
-            var userId = message.From!.Id;
-            var keywords = message.Text.Trim();
+            Message message = update.Message;
+            long userId = message.From!.Id;
+            string keywords = message.Text.Trim();
 
             // ^^^^^^ END OF THE PRIMARY FIX ^^^^^^
 
@@ -78,34 +77,34 @@ namespace TelegramPanel.Application.States
 
             _logger.LogInformation("User {UserId} is searching for news with keywords: '{Keywords}'", userId, keywords);
 
-            var searchingMessage = $"⏳ Searching for news related to `{TelegramMessageFormatter.EscapeMarkdownV2(keywords)}`...";
+            string searchingMessage = $"⏳ Searching for news related to `{TelegramMessageFormatter.EscapeMarkdownV2(keywords)}`...";
             await _messageSender.SendTextMessageAsync(chatId.Value, searchingMessage, ParseMode.MarkdownV2, cancellationToken: cancellationToken);
 
-            var keywordList = keywords.Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries).ToList();
+            List<string> keywordList = keywords.Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries).ToList();
 
-            var (results, _) = await _newsRepository.SearchNewsAsync(keywordList, DateTime.UtcNow.AddDays(-30), DateTime.UtcNow, 1, 5, false, true, cancellationToken);
+            (List<Domain.Entities.NewsItem> results, int _) = await _newsRepository.SearchNewsAsync(keywordList, DateTime.UtcNow.AddDays(-30), DateTime.UtcNow, 1, 5, false, true, cancellationToken);
 
             if (!results.Any())
             {
-                var notFoundMessage = $"No news articles found for your keywords: `{TelegramMessageFormatter.EscapeMarkdownV2(keywords)}`\\. Try a different search\\.";
+                string notFoundMessage = $"No news articles found for your keywords: `{TelegramMessageFormatter.EscapeMarkdownV2(keywords)}`\\. Try a different search\\.";
                 await _messageSender.SendTextMessageAsync(chatId.Value, notFoundMessage, ParseMode.MarkdownV2, cancellationToken: cancellationToken);
             }
             else
             {
-                var sb = new StringBuilder();
+                StringBuilder sb = new();
                 _ = sb.AppendLine(TelegramMessageFormatter.Bold($"📰 Top {results.Count} News Results for: `{TelegramMessageFormatter.EscapeMarkdownV2(keywords)}`"));
                 _ = sb.AppendLine();
 
-                foreach (var item in results)
+                foreach (Domain.Entities.NewsItem item in results)
                 {
                     _ = sb.AppendLine($"🔸 *{TelegramMessageFormatter.EscapeMarkdownV2(item.Title)}*");
                     _ = sb.AppendLine($"_{TelegramMessageFormatter.EscapeMarkdownV2(item.SourceName)}_ at _{item.PublishedDate:yyyy-MM-dd HH:mm} UTC_");
                     if (!string.IsNullOrWhiteSpace(item.Summary))
                     {
-                        var summary = item.Summary.Length > 200 ? item.Summary.Substring(0, 200) + "..." : item.Summary;
+                        string summary = item.Summary.Length > 200 ? item.Summary[..200] + "..." : item.Summary;
                         _ = sb.AppendLine(TelegramMessageFormatter.EscapeMarkdownV2(summary));
                     }
-                    if (Uri.TryCreate(item.Link, UriKind.Absolute, out var validUri))
+                    if (Uri.TryCreate(item.Link, UriKind.Absolute, out Uri? validUri))
                     {
                         _ = sb.AppendLine($"[Read More]({validUri})");
                     }

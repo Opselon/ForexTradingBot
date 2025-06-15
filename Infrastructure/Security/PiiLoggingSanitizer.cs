@@ -1,7 +1,5 @@
 ﻿using Application.Common.Interfaces; // Using the established interface path
 using Microsoft.Extensions.Logging;
-using System;
-using System.Collections.Generic;
 using System.Text.RegularExpressions;
 
 namespace Infrastructure.Security
@@ -51,13 +49,13 @@ namespace Infrastructure.Security
             {
                 // 1. Truncate first to limit the amount of data being processed.
                 string sanitized = input.Length > MaxLogLength
-                    ? input.Substring(0, MaxLogLength) + "..."
+                    ? input[..MaxLogLength] + "..."
                     : input;
 
                 // 2. Apply all redaction rules.
-                foreach (var rule in RedactionRules)
+                foreach ((Regex Pattern, string Replacement) in RedactionRules)
                 {
-                    sanitized = rule.Pattern.Replace(sanitized, rule.Replacement);
+                    sanitized = Pattern.Replace(sanitized, Replacement);
                 }
 
                 // 3. Final cleanup for log-forging characters (CRLF injection).

@@ -79,7 +79,7 @@ namespace Infrastructure.Persistence.Configurations
 
             public NewsItem ToDomainEntity()
             {
-                var newsItem = new NewsItem
+                NewsItem newsItem = new()
                 {
                     Id = Id,
                     Title = Title,
@@ -262,11 +262,11 @@ namespace Infrastructure.Persistence.Configurations
                 // Using Polly as before
                 return await _retryPolicy.ExecuteAsync(async (ct) =>
                 {
-                    using var connection = CreateConnection();
+                    using SqlConnection connection = CreateConnection();
                     await connection.OpenAsync(ct);
 
-                    var whereClauses = new List<string>();
-                    var parameters = new DynamicParameters();
+                    List<string> whereClauses = new();
+                    DynamicParameters parameters = new();
 
                     // --- Date and VIP Filtering ---
                     whereClauses.Add("n.PublishedDate >= @SinceDate AND n.PublishedDate <= @UntilDate");
@@ -279,14 +279,14 @@ namespace Infrastructure.Persistence.Configurations
 
                     // ✅✅ --- REVERTING TO THE ORIGINAL, WORKING `LIKE` LOGIC --- ✅✅
                     // This is not the fastest, but it works without any special DB setup.
-                    var keywordList = keywords?.Select(k => k.Trim()).Where(k => !string.IsNullOrWhiteSpace(k)).ToList();
+                    List<string>? keywordList = keywords?.Select(k => k.Trim()).Where(k => !string.IsNullOrWhiteSpace(k)).ToList();
                     if (keywordList != null && keywordList.Any())
                     {
-                        var keywordConditions = new List<string>();
+                        List<string> keywordConditions = new();
                         for (int i = 0; i < keywordList.Count; i++)
                         {
-                            var keyword = keywordList[i];
-                            var paramName = $"keyword{i}";
+                            string keyword = keywordList[i];
+                            string paramName = $"keyword{i}";
                             // We search in Title and Summary. Searching in FullContent can be very slow.
                             keywordConditions.Add($"(LOWER(n.Title) LIKE '%' + LOWER(@{paramName}) + '%' OR LOWER(n.Summary) LIKE '%' + LOWER(@{paramName}) + '%')");
                             parameters.Add(paramName, keyword);
@@ -296,14 +296,14 @@ namespace Infrastructure.Persistence.Configurations
                         whereClauses.Add($"({string.Join(keywordOperator, keywordConditions)})");
                     }
 
-                    var fullWhereClause = whereClauses.Any() ? "WHERE " + string.Join(" AND ", whereClauses) : "";
+                    string fullWhereClause = whereClauses.Any() ? "WHERE " + string.Join(" AND ", whereClauses) : "";
 
                     // --- Back to Two Separate Queries ---
                     // This is necessary because QueryMultiple + Multi-mapping is problematic in Dapper.
 
                     // Query 1: Get the total count
-                    var countSql = $"SELECT COUNT(n.Id) FROM NewsItems n {fullWhereClause};";
-                    var totalCount = await connection.ExecuteScalarAsync<int>(
+                    string countSql = $"SELECT COUNT(n.Id) FROM NewsItems n {fullWhereClause};";
+                    int totalCount = await connection.ExecuteScalarAsync<int>(
                         new CommandDefinition(countSql, parameters, commandTimeout: CommandTimeoutSeconds, cancellationToken: ct)
                     );
 
@@ -313,7 +313,7 @@ namespace Infrastructure.Persistence.Configurations
                     }
 
                     // Query 2: Get the paged data
-                    var sql = $@"
+                    string sql = $@"
                 SELECT
                     n.Id, n.Title, n.Link, n.Summary, n.FullContent, n.ImageUrl, n.PublishedDate, n.CreatedAt, 
                     n.SourceName, n.IsVipOnly, n.AssociatedSignalCategoryId,
@@ -330,12 +330,12 @@ namespace Infrastructure.Persistence.Configurations
                     parameters.Add("PageSize", pageSize);
 
                     // This multi-mapping call is correct and works with a separate query.
-                    var newsItemsMap = new Dictionary<Guid, NewsItem>();
-                    var items = await connection.QueryAsync<NewsItemDbDto, RssSourceMapDto, SignalCategoryMapDto, NewsItem>(
+                    Dictionary<Guid, NewsItem> newsItemsMap = new();
+                    IEnumerable<NewsItem> items = await connection.QueryAsync<NewsItemDbDto, RssSourceMapDto, SignalCategoryMapDto, NewsItem>(
                         new CommandDefinition(sql, parameters, commandTimeout: CommandTimeoutSeconds, cancellationToken: ct),
                         (newsItemDto, rssSourceDto, signalCategoryDto) =>
                         {
-                            if (!newsItemsMap.TryGetValue(newsItemDto.Id, out var newsItem))
+                            if (!newsItemsMap.TryGetValue(newsItemDto.Id, out NewsItem? newsItem))
                             {
                                 newsItem = newsItemDto.ToDomainEntity();
                                 newsItemsMap.Add(newsItem.Id, newsItem);
@@ -365,10 +365,10 @@ namespace Infrastructure.Persistence.Configurations
             {
                 return await _retryPolicy.ExecuteAsync(async () =>
                 {
-                    using var connection = CreateConnection();
+                    using SqlConnection connection = CreateConnection();
                     await connection.OpenAsync(cancellationToken);
 
-                    var sql = @"
+                    string sql = @"
                         SELECT
                             n.Id, n.Title, n.Link, n.Summary, n.FullContent, n.ImageUrl, n.PublishedDate, n.CreatedAt, n.LastProcessedAt,
                             n.SourceName, n.SourceItemId, n.SentimentScore, n.SentimentLabel, n.DetectedLanguage, n.AffectedAssets,
@@ -380,11 +380,11 @@ namespace Infrastructure.Persistence.Configurations
                         LEFT JOIN SignalCategories sc ON n.AssociatedSignalCategoryId = sc.Id
                         WHERE n.Id = @Id;";
 
-                    var newsItem = await connection.QueryAsync<NewsItemDbDto, RssSourceMapDto, SignalCategoryMapDto, NewsItem>(
+                    IEnumerable<NewsItem> newsItem = await connection.QueryAsync<NewsItemDbDto, RssSourceMapDto, SignalCategoryMapDto, NewsItem>(
                         new CommandDefinition(sql, new { Id = id }, commandTimeout: CommandTimeoutSeconds), // <--- ADDED: Pass CommandTimeout
                         (newsItemDto, rssSourceDto, signalCategoryDto) =>
                         {
-                            var item = newsItemDto.ToDomainEntity();
+                            NewsItem item = newsItemDto.ToDomainEntity();
                             // NewsItemDbDto's ToDomainEntity should already handle the RssSource and SignalCategory mapping from aliased properties
                             return item;
                         },
@@ -413,10 +413,10 @@ namespace Infrastructure.Persistence.Configurations
             {
                 return await _retryPolicy.ExecuteAsync(async () =>
                 {
-                    using var connection = CreateConnection();
+                    using SqlConnection connection = CreateConnection();
                     await connection.OpenAsync(cancellationToken);
 
-                    var sql = @"
+                    string sql = @"
                         SELECT
                             n.Id, n.Title, n.Link, n.Summary, n.FullContent, n.ImageUrl, n.PublishedDate, n.CreatedAt, n.LastProcessedAt,
                             n.SourceName, n.SourceItemId, n.SentimentScore, n.SentimentLabel, n.DetectedLanguage, n.AffectedAssets,
@@ -428,11 +428,11 @@ namespace Infrastructure.Persistence.Configurations
                         LEFT JOIN SignalCategories sc ON n.AssociatedSignalCategoryId = sc.Id
                         WHERE n.RssSourceId = @RssSourceId AND n.SourceItemId = @SourceItemId;";
 
-                    var newsItem = await connection.QueryAsync<NewsItemDbDto, RssSourceMapDto, SignalCategoryMapDto, NewsItem>(
+                    IEnumerable<NewsItem> newsItem = await connection.QueryAsync<NewsItemDbDto, RssSourceMapDto, SignalCategoryMapDto, NewsItem>(
                         new CommandDefinition(sql, new { RssSourceId = rssSourceId, SourceItemId = sourceItemId }, commandTimeout: CommandTimeoutSeconds), // <--- ADDED: Pass CommandTimeout
                         (newsItemDto, rssSourceDto, signalCategoryDto) =>
                         {
-                            var item = newsItemDto.ToDomainEntity();
+                            NewsItem item = newsItemDto.ToDomainEntity();
                             return item;
                         },
                         splitOn: "RssSource_Id,AssociatedSignalCategory_Id"
@@ -460,11 +460,11 @@ namespace Infrastructure.Persistence.Configurations
             {
                 return await _retryPolicy.ExecuteAsync(async () =>
                 {
-                    using var connection = CreateConnection();
+                    using SqlConnection connection = CreateConnection();
                     await connection.OpenAsync(cancellationToken);
 
-                    var sql = "SELECT COUNT(*) FROM NewsItems WHERE RssSourceId = @RssSourceId AND SourceItemId = @SourceItemId;";
-                    var count = await connection.ExecuteScalarAsync<int>(new CommandDefinition(sql, new { RssSourceId = rssSourceId, SourceItemId = sourceItemId }, commandTimeout: CommandTimeoutSeconds)); // <--- ADDED: Pass CommandTimeout
+                    string sql = "SELECT COUNT(*) FROM NewsItems WHERE RssSourceId = @RssSourceId AND SourceItemId = @SourceItemId;";
+                    int count = await connection.ExecuteScalarAsync<int>(new CommandDefinition(sql, new { RssSourceId = rssSourceId, SourceItemId = sourceItemId }, commandTimeout: CommandTimeoutSeconds)); // <--- ADDED: Pass CommandTimeout
                     return count > 0;
                 });
             }
@@ -493,10 +493,10 @@ namespace Infrastructure.Persistence.Configurations
             {
                 return await _retryPolicy.ExecuteAsync(async () =>
                 {
-                    using var connection = CreateConnection();
+                    using SqlConnection connection = CreateConnection();
                     await connection.OpenAsync(cancellationToken);
 
-                    var sql = @"
+                    string sql = @"
                         SELECT
                             n.Id, n.Title, n.Link, n.Summary, n.FullContent, n.ImageUrl, n.PublishedDate, n.CreatedAt, n.LastProcessedAt,
                             n.SourceName, n.SourceItemId, n.SentimentScore, n.SentimentLabel, n.DetectedLanguage, n.AffectedAssets,
@@ -507,8 +507,8 @@ namespace Infrastructure.Persistence.Configurations
                         LEFT JOIN RssSources rs ON n.RssSourceId = rs.Id
                         LEFT JOIN SignalCategories sc ON n.AssociatedSignalCategoryId = sc.Id";
 
-                    var whereClauses = new List<string>();
-                    var parameters = new DynamicParameters();
+                    List<string> whereClauses = new();
+                    DynamicParameters parameters = new();
 
                     if (rssSourceId.HasValue)
                     {
@@ -526,11 +526,11 @@ namespace Infrastructure.Persistence.Configurations
                         OFFSET 0 ROWS FETCH NEXT @Count ROWS ONLY;"; // Always fetch from start for 'recent'
                     parameters.Add("Count", count);
 
-                    var newsItems = await connection.QueryAsync<NewsItemDbDto, RssSourceMapDto, SignalCategoryMapDto, NewsItem>(
+                    IEnumerable<NewsItem> newsItems = await connection.QueryAsync<NewsItemDbDto, RssSourceMapDto, SignalCategoryMapDto, NewsItem>(
                         new CommandDefinition(sql, parameters, commandTimeout: CommandTimeoutSeconds), // <--- ADDED: Pass CommandTimeout
                         (newsItemDto, rssSourceDto, signalCategoryDto) =>
                         {
-                            var item = newsItemDto.ToDomainEntity();
+                            NewsItem item = newsItemDto.ToDomainEntity();
                             return item;
                         },
                         splitOn: "RssSource_Id,AssociatedSignalCategory_Id"
@@ -566,11 +566,11 @@ namespace Infrastructure.Persistence.Configurations
             {
                 return await _retryPolicy.ExecuteAsync(async () =>
                 {
-                    using var connection = CreateConnection();
+                    using SqlConnection connection = CreateConnection();
                     await connection.OpenAsync(cancellationToken);
 
-                    var sql = "SELECT SourceItemId FROM NewsItems WHERE RssSourceId = @RssSourceId AND SourceItemId IS NOT NULL;";
-                    var ids = (await connection.QueryAsync<string>(new CommandDefinition(sql, new { RssSourceId = rssSourceId }, commandTimeout: CommandTimeoutSeconds))).ToList(); // <--- ADDED: Pass CommandTimeout
+                    string sql = "SELECT SourceItemId FROM NewsItems WHERE RssSourceId = @RssSourceId AND SourceItemId IS NOT NULL;";
+                    List<string> ids = (await connection.QueryAsync<string>(new CommandDefinition(sql, new { RssSourceId = rssSourceId }, commandTimeout: CommandTimeoutSeconds))).ToList(); // <--- ADDED: Pass CommandTimeout
                     return new HashSet<string>(ids, StringComparer.OrdinalIgnoreCase);
                 });
             }
@@ -614,7 +614,7 @@ namespace Infrastructure.Persistence.Configurations
             {
                 await _retryPolicy.ExecuteAsync(async (ct) =>
                 {
-                    await using var connection = CreateConnection();
+                    await using SqlConnection connection = CreateConnection();
 
                     string mergeSql;
                     object mergeParams;
@@ -649,14 +649,14 @@ WHEN NOT MATCHED BY TARGET THEN
                     }
 
                     // --- Step 2: Execute the atomic MERGE operation ---
-                    var command = new CommandDefinition(
+                    CommandDefinition command = new(
                         mergeSql,
                         mergeParams,
                         commandTimeout: CommandTimeoutSeconds,
                         cancellationToken: ct);
 
                     // .ExecuteAsync returns the number of rows affected. 1 for an insert, 0 if it already existed.
-                    var rowsAffected = await connection.ExecuteAsync(command).ConfigureAwait(false);
+                    int rowsAffected = await connection.ExecuteAsync(command).ConfigureAwait(false);
 
                     if (rowsAffected > 0)
                     {
@@ -688,10 +688,10 @@ WHEN NOT MATCHED BY TARGET THEN
             {
                 await _retryPolicy.ExecuteAsync(async () =>
                 {
-                    using var connection = CreateConnection();
+                    using SqlConnection connection = CreateConnection();
                     await connection.OpenAsync(cancellationToken);
 
-                    var sql = @"
+                    string sql = @"
                         INSERT INTO NewsItems (
                             Id, Title, Link, Summary, FullContent, ImageUrl, PublishedDate, CreatedAt, LastProcessedAt,
                             SourceName, SourceItemId, SentimentScore, SentimentLabel, DetectedLanguage, AffectedAssets,
@@ -757,10 +757,10 @@ WHEN NOT MATCHED BY TARGET THEN
                 await _retryPolicy.ExecuteAsync(async (ct) =>
                 {
                     // Use 'await using' for modern async disposal
-                    await using var connection = CreateConnection();
+                    await using SqlConnection connection = CreateConnection();
                     await connection.OpenAsync(ct).ConfigureAwait(false);
 
-                    var sql = @"
+                    string sql = @"
                 UPDATE NewsItems SET
                     Title = @Title,
                     Link = @Link,
@@ -782,13 +782,13 @@ WHEN NOT MATCHED BY TARGET THEN
 
                     // ✅ UPGRADE: Pass the entire newsItem object directly.
                     // Dapper will map all the properties to the SQL parameters. This is cleaner.
-                    var command = new CommandDefinition(
+                    CommandDefinition command = new(
                         sql,
                         newsItem, // <-- Cleaner parameter passing
                         commandTimeout: CommandTimeoutSeconds,
                         cancellationToken: ct);
 
-                    var rowsAffected = await connection.ExecuteAsync(command).ConfigureAwait(false);
+                    int rowsAffected = await connection.ExecuteAsync(command).ConfigureAwait(false);
 
                     // ✅ UPGRADE: More precise concurrency check.
                     if (rowsAffected == 0)
@@ -833,13 +833,13 @@ WHEN NOT MATCHED BY TARGET THEN
             {
                 return await _retryPolicy.ExecuteAsync(async () =>
                 {
-                    using var connection = CreateConnection();
+                    using SqlConnection connection = CreateConnection();
                     await connection.OpenAsync(cancellationToken);
 
                     // Note: If NewsItem has other entities that cascade delete, deleting the NewsItem will handle it.
                     // For performance, a simple DELETE is often best if cascades are set in DB.
-                    var sql = "DELETE FROM NewsItems WHERE Id = @Id;";
-                    var rowsAffected = await connection.ExecuteAsync(new CommandDefinition(sql, new { Id = id }, commandTimeout: CommandTimeoutSeconds)); // <--- ADDED: Pass CommandTimeout
+                    string sql = "DELETE FROM NewsItems WHERE Id = @Id;";
+                    int rowsAffected = await connection.ExecuteAsync(new CommandDefinition(sql, new { Id = id }, commandTimeout: CommandTimeoutSeconds)); // <--- ADDED: Pass CommandTimeout
 
                     if (rowsAffected == 0)
                     {

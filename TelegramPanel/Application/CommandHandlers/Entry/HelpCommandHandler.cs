@@ -4,7 +4,6 @@ using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Formatters; // برای TelegramMessageFormatter
-using TelegramPanel.Infrastructure;
 using static TelegramPanel.Infrastructure.ActualTelegramMessageActions;
 
 namespace TelegramPanel.Application.CommandHandlers.Entry
@@ -28,16 +27,16 @@ namespace TelegramPanel.Application.CommandHandlers.Entry
 
         public async Task HandleAsync(Update update, CancellationToken cancellationToken = default)
         {
-            var message = update.Message;
+            Message? message = update.Message;
             if (message == null)
             {
                 return;
             }
 
-            var chatId = message.Chat.Id;
+            long chatId = message.Chat.Id;
             _logger.LogInformation("Handling /help command for ChatID {ChatId}", chatId);
 
-            var helpText = new StringBuilder();
+            StringBuilder helpText = new();
             _ = helpText.AppendLine(TelegramMessageFormatter.Bold("Forex Signal Bot Help"));
             _ = helpText.AppendLine("Here are the available commands:");
             _ = helpText.AppendLine(); // خط خالی

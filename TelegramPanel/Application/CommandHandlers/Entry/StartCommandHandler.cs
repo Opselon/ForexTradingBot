@@ -12,7 +12,6 @@ using Telegram.Bot.Types.ReplyMarkups;
 using TelegramPanel.Application.CommandHandlers.MainMenu; // For centralized menu
 using TelegramPanel.Application.Interfaces; // For ITelegramCommandHandler
 using TelegramPanel.Formatters;         // For TelegramMessageFormatter
-using TelegramPanel.Infrastructure;
 using static TelegramPanel.Infrastructure.ActualTelegramMessageActions;
 
 namespace TelegramPanel.Application.CommandHandlers.Entry
@@ -45,8 +44,7 @@ namespace TelegramPanel.Application.CommandHandlers.Entry
         {
             return update.Type == UpdateType.Message &&
                 update.Message?.Text?.Trim().Equals("/start", StringComparison.OrdinalIgnoreCase) == true
-                ? true
-                : update.Type == UpdateType.CallbackQuery &&
+|| update.Type == UpdateType.CallbackQuery &&
                 update.CallbackQuery?.Data == ShowMainMenuCallback;
         }
 
@@ -68,10 +66,10 @@ namespace TelegramPanel.Application.CommandHandlers.Entry
 
         private async Task HandleShowMainMenuCallback(CallbackQuery callbackQuery, CancellationToken cancellationToken)
         {
-            var message = callbackQuery.Message!;
-            var user = callbackQuery.From;
-            var chatId = message.Chat.Id;
-            var messageId = message.MessageId;
+            Message message = callbackQuery.Message!;
+            User user = callbackQuery.From;
+            long chatId = message.Chat.Id;
+            int messageId = message.MessageId;
 
             _logger.LogInformation("Handling '{Callback}' for UserID: {UserId}, editing message {MessageId} to become main menu.",
                 ShowMainMenuCallback, user.Id, messageId);
@@ -80,12 +78,12 @@ namespace TelegramPanel.Application.CommandHandlers.Entry
             {
                 await _botClient.AnswerCallbackQuery(callbackQuery.Id, cancellationToken: cancellationToken);
 
-                var effectiveUsername = !string.IsNullOrWhiteSpace(user.Username) ? user.Username : user.FirstName;
-                var welcomeText = $"🎉 *Welcome back, {TelegramMessageFormatter.EscapeMarkdownV2(effectiveUsername)}!*";
-                var messageBody = GenerateWelcomeMessageBody(welcomeText, isExistingUser: true);
+                string effectiveUsername = !string.IsNullOrWhiteSpace(user.Username) ? user.Username : user.FirstName;
+                string welcomeText = $"🎉 *Welcome back, {TelegramMessageFormatter.EscapeMarkdownV2(effectiveUsername)}!*";
+                string messageBody = GenerateWelcomeMessageBody(welcomeText, isExistingUser: true);
 
                 // Uses the corrected helper method below
-                var keyboard = GetMainMenuKeyboard();
+                InlineKeyboardMarkup keyboard = GetMainMenuKeyboard();
 
                 _ = await _botClient.EditMessageText(
                     chatId: chatId,
@@ -127,8 +125,8 @@ namespace TelegramPanel.Application.CommandHandlers.Entry
         // --- The rest of the methods also use GetMainMenuKeyboard, so no further changes are needed in them. ---
         private async Task HandleStartCommand(Message message, CancellationToken cancellationToken)
         {
-            var user = message.From!;
-            var chatId = message.Chat.Id;
+            User user = message.From!;
+            long chatId = message.Chat.Id;
 
             _logger.LogInformation("FAST /start received for UserID: {UserId}. Sending initial generic welcome.", user.Id);
 
@@ -150,25 +148,25 @@ namespace TelegramPanel.Application.CommandHandlers.Entry
 
             _ = Task.Run(async () =>
             {
-                using var scope = _scopeFactory.CreateScope();
-                var scopedLogger = scope.ServiceProvider.GetRequiredService<ILogger<StartCommandHandler>>();
-                var userService = scope.ServiceProvider.GetRequiredService<IUserService>();
-                var stateMachine = scope.ServiceProvider.GetService<ITelegramStateMachine>();
-                var messageSender = scope.ServiceProvider.GetRequiredService<ITelegramMessageSender>();
+                using IServiceScope scope = _scopeFactory.CreateScope();
+                ILogger<StartCommandHandler> scopedLogger = scope.ServiceProvider.GetRequiredService<ILogger<StartCommandHandler>>();
+                IUserService userService = scope.ServiceProvider.GetRequiredService<IUserService>();
+                ITelegramStateMachine? stateMachine = scope.ServiceProvider.GetService<ITelegramStateMachine>();
+                ITelegramMessageSender messageSender = scope.ServiceProvider.GetRequiredService<ITelegramMessageSender>();
 
                 try
                 {
-                    var telegramUserId = user.Id.ToString();
-                    var existingUser = await userService.GetUserByTelegramIdAsync(telegramUserId, cancellationToken);
+                    string telegramUserId = user.Id.ToString();
+                    UserDto? existingUser = await userService.GetUserByTelegramIdAsync(telegramUserId, cancellationToken);
 
                     bool isNewRegistration = existingUser == null;
                     string finalUsername;
 
                     if (isNewRegistration)
                     {
-                        var firstName = user.FirstName ?? "";
-                        var lastName = user.LastName ?? "";
-                        var username = user.Username;
+                        string firstName = user.FirstName ?? "";
+                        string lastName = user.LastName ?? "";
+                        string? username = user.Username;
                         string effectiveUsername = !string.IsNullOrWhiteSpace(username) ? username : $"{firstName} {lastName}".Trim();
                         if (string.IsNullOrWhiteSpace(effectiveUsername))
                         {
@@ -206,11 +204,11 @@ namespace TelegramPanel.Application.CommandHandlers.Entry
 
         private Task<Message> SendInitialWelcomeMessageAsync(long chatId, string firstName, CancellationToken cancellationToken)
         {
-            var welcomeText = $"Hello {TelegramMessageFormatter.EscapeMarkdownV2(firstName)}! 👋\n\n" +
+            string welcomeText = $"Hello {TelegramMessageFormatter.EscapeMarkdownV2(firstName)}! 👋\n\n" +
                               "🌟 *Welcome to the Forex Trading Bot*\n\n" +
                               "Initializing your profile, please wait...";
 
-            var keyboard = GetMainMenuKeyboard();
+            InlineKeyboardMarkup keyboard = GetMainMenuKeyboard();
 
             return _botClient.SendMessage(
                  chatId: chatId,
@@ -222,12 +220,12 @@ namespace TelegramPanel.Application.CommandHandlers.Entry
 
         private Task EditWelcomeMessageWithDetailsAsync(long chatId, int messageId, string username, bool isExistingUser, ITelegramMessageSender messageSender, CancellationToken cancellationToken)
         {
-            var welcomeText = isExistingUser ? $"🎉 *Welcome back, {TelegramMessageFormatter.EscapeMarkdownV2(username)}!*" :
+            string welcomeText = isExistingUser ? $"🎉 *Welcome back, {TelegramMessageFormatter.EscapeMarkdownV2(username)}!*" :
                                                $"Hello {TelegramMessageFormatter.EscapeMarkdownV2(username)}! 👋\n\n🌟 *Welcome to the Forex Trading Bot*";
 
-            var messageBody = GenerateWelcomeMessageBody(welcomeText, isExistingUser);
+            string messageBody = GenerateWelcomeMessageBody(welcomeText, isExistingUser);
 
-            var keyboard = GetMainMenuKeyboard();
+            InlineKeyboardMarkup keyboard = GetMainMenuKeyboard();
 
             return messageSender.EditMessageTextAsync(
                 chatId,

@@ -25,7 +25,7 @@ namespace TelegramPanel.Queue
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _maxRetryAttempts = 3;
 
-            var options = new BoundedChannelOptions(capacity)
+            BoundedChannelOptions options = new(capacity)
             {
                 // ✅ تغییر مهم: بازگشت به Wait. این تضمین می‌کند که هیچ آپدیتی در صف داخلی از دست نمی‌رود.
                 // مدیریت بلاک شدن این WriteAsync (اگر Channel پر باشد) به لایه فراخواننده (TelegramBotService) واگذار می‌شود.

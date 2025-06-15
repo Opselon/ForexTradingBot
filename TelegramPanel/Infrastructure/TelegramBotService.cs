@@ -85,7 +85,7 @@ namespace TelegramPanel.Infrastructure
                     // ابتدا هرگونه Webhook قبلی را حذف می‌کنیم تا از تداخل جلوگیری شود.
                     await TryDeleteWebhookAsync(_cancellationTokenSourceForPolling.Token, "Preparing for new Webhook setup.");
 
-                    var allowedUpdatesForWebhook = _settings.AllowedUpdates?.ToArray() ?? Array.Empty<UpdateType>();
+                    UpdateType[] allowedUpdatesForWebhook = _settings.AllowedUpdates?.ToArray() ?? Array.Empty<UpdateType>();
 
                     try
                     {
@@ -100,7 +100,7 @@ namespace TelegramPanel.Infrastructure
                             secretToken: _settings.WebhookSecretToken,
                             cancellationToken: _cancellationTokenSourceForPolling.Token);
 
-                        var webhookInfo = await _botClient.GetWebhookInfo(cancellationToken: _cancellationTokenSourceForPolling.Token);
+                        WebhookInfo? webhookInfo = await _botClient.GetWebhookInfo(cancellationToken: _cancellationTokenSourceForPolling.Token);
                         if (webhookInfo != null && webhookInfo.Url.Equals(_settings.WebhookAddress, StringComparison.OrdinalIgnoreCase))
                         {
                             _logger.LogInformation("Webhook configured successfully to: {WebhookAddress}. Pending updates: {PendingUpdates}. Last error: {LastErrorMsg} at {LastErrorDate}",
@@ -143,7 +143,7 @@ namespace TelegramPanel.Infrastructure
                 try
                 {
                     // Double check webhook is deleted before starting polling
-                    var webhookInfo = await _botClient.GetWebhookInfo(cancellationToken: _cancellationTokenSourceForPolling.Token);
+                    WebhookInfo webhookInfo = await _botClient.GetWebhookInfo(cancellationToken: _cancellationTokenSourceForPolling.Token);
                     if (!string.IsNullOrEmpty(webhookInfo.Url))
                     {
                         _logger.LogWarning("Webhook still active at {WebhookUrl}. Attempting to delete before starting polling.", webhookInfo.Url);
@@ -151,8 +151,8 @@ namespace TelegramPanel.Infrastructure
                         _logger.LogInformation("Webhook deleted successfully before starting polling.");
                     }
 
-                    var allowedUpdatesForPolling = _settings.AllowedUpdates?.ToArray() ?? Array.Empty<UpdateType>();
-                    var receiverOptions = new ReceiverOptions
+                    UpdateType[] allowedUpdatesForPolling = _settings.AllowedUpdates?.ToArray() ?? Array.Empty<UpdateType>();
+                    ReceiverOptions receiverOptions = new()
                     {
                         AllowedUpdates = allowedUpdatesForPolling,
                         //  اگر نیاز به مدیریت offset دارید، این بخش باید با دقت بیشتری بررسی شود.
@@ -192,7 +192,7 @@ namespace TelegramPanel.Infrastructure
             try
             {
                 // بررسی اینکه آیا Webhook ای اصلاً تنظیم شده است
-                var currentWebhookInfo = await _botClient.GetWebhookInfo(cancellationToken);
+                WebhookInfo currentWebhookInfo = await _botClient.GetWebhookInfo(cancellationToken);
                 if (!string.IsNullOrEmpty(currentWebhookInfo.Url))
                 {
                     await _botClient.DeleteWebhook(dropPendingUpdates: true, cancellationToken: cancellationToken);
@@ -232,8 +232,8 @@ namespace TelegramPanel.Infrastructure
                 return;
             }
 
-            var userId = update.Message?.From?.Id ?? update.CallbackQuery?.From?.Id;
-            var logScopeProps = new Dictionary<string, object?>
+            long? userId = update.Message?.From?.Id ?? update.CallbackQuery?.From?.Id;
+            Dictionary<string, object?> logScopeProps = new()
             {
                 ["Source"] = "Polling",
                 ["UpdateId"] = update.Id,
@@ -282,7 +282,7 @@ namespace TelegramPanel.Infrastructure
             HandleErrorSource source, // ✅ پارامتر HandleErrorSource اضافه شد
             CancellationToken cancellationToken)
         {
-            var errorMessage = exception switch
+            string errorMessage = exception switch
             {
                 ApiRequestException apiRequestException =>
                     $"Telegram API Error during polling (Source: {source}): Code=[{apiRequestException.ErrorCode}], Message='{apiRequestException.Message}'. Parameters: {apiRequestException.Parameters}",
@@ -338,7 +338,7 @@ namespace TelegramPanel.Infrastructure
             {
                 // از یک CancellationToken جدید برای این عملیات استفاده کنید چون hostCancellationToken ممکن است زودتر منقضی شود.
                 // یا می‌توانید از یک CancellationTokenSource با Timeout استفاده کنید.
-                using var cleanupCts = new CancellationTokenSource(TimeSpan.FromSeconds(10)); // Timeout 10 ثانیه
+                using CancellationTokenSource cleanupCts = new(TimeSpan.FromSeconds(10)); // Timeout 10 ثانیه
                 await TryDeleteWebhookAsync(cleanupCts.Token, "Application shutting down.");
             }
 

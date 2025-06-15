@@ -26,7 +26,7 @@ namespace Infrastructure.Caching
 
         public void Set(string key, T value, TimeSpan absoluteExpirationRelativeToNow)
         {
-            var cacheEntryOptions = new MemoryCacheEntryOptions
+            MemoryCacheEntryOptions cacheEntryOptions = new()
             {
                 AbsoluteExpirationRelativeToNow = absoluteExpirationRelativeToNow
             };

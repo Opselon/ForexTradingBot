@@ -70,7 +70,7 @@ namespace Infrastructure.Repositories
 
         public async Task<bool> DeleteAsync(Guid id, CancellationToken cancellationToken = default)
         {
-            var analysisToDelete = await GetByIdAsync(id, cancellationToken);
+            SignalAnalysis? analysisToDelete = await GetByIdAsync(id, cancellationToken);
             if (analysisToDelete == null)
             {
                 return false; // پیدا نشد

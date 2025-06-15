@@ -8,18 +8,14 @@
 #region Usings
 
 // --- Standard .NET Framework Namespaces ---
-using System.Data.Common;
-using System.Globalization;
-using System.Net;
-using System.Net.Http.Headers;
-using System.Security.Cryptography;
-using System.ServiceModel.Syndication;
-using System.Text;
-using System.Xml;
-
+// --- Application-Specific Namespaces ---
+using Application.Common.Interfaces;
+using Application.DTOs.News;
+using Application.Interfaces;
 // --- Third-party Libraries ---
 using AutoMapper;
 using Dapper;
+using Domain.Entities;
 using Hangfire;
 using HtmlAgilityPack;
 using Microsoft.Data.SqlClient;
@@ -28,14 +24,15 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Polly;
 using Polly.Retry;
-
-// --- Application-Specific Namespaces ---
-using Application.Common.Interfaces;
-using Application.DTOs.News;
-using Application.Interfaces;
-using Domain.Entities;
 using Shared.Extensions;
 using Shared.Results;
+using System.Data.Common;
+using System.Net;
+using System.Net.Http.Headers;
+using System.Security.Cryptography;
+using System.ServiceModel.Syndication;
+using System.Text;
+using System.Xml;
 
 #endregion
 
@@ -51,7 +48,7 @@ namespace Infrastructure.Services
     public class RssReaderServiceSettings
     {
 
-        
+
         /// <summary>
         /// The section name in the application's configuration file.
         /// </summary>
@@ -216,13 +213,17 @@ namespace Infrastructure.Services
             /// Creates a standard success outcome.
             /// </summary>
             public static RssFetchOutcome Success(IEnumerable<NewsItemDto> dispatchedNewsItems, string? etag, string? lastModified)
-                => new(true, dispatchedNewsItems, etag, lastModified, RssFetchErrorType.None, null);
+            {
+                return new(true, dispatchedNewsItems, etag, lastModified, RssFetchErrorType.None, null);
+            }
 
             /// <summary>
             /// Creates a standard failure outcome.
             /// </summary>
             public static RssFetchOutcome Failure(RssFetchErrorType errorType, string errorMessage, Exception? ex = null, string? etag = null, string? lastModified = null)
-                => new(false, Enumerable.Empty<NewsItemDto>(), etag, lastModified, errorType, errorMessage, ex);
+            {
+                return new(false, Enumerable.Empty<NewsItemDto>(), etag, lastModified, errorType, errorMessage, ex);
+            }
         }
 
         /// <summary>
@@ -277,14 +278,14 @@ namespace Infrastructure.Services
             _httpRetryPolicy = Policy<HttpResponseMessage>
                .Handle<HttpRequestException>()
                .OrResult(response =>
-                   response.StatusCode >= HttpStatusCode.InternalServerError ||
-                   response.StatusCode == HttpStatusCode.RequestTimeout ||
-                   response.StatusCode == HttpStatusCode.TooManyRequests)
+                   response.StatusCode is >= HttpStatusCode.InternalServerError or
+                   HttpStatusCode.RequestTimeout or
+                   HttpStatusCode.TooManyRequests)
                .WaitAndRetryAsync(
                    retryCount: _settings.HttpRetryCount,
                    sleepDurationProvider: retryAttempt =>
                    {
-                       var delay = TimeSpan.FromSeconds(Math.Pow(2, retryAttempt));
+                       TimeSpan delay = TimeSpan.FromSeconds(Math.Pow(2, retryAttempt));
                        _logger.LogWarning(
                            "Polly HTTP Retry: Attempt {RetryAttempt} of {MaxRetries} failed. Waiting {Delay} before next retry.",
                            retryAttempt, _settings.HttpRetryCount, delay);
@@ -309,7 +310,7 @@ namespace Infrastructure.Services
                     retryCount: _settings.DbRetryCount,
                     sleepDurationProvider: retryAttempt =>
                     {
-                        var delay = TimeSpan.FromSeconds(Math.Pow(2, retryAttempt));
+                        TimeSpan delay = TimeSpan.FromSeconds(Math.Pow(2, retryAttempt));
                         _logger.LogWarning("Polly DB Retry: Database operation failed on attempt {RetryAttempt} of {MaxRetries}. Waiting {Delay} before next retry.",
                             retryAttempt, _settings.DbRetryCount, delay);
                         return delay;
@@ -326,7 +327,10 @@ namespace Infrastructure.Services
         /// This is a simple factory method. Connection management, opening, and closing are handled
         /// within the methods that use it, leveraging .NET's built-in connection pooling.
         /// </remarks>
-        private SqlConnection CreateConnection() => new(_connectionString);
+        private SqlConnection CreateConnection()
+        {
+            return new(_connectionString);
+        }
 
         #endregion
 
@@ -352,7 +356,7 @@ namespace Infrastructure.Services
 
             // --- 2. Setup Logging Scope and Initial State ---
             string correlationId = $"RSSFetch_{rssSource.Id}_{Guid.NewGuid():N}";
-            using var scope = _logger.BeginScope(new Dictionary<string, object?>
+            using IDisposable? scope = _logger.BeginScope(new Dictionary<string, object?>
             {
                 ["CorrelationId"] = correlationId,
                 ["RssSourceId"] = rssSource.Id,
@@ -385,7 +389,7 @@ namespace Infrastructure.Services
 
             // --- 4. Final Status Update and Return ---
             _logger.LogInformation("Fetch cycle has concluded. Updating final status of RssSource in the database.");
-            var finalResult = await UpdateRssSourceStatusAfterFetchOutcomeAsync(rssSource, outcome, cancellationToken);
+            Result<IEnumerable<NewsItemDto>> finalResult = await UpdateRssSourceStatusAfterFetchOutcomeAsync(rssSource, outcome, cancellationToken);
 
             _logger.LogTrace("Exiting {MethodName}", methodName);
             return finalResult;
@@ -409,7 +413,7 @@ namespace Infrastructure.Services
             {
                 string httpErrorMsg = $"HTTP request failed with status code {httpResponse.StatusCode} ({httpResponse.ReasonPhrase}).";
                 _logger.LogWarning(httpErrorMsg);
-                var errorType = IsPermanentHttpError(httpResponse.StatusCode) ? RssFetchErrorType.PermanentHttp : RssFetchErrorType.TransientHttp;
+                RssFetchErrorType errorType = IsPermanentHttpError(httpResponse.StatusCode) ? RssFetchErrorType.PermanentHttp : RssFetchErrorType.TransientHttp;
                 return RssFetchOutcome.Failure(errorType, httpErrorMsg, new HttpRequestException(httpErrorMsg, null, httpResponse.StatusCode),
                     CleanETag(httpResponse.Headers.ETag?.Tag), GetLastModifiedFromHeaders(httpResponse.Headers));
             }
@@ -421,7 +425,7 @@ namespace Infrastructure.Services
             List<NewsItem> newNewsEntities = await FilterAndCreateNewsEntitiesAsync(feed.Items, rssSource, cancellationToken);
 
             _logger.LogInformation("Filtering complete. Proceeding to save {NewItemCount} new items and dispatch notifications.", newNewsEntities.Count);
-            var outcome = await SaveAndDispatchAsync(rssSource, newNewsEntities, httpResponse, cancellationToken);
+            RssFetchOutcome outcome = await SaveAndDispatchAsync(rssSource, newNewsEntities, httpResponse, cancellationToken);
 
             _logger.LogTrace("Exiting {MethodName}", methodName);
             return outcome;
@@ -435,16 +439,16 @@ namespace Infrastructure.Services
             const string methodName = nameof(ExecuteHttpRequestAsync);
             _logger.LogTrace("Entering {MethodName}", methodName);
 
-            var httpClient = _httpClientFactory.CreateClient("RssFeedClient"); // Assuming named client is configured
-            using var requestMessage = new HttpRequestMessage(HttpMethod.Get, rssSource.Url);
+            HttpClient httpClient = _httpClientFactory.CreateClient("RssFeedClient"); // Assuming named client is configured
+            using HttpRequestMessage requestMessage = new(HttpMethod.Get, rssSource.Url);
             requestMessage.Headers.UserAgent.ParseAdd(_settings.UserAgent);
 
             AddConditionalGetHeaders(requestMessage, rssSource);
 
-            var response = await _httpRetryPolicy.ExecuteAsync(async (context, ct) =>
+            HttpResponseMessage response = await _httpRetryPolicy.ExecuteAsync(async (context, ct) =>
             {
-                using var requestTimeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(_settings.HttpClientTimeoutSeconds));
-                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, requestTimeoutCts.Token, cancellationToken);
+                using CancellationTokenSource requestTimeoutCts = new(TimeSpan.FromSeconds(_settings.HttpClientTimeoutSeconds));
+                using CancellationTokenSource linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, requestTimeoutCts.Token, cancellationToken);
                 _logger.LogDebug("Polly Execute: Sending HTTP GET request with a {Timeout}s timeout.", _settings.HttpClientTimeoutSeconds);
                 return await httpClient.SendAsync(requestMessage, HttpCompletionOption.ResponseHeadersRead, linkedCts.Token);
             }, new Context(correlationId), cancellationToken).ConfigureAwait(false);
@@ -465,16 +469,16 @@ namespace Infrastructure.Services
             const string methodName = nameof(ParseFeedContentAsync);
             _logger.LogTrace("Entering {MethodName}", methodName);
 
-            await using var feedStream = await response.Content.ReadAsStreamAsync(cancellationToken);
-            var readerSettings = new XmlReaderSettings
+            await using Stream feedStream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            XmlReaderSettings readerSettings = new()
             {
                 Async = true,
                 DtdProcessing = DtdProcessing.Ignore, // Security best practice: prevent XXE attacks.
                 IgnoreWhitespace = true
             };
 
-            using var xmlReader = XmlReader.Create(feedStream, readerSettings);
-            var feed = await Task.Run(() => SyndicationFeed.Load(xmlReader), cancellationToken);
+            using XmlReader xmlReader = XmlReader.Create(feedStream, readerSettings);
+            SyndicationFeed feed = await Task.Run(() => SyndicationFeed.Load(xmlReader), cancellationToken);
 
             _logger.LogDebug("Successfully parsed feed content. Feed Title: '{FeedTitle}'", feed.Title?.Text.Truncate(100));
             _logger.LogTrace("Exiting {MethodName}", methodName);
@@ -496,21 +500,21 @@ namespace Infrastructure.Services
                 return [];
             }
 
-            var creationContext = new NewsItemCreationContext(
+            NewsItemCreationContext creationContext = new(
                 SyndicationItem: null!, // This is a placeholder; it will be set inside the loop.
                 RssSource: rssSource,
                 ExistingSourceItemIds: await GetExistingSourceItemIdsAsync(rssSource.Id, cancellationToken),
                 ProcessedInThisBatch: new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             );
 
-            var newNewsEntities = new List<NewsItem>();
+            List<NewsItem> newNewsEntities = new();
             _logger.LogDebug("Beginning iteration through {ItemCount} fetched syndication items.", syndicationItems.Count());
 
-            foreach (var syndicationItem in syndicationItems.OrderByDescending(i => i.PublishDate.UtcDateTime))
+            foreach (SyndicationItem? syndicationItem in syndicationItems.OrderByDescending(i => i.PublishDate.UtcDateTime))
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var contextWithItem = creationContext with { SyndicationItem = syndicationItem };
-                var newsEntity = TryCreateNewsItemEntity(contextWithItem);
+                NewsItemCreationContext contextWithItem = creationContext with { SyndicationItem = syndicationItem };
+                NewsItem? newsEntity = TryCreateNewsItemEntity(contextWithItem);
                 if (newsEntity != null)
                 {
                     newNewsEntities.Add(newsEntity);
@@ -531,15 +535,15 @@ namespace Infrastructure.Services
             const string methodName = nameof(GetExistingSourceItemIdsAsync);
             _logger.LogTrace("Entering {MethodName} for RssSourceId: {RssSourceId}", methodName, rssSourceId);
 
-            var ids = await _dbRetryPolicy.ExecuteAsync(async () =>
+            IEnumerable<string> ids = await _dbRetryPolicy.ExecuteAsync(async () =>
             {
-                await using var connection = CreateConnection();
-                var sql = "SELECT SourceItemId FROM NewsItems WHERE RssSourceId = @RssSourceId AND SourceItemId IS NOT NULL;";
+                await using SqlConnection connection = CreateConnection();
+                string sql = "SELECT SourceItemId FROM NewsItems WHERE RssSourceId = @RssSourceId AND SourceItemId IS NOT NULL;";
                 _logger.LogDebug("Executing SQL to fetch existing SourceItemIds.");
                 return await connection.QueryAsync<string>(sql, new { RssSourceId = rssSourceId });
             });
 
-            var idSet = ids.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            HashSet<string> idSet = ids.ToHashSet(StringComparer.OrdinalIgnoreCase);
             _logger.LogDebug("Fetched {Count} existing SourceItemIds from the database.", idSet.Count);
             _logger.LogTrace("Exiting {MethodName}", methodName);
             return idSet;
@@ -552,8 +556,8 @@ namespace Infrastructure.Services
         /// <returns>A new <see cref="NewsItem"/> entity if it's valid and new; otherwise, <c>null</c>.</returns>
         private NewsItem? TryCreateNewsItemEntity(NewsItemCreationContext context)
         {
-            var syndicationItem = context.SyndicationItem;
-            var rssSource = context.RssSource;
+            SyndicationItem syndicationItem = context.SyndicationItem;
+            RssSource rssSource = context.RssSource;
 
             string? originalLink = syndicationItem.Links.FirstOrDefault(l => l.Uri != null)?.Uri?.ToString();
             string title = syndicationItem.Title?.Text?.Trim() ?? "Untitled News Item";
@@ -635,7 +639,7 @@ namespace Infrastructure.Services
             }
 
             // --- Stage 2: Dispatch notifications based on the image-only prioritization logic ---
-            var dispatchedDtos = await DispatchNotificationsForImageItemsAsync(newNewsEntitiesToSave, cancellationToken);
+            IEnumerable<NewsItemDto> dispatchedDtos = await DispatchNotificationsForImageItemsAsync(newNewsEntitiesToSave, cancellationToken);
 
             _logger.LogTrace("Exiting {MethodName}", methodName);
             return RssFetchOutcome.Success(dispatchedDtos, etagFromResponse, lastModifiedFromResponse);
@@ -651,18 +655,18 @@ namespace Infrastructure.Services
 
             await _dbRetryPolicy.ExecuteAsync(async () =>
             {
-                await using var connection = CreateConnection();
+                await using SqlConnection connection = CreateConnection();
                 await connection.OpenAsync(cancellationToken);
-                await using var transaction = connection.BeginTransaction();
+                await using SqlTransaction transaction = connection.BeginTransaction();
                 _logger.LogDebug("Database connection opened and transaction started.");
 
                 try
                 {
-                    var sql = @"
+                    string sql = @"
                         INSERT INTO NewsItems (Id, Title, Link, Summary, FullContent, ImageUrl, PublishedDate, CreatedAt, LastProcessedAt, SourceName, SourceItemId, SentimentScore, SentimentLabel, DetectedLanguage, AffectedAssets, RssSourceId, IsVipOnly, AssociatedSignalCategoryId) 
                         VALUES (@Id, @Title, @Link, @Summary, @FullContent, @ImageUrl, @PublishedDate, @CreatedAt, @LastProcessedAt, @SourceName, @SourceItemId, @SentimentScore, @SentimentLabel, @DetectedLanguage, @AffectedAssets, @RssSourceId, @IsVipOnly, @AssociatedSignalCategoryId);";
 
-                    var rowsAffected = await connection.ExecuteAsync(sql, items, transaction);
+                    int rowsAffected = await connection.ExecuteAsync(sql, items, transaction);
                     await transaction.CommitAsync(cancellationToken);
                     _logger.LogInformation("Database save successful. Transaction committed. {RowsAffected} rows affected.", rowsAffected);
                 }
@@ -689,7 +693,7 @@ namespace Infrastructure.Services
             _logger.LogTrace("Entering {MethodName}", methodName);
 
             // --- Business Logic: Filter for items with an image ONLY ---
-            var itemsToDispatch = savedItems
+            List<NewsItem> itemsToDispatch = savedItems
                 .Where(item => !string.IsNullOrWhiteSpace(item.ImageUrl))
                 .OrderByDescending(item => item.PublishedDate)
                 .ToList();
@@ -709,14 +713,14 @@ namespace Infrastructure.Services
                 return Enumerable.Empty<NewsItemDto>();
             }
 
-            var dispatchedItemIds = new HashSet<Guid>();
+            HashSet<Guid> dispatchedItemIds = new();
 
             _logger.LogInformation("Dispatching Batch: Enqueuing all {Count} notifications for news items with images.", itemsToDispatch.Count);
             await EnqueueDispatchTasks(itemsToDispatch, "ImageOnlyBatch", dispatchedItemIds, cancellationToken);
 
             _logger.LogInformation("Completed all dispatch enqueueing. Total items queued for notification: {TotalDispatchedCount}", dispatchedItemIds.Count);
 
-            var dispatchedDtos = _mapper.Map<IEnumerable<NewsItemDto>>(savedItems.Where(ni => dispatchedItemIds.Contains(ni.Id)));
+            IEnumerable<NewsItemDto> dispatchedDtos = _mapper.Map<IEnumerable<NewsItemDto>>(savedItems.Where(ni => dispatchedItemIds.Contains(ni.Id)));
             _logger.LogTrace("Exiting {MethodName}", methodName);
             return dispatchedDtos;
         }
@@ -733,8 +737,8 @@ namespace Infrastructure.Services
             const string methodName = nameof(EnqueueDispatchTasks);
             _logger.LogTrace("Entering {MethodName} for batch '{BatchName}' with {ItemCount} items.", methodName, batchName, itemsToEnqueue.Count);
 
-            var tasks = new List<Task>();
-            foreach (var item in itemsToEnqueue)
+            List<Task> tasks = new();
+            foreach (NewsItem item in itemsToEnqueue)
             {
                 if (ct.IsCancellationRequested)
                 {
@@ -742,8 +746,9 @@ namespace Infrastructure.Services
                     break;
                 }
 
-                var capturedItem = item;
-                tasks.Add(Task.Run(() => {
+                NewsItem capturedItem = item;
+                tasks.Add(Task.Run(() =>
+                {
                     try
                     {
                         ct.ThrowIfCancellationRequested();
@@ -751,12 +756,12 @@ namespace Infrastructure.Services
                             capturedItem.Id, capturedItem.Title.Truncate(30), batchName);
 
                         // Enqueue the job to be processed by Hangfire. Use CancellationToken.None as Hangfire manages job lifetime independently.
-                        _backgroundJobClient.Enqueue<INotificationDispatchService>(s => s.DispatchNewsNotificationAsync(capturedItem.Id, CancellationToken.None));
+                        _ = _backgroundJobClient.Enqueue<INotificationDispatchService>(s => s.DispatchNewsNotificationAsync(capturedItem.Id, CancellationToken.None));
 
                         // Safely add the ID to the tracker for final reporting.
                         lock (dispatchedTracker)
                         {
-                            dispatchedTracker.Add(capturedItem.Id);
+                            _ = dispatchedTracker.Add(capturedItem.Id);
                         }
                     }
                     catch (OperationCanceledException)
@@ -804,8 +809,16 @@ namespace Infrastructure.Services
                 _logger.LogInformation("Fetch was successful. Resetting error count and updating metadata.");
                 source.LastSuccessfulFetchAt = source.LastFetchAttemptAt;
                 source.FetchErrorCount = 0;
-                if (!string.IsNullOrWhiteSpace(outcome.ETag)) source.ETag = outcome.ETag;
-                if (!string.IsNullOrWhiteSpace(outcome.LastModifiedHeader)) source.LastModifiedHeader = outcome.LastModifiedHeader;
+                if (!string.IsNullOrWhiteSpace(outcome.ETag))
+                {
+                    source.ETag = outcome.ETag;
+                }
+
+                if (!string.IsNullOrWhiteSpace(outcome.LastModifiedHeader))
+                {
+                    source.LastModifiedHeader = outcome.LastModifiedHeader;
+                }
+
                 source.IsActive = true;
             }
             else
@@ -836,9 +849,10 @@ namespace Infrastructure.Services
 
             try
             {
-                await _dbRetryPolicy.ExecuteAsync(async () => {
-                    await using var connection = CreateConnection();
-                    var sql = @"
+                await _dbRetryPolicy.ExecuteAsync(async () =>
+                {
+                    await using SqlConnection connection = CreateConnection();
+                    string sql = @"
                         UPDATE RssSources SET 
                             LastSuccessfulFetchAt = @LastSuccessfulFetchAt, 
                             FetchErrorCount = @FetchErrorCount, 
@@ -849,7 +863,7 @@ namespace Infrastructure.Services
                             LastFetchAttemptAt = @LastFetchAttemptAt 
                         WHERE Id = @Id;";
                     _logger.LogDebug("Executing final status update to database for RssSource {RssSourceId}.", source.Id);
-                    await connection.ExecuteAsync(sql, source);
+                    _ = await connection.ExecuteAsync(sql, source);
                 });
             }
             catch (Exception ex)
@@ -861,13 +875,13 @@ namespace Infrastructure.Services
             // --- Construct Final Return Value ---
             if (outcome.IsSuccess)
             {
-                var successMessage = $"Fetch successful. {outcome.DispatchedNewsItems.Count()} items were dispatched for notification.";
+                string successMessage = $"Fetch successful. {outcome.DispatchedNewsItems.Count()} items were dispatched for notification.";
                 _logger.LogInformation(successMessage);
                 return Result<IEnumerable<NewsItemDto>>.Success(outcome.DispatchedNewsItems, successMessage);
             }
             else
             {
-                var failureMessage = $"Fetch failed for '{source.SourceName}'. Error: {outcome.ErrorMessage}";
+                string failureMessage = $"Fetch failed for '{source.SourceName}'. Error: {outcome.ErrorMessage}";
                 _logger.LogError(outcome.Exception, failureMessage);
                 return Result<IEnumerable<NewsItemDto>>.Failure(new[] { outcome.ErrorMessage ?? "An unknown fetch error occurred." });
             }
@@ -911,7 +925,10 @@ namespace Infrastructure.Services
 
         #region HTTP and HTML Helper Methods
 
-        private bool IsPermanentHttpError(HttpStatusCode? code) => code is HttpStatusCode.BadRequest or HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden or HttpStatusCode.NotFound or HttpStatusCode.Gone;
+        private bool IsPermanentHttpError(HttpStatusCode? code)
+        {
+            return code is HttpStatusCode.BadRequest or HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden or HttpStatusCode.NotFound or HttpStatusCode.Gone;
+        }
 
         private void AddConditionalGetHeaders(HttpRequestMessage request, RssSource source)
         {
@@ -919,7 +936,7 @@ namespace Infrastructure.Services
             {
                 request.Headers.IfNoneMatch.ParseAdd(source.ETag.Contains('"') ? source.ETag : $"\"{source.ETag}\"");
             }
-            if (!string.IsNullOrWhiteSpace(source.LastModifiedHeader) && DateTimeOffset.TryParse(source.LastModifiedHeader, out var lastMod))
+            if (!string.IsNullOrWhiteSpace(source.LastModifiedHeader) && DateTimeOffset.TryParse(source.LastModifiedHeader, out DateTimeOffset lastMod))
             {
                 request.Headers.IfModifiedSince = lastMod;
             }
@@ -933,34 +950,39 @@ namespace Infrastructure.Services
 
         private string? GetLastModifiedFromHeaders(HttpResponseHeaders? headers)
         {
-            if (headers == null || !headers.TryGetValues("Last-Modified", out var values))
-            {
-                return null;
-            }
-
-            return values.FirstOrDefault();
+            return headers == null || !headers.TryGetValues("Last-Modified", out IEnumerable<string>? values) ? null : values.FirstOrDefault();
         }
 
         private string? CleanETag(string? etag)
         {
-            if (string.IsNullOrWhiteSpace(etag)) return null;
-            return etag.StartsWith("W/", StringComparison.OrdinalIgnoreCase) ? etag : etag.Trim('"');
+            return string.IsNullOrWhiteSpace(etag) ? null : etag.StartsWith("W/", StringComparison.OrdinalIgnoreCase) ? etag : etag.Trim('"');
         }
 
         private string DetermineSourceItemId(SyndicationItem item, string? link, string title, Guid sourceId)
         {
-            if (!string.IsNullOrWhiteSpace(item.Id) && item.Id.Length > 20) return item.Id.Truncate(NewsSourceItemIdMaxLenDb);
-            if (!string.IsNullOrWhiteSpace(link) && Uri.IsWellFormedUriString(link, UriKind.Absolute)) return link.Truncate(NewsSourceItemIdMaxLenDb);
+            if (!string.IsNullOrWhiteSpace(item.Id) && item.Id.Length > 20)
+            {
+                return item.Id.Truncate(NewsSourceItemIdMaxLenDb);
+            }
 
-            using var sha = SHA256.Create();
+            if (!string.IsNullOrWhiteSpace(link) && Uri.IsWellFormedUriString(link, UriKind.Absolute))
+            {
+                return link.Truncate(NewsSourceItemIdMaxLenDb);
+            }
+
+            using SHA256 sha = SHA256.Create();
             byte[] hash = sha.ComputeHash(Encoding.UTF8.GetBytes($"{sourceId}_{title}_{item.PublishDate:o}"));
             return Convert.ToHexString(hash).ToLowerInvariant().Truncate(NewsSourceItemIdMaxLenDb);
         }
 
         private string? CleanHtmlWithHtmlAgility(string? html)
         {
-            if (string.IsNullOrWhiteSpace(html)) return null;
-            var doc = new HtmlDocument();
+            if (string.IsNullOrWhiteSpace(html))
+            {
+                return null;
+            }
+
+            HtmlDocument doc = new();
             doc.LoadHtml(html);
             return WebUtility.HtmlDecode(doc.DocumentNode.InnerText).Trim();
         }
@@ -969,24 +991,33 @@ namespace Infrastructure.Services
         {
             try
             {
-                var mediaContent = item.ElementExtensions.FirstOrDefault(e => e.OuterName == "content" && e.OuterNamespace.Contains("media"));
+                SyndicationElementExtension? mediaContent = item.ElementExtensions.FirstOrDefault(e => e.OuterName == "content" && e.OuterNamespace.Contains("media"));
                 if (mediaContent != null)
                 {
-                    var url = mediaContent.GetObject<System.Xml.Linq.XElement>()?.Attribute("url")?.Value;
-                    if (!string.IsNullOrWhiteSpace(url)) return MakeUrlAbsolute(item, url);
+                    string? url = mediaContent.GetObject<System.Xml.Linq.XElement>()?.Attribute("url")?.Value;
+                    if (!string.IsNullOrWhiteSpace(url))
+                    {
+                        return MakeUrlAbsolute(item, url);
+                    }
                 }
 
-                var enclosure = item.Links.FirstOrDefault(l => l.RelationshipType == "enclosure" && l.MediaType?.StartsWith("image/") == true);
-                if (enclosure?.Uri != null) return enclosure.Uri.ToString();
+                SyndicationLink? enclosure = item.Links.FirstOrDefault(l => l.RelationshipType == "enclosure" && l.MediaType?.StartsWith("image/") == true);
+                if (enclosure?.Uri != null)
+                {
+                    return enclosure.Uri.ToString();
+                }
 
-                var htmlToParse = !string.IsNullOrWhiteSpace(content) ? content : summary;
-                if (string.IsNullOrWhiteSpace(htmlToParse)) return null;
+                string? htmlToParse = !string.IsNullOrWhiteSpace(content) ? content : summary;
+                if (string.IsNullOrWhiteSpace(htmlToParse))
+                {
+                    return null;
+                }
 
-                var doc = new HtmlDocument();
+                HtmlDocument doc = new();
                 doc.LoadHtml(htmlToParse);
 
-                var imgNode = doc.DocumentNode.SelectSingleNode("//img[@src]");
-                var src = imgNode?.GetAttributeValue("src", null);
+                HtmlNode? imgNode = doc.DocumentNode.SelectSingleNode("//img[@src]");
+                string? src = imgNode?.GetAttributeValue("src", null);
 
                 if (!string.IsNullOrWhiteSpace(src) && !src.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
                 {
@@ -1002,15 +1033,18 @@ namespace Infrastructure.Services
 
         private string? MakeUrlAbsolute(SyndicationItem item, string? imageUrl)
         {
-            if (string.IsNullOrWhiteSpace(imageUrl)) return null;
-            if (Uri.IsWellFormedUriString(imageUrl, UriKind.Absolute)) return imageUrl;
-
-            var baseUri = item.BaseUri ?? item.Links.FirstOrDefault(l => l.Uri?.IsAbsoluteUri == true)?.Uri;
-            if (baseUri != null && Uri.TryCreate(baseUri, imageUrl, out var absoluteUri))
+            if (string.IsNullOrWhiteSpace(imageUrl))
             {
-                return absoluteUri.ToString();
+                return null;
             }
-            return imageUrl;
+
+            if (Uri.IsWellFormedUriString(imageUrl, UriKind.Absolute))
+            {
+                return imageUrl;
+            }
+
+            Uri? baseUri = item.BaseUri ?? item.Links.FirstOrDefault(l => l.Uri?.IsAbsoluteUri == true)?.Uri;
+            return baseUri != null && Uri.TryCreate(baseUri, imageUrl, out Uri? absoluteUri) ? absoluteUri.ToString() : imageUrl;
         }
 
         #endregion

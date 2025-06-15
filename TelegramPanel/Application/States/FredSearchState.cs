@@ -7,7 +7,6 @@ using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Formatters;
-using TelegramPanel.Infrastructure;
 using TelegramPanel.Infrastructure.Helper;
 using static TelegramPanel.Infrastructure.ActualTelegramMessageActions;
 
@@ -35,7 +34,7 @@ namespace TelegramPanel.Application.States
             try
             {
                 // Add a bit more detail to the entry message.
-                var entryMessage = new StringBuilder();
+                StringBuilder entryMessage = new();
                 _ = entryMessage.AppendLine("📈 *Search for Economic Data Series* 📊"); // Add emoji to emphasize the topic.
                 _ = entryMessage.AppendLine(); // Add some space.
                 _ = entryMessage.AppendLine("🔍 Enter the *exact* name or a *partial* name of the data series you want to find.");
@@ -75,9 +74,9 @@ namespace TelegramPanel.Application.States
                 _logger.LogError("FredSearchState: Could not determine ChatID from the update. Aborting.");
                 return null; // Exit state
             }
-            var message = update.Message;
-            var userId = message.From!.Id;
-            var searchText = message.Text.Trim();
+            Message message = update.Message;
+            long userId = message.From!.Id;
+            string searchText = message.Text.Trim();
 
             if (searchText.Equals("/cancel", StringComparison.OrdinalIgnoreCase))
             {
@@ -91,16 +90,16 @@ namespace TelegramPanel.Application.States
                 _logger.LogInformation("User {UserId} is searching FRED for: '{SearchText}'", userId, searchText);
                 await _messageSender.SendTextMessageAsync(chatId.Value, $"⏳ Searching FRED for data series matching *{TelegramMessageFormatter.EscapeMarkdownV2(searchText)}*...", ParseMode.MarkdownV2, cancellationToken: cancellationToken);
 
-                var result = await _calendarService.SearchSeriesAsync(searchText, cancellationToken);
+                Shared.Results.Result<List<FredSeriesDto>> result = await _calendarService.SearchSeriesAsync(searchText, cancellationToken);
 
                 if (!result.Succeeded || result.Data == null || !result.Data.Any())
                 {
-                    var notFoundText = $"❌ No data series found for *{TelegramMessageFormatter.EscapeMarkdownV2(searchText)}*.\n\nPlease try a different search term or use `/cancel` to exit.";
+                    string notFoundText = $"❌ No data series found for *{TelegramMessageFormatter.EscapeMarkdownV2(searchText)}*.\n\nPlease try a different search term or use `/cancel` to exit.";
                     await _messageSender.SendTextMessageAsync(chatId.Value, notFoundText, ParseMode.MarkdownV2, cancellationToken: cancellationToken);
                     return Name;
                 }
 
-                var (responseText, responseKeyboard) = BuildResponseMessage(searchText, result.Data);
+                (string responseText, InlineKeyboardMarkup responseKeyboard) = BuildResponseMessage(searchText, result.Data);
 
                 await _messageSender.SendTextMessageAsync(chatId.Value, responseText, ParseMode.MarkdownV2, responseKeyboard, cancellationToken);
             }
@@ -118,17 +117,17 @@ namespace TelegramPanel.Application.States
         /// </summary>
         private (string, InlineKeyboardMarkup?) BuildResponseMessage(string searchText, List<FredSeriesDto> seriesList)
         {
-            var singleMessageSb = new StringBuilder();
+            StringBuilder singleMessageSb = new();
             _ = singleMessageSb.AppendLine($"✅ Found *{seriesList.Count}* results for `{TelegramMessageFormatter.EscapeMarkdownV2(searchText)}`:");
 
-            foreach (var series in seriesList.OrderByDescending(s => s.Popularity).Take(5))
+            foreach (FredSeriesDto? series in seriesList.OrderByDescending(s => s.Popularity).Take(5))
             {
                 _ = singleMessageSb.AppendLine();
                 _ = singleMessageSb.AppendLine($"📈 *{TelegramMessageFormatter.EscapeMarkdownV2(series.Title)}*");
                 _ = singleMessageSb.AppendLine($"`ID:` [{series.Id}](https://fred.stlouisfed.org/series/{series.Id}) `| Freq: {series.FrequencyShort} | Units: {series.UnitsShort}`");
             }
 
-            var finalKeyboard = MarkupBuilder.CreateInlineKeyboard(
+            InlineKeyboardMarkup? finalKeyboard = MarkupBuilder.CreateInlineKeyboard(
                 new[]
                 {
                     InlineKeyboardButton.WithCallbackData("⬅️ New Search", "econ_search_series"),

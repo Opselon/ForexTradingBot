@@ -4,7 +4,6 @@ using Application.Interfaces;
 using Microsoft.Extensions.Logging;
 using Telegram.Bot.Types;
 using TelegramPanel.Application.Interfaces;
-using TelegramPanel.Infrastructure;
 using static TelegramPanel.Infrastructure.ActualTelegramMessageActions;     // For the User entity
 
 namespace TelegramPanel.Application.Pipeline
@@ -33,7 +32,7 @@ namespace TelegramPanel.Application.Pipeline
 
         public async Task InvokeAsync(Update update, TelegramPipelineDelegate next, CancellationToken cancellationToken)
         {
-            var userId = update.Message?.From?.Id ?? update.CallbackQuery?.From?.Id;
+            long? userId = update.Message?.From?.Id ?? update.CallbackQuery?.From?.Id;
 
             if (userId is null)
             {
@@ -51,7 +50,7 @@ namespace TelegramPanel.Application.Pipeline
             try
             {
                 // STEP 1: Use the service to check for EXISTENCE and get lightweight DTO.
-                var userDto = await _userService.GetUserByTelegramIdAsync(userId.Value.ToString(), cancellationToken).ConfigureAwait(false);
+                global::Application.DTOs.UserDto? userDto = await _userService.GetUserByTelegramIdAsync(userId.Value.ToString(), cancellationToken).ConfigureAwait(false);
 
                 if (userDto is null)
                 {
@@ -66,7 +65,7 @@ namespace TelegramPanel.Application.Pipeline
 
                 // --- THIS IS THE FIX ---
                 // STEP 2: Now that user exists, fetch the full RICH DOMAIN ENTITY from the repository.
-                var userEntity = await _userRepository.GetByTelegramIdAsync(userId.Value.ToString(), cancellationToken).ConfigureAwait(false);
+                Domain.Entities.User? userEntity = await _userRepository.GetByTelegramIdAsync(userId.Value.ToString(), cancellationToken).ConfigureAwait(false);
 
                 // Add a sanity check in case of data inconsistency between services/DB.
                 if (userEntity is null)
@@ -85,7 +84,7 @@ namespace TelegramPanel.Application.Pipeline
                 _userContext.SetCurrentUser(userEntity);
                 // --- END FIX ---
 
-                var username = string.IsNullOrEmpty(userEntity.Username) ? "[no username]" : userEntity.Username;
+                string username = string.IsNullOrEmpty(userEntity.Username) ? "[no username]" : userEntity.Username;
                 _logger.LogInformation("User {UserId} ({Username}) authenticated successfully. Proceeding with pipeline.", userEntity.TelegramId, username);
 
                 await next(update, cancellationToken).ConfigureAwait(false);

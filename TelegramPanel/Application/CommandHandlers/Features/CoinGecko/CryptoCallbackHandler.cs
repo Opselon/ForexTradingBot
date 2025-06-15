@@ -14,7 +14,6 @@ using Telegram.Bot.Types.ReplyMarkups;
 using TelegramPanel.Application.CommandHandlers.MainMenu;
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Formatters;
-using TelegramPanel.Infrastructure;
 using static TelegramPanel.Infrastructure.ActualTelegramMessageActions; // Needed for TelegramMessageFormatter etc.
 
 // FIX: Changed namespace to match the new location
@@ -72,7 +71,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.CoinGecko
 
         public async Task HandleAsync(Update update, CancellationToken cancellationToken)
         {
-            var callbackQuery = update.CallbackQuery;
+            CallbackQuery? callbackQuery = update.CallbackQuery;
             if (callbackQuery?.Message == null || callbackQuery.Data == null)
             {
                 _logger.LogWarning("Callback query or message data is null.");
@@ -90,13 +89,13 @@ namespace TelegramPanel.Application.CommandHandlers.Features.CoinGecko
 
             long chatId = callbackQuery.Message.Chat.Id;
             int messageId = callbackQuery.Message.MessageId;
-            var currentMessageText = callbackQuery.Message.Text;
-            var currentMessageMarkup = callbackQuery.Message.ReplyMarkup;
+            string? currentMessageText = callbackQuery.Message.Text;
+            InlineKeyboardMarkup? currentMessageMarkup = callbackQuery.Message.ReplyMarkup;
 
-            var cacheKey = callbackQuery.Data;
+            string cacheKey = callbackQuery.Data;
 
             // 1. Check cache first
-            if (_uiCache.TryGetValue(cacheKey, out var cachedUi))
+            if (_uiCache.TryGetValue(cacheKey, out UiCacheEntry? cachedUi))
             {
                 _logger.LogInformation("Serving callback {CallbackData} from cache.", cacheKey);
                 try
@@ -150,24 +149,36 @@ namespace TelegramPanel.Application.CommandHandlers.Features.CoinGecko
             try
             {
                 // --- Fetch data and build UI (can result in success or specific data error UI) ---
-                var parts = callbackQuery.Data.Split('_');
+                string[] parts = callbackQuery.Data.Split('_');
                 string action = parts.Length > 2 ? parts[2] : string.Empty;
-                var paramDict = ParseParameters(parts.Skip(3).ToArray());
+                Dictionary<string, string> paramDict = ParseParameters(parts.Skip(3).ToArray());
 
                 (string text, InlineKeyboardMarkup keyboard) builtUi; // Result of fetching and building
 
                 switch (action)
                 {
                     case ListAction:
-                        int page = paramDict.TryGetValue(PageParam, out var pageStr) && int.TryParse(pageStr, out int parsedPage) ? parsedPage : 1;
-                        if (page < 1) page = 1;
+                        int page = paramDict.TryGetValue(PageParam, out string? pageStr) && int.TryParse(pageStr, out int parsedPage) ? parsedPage : 1;
+                        if (page < 1)
+                        {
+                            page = 1;
+                        }
+
                         builtUi = await FetchAndBuildCryptoListAsync(page, cancellationToken); // Returns success or list error UI
                         break;
                     case DetailsAction:
-                        string coinId = paramDict.TryGetValue(IdParam, out var idStr) ? idStr : null!;
-                        int returnPage = paramDict.TryGetValue(PageParam, out var returnPageStr) && int.TryParse(returnPageStr, out int parsedReturnPage) ? parsedReturnPage : 1;
-                        if (returnPage < 1) returnPage = 1;
-                        if (string.IsNullOrEmpty(coinId)) throw new ArgumentException("Missing coin ID in details callback data.");
+                        string coinId = paramDict.TryGetValue(IdParam, out string? idStr) ? idStr : null!;
+                        int returnPage = paramDict.TryGetValue(PageParam, out string? returnPageStr) && int.TryParse(returnPageStr, out int parsedReturnPage) ? parsedReturnPage : 1;
+                        if (returnPage < 1)
+                        {
+                            returnPage = 1;
+                        }
+
+                        if (string.IsNullOrEmpty(coinId))
+                        {
+                            throw new ArgumentException("Missing coin ID in details callback data.");
+                        }
+
                         builtUi = await FetchAndBuildDetailsAsync(coinId, returnPage, cancellationToken); // Returns success or details error UI
                         break;
                     default:
@@ -178,7 +189,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.CoinGecko
 
                 // --- Cache the generated UI (Success or specific Error) ---
                 // This creates a UiCacheEntry from the built text and keyboard.
-                var finalUi = new UiCacheEntry(builtUi.text, builtUi.keyboard);
+                UiCacheEntry finalUi = new(builtUi.text, builtUi.keyboard);
 
                 // _uiCache.Set automatically overwrites any existing entry for the same cacheKey.
                 // This ensures that if a previous request for this key resulted in an error UI being cached,
@@ -220,41 +231,44 @@ namespace TelegramPanel.Application.CommandHandlers.Features.CoinGecko
                 // as it represents a transient processing issue rather than a specific data state.
                 _logger.LogError(ex, "Error handling crypto callback {CallbackData}", callbackQuery.Data);
 
-                var errorText = new StringBuilder();
-                errorText.AppendLine("💔 Ops! Something went wrong while processing your request.");
+                StringBuilder errorText = new();
+                _ = errorText.AppendLine("💔 Ops! Something went wrong while processing your request.");
 
-                var parts = callbackQuery.Data.Split('_');
+                string[] parts = callbackQuery.Data.Split('_');
                 string action = parts.Length > 2 ? parts[2] : "unknown";
-                var paramDict = ParseParameters(parts.Skip(3).ToArray());
+                Dictionary<string, string> paramDict = ParseParameters(parts.Skip(3).ToArray());
 
-                errorText.AppendLine($"_Attempted action: *{EscapeTextForTelegramMarkup(action.ToUpper())}*_{EscapeTextForTelegramMarkup(paramDict.Any() ? " with params: " + string.Join(", ", paramDict.Select(kv => $"{kv.Key}={kv.Value}")) : "")}");
+                _ = errorText.AppendLine($"_Attempted action: *{EscapeTextForTelegramMarkup(action.ToUpper())}*_{EscapeTextForTelegramMarkup(paramDict.Any() ? " with params: " + string.Join(", ", paramDict.Select(kv => $"{kv.Key}={kv.Value}")) : "")}");
 
                 // Include exception message details carefully
                 if (!string.IsNullOrEmpty(ex.Message) && !ex.Message.Contains("Failed") && !ex.Message.Contains("Object reference not set")) // Simple heuristic to exclude common generic developer errors
                 {
-                    errorText.AppendLine($"_Details: {EscapeTextForTelegramMarkup(ex.Message)}_");
+                    _ = errorText.AppendLine($"_Details: {EscapeTextForTelegramMarkup(ex.Message)}_");
                 }
                 else
                 {
-                    errorText.AppendLine("_Please try again or return to the main menu._");
+                    _ = errorText.AppendLine("_Please try again or return to the main menu._");
                 }
 
                 // Build context-aware error keyboard (similar logic as before)
                 InlineKeyboardMarkup errorKeyboard;
-                int contextPage = paramDict.TryGetValue(PageParam, out var pStr) && int.TryParse(pStr, out int parsedP) ? parsedP : 1;
-                if (contextPage < 1) contextPage = 1;
+                int contextPage = paramDict.TryGetValue(PageParam, out string? pStr) && int.TryParse(pStr, out int parsedP) ? parsedP : 1;
+                if (contextPage < 1)
+                {
+                    contextPage = 1;
+                }
 
-                var keyboardRows = new List<List<InlineKeyboardButton>>();
+                List<List<InlineKeyboardButton>> keyboardRows = new();
                 if (action == DetailsAction)
                 {
-                    keyboardRows.Add(new List<InlineKeyboardButton> { InlineKeyboardButton.WithCallbackData($"⬅️ Back to Page {contextPage}", $"{CallbackPrefix}_{ListAction}_{PageParam}_{contextPage}") });
+                    keyboardRows.Add([InlineKeyboardButton.WithCallbackData($"⬅️ Back to Page {contextPage}", $"{CallbackPrefix}_{ListAction}_{PageParam}_{contextPage}")]);
                 }
                 else if (action == ListAction && contextPage > 1)
                 {
-                    keyboardRows.Add(new List<InlineKeyboardButton> { InlineKeyboardButton.WithCallbackData("⬅️ Previous Page", $"{CallbackPrefix}_{ListAction}_{PageParam}_{contextPage - 1}") });
+                    keyboardRows.Add([InlineKeyboardButton.WithCallbackData("⬅️ Previous Page", $"{CallbackPrefix}_{ListAction}_{PageParam}_{contextPage - 1}")]);
                 }
-                keyboardRows.Add(new List<InlineKeyboardButton> { InlineKeyboardButton.WithCallbackData("🔄 Retry Last Action", callbackQuery.Data!) });
-                keyboardRows.Add(new List<InlineKeyboardButton> { InlineKeyboardButton.WithCallbackData("🏠 Main Menu", MenuCallbackQueryHandler.BackToMainMenuGeneral) });
+                keyboardRows.Add([InlineKeyboardButton.WithCallbackData("🔄 Retry Last Action", callbackQuery.Data!)]);
+                keyboardRows.Add([InlineKeyboardButton.WithCallbackData("🏠 Main Menu", MenuCallbackQueryHandler.BackToMainMenuGeneral)]);
                 errorKeyboard = new InlineKeyboardMarkup(keyboardRows);
 
                 try
@@ -325,23 +339,23 @@ namespace TelegramPanel.Application.CommandHandlers.Features.CoinGecko
         }
 
 
-        
+
         private (string text, InlineKeyboardMarkup keyboard) BuildCryptoListMessage(int page, List<UnifiedCryptoDto> coins)
         {
-            var sb = new StringBuilder();
-            sb.AppendLine($"📊 *Crypto Markets Dashboard* `(Page {page})`"); // Added emoji
-            sb.AppendLine("`----------------------------------`");
+            StringBuilder sb = new();
+            _ = sb.AppendLine($"📊 *Crypto Markets Dashboard* `(Page {page})`"); // Added emoji
+            _ = sb.AppendLine("`----------------------------------`");
 
             if (!coins.Any())
             {
-                sb.AppendLine("🥹 No coins found on this page or unable to retrieve."); // Added emoji
+                _ = sb.AppendLine("🥹 No coins found on this page or unable to retrieve."); // Added emoji
             }
             else
             {
-                foreach (var coin in coins)
+                foreach (UnifiedCryptoDto coin in coins)
                 {
                     // Emoji for the list entry text
-                    string listEntryEmoji = CoinEmojis.TryGetValue(coin.Symbol.ToLower(), out var e) ? e : "🔹";
+                    string listEntryEmoji = CoinEmojis.TryGetValue(coin.Symbol.ToLower(), out string? e) ? e : "🔹";
                     // Use appropriate price format (more decimals for low prices)
                     string priceFormat = (coin.Price.HasValue && coin.Price > 0 && coin.Price < 0.01m) ? "N8" : "N4";
                     string price = coin.Price?.ToString(priceFormat, CultureInfo.InvariantCulture) ?? "N/A";
@@ -354,22 +368,22 @@ namespace TelegramPanel.Application.CommandHandlers.Features.CoinGecko
                     string escapedName = EscapeTextForTelegramMarkup(coin.Name ?? coin.Symbol);
                     string escapedSymbol = EscapeTextForTelegramMarkup(coin.Symbol.ToUpper());
 
-                    sb.AppendLine().AppendLine($"{listEntryEmoji} {TelegramMessageFormatter.Bold(escapedName)} ({escapedSymbol})");
+                    _ = sb.AppendLine().AppendLine($"{listEntryEmoji} {TelegramMessageFormatter.Bold(escapedName)} ({escapedSymbol})");
                     // Price and change are inside backticks, their content isn't escaped by this helper
-                    sb.AppendLine($"{EscapeTextForTelegramMarkup("  Price:")} `${price}` USD {changeEmoji} `{change}`");
+                    _ = sb.AppendLine($"{EscapeTextForTelegramMarkup("  Price:")} `${price}` USD {changeEmoji} `{change}`");
                     // sb.AppendLine("`-- -- -- -- -- -- -- -- -- -- -- --`"); // Smaller separator
                 }
 
 
-                sb.AppendLine().AppendLine("👇 Select a coin below for full details."); // Added emoji
+                _ = sb.AppendLine().AppendLine("👇 Select a coin below for full details."); // Added emoji
             }
 
-            var keyboardRows = new List<List<InlineKeyboardButton>>();
-            var buttonRow = new List<InlineKeyboardButton>();
+            List<List<InlineKeyboardButton>> keyboardRows = new();
+            List<InlineKeyboardButton> buttonRow = new();
 
             // Add buttons for each coin on the page
             int buttonsInRow = 0;
-            foreach (var coin in coins)
+            foreach (UnifiedCryptoDto coin in coins)
             {
 
                 // A proper solution requires an ID mapping layer.
@@ -384,11 +398,11 @@ namespace TelegramPanel.Application.CommandHandlers.Features.CoinGecko
                 }
 
 
-                var callbackData = $"{CallbackPrefix}_{DetailsAction}_{IdParam}_{safeCoinIdentifier}_{PageParam}_{page}";
+                string callbackData = $"{CallbackPrefix}_{DetailsAction}_{IdParam}_{safeCoinIdentifier}_{PageParam}_{page}";
 
 
                 // Get the emoji for the button
-                string buttonEmoji = CoinEmojis.TryGetValue(coin.Symbol.ToLower(), out var e) ? e : "🔹";
+                string buttonEmoji = CoinEmojis.TryGetValue(coin.Symbol.ToLower(), out string? e) ? e : "🔹";
 
 
                 // The symbol itself is usually safe to use directly as button text
@@ -402,7 +416,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.CoinGecko
                 if (buttonsInRow >= 4) // Adjusted button per row count slightly
                 {
                     keyboardRows.Add(buttonRow);
-                    buttonRow = new List<InlineKeyboardButton>();
+                    buttonRow = [];
                     buttonsInRow = 0;
                 }
             }
@@ -415,7 +429,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.CoinGecko
             }
 
             // Pagination buttons
-            var paginationRow = new List<InlineKeyboardButton>();
+            List<InlineKeyboardButton> paginationRow = new();
             if (page > 1)
             {
                 // Callback for previous page - Uses only safe characters and integers
@@ -433,7 +447,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.CoinGecko
             }
 
             // Main menu button at the bottom - ASSUMING MenuCallbackQueryHandler.BackToMainMenuGeneral is a VALID callback data string ([a-zA-Z0-9_] only)
-            keyboardRows.Add(new List<InlineKeyboardButton> { InlineKeyboardButton.WithCallbackData("🏠 Main Menu", MenuCallbackQueryHandler.BackToMainMenuGeneral) });
+            keyboardRows.Add([InlineKeyboardButton.WithCallbackData("🏠 Main Menu", MenuCallbackQueryHandler.BackToMainMenuGeneral)]);
 
             return (sb.ToString(), new InlineKeyboardMarkup(keyboardRows));
         }
@@ -444,14 +458,15 @@ namespace TelegramPanel.Application.CommandHandlers.Features.CoinGecko
         {
 
             // Create callback data to go back to the specific list page.
-            var backCallbackData = $"{CallbackPrefix}_{ListAction}_{PageParam}_{page}";
+            string backCallbackData = $"{CallbackPrefix}_{ListAction}_{PageParam}_{page}";
 
-            var keyboardRows = new List<List<InlineKeyboardButton>>();
+            List<List<InlineKeyboardButton>> keyboardRows = new()
+            {
+                ([InlineKeyboardButton.WithCallbackData($"⬅️ Back to Page {page}", backCallbackData)]),
 
-            keyboardRows.Add(new List<InlineKeyboardButton> { InlineKeyboardButton.WithCallbackData($"⬅️ Back to Page {page}", backCallbackData) });
-
-            // ASSUMING MenuCallbackQueryHandler.BackToMainMenuGeneral is a VALID callback data string
-            keyboardRows.Add(new List<InlineKeyboardButton> { InlineKeyboardButton.WithCallbackData("🏠 Main Menu", MenuCallbackQueryHandler.BackToMainMenuGeneral) }); // Add Main Menu button here too
+                // ASSUMING MenuCallbackQueryHandler.BackToMainMenuGeneral is a VALID callback data string
+                ([InlineKeyboardButton.WithCallbackData("🏠 Main Menu", MenuCallbackQueryHandler.BackToMainMenuGeneral)]) // Add Main Menu button here too
+            };
 
             return new InlineKeyboardMarkup(keyboardRows);
         }
@@ -630,6 +645,6 @@ namespace TelegramPanel.Application.CommandHandlers.Features.CoinGecko
             return (errorText.ToString(), GetBackKeyboard(returnPage));
         }
 
-      
+
     }
 }

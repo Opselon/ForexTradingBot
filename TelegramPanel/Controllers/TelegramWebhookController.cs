@@ -56,7 +56,7 @@ namespace TelegramPanel.Controllers // یا namespace پروژه WebAPI شما
         /// <see cref="StatusCodeResult"/> با کد 500 (Internal Server Error) برای سایر خطاهای پیش‌بینی نشده.
         /// </returns>
         [HttpPost]
-       public async Task<IActionResult> Post(
+        public async Task<IActionResult> Post(
        [FromBody] Update update,
        [FromHeader(Name = "X-Telegram-Bot-Api-Secret-Token")] string? secretTokenHeader,
        CancellationToken cancellationToken)
@@ -70,15 +70,15 @@ namespace TelegramPanel.Controllers // یا namespace پروژه WebAPI شما
                     // VULNERABILITY REMEDIATION
                     // ==========================================================
                     // 1. Sanitize the user-provided header to prevent log forging (CRLF Injection).
-                    var sanitizedTokenHeader = (secretTokenHeader ?? "NULL")
+                    string sanitizedTokenHeader = (secretTokenHeader ?? "NULL")
                                                    .Replace(Environment.NewLine, "[NL]")
                                                    .Replace("\n", "[NL]")
                                                    .Replace("\r", "[CR]");
 
                     // 2. Mask the expected token to avoid leaking secrets in logs.
-                    var maskedExpectedToken = string.IsNullOrWhiteSpace(_settings.WebhookSecretToken)
+                    string maskedExpectedToken = string.IsNullOrWhiteSpace(_settings.WebhookSecretToken)
                                                   ? "NOT_SET"
-                                                  : $"{_settings.WebhookSecretToken.Substring(0, Math.Min(4, _settings.WebhookSecretToken.Length))}...";
+                                                  : $"{_settings.WebhookSecretToken[..Math.Min(4, _settings.WebhookSecretToken.Length)]}...";
 
                     // 3. Log the sanitized and masked data.
                     _logger.LogWarning(

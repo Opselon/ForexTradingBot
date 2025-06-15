@@ -26,7 +26,7 @@ namespace TelegramPanel.Infrastructure.Services
         ];
 
         private static readonly Dictionary<string, (decimal Price, DateTime Timestamp)> _previousPriceStaticCache = [];
-        private static readonly object _staticCacheLock = new object();
+        private static readonly object _staticCacheLock = new();
         private const int StaleCacheFallbackDurationHours_Static = 6;
 
         public MarketDataService(
@@ -47,9 +47,9 @@ namespace TelegramPanel.Infrastructure.Services
 
             string normalizedSymbol = symbol.ToUpperInvariant();
             _logger.LogInformation("GetMarketDataAsync for {Symbol}. ForceRefresh: {ForceRefresh}", normalizedSymbol, forceRefresh);
-            var currencyInfo = GetCurrencyInfo(normalizedSymbol);
+            CurrencyDetails currencyInfo = GetCurrencyInfo(normalizedSymbol);
 
-            var marketData = new MarketData
+            MarketData marketData = new()
             {
                 Symbol = normalizedSymbol,
                 CurrencyName = currencyInfo.Name,
@@ -83,8 +83,8 @@ namespace TelegramPanel.Infrastructure.Services
                 // No direct cache to clear for the static cache, but new data will overwrite.
             }
 
-            var client = _httpClientFactory.CreateClient("MarketDataFreeApis");
-            string baseAsset = currencyInfo.BaseAsset ?? (normalizedSymbol.Length >= 3 ? normalizedSymbol.Substring(0, 3) : string.Empty);
+            HttpClient client = _httpClientFactory.CreateClient("MarketDataFreeApis");
+            string baseAsset = currencyInfo.BaseAsset ?? (normalizedSymbol.Length >= 3 ? normalizedSymbol[..3] : string.Empty);
             string quoteAsset = currencyInfo.QuoteAsset ?? (normalizedSymbol.Length >= 6 ? normalizedSymbol.Substring(3, 3) : "USD");
 
             if (string.IsNullOrEmpty(baseAsset) || string.IsNullOrEmpty(quoteAsset))
@@ -96,11 +96,11 @@ namespace TelegramPanel.Infrastructure.Services
 
             for (int i = 0; i < _apiFetchStrategies.Count; i++)
             {
-                var fetchStrategy = _apiFetchStrategies[i];
+                ApiFetchStrategy fetchStrategy = _apiFetchStrategies[i];
                 if (cancellationToken.IsCancellationRequested) { marketData.Remarks.Add("Operation cancelled."); break; }
 
                 _logger.LogDebug("Trying API strategy #{Number} for {Symbol}", i + 1, normalizedSymbol);
-                var (price, change24h, high24, low24, volume, dataSource, rawResponse) =
+                (decimal? price, decimal? change24h, decimal? high24, decimal? low24, decimal? volume, string dataSource, JsonElement? rawResponse) =
                     await fetchStrategy(client, normalizedSymbol, baseAsset, quoteAsset, currencyInfo, _logger, forceRefresh, cancellationToken);
 
                 if (price.HasValue && price.Value != 0) // CRITICAL: Ensure price is not zero
@@ -159,7 +159,7 @@ namespace TelegramPanel.Infrastructure.Services
                 {
                     lock (_staticCacheLock)
                     {
-                        if (_previousPriceStaticCache.TryGetValue(normalizedSymbol, out var prevCacheEntry) &&
+                        if (_previousPriceStaticCache.TryGetValue(normalizedSymbol, out (decimal Price, DateTime Timestamp) prevCacheEntry) &&
                             (DateTime.UtcNow - prevCacheEntry.Timestamp).TotalHours < StaleCacheFallbackDurationHours_Static)
                         {
                             marketData.Price = prevCacheEntry.Price;
@@ -197,7 +197,7 @@ namespace TelegramPanel.Infrastructure.Services
 
             lock (_staticCacheLock)
             {
-                if (_previousPriceStaticCache.TryGetValue(md.Symbol, out var prevCacheEntry))
+                if (_previousPriceStaticCache.TryGetValue(md.Symbol, out (decimal Price, DateTime Timestamp) prevCacheEntry))
                 {
                     // --- CORRECTED ACCESS TO SETTING ---
                     int maxAgeHours = _marketDataSettings.StaticPreviousPriceCacheMaxAgeHours;
@@ -240,15 +240,15 @@ namespace TelegramPanel.Infrastructure.Services
             try // Fetch current price
             {
                 logger.LogDebug("FrankfurterSmart: Attempting LATEST {Url}", latestUrl);
-                var response = await client.GetAsync(latestUrl, cancellationToken);
+                HttpResponseMessage response = await client.GetAsync(latestUrl, cancellationToken);
                 if (response.IsSuccessStatusCode)
                 {
-                    using var jsonStream = await response.Content.ReadAsStreamAsync(cancellationToken);
-                    var jsonDoc = await JsonDocument.ParseAsync(jsonStream, cancellationToken: cancellationToken);
+                    using Stream jsonStream = await response.Content.ReadAsStreamAsync(cancellationToken);
+                    JsonDocument jsonDoc = await JsonDocument.ParseAsync(jsonStream, cancellationToken: cancellationToken);
                     latestResponseJson = jsonDoc.RootElement;
-                    if (latestResponseJson.Value.TryGetProperty("rates", out var rates) &&
-                        rates.TryGetProperty(quoteAsset, out var rateElement) &&
-                        rateElement.TryGetDecimal(out var priceVal) && priceVal != 0)
+                    if (latestResponseJson.Value.TryGetProperty("rates", out JsonElement rates) &&
+                        rates.TryGetProperty(quoteAsset, out JsonElement rateElement) &&
+                        rateElement.TryGetDecimal(out decimal priceVal) && priceVal != 0)
                     {
                         currentPrice = priceVal;
                         logger.LogInformation("FrankfurterSmart: Success LATEST for {Symbol}. Price: {Price}", fullSymbol, currentPrice);
@@ -267,14 +267,14 @@ namespace TelegramPanel.Infrastructure.Services
             try // Fetch yesterday's price for 24h change
             {
                 logger.LogDebug("FrankfurterSmart: Attempting HISTORICAL {Url}", historicalUrl);
-                var response = await client.GetAsync(historicalUrl, cancellationToken);
+                HttpResponseMessage response = await client.GetAsync(historicalUrl, cancellationToken);
                 if (response.IsSuccessStatusCode)
                 {
-                    using var jsonStream = await response.Content.ReadAsStreamAsync(cancellationToken);
-                    var jsonDoc = await JsonDocument.ParseAsync(jsonStream, cancellationToken: cancellationToken);
-                    if (jsonDoc.RootElement.TryGetProperty("rates", out var rates) &&
-                        rates.TryGetProperty(quoteAsset, out var rateElement) &&
-                        rateElement.TryGetDecimal(out var priceVal) && priceVal != 0)
+                    using Stream jsonStream = await response.Content.ReadAsStreamAsync(cancellationToken);
+                    JsonDocument jsonDoc = await JsonDocument.ParseAsync(jsonStream, cancellationToken: cancellationToken);
+                    if (jsonDoc.RootElement.TryGetProperty("rates", out JsonElement rates) &&
+                        rates.TryGetProperty(quoteAsset, out JsonElement rateElement) &&
+                        rateElement.TryGetDecimal(out decimal priceVal) && priceVal != 0)
                     {
                         prevDayPrice = priceVal;
                         logger.LogInformation("FrankfurterSmart: Success HISTORICAL for {Symbol}. PrevPrice: {Price}", fullSymbol, prevDayPrice);
@@ -306,11 +306,11 @@ namespace TelegramPanel.Infrastructure.Services
             try
             {
                 logger.LogDebug("ExchangeRateHost: Attempting {Url}", url);
-                var response = await client.GetAsync(url, cancellationToken);
+                HttpResponseMessage response = await client.GetAsync(url, cancellationToken);
                 if (!response.IsSuccessStatusCode) { logger.LogWarning("ExchangeRateHost: Failed {Symbol}. Status: {Code}", fullSymbol, response.StatusCode); return (null, null, null, null, null, null, null); }
-                using var jsonStream = await response.Content.ReadAsStreamAsync(cancellationToken);
-                var jsonDoc = await JsonDocument.ParseAsync(jsonStream, cancellationToken: cancellationToken);
-                if (jsonDoc.RootElement.TryGetProperty("rates", out var rates) && rates.TryGetProperty(quoteAsset, out var rateEl) && rateEl.TryGetDecimal(out var price) && price != 0)
+                using Stream jsonStream = await response.Content.ReadAsStreamAsync(cancellationToken);
+                JsonDocument jsonDoc = await JsonDocument.ParseAsync(jsonStream, cancellationToken: cancellationToken);
+                if (jsonDoc.RootElement.TryGetProperty("rates", out JsonElement rates) && rates.TryGetProperty(quoteAsset, out JsonElement rateEl) && rateEl.TryGetDecimal(out decimal price) && price != 0)
                 {
                     logger.LogInformation("ExchangeRateHost: Success {Symbol}. Price: {Price}", fullSymbol, price);
                     return (price, null, null, null, null, "ExchangeRate.host", jsonDoc.RootElement);
@@ -333,43 +333,43 @@ namespace TelegramPanel.Infrastructure.Services
             try
             {
                 logger.LogDebug("CoinGeckoProxy: Attempting {Symbol} via {ID} ({Url})", fullSymbol, currencyInfo.CoinGeckoId, url);
-                var response = await client.GetAsync(url, cancellationToken);
+                HttpResponseMessage response = await client.GetAsync(url, cancellationToken);
                 if (!response.IsSuccessStatusCode) { logger.LogWarning("CoinGeckoProxy: Failed for {ID}. Status: {Code}", currencyInfo.CoinGeckoId, response.StatusCode); return (null, null, null, null, null, null, null); }
-                using var jsonStream = await response.Content.ReadAsStreamAsync(cancellationToken);
-                var jsonDoc = await JsonDocument.ParseAsync(jsonStream, cancellationToken: cancellationToken);
-                var root = jsonDoc.RootElement;
+                using Stream jsonStream = await response.Content.ReadAsStreamAsync(cancellationToken);
+                JsonDocument jsonDoc = await JsonDocument.ParseAsync(jsonStream, cancellationToken: cancellationToken);
+                JsonElement root = jsonDoc.RootElement;
 
-                if (root.TryGetProperty("market_data", out var mdNode))
+                if (root.TryGetProperty("market_data", out JsonElement mdNode))
                 {
                     decimal? price = null; decimal? change24h = null; decimal? high24 = null; decimal? low24 = null; decimal? volume = null;
                     string priceCurr = currencyInfo.CoinGeckoPriceCurrency.ToLowerInvariant();
 
-                    if (mdNode.TryGetProperty("current_price", out var cpN) && cpN.TryGetProperty(priceCurr, out var pN) && pN.TryGetDecimal(out var pVal) && pVal != 0)
+                    if (mdNode.TryGetProperty("current_price", out JsonElement cpN) && cpN.TryGetProperty(priceCurr, out JsonElement pN) && pN.TryGetDecimal(out decimal pVal) && pVal != 0)
                     {
                         price = pVal;
                     }
                     else { logger.LogWarning("CoinGeckoProxy: No current_price.{Pc} for {ID}", priceCurr, currencyInfo.CoinGeckoId); return (null, null, null, null, null, null, root); }
 
-                    if (mdNode.TryGetProperty("price_change_percentage_24h_in_currency", out var pcp24N) && pcp24N.TryGetProperty(priceCurr, out var pcp24ValN) && pcp24ValN.TryGetDecimal(out var pcp24Val))
+                    if (mdNode.TryGetProperty("price_change_percentage_24h_in_currency", out JsonElement pcp24N) && pcp24N.TryGetProperty(priceCurr, out JsonElement pcp24ValN) && pcp24ValN.TryGetDecimal(out decimal pcp24Val))
                     {
                         change24h = pcp24Val;
                     }
-                    else if (mdNode.TryGetProperty("price_change_percentage_24h", out var basePcp24N) && basePcp24N.TryGetDecimal(out var basePcp24))
+                    else if (mdNode.TryGetProperty("price_change_percentage_24h", out JsonElement basePcp24N) && basePcp24N.TryGetDecimal(out decimal basePcp24))
                     {
                         change24h = basePcp24;
                     }
 
-                    if (mdNode.TryGetProperty("high_24h", out var h24N) && h24N.TryGetProperty(priceCurr, out var h24ValN) && h24ValN.TryGetDecimal(out var hVal))
+                    if (mdNode.TryGetProperty("high_24h", out JsonElement h24N) && h24N.TryGetProperty(priceCurr, out JsonElement h24ValN) && h24ValN.TryGetDecimal(out decimal hVal))
                     {
                         high24 = hVal;
                     }
 
-                    if (mdNode.TryGetProperty("low_24h", out var l24N) && l24N.TryGetProperty(priceCurr, out var l24ValN) && l24ValN.TryGetDecimal(out var lVal))
+                    if (mdNode.TryGetProperty("low_24h", out JsonElement l24N) && l24N.TryGetProperty(priceCurr, out JsonElement l24ValN) && l24ValN.TryGetDecimal(out decimal lVal))
                     {
                         low24 = lVal;
                     }
 
-                    if (mdNode.TryGetProperty("total_volume", out var tvN) && tvN.TryGetProperty(priceCurr, out var tvValN) && tvValN.TryGetDecimal(out var vVal))
+                    if (mdNode.TryGetProperty("total_volume", out JsonElement tvN) && tvN.TryGetProperty(priceCurr, out JsonElement tvValN) && tvValN.TryGetDecimal(out decimal vVal))
                     {
                         volume = vVal;
                     }
@@ -483,7 +483,7 @@ namespace TelegramPanel.Infrastructure.Services
             if (md.Support > 0 && md.Resistance > 0 && md.Support >= md.Resistance)
             { // Sanity check
                 md.Support = Math.Round(md.Price * 0.995m, displayDecimals); md.Resistance = Math.Round(md.Price * 1.005m, displayDecimals);
-                md.Remarks[md.Remarks.Count - 1] = "S/R (est. adjusted).";
+                md.Remarks[^1] = "S/R (est. adjusted).";
             }
             if (md.Support > 0 && md.Resistance > 0)
             {
@@ -502,7 +502,7 @@ namespace TelegramPanel.Infrastructure.Services
         {
             lock (_staticCacheLock)
             {
-                if (_previousPriceStaticCache.TryGetValue(symbol, out var prev) && prev.Price != currentPrice)
+                if (_previousPriceStaticCache.TryGetValue(symbol, out (decimal Price, DateTime Timestamp) prev) && prev.Price != currentPrice)
                 {
                     return true;
                 }
@@ -516,8 +516,8 @@ namespace TelegramPanel.Infrastructure.Services
         }
         private CurrencyDetails GetCurrencyInfo(string symbol)
         {
-            var currencies = _currencySettings?.Currencies ?? new Dictionary<string, CurrencyDetails>(StringComparer.OrdinalIgnoreCase);
-            if (currencies.TryGetValue(symbol, out var info))
+            Dictionary<string, CurrencyDetails> currencies = _currencySettings?.Currencies ?? new Dictionary<string, CurrencyDetails>(StringComparer.OrdinalIgnoreCase);
+            if (currencies.TryGetValue(symbol, out CurrencyDetails? info))
             {
                 if (!string.IsNullOrEmpty(info.CoinGeckoId) && string.IsNullOrEmpty(info.CoinGeckoPriceCurrency))
                 {
@@ -532,7 +532,7 @@ namespace TelegramPanel.Infrastructure.Services
                 return info;
             }
             _logger.LogWarning("CurrencyInfo for {Symbol} not in settings. Using dynamic default.", symbol);
-            string baseC = symbol.Length >= 3 ? symbol.Substring(0, 3) : symbol;
+            string baseC = symbol.Length >= 3 ? symbol[..3] : symbol;
             string quoteC = symbol.Length >= 6 ? symbol.Substring(3, 3) : "USD";
             return new CurrencyDetails { Name = $"{baseC}/{quoteC}", Description = $"Data for {baseC}/{quoteC}.", Category = "Forex", IsActive = true, BaseAsset = baseC, QuoteAsset = quoteC, CoinGeckoId = null, CoinGeckoPriceCurrency = "usd", DisplayDecimalPlaces = (baseC == "JPY" || quoteC == "JPY") ? 2 : 4 };
         }
@@ -541,9 +541,9 @@ namespace TelegramPanel.Infrastructure.Services
         internal class FrankfurterResponse
         {
             public decimal Amount { get; set; }
-            public string Base { get; set; }
+            public required string Base { get; set; }
             public DateTime Date { get; set; }
-            public Dictionary<string, decimal> Rates { get; set; } = new();
+            public Dictionary<string, decimal> Rates { get; set; } = [];
         }
 
         public class MarketDataException : Exception

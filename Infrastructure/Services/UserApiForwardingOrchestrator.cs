@@ -234,7 +234,7 @@ namespace Infrastructure.Services
                             return; // Skip if media type is not supported
                         }
 
-                        InputMediaWithCaption currentMediaItem = new InputMediaWithCaption
+                        InputMediaWithCaption currentMediaItem = new()
                         {
                             Media = preparedMedia,
                             Caption = messageToProcess.message,
@@ -372,7 +372,7 @@ namespace Infrastructure.Services
                 // --- FIX: Proper sorting by `media.id` from InputMediaPhoto/Document ---
                 // The `id` property is on the *specific* InputPhoto/InputDocument types, not InputMedia base.
                 // We need to safely cast and access.
-                var firstMediaItem = buffer.Items
+                InputMediaWithCaption? firstMediaItem = buffer.Items
                     .OrderBy(item => GetInputMediaId(item.Media)) // Use helper to get sortable ID
                     .FirstOrDefault(item => item.Media != null);
 

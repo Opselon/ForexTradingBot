@@ -15,10 +15,10 @@ namespace TelegramPanel.Application.Pipeline
 
         public async Task InvokeAsync(Update update, TelegramPipelineDelegate next, CancellationToken cancellationToken = default)
         {
-            var updateId = update.Id;
-            var updateType = update.Type;
-            var userId = update.Message?.From?.Id ?? update.CallbackQuery?.From?.Id;
-            var stopwatch = Stopwatch.StartNew();
+            int updateId = update.Id;
+            Telegram.Bot.Types.Enums.UpdateType updateType = update.Type;
+            long? userId = update.Message?.From?.Id ?? update.CallbackQuery?.From?.Id;
+            Stopwatch stopwatch = Stopwatch.StartNew();
 
             _logger.LogInformation(
                 "Processing Telegram Update: ID={UpdateId}, Type={UpdateType}, UserID={UserId}",

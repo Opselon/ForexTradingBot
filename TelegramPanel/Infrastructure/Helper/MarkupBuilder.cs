@@ -19,8 +19,8 @@ namespace TelegramPanel.Infrastructure.Helper // یا یک namespace مناسب 
                 return null; // or new InlineKeyboardMarkup(new List<List<InlineKeyboardButton>>());
             }
 
-            var rowsAsList = new List<List<InlineKeyboardButton>>();
-            foreach (var rowArray in buttonRows)
+            List<List<InlineKeyboardButton>> rowsAsList = new();
+            foreach (InlineKeyboardButton[] rowArray in buttonRows)
             {
                 if (rowArray != null)
                 {
@@ -49,8 +49,8 @@ namespace TelegramPanel.Infrastructure.Helper // یا یک namespace مناسب 
                 return null;
             }
 
-            var rowsAsList = new List<List<InlineKeyboardButton>>();
-            foreach (var rowEnum in buttonRows)
+            List<List<InlineKeyboardButton>> rowsAsList = new();
+            foreach (IEnumerable<InlineKeyboardButton> rowEnum in buttonRows)
             {
                 if (rowEnum != null)
                 {

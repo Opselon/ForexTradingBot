@@ -5,7 +5,6 @@ using Infrastructure.Jobs; // For ForwardingJob
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using WebAPI.Models;
-using static StackExchange.Redis.Role;
 
 namespace WebAPI.Controllers
 {
@@ -159,7 +158,7 @@ namespace WebAPI.Controllers
         public async Task<ActionResult<ForwardingRule>> GetRule(string ruleName, CancellationToken cancellationToken)
         {
             // 1. Sanitize the input IMMEDIATELY.
-            var sanitizedRuleName = ruleName?.Replace(Environment.NewLine, "").Replace("\n", "").Replace("\r", "") ?? string.Empty;
+            string sanitizedRuleName = ruleName?.Replace(Environment.NewLine, "").Replace("\n", "").Replace("\r", "") ?? string.Empty;
 
             // 2. Validate the SANITIZED input.
             if (string.IsNullOrWhiteSpace(sanitizedRuleName))
@@ -203,7 +202,7 @@ namespace WebAPI.Controllers
 
                 // SECURE: Map the internal domain entities to clean public-facing DTOs.
                 // This prevents leaking the internal model structure.
-                var rulesDto = _mapper.Map<IEnumerable<ForwardingRuleSummaryDto>>(rules);
+                IEnumerable<ForwardingRuleSummaryDto> rulesDto = _mapper.Map<IEnumerable<ForwardingRuleSummaryDto>>(rules);
 
                 return Ok(rulesDto);
             }
@@ -224,17 +223,23 @@ namespace WebAPI.Controllers
         [HttpPost("rules")]
         public async Task<ActionResult> CreateRule([FromBody] ForwardingRuleDto dto, CancellationToken cancellationToken)
         {
-            if (dto == null) return BadRequest("Invalid rule data.");
+            if (dto == null)
+            {
+                return BadRequest("Invalid rule data.");
+            }
 
             // Sanitize user input before it's used anywhere
-            var sanitizedRuleName = dto.RuleName?.Replace(Environment.NewLine, "").Replace("\n", "").Replace("\r", "") ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(sanitizedRuleName)) return BadRequest("Rule name is required.");
+            string sanitizedRuleName = dto.RuleName?.Replace(Environment.NewLine, "").Replace("\n", "").Replace("\r", "") ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(sanitizedRuleName))
+            {
+                return BadRequest("Rule name is required.");
+            }
 
             dto.RuleName = sanitizedRuleName;
 
             try
             {
-                var newRule = _mapper.Map<ForwardingRule>(dto);
+                ForwardingRule newRule = _mapper.Map<ForwardingRule>(dto);
 
                 await _forwardingService.CreateRuleAsync(newRule, cancellationToken);
                 _logger.LogInformation("CONTROLLER.CreateRule: Rule '{RuleName}' created successfully.", sanitizedRuleName);
@@ -261,11 +266,14 @@ namespace WebAPI.Controllers
         public async Task<ActionResult> UpdateRule(string ruleName, [FromBody] ForwardingRuleDto dto, CancellationToken cancellationToken)
         {
             // Sanitize URL input immediately
-            var sanitizedUrlRuleName = ruleName?.Replace(Environment.NewLine, "").Replace("\n", "").Replace("\r", "") ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(sanitizedUrlRuleName) || dto == null) return BadRequest("Rule name is invalid or request body is missing.");
+            string sanitizedUrlRuleName = ruleName?.Replace(Environment.NewLine, "").Replace("\n", "").Replace("\r", "") ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(sanitizedUrlRuleName) || dto == null)
+            {
+                return BadRequest("Rule name is invalid or request body is missing.");
+            }
 
             // Sanitize DTO body input immediately
-            var sanitizedDtoRuleName = dto.RuleName?.Replace(Environment.NewLine, "").Replace("\n", "").Replace("\r", "") ?? string.Empty;
+            string sanitizedDtoRuleName = dto.RuleName?.Replace(Environment.NewLine, "").Replace("\n", "").Replace("\r", "") ?? string.Empty;
 
             // Perform comparison with sanitized values
             if (sanitizedUrlRuleName != sanitizedDtoRuleName)
@@ -282,7 +290,7 @@ namespace WebAPI.Controllers
 
             try
             {
-                var updatedRule = _mapper.Map<ForwardingRule>(dto);
+                ForwardingRule updatedRule = _mapper.Map<ForwardingRule>(dto);
 
                 await _forwardingService.UpdateRuleAsync(updatedRule, cancellationToken);
                 _logger.LogInformation("CONTROLLER.UpdateRule: Rule '{RuleName}' updated successfully.", sanitizedDtoRuleName);
@@ -317,7 +325,7 @@ namespace WebAPI.Controllers
         public async Task<ActionResult> DeleteRule(string ruleName, CancellationToken cancellationToken)
         {
             // 1. Sanitize the input IMMEDIATELY.
-            var sanitizedRuleName = ruleName?.Replace(Environment.NewLine, "").Replace("\n", "").Replace("\r", "") ?? string.Empty;
+            string sanitizedRuleName = ruleName?.Replace(Environment.NewLine, "").Replace("\n", "").Replace("\r", "") ?? string.Empty;
 
             // 2. Validate the SANITIZED input.
             if (string.IsNullOrWhiteSpace(sanitizedRuleName))

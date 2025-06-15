@@ -14,10 +14,10 @@ public class BroadcastService : IBroadcastService
 
     public async Task<List<long>> GetAllActiveUserChatIdsAsync(CancellationToken cancellationToken = default)
     {
-        await using var connection = new SqlConnection(_configuration.GetConnectionString("DefaultConnection"));
-        var sql = "SELECT TelegramId FROM dbo.Users WHERE IsActive = 1 AND TelegramId IS NOT NULL;";
+        await using SqlConnection connection = new(_configuration.GetConnectionString("DefaultConnection"));
+        string sql = "SELECT TelegramId FROM dbo.Users WHERE IsActive = 1 AND TelegramId IS NOT NULL;";
 
-        var idsAsString = await connection.QueryAsync<string>(new CommandDefinition(sql, cancellationToken: cancellationToken));
+        IEnumerable<string> idsAsString = await connection.QueryAsync<string>(new CommandDefinition(sql, cancellationToken: cancellationToken));
 
         // Convert string IDs to long
         return idsAsString.Select(long.Parse).ToList();

@@ -75,14 +75,14 @@ namespace TelegramPanel.Infrastructure.Services
         /// <returns>A task representing the asynchronous operation.</returns>
         public async Task HandleAsync(Update update, CancellationToken cancellationToken)
         {
-            var callbackQuery = update.CallbackQuery;
+            CallbackQuery? callbackQuery = update.CallbackQuery;
             if (callbackQuery == null || callbackQuery.Message == null)
             {
                 _logger.LogWarning("Received callback query without message context. UpdateID: {UpdateId}", update.Id);
                 return;
             }
 
-            var callbackData = callbackQuery.Data;
+            string? callbackData = callbackQuery.Data;
             if (string.IsNullOrEmpty(callbackData))
             {
                 _logger.LogWarning("Received callback query with empty data. UpdateID: {UpdateId}, CallbackQueryID: {CallbackQueryId}", update.Id, callbackQuery.Id);
@@ -159,7 +159,7 @@ namespace TelegramPanel.Infrastructure.Services
         private async Task HandleMarketAnalysisCallback(CallbackQuery callbackQuery, string callbackData, CancellationToken cancellationToken)
         {
             _logger.LogInformation("Handling 'market_analysis' callback. CallbackData: {CallbackData}, CallbackQueryID: {CallbackQueryId}", callbackData, callbackQuery.Id);
-            var parts = callbackData.Split(':');
+            string[] parts = callbackData.Split(':');
             if (parts.Length < 2 || string.IsNullOrWhiteSpace(parts[1]))
             {
                 _logger.LogWarning("Invalid market_analysis callback data format: {CallbackData}. CallbackQueryID: {CallbackQueryId}", callbackData, callbackQuery.Id);
@@ -238,7 +238,7 @@ namespace TelegramPanel.Infrastructure.Services
             // For example, if it handles "change_currency" directly (which it was):
             if (update.Type == UpdateType.CallbackQuery && update.CallbackQuery?.Data != null)
             {
-                var callbackData = update.CallbackQuery.Data;
+                string callbackData = update.CallbackQuery.Data;
                 // Example: if this handler is *only* for a specific set of callbacks
                 // that are NOT handled by MarketAnalysisCallbackHandler or
                 // .
@@ -263,8 +263,8 @@ namespace TelegramPanel.Infrastructure.Services
         /// <returns>A Markdown formatted string representing the market analysis.</returns>
         private string FormatMarketAnalysisMessage(MarketData data)
         {
-            var trendEmoji = data.Change24h >= 0 ? "📈" : "📉"; // Assign emoji based on 24h price change.
-            var sentimentEmoji = data.MarketSentiment?.ToLowerInvariant() switch // Assign emoji based on market sentiment.
+            string trendEmoji = data.Change24h >= 0 ? "📈" : "📉"; // Assign emoji based on 24h price change.
+            string sentimentEmoji = data.MarketSentiment?.ToLowerInvariant() switch // Assign emoji based on market sentiment.
             {
                 "bullish" => "🟢",
                 "bearish" => "🔴",
@@ -286,7 +286,7 @@ namespace TelegramPanel.Infrastructure.Services
             string formattedLastUpdated = data.LastUpdated.ToString("yyyy-MM-dd HH:mm:ss"); // LastUpdated is DateTime, not nullable
             string escapedFormattedLastUpdated = EscapeMarkdown(formattedLastUpdated);
 
-            var sb = new StringBuilder();
+            StringBuilder sb = new();
             _ = sb.AppendLine($"*__{currencyName} ({symbol}) Analysis__*");
             _ = sb.AppendLine(description);
             _ = sb.AppendLine(); // Extra blank line for visual spacing.
@@ -344,19 +344,19 @@ namespace TelegramPanel.Infrastructure.Services
             // Define a list of common forex pairs and XAUUSD for quick selection.
             // If this list were to become very large and button generation complex,
             // PLINQ or other parallel processing *could* be considered, but is an overkill for this size.
-            var forexPairs = new[]
+            string[] forexPairs = new[]
             {
                 "EURUSD", "USDJPY", "GBPUSD", "USDCHF",
                 "AUDUSD", "USDCAD", "NZDUSD", "XAUUSD"
             };
 
-            var buttons = new System.Collections.Generic.List<System.Collections.Generic.List<InlineKeyboardButton>>();
-            var row = new System.Collections.Generic.List<InlineKeyboardButton>();
+            List<List<InlineKeyboardButton>> buttons = new();
+            List<InlineKeyboardButton> row = new();
 
-            foreach (var pair in forexPairs)
+            foreach (string? pair in forexPairs)
             {
                 // Add a star emoji to the button text if it's the currently displayed symbol for better UX.
-                var buttonText = (pair == currentSymbol) ? $"⭐ {pair}" : pair;
+                string buttonText = (pair == currentSymbol) ? $"⭐ {pair}" : pair;
                 row.Add(InlineKeyboardButton.WithCallbackData(buttonText, $"market_analysis:{pair}"));
                 if (row.Count == 2) // Arrange buttons in rows of 2 for a cleaner layout.
                 {

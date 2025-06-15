@@ -58,7 +58,7 @@ namespace TelegramPanel.Queue
                     sleepDurationProvider: retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
                     onRetry: (exception, timeSpan, retryAttempt, context) =>
                     {
-                        var updateId = context.TryGetValue("UpdateId", out var id) ? (int?)id : null;
+                        int? updateId = context.TryGetValue("UpdateId", out object? id) ? (int?)id : null;
                         _logger.LogWarning(exception, "PollyRetry: Processing update {UpdateId} failed. Retrying in {TimeSpan} (attempt {RetryAttempt}).",
                             updateId, timeSpan, retryAttempt);
                     });
@@ -98,7 +98,7 @@ namespace TelegramPanel.Queue
                         // The await foreach loop will now be protected. If ReadAllAsync throws
                         // a RedisException (after its own internal retries fail),
                         // this circuit breaker will catch it.
-                        await foreach (var update in _updateChannel.ReadAllAsync(ct).WithCancellation(ct))
+                        await foreach (Telegram.Bot.Types.Update? update in _updateChannel.ReadAllAsync(ct).WithCancellation(ct))
                         {
                             // If we get here, we successfully dequeued an item.
                             // The processing logic for a single update remains the same.
@@ -137,7 +137,7 @@ namespace TelegramPanel.Queue
         // to make the ExecuteAsync method cleaner and more focused on the resilience loop.
         private async Task ProcessSingleUpdateWithRetries(Telegram.Bot.Types.Update update, CancellationToken stoppingToken)
         {
-            var pollyContext = new Polly.Context($"UpdateProcessing_{update.Id}", new Dictionary<string, object>
+            Context pollyContext = new($"UpdateProcessing_{update.Id}", new Dictionary<string, object>
             {
                 { "UpdateId", update.Id },
                 { "UpdateType", update.Type.ToString() }
@@ -149,8 +149,8 @@ namespace TelegramPanel.Queue
                 {
                     await _processingRetryPolicy.ExecuteAsync(async (context, ct) =>
                     {
-                        await using var scope = _scopeFactory.CreateAsyncScope();
-                        var updateProcessor = scope.ServiceProvider.GetRequiredService<ITelegramUpdateProcessor>();
+                        await using AsyncServiceScope scope = _scopeFactory.CreateAsyncScope();
+                        ITelegramUpdateProcessor updateProcessor = scope.ServiceProvider.GetRequiredService<ITelegramUpdateProcessor>();
                         await updateProcessor.ProcessUpdateAsync(update, ct);
                     }, pollyContext, stoppingToken);
                 }
@@ -163,7 +163,7 @@ namespace TelegramPanel.Queue
         }
         #endregion
 
-            #region Service Lifecycle
+        #region Service Lifecycle
         public override async Task StopAsync(CancellationToken cancellationToken)
         {
             _logger.LogInformation("Update Queue Consumer Service stop requested.");

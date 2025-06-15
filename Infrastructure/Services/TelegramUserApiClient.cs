@@ -28,7 +28,7 @@ namespace Infrastructure.Services
         private readonly ConcurrentDictionary<long, (TL.User User, DateTime Expiry)> _userCacheWithExpiry = new();
         private readonly ConcurrentDictionary<long, (TL.ChatBase Chat, DateTime Expiry)> _chatCacheWithExpiry = new();
         private readonly TimeSpan _cacheExpiration = TimeSpan.FromMinutes(30);
-        private readonly MemoryCache _messageCache = new MemoryCache(new MemoryCacheOptions());
+        private readonly MemoryCache _messageCache = new(new MemoryCacheOptions());
         private readonly MemoryCacheEntryOptions _cacheOptions = new MemoryCacheEntryOptions()
             .SetSlidingExpiration(TimeSpan.FromMinutes(5))
             .SetAbsoluteExpiration(TimeSpan.FromHours(1));
@@ -51,7 +51,7 @@ namespace Infrastructure.Services
 
         #region Private Fields
         private WTelegram.Client? _client;
-        private readonly SemaphoreSlim _connectionLock = new SemaphoreSlim(1, 1);
+        private readonly SemaphoreSlim _connectionLock = new(1, 1);
         private System.Threading.Timer? _cacheCleanupTimer;
         // Internal caches used by WTelegramClient's update handler to populate main caches.
         // These remain Dictionary<long, ...> as WTelegramClient's CollectUsersChats populates these.
@@ -97,7 +97,7 @@ namespace Infrastructure.Services
             // Configure WTelegramClient's internal logging to use Microsoft.Extensions.Logging.
             WTelegram.Helpers.Log = (level, message) =>
             {
-                var msLevel = level switch
+                LogLevel msLevel = level switch
                 {
                     0 => Microsoft.Extensions.Logging.LogLevel.Trace,
                     1 => Microsoft.Extensions.Logging.LogLevel.Debug,
@@ -204,9 +204,9 @@ namespace Infrastructure.Services
                                 rpcEx.Message.Contains("FLOOD_WAIT_", StringComparison.OrdinalIgnoreCase))
                             {
                                 if (rpcEx.Message.StartsWith("FLOOD_WAIT_") &&
-                                    int.TryParse(rpcEx.Message.Substring("FLOOD_WAIT_".Length), out int seconds))
+                                    int.TryParse(rpcEx.Message["FLOOD_WAIT_".Length..], out int seconds))
                                 {
-                                    if (seconds > _retryDelays[_retryDelays.Length - 1].TotalSeconds * 2)
+                                    if (seconds > _retryDelays[^1].TotalSeconds * 2)
                                     {
                                         _logger.LogCritical(rpcEx, "Polly: Encountered a FLOOD_WAIT of {Seconds}s, which greatly exceeds max configured retry delay. Aborting retries for this specific error to prevent resource exhaustion.", seconds);
                                         return false;
@@ -221,10 +221,10 @@ namespace Infrastructure.Services
                         }),
                     DelayGenerator = args =>
                     {
-                        var retryAttempt = args.AttemptNumber;
+                        int retryAttempt = args.AttemptNumber;
                         if (retryAttempt < _retryDelays.Length)
                         {
-                            var delay = _retryDelays[retryAttempt];
+                            TimeSpan delay = _retryDelays[retryAttempt];
                             _logger.LogWarning("Polly Retry: Attempt {AttemptNumber} for operation '{OperationKey}'. Delaying for {Delay}ms due to {ExceptionType}. Outcome: {Outcome}.",
                                 retryAttempt + 1, args.Context.OperationKey ?? "N/A", delay.TotalMilliseconds, args.Outcome.Exception?.GetType().Name ?? "N/A", args.Outcome.Result?.ToString() ?? "N/A");
                             return ValueTask.FromResult<TimeSpan?>(delay);
@@ -274,7 +274,7 @@ namespace Infrastructure.Services
 
             _channelConsumerTask = Task.Run(async () =>
             {
-                await foreach (var update in _updateChannel.Reader.ReadAllAsync()) // Reader is now correctly accessed
+                await foreach (Update update in _updateChannel.Reader.ReadAllAsync()) // Reader is now correctly accessed
                 {
                     try
                     {
@@ -332,7 +332,7 @@ namespace Infrastructure.Services
             if (_logger.IsEnabled(LogLevel.Debug) || _logger.IsEnabled(LogLevel.Trace))
             {
                 string value = obj.ToString() ?? string.Empty;
-                return value.Length <= maxLength ? value : value.Substring(0, maxLength) + "...";
+                return value.Length <= maxLength ? value : value[..maxLength] + "...";
             }
             return "Content not logged at current level.";
         }
@@ -344,7 +344,7 @@ namespace Infrastructure.Services
         {
             if (isChat)
             {
-                if (_internalWtcChatCache.TryGetValue(id, out var cachedChat))
+                if (_internalWtcChatCache.TryGetValue(id, out ChatBase? cachedChat))
                 {
                     if (_logger.IsEnabled(LogLevel.Trace))
                     {
@@ -360,7 +360,7 @@ namespace Infrastructure.Services
             }
             else // is User
             {
-                if (_internalWtcUserCache.TryGetValue(id, out var cachedUser))
+                if (_internalWtcUserCache.TryGetValue(id, out User? cachedUser))
                 {
                     if (_logger.IsEnabled(LogLevel.Trace))
                     {
@@ -379,9 +379,9 @@ namespace Infrastructure.Services
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private TL.UpdateNewMessage ConvertShortMessageToNewMessage(TL.UpdateShortMessage usm)
         {
-            var userPeer = ResolvePeer(usm.user_id, false);
+            Peer userPeer = ResolvePeer(usm.user_id, false);
 
-            var msg = new TL.Message
+            Message msg = new()
             {
                 flags = 0,
                 id = usm.id,
@@ -406,10 +406,10 @@ namespace Infrastructure.Services
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private TL.UpdateNewMessage ConvertShortChatMessageToNewMessage(TL.UpdateShortChatMessage uscm)
         {
-            var chatPeer = ResolvePeer(uscm.chat_id, true);
-            var fromPeer = ResolvePeer(uscm.from_id, false);
+            Peer chatPeer = ResolvePeer(uscm.chat_id, true);
+            Peer fromPeer = ResolvePeer(uscm.from_id, false);
 
-            var msg = new TL.Message
+            Message msg = new()
             {
                 flags = 0,
                 id = uscm.id,
@@ -515,7 +515,7 @@ namespace Infrastructure.Services
             string trimmedQuestion = question.Trim();
 
             _logger.LogInformation("WTC Input Request: \"{QuestionDisplay}\" (Source: {SourceMethod})",
-                                   trimmedQuestion.Length > 50 ? trimmedQuestion.Substring(0, 50) + "..." : trimmedQuestion,
+                                   trimmedQuestion.Length > 50 ? trimmedQuestion[..50] + "..." : trimmedQuestion,
                                    effectiveSourceMethod);
 
             if (effectiveSourceMethod.Equals("console", StringComparison.OrdinalIgnoreCase))
@@ -526,7 +526,7 @@ namespace Infrastructure.Services
                     if (!Environment.UserInteractive)
                     {
                         _logger.LogWarning("AskCode (console): Application is not running in an interactive user environment. Cannot prompt for \"{QuestionDisplay}\". Returning null.",
-                                           trimmedQuestion.Length > 50 ? trimmedQuestion.Substring(0, 50) + "..." : trimmedQuestion);
+                                           trimmedQuestion.Length > 50 ? trimmedQuestion[..50] + "..." : trimmedQuestion);
                         return null;
                     }
                     // Attempt to detect if console input is redirected (e.g., from a file or pipe).
@@ -535,14 +535,14 @@ namespace Infrastructure.Services
                         if (Console.IsInputRedirected)
                         {
                             _logger.LogInformation("AskCode (console): Input is redirected. Reading from redirected input for \"{QuestionDisplay}\".",
-                                                   trimmedQuestion.Length > 50 ? trimmedQuestion.Substring(0, 50) + "..." : trimmedQuestion);
+                                                   trimmedQuestion.Length > 50 ? trimmedQuestion[..50] + "..." : trimmedQuestion);
                         }
                     }
                     catch (InvalidOperationException ioExConsoleCheck)
                     {
                         // This can happen if no console is attached (e.g., a service or non-interactive process).
                         _logger.LogWarning(ioExConsoleCheck, "AskCode (console): No console available or console operation failed during pre-check for \"{QuestionDisplay}\". Returning null.",
-                                           trimmedQuestion.Length > 50 ? trimmedQuestion.Substring(0, 50) + "..." : trimmedQuestion);
+                                           trimmedQuestion.Length > 50 ? trimmedQuestion[..50] + "..." : trimmedQuestion);
                         return null;
                     }
 
@@ -553,32 +553,32 @@ namespace Infrastructure.Services
                     {
                         _logger.LogInformation("WTC Input Received: User provided input of length {InputLength} for \"{QuestionDisplay}\" from console.",
                                                userInput.Length,
-                                               trimmedQuestion.Length > 50 ? trimmedQuestion.Substring(0, 50) + "..." : trimmedQuestion);
+                                               trimmedQuestion.Length > 50 ? trimmedQuestion[..50] + "..." : trimmedQuestion);
                         return userInput;
                     }
                     else
                     {
                         _logger.LogWarning("WTC Input Received: User cancelled input (EOF) or input stream ended for \"{QuestionDisplay}\" from console. Returning null.",
-                                           trimmedQuestion.Length > 50 ? trimmedQuestion.Substring(0, 50) + "..." : trimmedQuestion);
+                                           trimmedQuestion.Length > 50 ? trimmedQuestion[..50] + "..." : trimmedQuestion);
                         return null;
                     }
                 }
                 catch (IOException ioEx)
                 {
                     _logger.LogError(ioEx, "WTC Input Error: An IOException occurred while trying to read from console for \"{QuestionDisplay}\". Returning null.",
-                                     trimmedQuestion.Length > 50 ? trimmedQuestion.Substring(0, 50) + "..." : trimmedQuestion);
+                                     trimmedQuestion.Length > 50 ? trimmedQuestion[..50] + "..." : trimmedQuestion);
                     return null;
                 }
                 catch (OperationCanceledException ocEx)
                 {
                     _logger.LogWarning(ocEx, "WTC Input Warning: Console read operation was ostensibly cancelled for \"{QuestionDisplay}\". Returning null.",
-                                       trimmedQuestion.Length > 50 ? trimmedQuestion.Substring(0, 50) + "..." : trimmedQuestion);
+                                       trimmedQuestion.Length > 50 ? trimmedQuestion[..50] + "..." : trimmedQuestion);
                     return null;
                 }
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "WTC Input Error: An unexpected error occurred during console input for \"{QuestionDisplay}\". Returning null.",
-                                     trimmedQuestion.Length > 50 ? trimmedQuestion.Substring(0, 50) + "..." : trimmedQuestion);
+                                     trimmedQuestion.Length > 50 ? trimmedQuestion[..50] + "..." : trimmedQuestion);
                     return null;
                 }
             }
@@ -587,7 +587,7 @@ namespace Infrastructure.Services
                 // Implement other source methods here (e.g., fetching from a secure vault, external API).
                 _logger.LogWarning("WTC Input Request: Source method '{SourceMethod}' is not implemented for question \"{QuestionDisplay}\". Returning null.",
                                    effectiveSourceMethod,
-                                   trimmedQuestion.Length > 50 ? trimmedQuestion.Substring(0, 50) + "..." : trimmedQuestion);
+                                   trimmedQuestion.Length > 50 ? trimmedQuestion[..50] + "..." : trimmedQuestion);
                 return null;
             }
         }
@@ -599,10 +599,10 @@ namespace Infrastructure.Services
         {
             _logger.LogDebug("Running scheduled cache cleanup for user and chat caches...");
             int usersRemoved = 0;
-            var now = DateTime.UtcNow;
+            DateTime now = DateTime.UtcNow;
 
             // Use ToArray() to avoid modification during enumeration.
-            foreach (var entry in _userCacheWithExpiry.ToArray())
+            foreach (KeyValuePair<long, (User User, DateTime Expiry)> entry in _userCacheWithExpiry.ToArray())
             {
                 if (entry.Value.Expiry < now)
                 {
@@ -616,7 +616,7 @@ namespace Infrastructure.Services
             _logger.LogInformation("Cache cleanup: Removed {UsersRemovedCount} expired users from _userCacheWithExpiry. Current user cache count: {CurrentUserCacheCount}", usersRemoved, _userCacheWithExpiry.Count);
 
             int chatsRemoved = 0;
-            foreach (var entry in _chatCacheWithExpiry.ToArray())
+            foreach (KeyValuePair<long, (ChatBase Chat, DateTime Expiry)> entry in _chatCacheWithExpiry.ToArray())
             {
                 if (entry.Value.Expiry < now)
                 {
@@ -660,7 +660,7 @@ namespace Infrastructure.Services
             // Level 1: Reduce String Allocations in Logging for cache updates by making logging conditional
             // Refactoring: Moved AddOrUpdate outside the conditional logging as it's efficient.
             // Only the LogTrace call is now conditional.
-            foreach (var userEntry in _internalWtcUserCache)
+            foreach (KeyValuePair<long, User> userEntry in _internalWtcUserCache)
             {
                 _ = _userCacheWithExpiry.AddOrUpdate(userEntry.Key,
                                                 (userEntry.Value, expiryTime),
@@ -670,7 +670,7 @@ namespace Infrastructure.Services
                     _logger.LogTrace("Cached user {UserId} with expiry {ExpiryTime}.", userEntry.Key, expiryTime);
                 }
             }
-            foreach (var chatEntry in _internalWtcChatCache)
+            foreach (KeyValuePair<long, ChatBase> chatEntry in _internalWtcChatCache)
             {
                 _ = _chatCacheWithExpiry.AddOrUpdate(chatEntry.Key,
                                                 (chatEntry.Value, expiryTime),
@@ -682,7 +682,7 @@ namespace Infrastructure.Services
             }
 
             // Level 1: Pre-allocate `updatesToDispatch` List with a reasonable capacity (e.g., 100 for UpdatesCombined).
-            List<TL.Update> updatesToDispatch = new List<TL.Update>(100); // Use TL.Update
+            List<TL.Update> updatesToDispatch = new(100); // Use TL.Update
 
             // Extract specific Update types from UpdatesBase containers.
             if (updatesBase is TL.Updates updatesContainer && updatesContainer.updates != null) // Use TL.Updates
@@ -723,7 +723,7 @@ namespace Infrastructure.Services
                 // Level 10: Use Channel for dispatch if enabled (Recommended for high-throughput and decoupled processing)
                 if (_useChannelForDispatch && _updateChannel != null)
                 {
-                    foreach (var update in updatesToDispatch)
+                    foreach (Update update in updatesToDispatch)
                     {
                         // Level 7: Conditional logging for channel writes
                         if (_logger.IsEnabled(LogLevel.Trace))
@@ -742,11 +742,11 @@ namespace Infrastructure.Services
                     // we offload the synchronous event invocation to the Thread Pool using Task.Run.
                     // This makes the invocation fire-and-forget from the perspective of this method,
                     // allowing it to quickly process the next incoming Telegram update.
-                    foreach (var update in updatesToDispatch)
+                    foreach (Update update in updatesToDispatch)
                     {
                         // Capture the update variable for the lambda expression to avoid closure over loop variable,
                         // ensuring each Task operates on its specific 'update' object.
-                        var currentUpdate = update;
+                        Update currentUpdate = update;
 
                         // Level 7: Conditional logging for direct dispatch
                         if (_logger.IsEnabled(LogLevel.Trace))
@@ -796,7 +796,7 @@ namespace Infrastructure.Services
         /// </summary>
         private string TruncateString(string? str, int maxLength)
         {
-            return string.IsNullOrEmpty(str) ? "[null_or_empty]" : str.Length <= maxLength ? str : str.Substring(0, maxLength) + "...";
+            return string.IsNullOrEmpty(str) ? "[null_or_empty]" : str.Length <= maxLength ? str : str[..maxLength] + "...";
         }
         #endregion
 
@@ -958,7 +958,7 @@ namespace Infrastructure.Services
                 }
 
                 int usersTransferred = 0;
-                foreach (var userEntry in _internalWtcUserCache)
+                foreach (KeyValuePair<long, User> userEntry in _internalWtcUserCache)
                 {
                     _userCacheWithExpiry[userEntry.Key] = (userEntry.Value, DateTime.UtcNow.Add(_cacheExpiration));
                     usersTransferred++;
@@ -971,7 +971,7 @@ namespace Infrastructure.Services
                 }
 
                 int chatsTransferred = 0;
-                foreach (var chatEntry in _internalWtcChatCache)
+                foreach (KeyValuePair<long, ChatBase> chatEntry in _internalWtcChatCache)
                 {
                     _chatCacheWithExpiry[chatEntry.Key] = (chatEntry.Value, DateTime.UtcNow.Add(_cacheExpiration));
                     chatsTransferred++;
@@ -1061,8 +1061,8 @@ namespace Infrastructure.Services
                 };
 
                 // Level 1: For cache keys, sorted IDs ensure consistent keys regardless of input order.
-                var sortedMsgIds = msgIds.OrderBy(id => id); // ToList() is an allocation, keep it IOrderedEnumerable<int>
-                var cacheKey = $"msgs_peer_{cacheKeySuffix}_ids_{string.Join("_", sortedMsgIds)}";
+                IOrderedEnumerable<int> sortedMsgIds = msgIds.OrderBy(id => id); // ToList() is an allocation, keep it IOrderedEnumerable<int>
+                string cacheKey = $"msgs_peer_{cacheKeySuffix}_ids_{string.Join("_", sortedMsgIds)}";
 
                 // Level 7: Conditional Logging for cache key
                 if (_logger.IsEnabled(LogLevel.Trace))
@@ -1094,7 +1094,7 @@ namespace Infrastructure.Services
 
                 // Level 6: Optimize `InputMessage` creation. Avoid LINQ `.Select().ToArray()` if `msgIds` is large
                 // by pre-allocating the array.
-                var inputMessageIDs = new TL.InputMessage[msgIds.Length];
+                InputMessage[] inputMessageIDs = new TL.InputMessage[msgIds.Length];
                 for (int i = 0; i < msgIds.Length; i++)
                 {
                     inputMessageIDs[i] = new TL.InputMessageID { id = msgIds[i] };
@@ -1245,7 +1245,7 @@ namespace Infrastructure.Services
                 // Level 3: Acquire a lock. Use 'await using' for proper disposal.
                 _logger.LogTrace("SendMessageAsync: Attempting to acquire send lock with key: {LockKey}", lockKey);
                 // Assuming AsyncLock.LockAsync is a static method that returns an IDisposable
-                using var sendLock = await AsyncLock.LockAsync(lockKey).ConfigureAwait(false);
+                using IDisposable sendLock = await AsyncLock.LockAsync(lockKey).ConfigureAwait(false);
                 _logger.LogDebug("SendMessageAsync: Acquired send lock with key: {LockKey} for Peer (Type: {PeerType}, LoggedID: {PeerId})",
                     lockKey, peerTypeForLog, peerIdForLog);
 
@@ -1413,7 +1413,7 @@ namespace Infrastructure.Services
             {
                 // Level 3: Acquire a lock for sending media groups to a specific peer.
                 _logger.LogTrace("SendMediaGroupAsync: Attempting to acquire send lock with key: {LockKey}", lockKey);
-                using var sendLock = await AsyncLock.LockAsync(lockKey).ConfigureAwait(false);
+                using IDisposable sendLock = await AsyncLock.LockAsync(lockKey).ConfigureAwait(false);
                 _logger.LogDebug("SendMediaGroupAsync: Acquired send lock with key: {LockKey} for Peer (Type: {PeerType}, LoggedID: {PeerId})",
                     lockKey, peerTypeForLog, peerIdForLog);
 
@@ -1427,7 +1427,7 @@ namespace Infrastructure.Services
                         caption: albumCaption,
                         reply_to_msg_id: replyToMsgIdInt,
                         entities: albumEntities, // Directly MessageEntity[] as per WTC method signature
-                        schedule_date: schedule_date ?? default(DateTime)
+                        schedule_date: schedule_date ?? default
                     // videoUrlAsFile is not on the interface, relying on WTelegramClient's default (false)
                     // background is not on SendAlbumAsync
                     ).ConfigureAwait(false),
@@ -1551,12 +1551,12 @@ namespace Infrastructure.Services
             }
 
             // Generate unique random IDs for each forwarded message. Required by Telegram API for idempotency.
-            var randomIdArray = messageIds.Select(_ => WTelegram.Helpers.RandomLong()).ToArray();
+            long[] randomIdArray = messageIds.Select(_ => WTelegram.Helpers.RandomLong()).ToArray();
 
             // Level 3: Use a lock specific to the forwarding operation to manage concurrency for this specific from-to pair.
             string lockKey = $"forward_peer_{fromPeerType}_{fromPeerId}_to_{toPeerType}_{toPeerId}";
             _logger.LogTrace("ForwardMessagesAsync: Attempting to acquire forward lock with key: {LockKey}.", lockKey);
-            using var forwardLock = await AsyncLock.LockAsync(lockKey).ConfigureAwait(false);
+            using IDisposable forwardLock = await AsyncLock.LockAsync(lockKey).ConfigureAwait(false);
             _logger.LogDebug("ForwardMessagesAsync: Acquired forward lock with key: {LockKey}.", lockKey);
 
             try
@@ -1670,7 +1670,7 @@ namespace Infrastructure.Services
             _logger.LogDebug("ResolvePeerAsync: Attempting to resolve PeerId: {PeerId}", peerId);
 
             // 1. Check User Cache
-            if (_userCacheWithExpiry.TryGetValue(peerId, out var userCacheEntry) &&
+            if (_userCacheWithExpiry.TryGetValue(peerId, out (User User, DateTime Expiry) userCacheEntry) &&
                 userCacheEntry.Expiry > DateTime.UtcNow && userCacheEntry.User != null)
             {
                 _logger.LogInformation("ResolvePeerAsync: Found User {UserId} (AccessHash: {AccessHash}) in LOCAL USER CACHE for PeerId {PeerId}.",
@@ -1679,7 +1679,7 @@ namespace Infrastructure.Services
             }
 
             // 2. Check Chat Cache (for Channel and Chat)
-            if (_chatCacheWithExpiry.TryGetValue(peerId, out var chatCacheEntry) &&
+            if (_chatCacheWithExpiry.TryGetValue(peerId, out (ChatBase Chat, DateTime Expiry) chatCacheEntry) &&
                 chatCacheEntry.Expiry > DateTime.UtcNow && chatCacheEntry.Chat != null)
             {
                 if (chatCacheEntry.Chat is TL.Channel channelFromCache)
@@ -1732,14 +1732,14 @@ namespace Infrastructure.Services
 
                     if (resolvedUsernameResponse?.users != null)
                     {
-                        foreach (var uEntry in resolvedUsernameResponse.users)
+                        foreach (KeyValuePair<long, User> uEntry in resolvedUsernameResponse.users)
                         {
                             _userCacheWithExpiry[uEntry.Key] = (uEntry.Value, DateTime.UtcNow.Add(_cacheExpiration));
                         }
                     }
                     if (resolvedUsernameResponse?.chats != null)
                     {
-                        foreach (var cEntry in resolvedUsernameResponse.chats)
+                        foreach (KeyValuePair<long, ChatBase> cEntry in resolvedUsernameResponse.chats)
                         {
                             _chatCacheWithExpiry[cEntry.Key] = (cEntry.Value, DateTime.UtcNow.Add(_cacheExpiration));
                         }
@@ -1790,13 +1790,13 @@ namespace Infrastructure.Services
 
                 if (channelsResponse?.chats != null)
                 {
-                    foreach (var cEntry in channelsResponse.chats)
+                    foreach (KeyValuePair<long, ChatBase> cEntry in channelsResponse.chats)
                     {
                         _chatCacheWithExpiry[cEntry.Key] = (cEntry.Value, DateTime.UtcNow.Add(_cacheExpiration));
                     }
                 }
 
-                if (channelsResponse?.chats != null && channelsResponse.chats.TryGetValue(PeerToChannelId(peerId), out var chatFromApi) && chatFromApi is TL.Channel telegramChannel)
+                if (channelsResponse?.chats != null && channelsResponse.chats.TryGetValue(PeerToChannelId(peerId), out ChatBase? chatFromApi) && chatFromApi is TL.Channel telegramChannel)
                 {
                     _logger.LogInformation("ResolvePeerAsync: Successfully resolved Channel {PeerId} (API ID: {ApiChannelId}, AccessHash: {AccessHash}) via Channels_GetChannels (fallback).",
                                        peerId, telegramChannel.id, telegramChannel.access_hash);
@@ -1827,13 +1827,13 @@ namespace Infrastructure.Services
 
                     if (chatsResponse?.chats != null)
                     {
-                        foreach (var cEntry in chatsResponse.chats)
+                        foreach (KeyValuePair<long, ChatBase> cEntry in chatsResponse.chats)
                         {
                             _chatCacheWithExpiry[cEntry.Key] = (cEntry.Value, DateTime.UtcNow.Add(_cacheExpiration));
                         }
                     }
 
-                    if (chatsResponse?.chats != null && chatsResponse.chats.TryGetValue(peerId, out var chatFromApi) && chatFromApi is Chat telegramChat)
+                    if (chatsResponse?.chats != null && chatsResponse.chats.TryGetValue(peerId, out ChatBase? chatFromApi) && chatFromApi is Chat telegramChat)
                     {
                         _logger.LogInformation("ResolvePeerAsync: Successfully resolved Chat {PeerId} via Messages_GetChats (fallback).", peerId);
                         return new InputPeerChat(telegramChat.id);
@@ -1865,7 +1865,7 @@ namespace Infrastructure.Services
 
                     if (usersResponse != null && usersResponse.Any())
                     {
-                        foreach (var userBase in usersResponse)
+                        foreach (UserBase userBase in usersResponse)
                         {
                             if (userBase is User user)
                             {
@@ -1977,7 +1977,7 @@ namespace Infrastructure.Services
             public static async Task<IDisposable> LockAsync(string key)
             {
                 // Get or add a SemaphoreSlim for the specific key.
-                var semaphore = _locks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
+                SemaphoreSlim semaphore = _locks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
                 await semaphore.WaitAsync(); // Wait to acquire the lock.
                 // Return a disposable object that releases the semaphore when disposed.
                 return new DisposableAction(() => semaphore.Release());

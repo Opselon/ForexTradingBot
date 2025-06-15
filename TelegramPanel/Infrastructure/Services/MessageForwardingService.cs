@@ -67,10 +67,10 @@ namespace TelegramPanel.Infrastructure.Services
             TL.MessageEntity[]? tlMessageEntities = null;
             if (currentTelegramBotEntities != null && currentTelegramBotEntities.Any())
             {
-                var convertedEntities = new List<TL.MessageEntity>();
-                foreach (var entity in currentTelegramBotEntities)
+                List<TL.MessageEntity> convertedEntities = new();
+                foreach (Telegram.Bot.Types.MessageEntity entity in currentTelegramBotEntities)
                 {
-                    var tlEntity = ConvertTelegramBotEntityToTLEntity(entity, currentMessageContent);
+                    TL.MessageEntity? tlEntity = ConvertTelegramBotEntityToTLEntity(entity, currentMessageContent);
                     if (tlEntity != null)
                     {
                         convertedEntities.Add(tlEntity);
@@ -131,7 +131,7 @@ namespace TelegramPanel.Infrastructure.Services
                 originalMessageId, sourceIdForMatchingRules, message.Type, TruncateString(currentMessageContent, 50), message.Photo != null || message.Video != null || message.Document != null, tlSenderPeer?.GetType().Name ?? "N/A"); // Check message.Photo/Video/Document for media presence
 
 
-            var applicableDbRules = (await _appForwardingService.GetRulesBySourceChannelAsync(sourceIdForMatchingRules, cancellationToken))
+            List<Domain.Features.Forwarding.Entities.ForwardingRule> applicableDbRules = (await _appForwardingService.GetRulesBySourceChannelAsync(sourceIdForMatchingRules, cancellationToken))
                                    .Where(r => r.IsEnabled)
                                    .ToList();
 
@@ -147,7 +147,7 @@ namespace TelegramPanel.Infrastructure.Services
             long rawSourcePeerIdForJob = message.From?.Id ?? Math.Abs(message.Chat.Id);
 
 
-            foreach (var dbRule in applicableDbRules)
+            foreach (Domain.Features.Forwarding.Entities.ForwardingRule? dbRule in applicableDbRules)
             {
                 try
                 {
@@ -176,7 +176,7 @@ namespace TelegramPanel.Infrastructure.Services
                         // This is the simplest path: no edits, just forward.
                         // This also handles media and captions seamlessly as Telegram servers do the work.
                         _logger.LogDebug("MessageForwardingService: Rule '{RuleName}' allows direct forwarding. Enqueuing direct forward job for message {MessageId}.", dbRule.RuleName, originalMessageId);
-                        var jobId = _enqueueRetryPolicy.Execute(
+                        string jobId = _enqueueRetryPolicy.Execute(
                             (pollyContext) =>
                             {
                                 return _jobScheduler.Enqueue<IForwardingJobActions>(processor =>
@@ -222,7 +222,7 @@ namespace TelegramPanel.Infrastructure.Services
 
                         _logger.LogDebug("MessageForwardingService: Rule '{RuleName}' requires custom send. Enqueuing custom send job for message {MessageId}.", dbRule.RuleName, originalMessageId);
 
-                        var jobId = _enqueueRetryPolicy.Execute(
+                        string jobId = _enqueueRetryPolicy.Execute(
                             (pollyContext) =>
                             {
                                 return _jobScheduler.Enqueue<IForwardingJobActions>(processor =>
@@ -300,7 +300,7 @@ namespace TelegramPanel.Infrastructure.Services
         // Helper function to truncate strings for logging
         private string TruncateString(string? str, int maxLength)
         {
-            return string.IsNullOrEmpty(str) ? "[null_or_empty]" : str.Length <= maxLength ? str : str.Substring(0, maxLength) + "...";
+            return string.IsNullOrEmpty(str) ? "[null_or_empty]" : str.Length <= maxLength ? str : str[..maxLength] + "...";
         }
 
         // Helper to get Peer from Telegram.Bot.Types.Message.From or .SenderChat

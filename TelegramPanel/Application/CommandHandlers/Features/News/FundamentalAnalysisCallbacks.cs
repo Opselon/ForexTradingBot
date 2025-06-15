@@ -10,7 +10,6 @@ using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
 using TelegramPanel.Application.CommandHandlers.MainMenu;
 using TelegramPanel.Application.Interfaces;
-using TelegramPanel.Infrastructure;
 using TelegramPanel.Infrastructure.Helper;
 using TelegramPanel.Infrastructure.Settings;
 using static TelegramPanel.Infrastructure.ActualTelegramMessageActions;
@@ -171,16 +170,16 @@ namespace TelegramPanel.Application.CommandHandlers.Features.News
 
         public async Task HandleAsync(Update update, CancellationToken cancellationToken)
         {
-            var callbackQuery = update.CallbackQuery;
+            CallbackQuery? callbackQuery = update.CallbackQuery;
             if (callbackQuery?.Message == null)
             {
                 return;
             }
 
-            var callbackData = callbackQuery.Data;
-            var chatId = callbackQuery.Message.Chat.Id;
-            var messageId = callbackQuery.Message.MessageId;
-            var telegramUserIdString = callbackQuery.From.Id.ToString();
+            string? callbackData = callbackQuery.Data;
+            long chatId = callbackQuery.Message.Chat.Id;
+            int messageId = callbackQuery.Message.MessageId;
+            string telegramUserIdString = callbackQuery.From.Id.ToString();
 
             _logger.LogInformation("FA_CBQ Handling: Data={Data}, Chat={ChatId}", callbackData, chatId);
 
@@ -188,7 +187,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.News
             {
                 await _messageSender.AnswerCallbackQueryAsync(callbackQuery.Id, cancellationToken: cancellationToken);
 
-                var parts = callbackData.Split(':', 4);
+                string[] parts = callbackData.Split(':', 4);
                 if (parts.Length < 2)
                 {
                     return;
@@ -208,7 +207,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.News
                     return;
                 }
 
-                var user = await _userRepository.GetByTelegramIdAsync(telegramUserIdString, cancellationToken);
+                Domain.Entities.User? user = await _userRepository.GetByTelegramIdAsync(telegramUserIdString, cancellationToken);
                 bool isVipUser = user?.Subscriptions?.Any(s => s.IsCurrentlyActive) ?? false;
                 int daysToFetch = isVipUser ? VipNewsDaysLimit : FreeNewsDaysLimit;
                 DateTime startDate = DateTime.UtcNow.Date.AddDays(-daysToFetch);
@@ -225,7 +224,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.News
         {
             await _messageSender.EditMessageTextAsync(chatId, messageId, $"⏳ Fetching news for *{GetCurrencyDisplayName(symbol)}*...", ParseMode.Markdown, null, cancellationToken);
 
-            var (newsItems, totalCount) = await GetRelevantNewsAsync(symbol, startDate, pageNumber, pageSize, isVipUser, cancellationToken);
+            (List<NewsItem> newsItems, int totalCount) = await GetRelevantNewsAsync(symbol, startDate, pageNumber, pageSize, isVipUser, cancellationToken);
 
             if (!newsItems.Any() && pageNumber == 1)
             {
@@ -234,8 +233,8 @@ namespace TelegramPanel.Application.CommandHandlers.Features.News
                 return;
             }
 
-            var messageText = FormatNewsMessage(newsItems, symbol, pageNumber, totalCount, pageSize);
-            var keyboard = BuildPaginationKeyboard(symbol, pageNumber, totalCount, pageSize, isVipUser);
+            string messageText = FormatNewsMessage(newsItems, symbol, pageNumber, totalCount, pageSize);
+            InlineKeyboardMarkup keyboard = BuildPaginationKeyboard(symbol, pageNumber, totalCount, pageSize, isVipUser);
             await _messageSender.EditMessageTextAsync(chatId, messageId, messageText, ParseMode.Markdown, keyboard, cancellationToken);
         }
 
@@ -243,34 +242,34 @@ namespace TelegramPanel.Application.CommandHandlers.Features.News
         private async Task<(List<NewsItem> News, int TotalCount)> GetRelevantNewsAsync(
             string symbol, DateTime startDate, int page, int pageSize, bool isVipUser, CancellationToken cancellationToken)
         {
-            var keywordSet = GenerateSmartKeywords(symbol);
+            SmartKeywordSet? keywordSet = GenerateSmartKeywords(symbol);
             if (keywordSet == null)
             {
                 return (new List<NewsItem>(), 0);
             }
 
-            var (highPrecisionItems, _) = await _newsItemRepository.SearchNewsAsync(keywordSet.HighPrecisionTerms, startDate, DateTime.UtcNow, 1, 100, false, isVipUser, cancellationToken);
-            var (generalItems, _) = await _newsItemRepository.SearchNewsAsync(keywordSet.GeneralTerms, startDate, DateTime.UtcNow, 1, 100, false, isVipUser, cancellationToken);
+            (List<NewsItem> highPrecisionItems, int _) = await _newsItemRepository.SearchNewsAsync(keywordSet.HighPrecisionTerms, startDate, DateTime.UtcNow, 1, 100, false, isVipUser, cancellationToken);
+            (List<NewsItem> generalItems, int _) = await _newsItemRepository.SearchNewsAsync(keywordSet.GeneralTerms, startDate, DateTime.UtcNow, 1, 100, false, isVipUser, cancellationToken);
 
-            var combinedNews = new Dictionary<Guid, NewsItem>();
-            foreach (var item in highPrecisionItems)
+            Dictionary<Guid, NewsItem> combinedNews = new();
+            foreach (NewsItem item in highPrecisionItems)
             {
                 combinedNews[item.Id] = item;
             }
 
-            string baseCode = symbol == "XAUUSD" ? "XAU" : symbol.Substring(0, 3);
+            string baseCode = symbol == "XAUUSD" ? "XAU" : symbol[..3];
             string quoteCode = symbol == "XAUUSD" ? "USD" : symbol.Substring(3, 3);
 
-            if (keywordSet.TermsByCurrency.TryGetValue(baseCode, out var baseTerms) && keywordSet.TermsByCurrency.TryGetValue(quoteCode, out var quoteTerms))
+            if (keywordSet.TermsByCurrency.TryGetValue(baseCode, out List<string>? baseTerms) && keywordSet.TermsByCurrency.TryGetValue(quoteCode, out List<string>? quoteTerms))
             {
-                foreach (var item in generalItems)
+                foreach (NewsItem item in generalItems)
                 {
                     if (combinedNews.ContainsKey(item.Id))
                     {
                         continue;
                     }
 
-                    var content = $"{item.Title} {item.Summary}".ToLowerInvariant();
+                    string content = $"{item.Title} {item.Summary}".ToLowerInvariant();
                     if (baseTerms.Any(k => content.Contains(k.ToLowerInvariant())) && quoteTerms.Any(k => content.Contains(k.ToLowerInvariant())))
                     {
                         combinedNews[item.Id] = item;
@@ -278,9 +277,9 @@ namespace TelegramPanel.Application.CommandHandlers.Features.News
                 }
             }
 
-            var finalRelevantNews = combinedNews.Values.OrderByDescending(n => n.PublishedDate).ThenByDescending(n => n.CreatedAt).ToList();
+            List<NewsItem> finalRelevantNews = combinedNews.Values.OrderByDescending(n => n.PublishedDate).ThenByDescending(n => n.CreatedAt).ToList();
             int totalCount = finalRelevantNews.Count;
-            var pagedNews = finalRelevantNews.Skip((page - 1) * pageSize).Take(pageSize).ToList();
+            List<NewsItem> pagedNews = finalRelevantNews.Skip((page - 1) * pageSize).Take(pageSize).ToList();
 
             return (pagedNews, totalCount);
         }
@@ -288,35 +287,36 @@ namespace TelegramPanel.Application.CommandHandlers.Features.News
         // --- ✅ SINGLE, CORRECT IMPLEMENTATION OF GenerateSmartKeywords ---
         private SmartKeywordSet? GenerateSmartKeywords(string symbol)
         {
-            var highPrecision = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var general = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var termsByCurrency = new Dictionary<string, List<string>>();
+            HashSet<string> highPrecision = new(StringComparer.OrdinalIgnoreCase);
+            HashSet<string> general = new(StringComparer.OrdinalIgnoreCase);
+            Dictionary<string, List<string>> termsByCurrency = new();
             symbol = symbol.ToUpperInvariant();
 
-            var nicknames = new Dictionary<string, string> { { "GBPUSD", "Cable" }, { "XAUUSD", "Gold" } };
-            string baseCode = symbol == "XAUUSD" ? "XAU" : symbol.Substring(0, 3);
+            Dictionary<string, string> nicknames = new()
+            { { "GBPUSD", "Cable" }, { "XAUUSD", "Gold" } };
+            string baseCode = symbol == "XAUUSD" ? "XAU" : symbol[..3];
             string quoteCode = symbol == "XAUUSD" ? "USD" : symbol.Substring(3, 3);
 
-            if (!_currencyKnowledgeBase.TryGetValue(baseCode, out var baseInfo) || !_currencyKnowledgeBase.TryGetValue(quoteCode, out var quoteInfo))
+            if (!_currencyKnowledgeBase.TryGetValue(baseCode, out (string Name, string[] CoreTerms, string[] Aliases) baseInfo) || !_currencyKnowledgeBase.TryGetValue(quoteCode, out (string Name, string[] CoreTerms, string[] Aliases) quoteInfo))
             {
                 return null;
             }
 
             _ = highPrecision.Add(symbol);
             _ = highPrecision.Add($"{baseCode}/{quoteCode}");
-            if (nicknames.TryGetValue(symbol, out var nick))
+            if (nicknames.TryGetValue(symbol, out string? nick))
             {
                 _ = highPrecision.Add(nick);
             }
 
             termsByCurrency[baseCode] = baseInfo.CoreTerms.Concat(baseInfo.Aliases).ToList();
             termsByCurrency[quoteCode] = quoteInfo.CoreTerms.Concat(quoteInfo.Aliases).ToList();
-            foreach (var term in termsByCurrency[baseCode])
+            foreach (string term in termsByCurrency[baseCode])
             {
                 _ = general.Add(term);
             }
 
-            foreach (var term in termsByCurrency[quoteCode])
+            foreach (string term in termsByCurrency[quoteCode])
             {
                 _ = general.Add(term);
             }
@@ -327,7 +327,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.News
         // --- ✅ SINGLE, CORRECT IMPLEMENTATION OF FormatNewsMessage ---
         private string FormatNewsMessage(List<NewsItem> newsItems, string symbol, int currentPage, int totalCount, int pageSize)
         {
-            var sb = new StringBuilder();
+            StringBuilder sb = new();
             int totalPages = (int)Math.Ceiling((double)totalCount / pageSize);
 
             _ = sb.AppendLine($"📊 *Fundamental News: {GetCurrencyDisplayName(symbol)}*");
@@ -341,7 +341,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.News
             }
 
             int itemNumber = ((currentPage - 1) * pageSize) + 1;
-            foreach (var item in newsItems)
+            foreach (NewsItem item in newsItems)
             {
                 _ = sb.AppendLine($"\n🔸 *{itemNumber++}. {item.Title}*");
                 _ = sb.AppendLine($"🏦 _{item.SourceName}_ | 🗓️ _{item.PublishedDate:MMM dd, yyyy HH:mm 'UTC'}_");
@@ -359,20 +359,20 @@ namespace TelegramPanel.Application.CommandHandlers.Features.News
         // --- Other Helper Methods ---
         private string? TruncateWithEllipsis(string? text, int maxLength)
         {
-            return string.IsNullOrWhiteSpace(text) || text.Length <= maxLength ? text : text.Substring(0, maxLength - 3).TrimEnd() + "...";
+            return string.IsNullOrWhiteSpace(text) || text.Length <= maxLength ? text : text[..(maxLength - 3)].TrimEnd() + "...";
         }
 
         private string GetCurrencyDisplayName(string symbol)
         {
-            return _currencyInfoSettings.Currencies != null && _currencyInfoSettings.Currencies.TryGetValue(symbol, out var details) && !string.IsNullOrEmpty(details.Name)
+            return _currencyInfoSettings.Currencies != null && _currencyInfoSettings.Currencies.TryGetValue(symbol, out CurrencyDetails? details) && !string.IsNullOrEmpty(details.Name)
                 ? details.Name
                 : symbol;
         }
 
         private InlineKeyboardMarkup BuildPaginationKeyboard(string symbol, int currentPage, int totalCount, int pageSize, bool isVipUser)
         {
-            var rows = new List<List<InlineKeyboardButton>>();
-            var paginationRow = new List<InlineKeyboardButton>();
+            List<List<InlineKeyboardButton>> rows = new();
+            List<InlineKeyboardButton> paginationRow = new();
             int totalPages = (int)Math.Ceiling((double)totalCount / pageSize);
 
             if (currentPage > 1)
@@ -407,7 +407,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.News
 
         private InlineKeyboardMarkup GetNoNewsKeyboard(string symbol, bool isVipUser)
         {
-            var rows = new List<List<InlineKeyboardButton>>();
+            List<List<InlineKeyboardButton>> rows = new();
             if (!isVipUser)
             {
                 rows.Add([InlineKeyboardButton.WithCallbackData("🌟 Try VIP for More News Sources", $"{ViewFundamentalAnalysisPrefix}:{symbol}:{SubscribeVipAction}")]);
@@ -419,8 +419,8 @@ namespace TelegramPanel.Application.CommandHandlers.Features.News
 
         private async Task HandleVipSubscriptionPromptAsync(long chatId, int messageId, string originalSymbol, CancellationToken cancellationToken)
         {
-            var vipMessage = "🌟 *Unlock Full News Access & More Features!*\n\nAs a VIP member, you benefit from:\n✅ Extended news history\n✅ More news sources\n✅ Access to all premium signals\n\nSupport the bot and elevate your trading insights!";
-            var vipKeyboard = MarkupBuilder.CreateInlineKeyboard(
+            string vipMessage = "🌟 *Unlock Full News Access & More Features!*\n\nAs a VIP member, you benefit from:\n✅ Extended news history\n✅ More news sources\n✅ Access to all premium signals\n\nSupport the bot and elevate your trading insights!";
+            InlineKeyboardMarkup? vipKeyboard = MarkupBuilder.CreateInlineKeyboard(
                 new[] { InlineKeyboardButton.WithCallbackData("💎 View VIP Plans", "show_subscription_options") },
                 new[] { InlineKeyboardButton.WithCallbackData("◀️ Back to News", $"{ViewFundamentalAnalysisPrefix}:{originalSymbol}") }
             );

@@ -70,7 +70,7 @@ namespace Infrastructure.Repositories
         public async Task<IEnumerable<Signal>> GetSignalsBySymbolAsync(string symbol, CancellationToken cancellationToken = default)
         {
             // مقایسه case-insensitive برای نماد
-            var normalizedSymbol = symbol.ToUpperInvariant();
+            string normalizedSymbol = symbol.ToUpperInvariant();
             return await _context.Signals
                 .Where(s => s.Symbol.ToUpper() == normalizedSymbol)
                 .Include(s => s.Category)
@@ -114,7 +114,7 @@ namespace Infrastructure.Repositories
 
         public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
         {
-            var signalToDelete = await GetByIdAsync(id, cancellationToken);
+            Signal? signalToDelete = await GetByIdAsync(id, cancellationToken);
             if (signalToDelete != null)
             {
                 _ = _context.Signals.Remove(signalToDelete);

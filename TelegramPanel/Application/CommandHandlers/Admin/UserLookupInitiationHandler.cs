@@ -5,7 +5,6 @@ using Microsoft.Extensions.Options;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using TelegramPanel.Application.Interfaces;
-using TelegramPanel.Infrastructure;
 using TelegramPanel.Settings;
 using static TelegramPanel.Infrastructure.ActualTelegramMessageActions;
 
@@ -42,9 +41,9 @@ namespace TelegramPanel.Application.CommandHandlers.Admin
 
         public async Task HandleAsync(Update update, CancellationToken cancellationToken = default)
         {
-            var callbackQuery = update.CallbackQuery!;
+            CallbackQuery callbackQuery = update.CallbackQuery!;
             _ = callbackQuery.Message!;
-            var adminId = callbackQuery.From.Id;
+            long adminId = callbackQuery.From.Id;
 
             await _messageSender.AnswerCallbackQueryAsync(callbackQuery.Id, "Enter lookup mode...", showAlert: false, cancellationToken: cancellationToken);
 

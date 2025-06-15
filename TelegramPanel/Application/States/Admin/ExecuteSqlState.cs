@@ -4,7 +4,6 @@ using Microsoft.Extensions.Logging;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using TelegramPanel.Application.Interfaces;
-using TelegramPanel.Infrastructure;
 using static TelegramPanel.Infrastructure.ActualTelegramMessageActions;
 
 namespace TelegramPanel.Application.States.Admin
@@ -35,8 +34,8 @@ namespace TelegramPanel.Application.States.Admin
                 return Name;
             }
 
-            var message = update.Message;
-            var adminId = message.From.Id;
+            Message message = update.Message;
+            long adminId = message.From.Id;
 
             if (message.Text.Trim() == "/cancel")
             {
@@ -51,7 +50,7 @@ namespace TelegramPanel.Application.States.Admin
             // Telegram messages have a 4096 character limit. Truncate if necessary.
             if (result.Length > 4000)
             {
-                result = result.Substring(0, 4000) + "\n\n... (result truncated)";
+                result = result[..4000] + "\n\n... (result truncated)";
             }
 
             await _messageSender.SendTextMessageAsync(adminId, result, ParseMode.Markdown, cancellationToken: cancellationToken);

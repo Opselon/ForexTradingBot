@@ -2,7 +2,6 @@
 
 #region Usings
 using Application.Common.Interfaces;
-using Application.DTOs.Notifications;
 using Application.Interfaces;
 using Domain.Entities;
 using Microsoft.Extensions.Logging;
@@ -11,7 +10,6 @@ using Polly.CircuitBreaker;
 using StackExchange.Redis;
 
 // using Shared.Extensions; // Assuming TruncateWithEllipsis is a local method
-using System.Text;
 // using System.Threading.RateLimiting; // Not needed here
 
 // --- ✅ FIX 1: ADD MISSING USINGS ---

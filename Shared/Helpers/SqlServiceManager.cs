@@ -20,7 +20,7 @@ namespace Shared.Helpers
 
         public static void EnsureSqlServicesRunning()
         {
-            List<string> servicesToStart = new();
+            List<string> servicesToStart = [];
 
             foreach (string service in SqlServices)
             {
@@ -85,16 +85,11 @@ namespace Shared.Helpers
                 string output = process.StandardOutput.ReadToEnd();
                 process.WaitForExit();
 
-                if (output.Contains("RUNNING"))
-                {
-                    return "RUNNING";
-                }
-                else
-                {
-                    return output.Contains("STOPPED")
+                return output.Contains("RUNNING")
+                    ? "RUNNING"
+                    : output.Contains("STOPPED")
                         ? "STOPPED"
                         : output.Contains("START_PENDING") ? "START_PENDING" : output.Contains("STOP_PENDING") ? "STOP_PENDING" : "UNKNOWN";
-                }
             }
             catch
             {

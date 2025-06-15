@@ -73,7 +73,6 @@ namespace Application.Services
 
         #region INotificationDispatchService Implementation
 
-        private readonly TimeSpan _delayBetweenJobEnqueues = TimeSpan.FromMilliseconds(50); // Configurable
 
 
 
@@ -235,111 +234,6 @@ namespace Application.Services
                     _logger.LogCritical(ex, "A critical, unhandled error occurred during dispatch orchestration for NewsItem {NewsItemId}.", newsItemId);
                 }
             }, cancellationToken);
-        }
-
-        /// <summary>
-        /// Builds the main text content for a news notification.
-        /// </summary>
-        /// <param name="newsItem">The news item to generate text for.</param>
-        /// <returns>Formatted string for the notification message.</returns>
-        private string BuildMessageText(NewsItem newsItem)
-        {
-            if (newsItem == null)
-            {
-                throw new ArgumentNullException(nameof(newsItem));
-            }
-
-            StringBuilder messageTextBuilder = new();
-
-            string title = EscapeTextForTelegramMarkup(newsItem.Title?.Trim() ?? "Untitled News");
-            string sourceName = EscapeTextForTelegramMarkup(newsItem.SourceName?.Trim() ?? "Unknown Source");
-            string summary = EscapeTextForTelegramMarkup(TruncateWithEllipsis(newsItem.Summary, 250)?.Trim() ?? string.Empty);
-            string? link = newsItem.Link?.Trim();
-
-            _ = messageTextBuilder.AppendLine($"*{title}*");
-            _ = messageTextBuilder.AppendLine($"_📰 Source: {sourceName}_");
-
-            if (!string.IsNullOrWhiteSpace(summary))
-            {
-                _ = messageTextBuilder.Append($"\n{summary}");
-            }
-
-            if (!string.IsNullOrWhiteSpace(link))
-            {
-                if (Uri.TryCreate(link, UriKind.Absolute, out _))
-                {
-                    string escapedLink = link.Replace("(", "\\(").Replace(")", "\\)");
-                    _ = messageTextBuilder.Append($"\n\n[🔗 Read Full Article]({escapedLink})");
-                }
-                else
-                {
-                    _logger.LogWarning("Invalid URL format for news item link. NewsItemID: {NewsItemId}, Link: {Link}", newsItem.Id, link);
-                }
-            }
-            return messageTextBuilder.ToString().Trim();
-        }
-
-
-        /// <summary>
-        /// Builds a list of notification buttons for a news item.
-        /// </summary>
-        private List<NotificationButton> BuildNotificationButtons(NewsItem newsItem) // Correct return type
-        {
-            if (newsItem == null)
-            {
-                throw new ArgumentNullException(nameof(newsItem));
-            }
-
-            List<NotificationButton> buttons = new();
-            if (!string.IsNullOrWhiteSpace(newsItem.Link) && Uri.TryCreate(newsItem.Link, UriKind.Absolute, out _))
-            {
-                buttons.Add(new NotificationButton { Text = "Read More", CallbackDataOrUrl = newsItem.Link, IsUrl = true });
-            }
-            return buttons;
-        }
-
-        /// <summary>
-        /// Truncates text to a maximum length, appending ellipsis if truncated.
-        /// </summary>
-        private string? TruncateWithEllipsis(string? text, int maxLength)
-        {
-            return string.IsNullOrWhiteSpace(text) ? text : text.Length <= maxLength ? text : text[..(maxLength - 3)] + "...";
-        }
-
-        /// <summary>
-        /// Escapes characters in plain text that have special meaning in Telegram Markdown (V1/relaxed V2 compatible).
-        /// This method targets minimal necessary escaping to produce clean output without extraneous backslashes
-        /// on common punctuation like periods, hyphens, or slashes, as seen in the user's desired output format.
-        /// </summary>
-        private string EscapeTextForTelegramMarkup(string? text)
-        {
-            if (string.IsNullOrEmpty(text))
-            {
-                return string.Empty;
-            }
-
-            StringBuilder sb = new(text.Length + 10);
-            foreach (char c in text)
-            {
-                switch (c)
-                {
-                    // Escape only critical Markdown characters that would otherwise break formatting.
-                    // Characters like '.', '-', '/', '!' etc., are typically NOT escaped in desired output.
-                    case '_': // Italic (Telegram V1 uses this)
-                    case '*': // Bold (Telegram V1/V2 accepts single '*')
-                    case '[': // Link start
-                    case ']': // Link end
-                    case '(': // Parenthesis (important if literal parentheses appear in text that might be part of URL syntax)
-                    case ')': // Parenthesis
-                    case '~': // Strikethrough (primarily MarkdownV2, but escaping doesn't hurt)
-                    case '`': // Code/Pre (primarily MarkdownV2, but escaping doesn't hurt)
-                    case '>': // Blockquote (primarily MarkdownV2, but escaping doesn't hurt)
-                        _ = sb.Append('\\');
-                        break;
-                }
-                _ = sb.Append(c);
-            }
-            return sb.ToString();
         }
 
         #endregion

@@ -1,59 +1,103 @@
-﻿using Microsoft.Extensions.Logging;
+﻿// using TelegramPanel.Domain.Interfaces; // Or wherever your IUserRepository is
+using Application.Common.Interfaces;
+using Application.Interfaces;
+using Microsoft.Extensions.Logging;
 using Telegram.Bot.Types;
-// using Application.Interfaces; // برای IUserService از پروژه اصلی Application
+using TelegramPanel.Application.Interfaces;
+using TelegramPanel.Infrastructure;     // For the User entity
 
 namespace TelegramPanel.Application.Pipeline
 {
     public class AuthenticationMiddleware : ITelegramMiddleware
     {
         private readonly ILogger<AuthenticationMiddleware> _logger;
-        // private readonly ITelegramUserAuthenticator _authenticator; // یا مستقیم IUserService
-        // private readonly IUserService _userService;
+        private readonly IUserService _userService;         // Returns DTOs
+        private readonly IUserRepository _userRepository;  // <<--- NEW: Inject the repository
+        private readonly IUserContext _userContext;
+        private readonly ITelegramMessageSender _messageSender;
 
-        // سازنده با وابستگی‌های لازم (مثلاً ITelegramUserAuthenticator یا IUserService)
-        public AuthenticationMiddleware(ILogger<AuthenticationMiddleware> logger /*, IUserService userService */)
+        public AuthenticationMiddleware(
+            ILogger<AuthenticationMiddleware> logger,
+            IUserService userService,
+            IUserRepository userRepository, // <<--- NEW
+            IUserContext userContext,
+            ITelegramMessageSender messageSender)
         {
-            _logger = logger;
-            // _userService = userService;
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _userService = userService ?? throw new ArgumentNullException(nameof(userService));
+            _userRepository = userRepository ?? throw new ArgumentNullException(nameof(userRepository)); // <<--- NEW
+            _userContext = userContext ?? throw new ArgumentNullException(nameof(userContext));
+            _messageSender = messageSender ?? throw new ArgumentNullException(nameof(messageSender));
         }
 
-        public async Task InvokeAsync(Update update, TelegramPipelineDelegate next, CancellationToken cancellationToken = default)
+        public async Task InvokeAsync(Update update, TelegramPipelineDelegate next, CancellationToken cancellationToken)
         {
             var userId = update.Message?.From?.Id ?? update.CallbackQuery?.From?.Id;
 
-            if (userId == null)
+            if (userId is null)
             {
-                _logger.LogWarning("Update received without a user ID. Update Type: {UpdateType}", update.Type);
-                // شاید بخواهید اینجا متوقف شوید یا یک پیام خطا ارسال کنید
-                // return;
-                await next(update, cancellationToken); // یا اجازه عبور بدهید و در مراحل بعد مدیریت شود
+                _logger.LogWarning("Update {UpdateId} received without a user ID. Update Type: {UpdateType}. Halting pipeline.", update.Id, update.Type);
                 return;
             }
 
-            _logger.LogInformation("Authenticating user with Telegram ID: {TelegramUserId}", userId);
+            if (update.Message?.Text?.StartsWith("/start") == true)
+            {
+                _logger.LogInformation("Passing through /start command for potential registration for UserID {UserId}", userId.Value);
+                await next(update, cancellationToken).ConfigureAwait(false);
+                return;
+            }
 
-            //  منطق احراز هویت:
-            //  ۱. بررسی اینکه آیا کاربر در سیستم شما با این Telegram ID وجود دارد یا خیر (با استفاده از IUserService).
-            //  ۲. اگر وجود ندارد، شاید بخواهید او را به فرآیند ثبت نام هدایت کنید یا دسترسی را محدود کنید.
-            //  ۳. اگر وجود دارد، می‌توانید اطلاعات کاربر را در یک Scoped Service یا HttpContext.Items (اگر در وب هستید) ذخیره کنید
-            //     تا در مراحل بعدی پایپ‌لاین و Command Handler ها در دسترس باشد.
+            try
+            {
+                // STEP 1: Use the service to check for EXISTENCE and get lightweight DTO.
+                var userDto = await _userService.GetUserByTelegramIdAsync(userId.Value.ToString(), cancellationToken).ConfigureAwait(false);
 
-            // مثال ساده:
-            // var user = await _userService.GetUserByTelegramIdAsync(userId.ToString(), cancellationToken);
-            // if (user == null)
-            // {
-            //     _logger.LogWarning("User with Telegram ID {TelegramUserId} not found in our system. Access denied or redirecting to register.", userId);
-            //     //  ارسال پیام "لطفاً ابتدا ثبت نام کنید با دستور /start"
-            //     // await _messageSender.SendTextMessageAsync(userId.Value, "Please register first using /start command.");
-            //     return; // توقف پردازش
-            // }
+                if (userDto is null)
+                {
+                    _logger.LogWarning("Unauthenticated access attempt by Telegram UserID {UserId}. Access denied.", userId.Value);
+                    await _messageSender.SendTextMessageAsync(
+                        chatId: userId.Value,
+                        text: "Access Denied. ⛔️\nPlease register with the /start command first.",
+                        cancellationToken: CancellationToken.None
+                    ).ConfigureAwait(false);
+                    return;
+                }
 
-            // _logger.LogInformation("User {TelegramUserId} ({Username}) authenticated successfully.", userId, user.Username);
-            //  ذخیره اطلاعات کاربر برای استفاده در مراحل بعد (مثلاً در یک Scoped Context Service)
-            // _userContext.SetCurrentUser(user);
+                // --- THIS IS THE FIX ---
+                // STEP 2: Now that user exists, fetch the full RICH DOMAIN ENTITY from the repository.
+                var userEntity = await _userRepository.GetByTelegramIdAsync(userId.Value.ToString(), cancellationToken).ConfigureAwait(false);
 
-            // ادامه به Middleware یا Handler بعدی
-            await next(update, cancellationToken);
+                // Add a sanity check in case of data inconsistency between services/DB.
+                if (userEntity is null)
+                {
+                    _logger.LogCritical("Data Inconsistency: User DTO found for UserID {UserId}, but the full domain entity was not. Halting pipeline.", userId.Value);
+                    await _messageSender.SendTextMessageAsync(
+                       chatId: userId.Value,
+                       text: "🤖 A server error occurred due to a data consistency issue. Please try again later.",
+                       cancellationToken: CancellationToken.None
+                   ).ConfigureAwait(false);
+                    return;
+                }
+
+                // Now we have the correct type: 'Domain.Entities.User'
+                // The compiler error is gone.
+                _userContext.SetCurrentUser(userEntity);
+                // --- END FIX ---
+
+                var username = string.IsNullOrEmpty(userEntity.Username) ? "[no username]" : userEntity.Username;
+                _logger.LogInformation("User {UserId} ({Username}) authenticated successfully. Proceeding with pipeline.", userEntity.TelegramId, username);
+
+                await next(update, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogCritical(ex, "A critical error occurred during authentication for UserID {UserId}. Halting pipeline.", userId.Value);
+                await _messageSender.SendTextMessageAsync(
+                    chatId: userId.Value,
+                    text: "🤖 A server error occurred during authentication. Please try again later.",
+                    cancellationToken: CancellationToken.None
+                ).ConfigureAwait(false);
+            }
         }
     }
 }

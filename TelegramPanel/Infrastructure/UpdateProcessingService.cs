@@ -102,13 +102,15 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
         {
             _logger.LogInformation("Beginning pipeline processing for update ID: {UpdateId}.", update.Id);
 
+            // This defines the final destination of the pipeline, which is our main router.
             async Task finalHandlerAction(Update processedUpdate, CancellationToken ct)
             {
                 await RouteToHandlerOrStateMachineAsync(processedUpdate, ct);
             }
 
+            // Build the middleware pipeline chain.
             var pipeline = _middlewares.Aggregate(
-(TelegramPipelineDelegate)finalHandlerAction,
+                (TelegramPipelineDelegate)finalHandlerAction,
                 (nextMiddlewareInChain, currentMiddleware) =>
                     async (upd, ct) => await currentMiddleware.InvokeAsync(upd, nextMiddlewareInChain, ct)
             );
@@ -121,10 +123,12 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
             catch (Exception ex)
             {
                 _logger.LogError(ex, "An unhandled exception escaped the Telegram update processing pipeline for update ID: {UpdateId}.", update.Id);
-                await HandleProcessingErrorAsync(update, ex, cancellationToken);
+
+                // --- THIS IS THE FIX ---
+                // The call now matches the corrected 2-argument signature of HandleProcessingErrorAsync.
+                await HandleProcessingErrorAsync(update, ex).ConfigureAwait(false);
             }
         }
-
 
         #endregion
 
@@ -147,252 +151,315 @@ namespace TelegramPanel.Infrastructure // یا Application اگر در آن لا
         /// 3. Active State Machine (if the user is in a conversation)
         /// 4. Fallback for unknown updates.
         /// </summary>
+        /// <summary>
+        /// Main router method. Orchestrates the entire routing workflow with a top-level resiliency boundary.
+        /// </summary>
         private async Task RouteToHandlerOrStateMachineAsync(Update update, CancellationToken cancellationToken)
         {
             var userId = update.Message?.From?.Id ?? update.CallbackQuery?.From?.Id;
             if (!userId.HasValue)
             {
-                _logger.LogWarning("Cannot route Update ID: {UpdateId}. UserID is missing from the update object.", update.Id);
+                _logger.LogWarning("Cannot route Update ID: {UpdateId}. UserID is missing.", update.Id);
                 return;
             }
 
-            var pollyContext = new Polly.Context($"RouteToHandler_{update.Id}", new Dictionary<string, object>
-    {
-        { "UpdateId", update.Id },
-        { "TelegramUserId", userId.Value }
-    });
-
-            // =========================================================================
-            // FIX: THE ROUTING LOGIC IS REORDERED HERE
-            // =========================================================================
-
-            // --- Priority 1: Check for a specific Command or Callback Handler ---
-            bool handledByTypeSpecificHandler = false;
-
-            // Check for Commands (e.g., /start, /cancel)
-            if (update.Type == UpdateType.Message && update.Message?.Text?.StartsWith('/') == true)
-            {
-                ITelegramCommandHandler? commandHandler = _commandHandlers.FirstOrDefault(h => h.CanHandle(update));
-                if (commandHandler != null)
-                {
-                    _logger.LogInformation("Routing UpdateID {UpdateId} to CommandHandler: {HandlerName}", update.Id, commandHandler.GetType().Name);
-                    await commandHandler.HandleAsync(update, cancellationToken);
-                    handledByTypeSpecificHandler = true;
-                }
-            }
-            // Check for Callback Queries (Button Clicks)
-            else if (update.Type == UpdateType.CallbackQuery)
-            {
-                ITelegramCallbackQueryHandler? callbackHandler = _callbackQueryHandlers.FirstOrDefault(h => h.CanHandle(update));
-                if (callbackHandler != null)
-                {
-                    _logger.LogInformation("Routing UpdateID {UpdateId} to CallbackQueryHandler: {HandlerName} for data '{CallbackData}'",
-                        update.Id, callbackHandler.GetType().Name, update.CallbackQuery!.Data);
-                    await callbackHandler.HandleAsync(update, cancellationToken);
-                    handledByTypeSpecificHandler = true;
-                }
-            }
-
-            // If a specific handler was found and executed, we are done.
-            if (handledByTypeSpecificHandler)
-            {
-                return;
-            }
-
-            // --- Priority 2: If no specific handler was found, THEN check the State Machine ---
-            _logger.LogDebug("No specific handler found. Checking for active state for UserID {UserId}.", userId.Value);
-
-            ITelegramState? currentState = null;
             try
             {
-                await _internalServiceRetryPolicy.ExecuteAsync(async (context, ct) =>
-                {
-                    currentState = await _stateMachine.GetCurrentStateAsync(userId.Value, ct);
-                }, pollyContext, cancellationToken);
+                var pollyContext = CreatePollyContextForUpdate(update, userId.Value);
+
+                await _internalServiceRetryPolicy.ExecuteAsync(
+                    async (context, ct) => await ProcessUpdateInternalAsync(update, userId.Value, context, ct),
+                    pollyContext,
+                    cancellationToken
+                ).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error retrieving current state for UserID {UserId} while processing Update ID: {UpdateId} after retries.", userId.Value, update.Id);
-                await HandleProcessingErrorAsync(update, ex, cancellationToken);
+                _logger.LogCritical(ex, "A critical, non-recoverable error occurred while routing Update ID {UpdateId} for UserID {UserId} after all retries.", update.Id, userId.Value);
+                await HandleProcessingErrorAsync(update, ex).ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>
+        /// The core processing workflow, executed within a Polly policy.
+        /// This version handles handler selection directly without a helper method.
+        /// Priority Order: 1. Specific Handlers -> 2. State Machine -> 3. Fallback.
+        /// </summary>
+        private async Task ProcessUpdateInternalAsync(Update update, long userId, Polly.Context pollyContext, CancellationToken cancellationToken)
+        {
+            // --- Priority 1: Check for a specific Command or Callback Handler ---
+            // The handler selection logic is now inlined here.
+            bool handled = false;
+
+            if (update.Type == UpdateType.Message && update.Message?.Text?.StartsWith('/') == true)
+            {
+                var commandHandler = _commandHandlers.FirstOrDefault(h => h.CanHandle(update));
+                if (commandHandler != null)
+                {
+                    _logger.LogInformation("Routing UpdateID {UpdateId} to CommandHandler: {HandlerName}", update.Id, commandHandler.GetType().Name);
+                    await commandHandler.HandleAsync(update, cancellationToken).ConfigureAwait(false);
+                    handled = true;
+                }
+            }
+            else if (update.Type == UpdateType.CallbackQuery)
+            {
+                var callbackHandler = _callbackQueryHandlers.FirstOrDefault(h => h.CanHandle(update));
+                if (callbackHandler != null)
+                {
+                    _logger.LogInformation("Routing UpdateID {UpdateId} to CallbackQueryHandler: {HandlerName}", update.Id, callbackHandler.GetType().Name);
+                    await callbackHandler.HandleAsync(update, cancellationToken).ConfigureAwait(false);
+                    handled = true;
+                }
+            }
+
+            // If a specific handler was found and executed, our work is done.
+            if (handled)
+            {
                 return;
             }
 
-            if (currentState != null)
+            // --- Priority 2: Attempt to handle with the state machine ---
+            if (await TryHandleWithStateMachineAsync(update, userId, pollyContext, cancellationToken).ConfigureAwait(false))
             {
-                _logger.LogInformation("UserID {UserId} is in state '{StateName}'. Processing UpdateID {UpdateId} with state machine.",
-                    userId.Value, currentState.Name, update.Id);
-                try
-                {
-                    await _internalServiceRetryPolicy.ExecuteAsync(async (context, ct) =>
-                    {
-                        await _stateMachine.ProcessUpdateInCurrentStateAsync(userId.Value, update, ct);
-                    }, pollyContext, cancellationToken);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error processing UpdateID {UpdateId} in state '{StateName}' for UserID {UserId} after retries.",
-                        update.Id, currentState.Name, userId.Value);
-                    await HandleProcessingErrorAsync(update, ex, cancellationToken);
-
-                    try
-                    {
-                        _logger.LogWarning("Attempting to clear faulty state '{StateName}' for UserID {UserId}.", currentState.Name, userId.Value);
-                        await _internalServiceRetryPolicy.ExecuteAsync(async (context, ct) =>
-                        {
-                            await _stateMachine.ClearStateAsync(userId.Value, ct);
-                        }, pollyContext, CancellationToken.None);
-                        _logger.LogInformation("State cleared for UserID {UserId} due to processing error.", userId.Value);
-                    }
-                    catch (Exception clearEx)
-                    {
-                        _logger.LogError(clearEx, "CRITICAL: Failed to clear state for UserID {UserId} after processing error in state '{StateName}'.", userId.Value, currentState.Name);
-                    }
-                }
-                return;
+                return; // Handled by the state machine path.
             }
 
-            // --- Fallback: No handler or state found ---
-            var contentPartial = update.Message?.Text ?? update.CallbackQuery?.Data ?? update.InlineQuery?.Query ?? "N/A";
-            if (contentPartial.Length > 50)
+            // --- Priority 3: Fallback for any unmatched updates ---
+            await HandleUnknownOrUnmatchedUpdateAsync(update, cancellationToken).ConfigureAwait(false);
+        }
+
+
+        // These helper methods below can remain exactly as they were in the previous refactored answer.
+        // They are not dependent on `FindSpecificHandlerFor` and are still highly valuable.
+
+        /// <summary>
+        /// Attempts to process the update using the state machine. Handles its own errors.
+        /// </summary>
+        /// <returns>True if the state machine path was taken, false if there was no active state.</returns>
+        private async Task<bool> TryHandleWithStateMachineAsync(Update update, long userId, Polly.Context pollyContext, CancellationToken cancellationToken)
+        {
+            ITelegramState? currentState = await _stateMachine.GetCurrentStateAsync(userId, cancellationToken).ConfigureAwait(false);
+
+            if (currentState == null)
             {
-                contentPartial = contentPartial.Substring(0, 50) + "...";
+                return false; // No active state.
             }
 
-            _logger.LogWarning("No suitable specific handler or active state found for Update ID: {UpdateId}. UpdateType: {UpdateType}. Content(partial): '{Content}'. Routing to unknown/unmatched handler.",
-                update.Id, update.Type, contentPartial);
-            await HandleUnknownOrUnmatchedUpdateAsync(update, cancellationToken);
+            _logger.LogInformation("UserID {UserId} is in state '{StateName}'. Processing UpdateID {UpdateId} with state machine.", userId, currentState.Name, update.Id);
+
+            try
+            {
+                await _stateMachine.ProcessUpdateInCurrentStateAsync(userId, update, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                await HandleStateMachineRecoveryAsync(update, userId, currentState.Name, ex).ConfigureAwait(false);
+            }
+
+            return true; // Path handled.
+        }
+
+        /// <summary>
+        /// Handles recovery after a state machine execution failure (notifies user, clears state).
+        /// </summary>
+        private async Task HandleStateMachineRecoveryAsync(Update update, long userId, string failedStateName, Exception originalException)
+        {
+            _logger.LogError(originalException, "Error processing UpdateID {UpdateId} in state '{StateName}' for UserID {UserId}.", update.Id, failedStateName, userId);
+
+            await HandleProcessingErrorAsync(update, originalException).ConfigureAwait(false);
+
+            _logger.LogWarning("Attempting to clear faulty state '{StateName}' for UserID {UserId} as part of recovery.", failedStateName, userId);
+            try
+            {
+                var recoveryContext = new Polly.Context($"StateClearRecovery_{update.Id}", new Dictionary<string, object> { { "UserId", userId } });
+
+                await _internalServiceRetryPolicy.ExecuteAsync(
+                    async (context, ct) => await _stateMachine.ClearStateAsync(userId, ct),
+                    recoveryContext,
+                    CancellationToken.None
+                ).ConfigureAwait(false);
+
+                _logger.LogInformation("State '{StateName}' cleared successfully for UserID {UserId} after processing error.", failedStateName, userId);
+            }
+            catch (Exception clearEx)
+            {
+                _logger.LogCritical(clearEx, "CRITICAL: Failed to clear state for UserID {UserId} after a processing error in state '{StateName}'.", userId, failedStateName);
+            }
+        }
+
+        /// <summary>
+        /// Creates a new Polly context for an operation.
+        /// </summary>
+        private Polly.Context CreatePollyContextForUpdate(Update update, long userId, string operationName = "UpdateProcessing")
+        {
+            return new Polly.Context($"{operationName}_{update.Id}", new Dictionary<string, object>
+    {
+        { "UpdateId", update.Id },
+        { "TelegramUserId", userId }
+    });
         }
         /// <summary>
-        /// Handles updates that were not managed by any Command Handler or active state.
-        /// It sends a default message to the user which self-destructs after a few seconds.
-        /// This method uses the <see cref="_externalApiRetryPolicy"/> retry policy for sending and deleting the message.
-        /// </summary>
-        /// <param name="update">The unhandled or unmatched update.</param>
-        /// <param name="cancellationToken">A token to cancel the operation.</param>
-        /// <summary>
-        /// Handles updates that were not managed by any other handler.
-        /// This method immediately returns while launching a background task to handle the response.
+        /// Handles updates that were not managed by any other handler. It safely
+        /// launches a background "fire-and-forget" task to notify the user.
         /// </summary>
         private Task HandleUnknownOrUnmatchedUpdateAsync(Update update, CancellationToken cancellationToken)
         {
-            var chatId = update.Message?.Chat?.Id ?? update.CallbackQuery?.Message?.Chat?.Id;
+            try
+            {
+                var chatId = update.Message?.Chat?.Id ?? update.CallbackQuery?.Message?.Chat?.Id;
 
-            if (chatId.HasValue)
-            {
-                // ✅ FIRE-AND-FORGET: Start the task but don't wait for it.
-                // This allows the handler to return immediately and process the next update.
-                _ = SendAndDeleteEphemeralMessageAsync(chatId.Value, cancellationToken);
+                if (chatId.HasValue)
+                {
+                    // 1. ROBUST LAUNCH: Launch the self-contained, resilient background task.
+                    _ = RespondToUnknownUpdateAndForgetAsync(chatId.Value, update.Id, cancellationToken);
+                }
+                else
+                {
+                    // 2. ENHANCED LOGGING: Include the UpdateType for better context.
+                    _logger.LogWarning(
+                        "Cannot handle unknown update {UpdateId} because ChatId is missing. UpdateType: {UpdateType}",
+                        update.Id,
+                        update.Type);
+                }
             }
-            else
+            catch (Exception ex)
             {
-                _logger.LogWarning("Cannot handle unknown update {UpdateId} because ChatId is missing.", update.Id);
+                // 3. LAUNCHER SAFETY NET: Prevents the main pipeline from crashing due to an error here.
+                _logger.LogError(ex, "An unexpected error occurred while trying to launch the 'unknown update' handler for Update ID {UpdateId}.", update.Id);
             }
 
             return Task.CompletedTask;
         }
 
-        private async Task SendAndDeleteEphemeralMessageAsync(long chatId, CancellationToken cancellationToken)
+        /// <summary>
+        /// A self-contained, resilient background task to send an ephemeral "unknown command" message.
+        /// It handles its own rate-limiting, error handling, and applies the external API retry policy.
+        /// </summary>
+        private async Task RespondToUnknownUpdateAndForgetAsync(long chatId, int updateId, CancellationToken cancellationToken)
         {
-            // --- ANTI-SPAM LOGIC ---
-            // Define a unique cache key for this user's rate limit.
-            var rateLimitCacheKey = $"unknown_command_ratelimit_{chatId}";
-
-            // Check if a rate-limit entry already exists for this user.
-            // The '_' is a discard, we only care IF the value exists, not what it is.
-            if (_memoryCache.TryGetValue(rateLimitCacheKey, out _))
-            {
-                // The user is rate-limited. Log it for debugging and do nothing.
-                _logger.LogInformation("Rate limit triggered for ChatId {ChatId}. Suppressing 'unknown command' message.", chatId);
-                return; // Exit the method silently.
-            }
-            // --- END ANTI-SPAM LOGIC ---
-
+            // This entire method runs in the background. It MUST handle all of its own exceptions.
             try
             {
-                // If not rate-limited, proceed to send the message.
-                var sentMessage = await _directMessageSender.SendTextMessageAsync(
-                    chatId: chatId,
-                    text: "Sorry, I didn't understand that command. This message will self-destruct.",
-                    cancellationToken: cancellationToken);
-
-                if (sentMessage is null)
+                var rateLimitCacheKey = $"unknown_command_ratelimit_{chatId}";
+                if (_memoryCache.TryGetValue(rateLimitCacheKey, out _))
                 {
-                    _logger.LogWarning("Failed to send ephemeral message to chat {ChatId}, it might be blocked.", chatId);
+                    _logger.LogInformation("Rate limit triggered for ChatId {ChatId}. Suppressing 'unknown command' message.", chatId);
                     return;
                 }
 
-                // --- ANTI-SPAM LOGIC ---
-                // After successfully sending, set the rate-limit cache entry for this user.
-                // It will automatically expire after 10 seconds.
-                var cacheEntryOptions = new MemoryCacheEntryOptions()
-                    .SetAbsoluteExpiration(TimeSpan.FromSeconds(10));
+                // 4. CORRECT RETRY POLICY APPLICATION
+                var pollyContext = new Polly.Context($"EphemeralMessage_{updateId}", new Dictionary<string, object> { { "ChatId", chatId } });
 
-                _ = _memoryCache.Set(rateLimitCacheKey, true, cacheEntryOptions);
-                // --- END ANTI-SPAM LOGIC ---
+                // Wrap the send operation with the retry policy.
+                var sentMessage = await _externalApiRetryPolicy.ExecuteAsync(
+                    async (context, ct) => await _directMessageSender.SendTextMessageAsync(
+                        chatId: chatId,
+                        text: "Sorry, I didn't understand that command. This message will self-destruct.",
+                        cancellationToken: ct
+                    ),
+                    pollyContext,
+                    cancellationToken
+                ).ConfigureAwait(false);
 
-                // Wait for 3 seconds to delete the message.
-                await Task.Delay(TimeSpan.FromSeconds(3), cancellationToken);
+                if (sentMessage is null)
+                {
+                    _logger.LogWarning("Failed to send ephemeral message to chat {ChatId} after retries, it might be blocked or does not exist.", chatId);
+                    return;
+                }
 
-                await _directMessageSender.DeleteMessageAsync(
-                    chatId: chatId,
-                    messageId: sentMessage.MessageId,
-                    cancellationToken: cancellationToken);
+                // If sending was successful, set the rate limit and plan the deletion.
+                _memoryCache.Set(rateLimitCacheKey, true, new MemoryCacheEntryOptions().SetAbsoluteExpiration(TimeSpan.FromSeconds(10)));
+                await Task.Delay(TimeSpan.FromSeconds(3), cancellationToken).ConfigureAwait(false);
+
+                // Wrap the delete operation with the retry policy as well.
+                await _externalApiRetryPolicy.ExecuteAsync(
+                    async (context, ct) => await _directMessageSender.DeleteMessageAsync(
+                        chatId: chatId,
+                        messageId: sentMessage.MessageId,
+                        cancellationToken: ct
+                    ),
+                    pollyContext,
+                    cancellationToken
+                ).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
-                // Safe to ignore.
+                // It's safe to ignore cancellation exceptions in a fire-and-forget task.
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error in fire-and-forget task 'SendAndDeleteEphemeralMessageAsync' for chat {ChatId}.", chatId);
+                // Catch all other exceptions to prevent the background task from crashing the application.
+                _logger.LogError(ex, "An unhandled exception occurred in the 'RespondToUnknownUpdateAndForgetAsync' background task for ChatId {ChatId}.", chatId);
             }
         }
 
-
         /// <summary>
-        /// خطاهای پیش‌بینی نشده در حین پردازش آپدیت را مدیریت می‌کند و یک پیام عمومی خطا به کاربر ارسال می‌کند.
-        /// این متد از سیاست تلاش مجدد <see cref="_externalApiRetryPolicy"/> برای ارسال پیام استفاده می‌کند.
+        /// Manages unexpected exceptions during update processing by logging the original error
+        /// and attempting to send a resilient "Oops" message to the user.
         /// </summary>
-        /// <param name="update">آپدیت که در حین پردازش آن خطا رخ داده است.</param>
-        /// <param name="exception">خطای رخ داده.</param>
-        /// <param name="cancellationToken">توکن برای لغو عملیات ارسال پیام (معمولاً CancellationToken.None استفاده می‌شود تا پیام خطا حتما ارسال شود).</param>
-        private async Task HandleProcessingErrorAsync(Update update, Exception exception, CancellationToken cancellationToken)
+        /// <param name="update">The update that caused the processing error.</param>
+        /// <param name="exception">The original exception that was thrown.</param>
+        private async Task HandleProcessingErrorAsync(Update update, Exception exception)
         {
-            _logger.LogError(exception, "Handling processing error for update ID: {UpdateId}. Attempting to notify user.", update.Id);
-            var chatId = update.Message?.Chat?.Id ?? update.CallbackQuery?.Message?.Chat?.Id;
+            // 1. ENHANCED LOGGING of the initial failure with more detail.
+            _logger.LogError(exception,
+                "Handling processing error for UpdateID {UpdateId}. Exception Type: {ExceptionType}. Error: {ErrorMessage}. Attempting to notify user.",
+                update.Id,
+                exception.GetType().Name,
+                exception.Message);
+
+            // 2. MORE COMPREHENSIVE ChatId/UserId retrieval.
+            var chatId = update.Message?.Chat?.Id
+                      ?? update.CallbackQuery?.Message?.Chat?.Id
+                      ?? update.InlineQuery?.From?.Id
+                      ?? update.ChosenInlineResult?.From?.Id
+                      ?? update.MyChatMember?.Chat?.Id;
+
             if (chatId.HasValue)
             {
-                // اطلاعات برای Context مربوط به Polly
+                // Create a dedicated Polly Context for this specific error-handling operation.
                 var pollyContext = new Polly.Context($"ProcessingErrorMessage_{update.Id}", new Dictionary<string, object>
-                {
-                    { "UpdateId", update.Id },
-                    { "ChatId", chatId.Value }
-                });
+        {
+            { "UpdateId", update.Id },
+            { "ChatId", chatId.Value }
+        });
 
                 try
                 {
-                    // ✅ اعمال سیاست تلاش مجدد بر روی SendTextMessageAsync
-                    // از CancellationToken.None استفاده می‌شود تا اطمینان حاصل شود که این پیام خطا حتی اگر درخواست اصلی (و CancellationToken آن)
-                    // لغو شده باشد، همچنان شانس ارسال داشته باشد.
-                    await _externalApiRetryPolicy.ExecuteAsync(async (context, ct) =>
-                    {
-                        // این فراخوانی باید async باشد و Thread را بلاک نکند.
-                        await _messageSender.SendTextMessageAsync(chatId.Value,
+                    // Use _externalApiRetryPolicy to make the user notification resilient.
+                    // Using CancellationToken.None is a deliberate choice here: we want this emergency
+                    // message to have the best possible chance of being delivered, even if the original
+                    // operation was canceled.
+                    await _externalApiRetryPolicy.ExecuteAsync(
+                        async (context, ct) => await _messageSender.SendTextMessageAsync(
+                            chatId.Value,
                             "🤖 Oops! Something went wrong while processing your request. Our team has been notified. Please try again in a moment.",
-                            cancellationToken: CancellationToken.None); // در اینجا از CancellationToken.None برای ارسال پیام اضطراری استفاده می‌شود
-                    }, pollyContext, CancellationToken.None); // ارسال CancellationToken.None به Polly
+                            cancellationToken: ct // Pass Polly's cancellation token down.
+                        ),
+                        pollyContext,
+                        CancellationToken.None // We explicitly tell Polly to start with a non-canceled token.
+                    ).ConfigureAwait(false);
                 }
                 catch (Exception sendEx)
                 {
-                    // اگر حتی ارسال پیام خطا نیز با مشکل مواجه شود، این یک خطای بحرانی‌تر است.
-                    _logger.LogError(sendEx, "Critical: Failed to send error notification message to user {ChatId} for update ID: {UpdateId} after a processing error and retries.", chatId.Value, update.Id);
+                    // 3. MORE SPECIFIC LOGGING for the failure of the error notification system itself.
+                    _logger.LogCritical(sendEx,
+                        "CRITICAL: Failed to send the final error notification message to ChatId {ChatId} for UpdateID {UpdateId} after a processing error. Original Exception Type was {OriginalExceptionType}.",
+                        chatId.Value,
+                        update.Id,
+                        exception.GetType().Name); // Include original exception type for context.
                 }
             }
             else
             {
-                _logger.LogWarning("Cannot send error notification for update ID: {UpdateId} as ChatId is missing. Original error: {ExceptionMessage}", update.Id, exception.Message);
+                // 4. MORE INFORMATIVE LOGGING when ChatId is missing.
+                _logger.LogWarning(
+                    "Could not notify user about processing error for UpdateID {UpdateId} because ChatId could not be determined. Original Exception Type: {ExceptionType}, Original Error: {OriginalErrorMessage}",
+                    update.Id,
+                    exception.GetType().Name,
+                    exception.Message);
             }
         }
-        #endregion
-    }
+            #endregion
+        }
 }

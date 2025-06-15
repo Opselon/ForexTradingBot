@@ -6,6 +6,7 @@
 using Application.Common.Interfaces; // برای IUserRepository, IUserSignalPreferenceRepository, ISignalCategoryRepository, IAppDbContext, INotificationService
 using Application.DTOs;
 using Application.Interfaces;        // برای IUserService, ISubscriptionService از پروژه اصلی Application
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging; // برای ILogger
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
@@ -145,38 +146,38 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
         private const double RateLimitSeconds = 0.5; // Allow max 2 requests per second per user.
 
         /// <summary>
-        /// Handles an incoming callback query from the settings menu with a focus on security, performance, and maintainability.
+        /// Handles an incoming callback query from the settings menu with a focus on security, performance, and reliability.
+        /// This method acts as the main entry point, orchestrating validation, rate limiting, and dispatching.
         /// </summary>
-        /// <param name="update">The incoming update from Telegram.</param>
-        /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
         public async Task HandleAsync(Update update, CancellationToken cancellationToken = default)
         {
-            // --- 1. Initial Validation and Request Destructuring ---
+            // --- 1. Initial Validation ---
             if (!ValidateRequest(update, out CallbackQuery? callbackQuery, out Message? message, out User? fromUser))
             {
-                // Validation failed, logging is handled within the validation method.
+                // 2. The compiler knows if it gets here, ValidateRequest returned `false`.
+                //    Therefore, `message` might be null, but that's okay because you `return`.
                 return;
             }
 
             long chatId = message.Chat.Id;
             long telegramUserId = fromUser.Id;
-            string callbackData = callbackQuery.Data ?? string.Empty;
 
             // --- 2. Security: Per-User Rate Limiting (Throttling) ---
             if (IsRateLimited(telegramUserId))
             {
-                // Silently answer the query to stop the loading spinner, but take no further action.
-                // This prevents button spam from overloading the system.
-                await AnswerCallbackQuerySilentAsync(callbackQuery.Id, cancellationToken);
-                _logger.LogWarning("Rate limit triggered for UserID {TelegramUserId}. Ignoring callback '{CallbackData}'.", telegramUserId, callbackData);
+                _logger.LogWarning("Rate limit triggered for UserID {TelegramUserId}. Ignoring callback '{CallbackData}'.", telegramUserId, callbackQuery.Data);
+                // Provide gentle feedback to the user instead of failing silently.
+                await AnswerCallbackQuerySilentAsync(callbackQuery.Id, cancellationToken, text: "You're clicking too fast. Please wait a moment.").ConfigureAwait(false);
                 return;
             }
 
-            // Set up a logging scope for this entire operation for contextualized logs.
-            using IDisposable? logScope = _logger.BeginScope(new Dictionary<string, object?>
+            // --- 3. Contextual Logging ---
+            // CORRECTED: Use a 'using' statement to ensure the logging scope is properly disposed, preventing leaks.
+            using var logScope = _logger.BeginScope(new Dictionary<string, object>
             {
                 ["TelegramUserId"] = telegramUserId,
-                ["CallbackData"] = callbackData,
+                ["CallbackQueryId"] = callbackQuery.Id,
+                ["CallbackData"] = callbackQuery.Data!,
                 ["OriginalMessageId"] = message.MessageId
             });
 
@@ -184,33 +185,47 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
 
             try
             {
-                // --- 3. Immediate User Feedback ---
-                // Answer the callback immediately. For actions that require processing, show a "Processing..." toast.
-                // For simple navigations like "back", a silent answer is sufficient.
-                string? toastMessage = ShouldShowProcessingToast(callbackData) ? "Processing..." : null;
-                await AnswerCallbackQuerySilentAsync(callbackQuery.Id, cancellationToken, toastMessage);
+                // --- 4. Immediate Acknowledgement (User Feedback) ---
+                // Acknowledge the button press instantly so the user knows their action was received.
+                // We do this *before* dispatching. Specific success/failure messages will be sent by the sub-handlers.
+                await AnswerCallbackQuerySilentAsync(callbackQuery.Id, cancellationToken).ConfigureAwait(false);
 
-                // --- 4. Logic Dispatching (Command Pattern) ---
-                // Instead of a large if-else block, we dispatch to the correct handler.
-                await DispatchCallbackAsync(callbackQuery, cancellationToken);
+                // --- 5. Logic Dispatching (Command Pattern) ---
+                // The main work is delegated to a dedicated dispatcher method.
+                await DispatchCallbackAsync(callbackQuery, cancellationToken).ConfigureAwait(false);
             }
+            // 6. ENHANCED EXCEPTION HANDLING
             catch (OperationCanceledException)
             {
-                // This is an expected exception when the application is shutting down.
-                _logger.LogInformation("Operation was cancelled for UserID {TelegramUserId}.", telegramUserId);
+                // This is an expected exception when the application is shutting down or the request is canceled. Log as info.
+                _logger.LogInformation("Operation was canceled for CallbackQueryId {CallbackQueryId}.", callbackQuery.Id);
+            }
+            catch (ApiRequestException apiEx)
+            {
+                // Handle API-specific errors that might occur during processing.
+                // These are often recoverable or indicate a client-side issue (e.g., bot blocked).
+                _logger.LogError(apiEx, "A Telegram API error occurred while processing CallbackQueryId {CallbackQueryId}.", callbackQuery.Id);
+                // It's often not necessary to message the user again, as a previous API call likely already failed.
             }
             catch (Exception ex)
             {
-                // This is a safety net for any unhandled exceptions within the dispatchers.
-                _logger.LogError(ex, "A critical error occurred while processing settings callback for UserID {TelegramUserId}.", telegramUserId);
+                // This is a safety net for any truly unexpected exceptions within the dispatchers.
+                _logger.LogCritical(ex, "A critical unhandled error occurred while processing CallbackQueryId {CallbackQueryId}.", callbackQuery.Id);
 
-                // Inform the user that something went wrong without revealing internal details.
-                // This message is sent as a new message because the original might be un-editable.
-                await _messageSender.SendTextMessageAsync(
-                    chatId,
-                    "An unexpected error occurred. Our team has been notified. Please try again later.",
-                    cancellationToken: cancellationToken
-                );
+                try
+                {
+                    // Inform the user that something went wrong without revealing internal details.
+                    await _messageSender.SendTextMessageAsync(
+                        chatId,
+                        "An unexpected error occurred. Our team has been notified. Please try again later.",
+                        cancellationToken: cancellationToken
+                    ).ConfigureAwait(false);
+                }
+                catch (ApiRequestException finalApiEx)
+                {
+                    // If even sending the error message fails, log it to avoid obscuring the original, more important exception.
+                    _logger.LogError(finalApiEx, "Failed to send the final error message to UserID {TelegramUserId} after a critical error.", telegramUserId);
+                }
             }
         }
 
@@ -218,41 +233,67 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
         /// Validates the incoming update to ensure it's a well-formed callback query we can process.
         /// </summary>
         /// <returns>True if the request is valid, otherwise false.</returns>
-        private bool ValidateRequest(Update update,
+        /// <summary>
+        /// Validates the incoming update to ensure it's a usable CallbackQuery.
+        /// This method uses a "guard clause" pattern to fail fast on invalid data.
+        /// </summary>
+        /// <returns>
+        /// True if the request is a valid, well-formed CallbackQuery; otherwise, false.
+        /// </returns>
+        private bool ValidateRequest(
+            Update update,
             [NotNullWhen(true)] out CallbackQuery? callbackQuery,
             [NotNullWhen(true)] out Message? message,
             [NotNullWhen(true)] out User? fromUser)
         {
-            callbackQuery = update.CallbackQuery;
-            message = callbackQuery?.Message;
-            fromUser = callbackQuery?.From;
+            // 1. EXPLICIT INITIALIZATION: Start by setting out parameters to a known default state (null).
+            // This is a robust pattern that ensures they have a predictable value if validation fails.
+            callbackQuery = null;
+            message = null;
+            fromUser = null;
 
-            if (callbackQuery == null)
+            // 2. PRIMARY GUARD CLAUSE: Ensure the update is a CallbackQuery.
+            // This is the most fundamental check.
+            if (update.CallbackQuery is null)
             {
-                _logger.LogWarning("Handler invoked with a non-CallbackQuery update. Type: {UpdateType}", update.Type);
+                _logger.LogWarning("Handler invoked with a non-CallbackQuery update. UpdateType: {UpdateType}", update.Type);
                 return false;
             }
 
-            if (message == null)
+            callbackQuery = update.CallbackQuery; // It's safe to assign now.
+
+            // 3. NESTED ENTITY GUARD CLAUSES: Ensure essential nested objects exist.
+            // We check them sequentially, providing specific logs for each failure case.
+            if (callbackQuery.Message is null)
             {
-                _logger.LogWarning("Received a callback query (ID: {CallbackQueryId}) but its associated message is null.", callbackQuery.Id);
+                _logger.LogWarning("Received CallbackQuery (ID: {CallbackQueryId}) but its associated Message is null. This is unexpected for standard button presses.", callbackQuery.Id);
                 return false;
             }
 
-            if (fromUser == null)
+            if (callbackQuery.From is null)
             {
-                _logger.LogWarning("Received a callback query (ID: {CallbackQueryId}) but its 'From' user is null.", callbackQuery.Id);
+                _logger.LogWarning("Received CallbackQuery (ID: {CallbackQueryId}) but its 'From' User is null.", callbackQuery.Id);
                 return false;
             }
 
+            // Now that we've confirmed nested entities exist, we can assign them.
+            message = callbackQuery.Message;
+            fromUser = callbackQuery.From;
+
+            // 4. PAYLOAD VALIDATION GUARD CLAUSE: Check the callback_data itself.
+            // Telegram's API specifies a 1-64 byte limit for this payload.
             if (string.IsNullOrEmpty(callbackQuery.Data) || callbackQuery.Data.Length > 64)
             {
-                // Telegram's limit for callback_data is 1-64 bytes.
-                _logger.LogError("Received an invalid callback query with null, empty, or oversized data. Length: {Length}. Data: '{Data}'",
-                    callbackQuery.Data?.Length ?? 0, callbackQuery.Data);
+                _logger.LogError(
+                    "Received an invalid CallbackQuery (ID: {CallbackQueryId}) from User {UserId} with null, empty, or oversized data. Length: {Length}. Data: '{Data}'",
+                    callbackQuery.Id,
+                    fromUser.Id,
+                    callbackQuery.Data?.Length ?? 0,
+                    callbackQuery.Data);
                 return false;
             }
 
+            // If all guard clauses have been passed, the request is valid.
             return true;
         }
 
@@ -289,59 +330,79 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
         }
 
         /// <summary>
-        /// Routes the callback query to the appropriate handler method using a command-like pattern.
-        /// </summary>
-        /// <summary>
-        /// Routes the callback query to the appropriate handler method using a command-like pattern.
+        /// Routes the callback query to the appropriate handler method. This implementation
+        /// is robust against null data and uses a clear, flat control flow for routing.
         /// </summary>
         private async Task DispatchCallbackAsync(CallbackQuery callbackQuery, CancellationToken cancellationToken)
         {
-            long chatId = callbackQuery.Message!.Chat.Id;
-            int messageId = callbackQuery.Message!.MessageId;
+            // 1. ROBUSTNESS: Explicitly check for null data to prevent NullReferenceException.
+            // This removes the need for the null-forgiving operator (`!`) and makes the code safer.
+            if (callbackQuery.Message is null || callbackQuery.Data is null)
+            {
+                _logger.LogCritical("Received a callback query with null Message or Data. CallbackQuery ID: {CallbackQueryId}", callbackQuery.Id);
+                // We cannot proceed, but we should at least try to answer the query silently to dismiss the loading indicator.
+                await AnswerCallbackQuerySilentAsync(callbackQuery.Id, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            // Now it's safe to access these properties.
+            long chatId = callbackQuery.Message.Chat.Id;
+            int messageId = callbackQuery.Message.MessageId;
             long telegramUserId = callbackQuery.From.Id;
-            string data = callbackQuery.Data!;
+            string data = callbackQuery.Data;
 
-            Dictionary<string, Func<Task>> actionMap = new()
-            {
-                { SettingsCommandHandler.ShowSettingsMenuCallback, () => ReshowSettingsMenuAsync(chatId, messageId, cancellationToken) },
-                { MenuCallbackQueryHandler.BackToMainMenuGeneral, async () => {
-                    (string text, InlineKeyboardMarkup k) = MenuCommandHandler.GetMainMenuMarkup();
-                    await EditMessageOrSendNewAsync(chatId, messageId, text, k, ParseMode.MarkdownV2, cancellationToken);
-                }},
-                { SettingsCommandHandler.PrefsSignalCategoriesCallback, () => ShowSignalCategoryPreferencesAsync(telegramUserId, chatId, messageId, cancellationToken) },
-                { SettingsCommandHandler.PrefsNotificationsCallback, () => ShowNotificationSettingsAsync(telegramUserId, chatId, messageId, cancellationToken) },
-                { SettingsCommandHandler.MySubscriptionInfoCallback, () => ShowMySubscriptionInfoAsync(telegramUserId, chatId, messageId, cancellationToken) },
-                { LanguageSettingsCallback, () => ShowLanguageSettingsAsync(telegramUserId, chatId, messageId, cancellationToken) },
-                { PrivacySettingsCallback, () => ShowPrivacySettingsAsync(telegramUserId, chatId, messageId, cancellationToken) },
-                { SaveSignalPreferencesCallback, () => HandleSaveSignalPreferencesAsync(telegramUserId, chatId, messageId, cancellationToken) },
-                { SelectAllSignalCategoriesCallback, () => HandleSelectAllSignalCategoriesAsync(telegramUserId, chatId, messageId, callbackQuery.Id, cancellationToken) },
-                { DeselectAllSignalCategoriesCallback, () => HandleDeselectAllSignalCategoriesAsync(telegramUserId, chatId, messageId, callbackQuery.Id, cancellationToken) }
-            };
+            // The dictionaries are kept local because their lambdas need to capture the method's local variables.
+            // This is a reasonable trade-off for clean, self-contained handlers.
+            var exactMatchActions = new Dictionary<string, Func<Task>>
+    {
+        { SettingsCommandHandler.ShowSettingsMenuCallback, () => ReshowSettingsMenuAsync(chatId, messageId, cancellationToken) },
+        { MenuCallbackQueryHandler.BackToMainMenuGeneral, async () => {
+            (string text, InlineKeyboardMarkup k) = MenuCommandHandler.GetMainMenuMarkup();
+            await EditMessageOrSendNewAsync(chatId, messageId, text, k, ParseMode.MarkdownV2, cancellationToken);
+        }},
+        { SettingsCommandHandler.PrefsSignalCategoriesCallback, () => ShowSignalCategoryPreferencesAsync(telegramUserId, chatId, messageId, cancellationToken) },
+        { SettingsCommandHandler.PrefsNotificationsCallback, () => ShowNotificationSettingsAsync(telegramUserId, chatId, messageId, cancellationToken) },
+        { SettingsCommandHandler.MySubscriptionInfoCallback, () => ShowMySubscriptionInfoAsync(telegramUserId, chatId, messageId, cancellationToken) },
+        { LanguageSettingsCallback, () => ShowLanguageSettingsAsync(telegramUserId, chatId, messageId, cancellationToken) },
+        { PrivacySettingsCallback, () => ShowPrivacySettingsAsync(telegramUserId, chatId, messageId, cancellationToken) },
+        { SaveSignalPreferencesCallback, () => HandleSaveSignalPreferencesAsync(telegramUserId, chatId, messageId, cancellationToken) },
+        { SelectAllSignalCategoriesCallback, () => HandleSelectAllSignalCategoriesAsync(telegramUserId, chatId, messageId, callbackQuery.Id, cancellationToken) },
+        { DeselectAllSignalCategoriesCallback, () => HandleDeselectAllSignalCategoriesAsync(telegramUserId, chatId, messageId, callbackQuery.Id, cancellationToken) }
+    };
 
-            Dictionary<string, Func<Task>> prefixActionMap = new()
-            {
-                { ToggleSignalCategoryPrefix, () => HandleToggleSignalCategoryAsync(telegramUserId, chatId, messageId, data, callbackQuery.Id, cancellationToken) },
-                { ToggleNotificationPrefix, () => HandleToggleNotificationAsync(telegramUserId, chatId, messageId, data, callbackQuery.Id, cancellationToken) },
-                { SelectLanguagePrefix, () => HandleSelectLanguageAsync(telegramUserId, chatId, messageId, data, callbackQuery.Id, cancellationToken) }
-            };
+            var prefixMatchActions = new Dictionary<string, Func<Task>>
+    {
+        { ToggleSignalCategoryPrefix, () => HandleToggleSignalCategoryAsync(telegramUserId, chatId, messageId, data, callbackQuery.Id, cancellationToken) },
+        { ToggleNotificationPrefix, () => HandleToggleNotificationAsync(telegramUserId, chatId, messageId, data, callbackQuery.Id, cancellationToken) },
+        { SelectLanguagePrefix, () => HandleSelectLanguageAsync(telegramUserId, chatId, messageId, data, callbackQuery.Id, cancellationToken) }
+    };
 
-            if (actionMap.TryGetValue(data, out Func<Task>? action))
+            // 2. READABILITY: Use a clear, flat "early return" pattern for routing.
+            // Check for an exact match first.
+            if (exactMatchActions.TryGetValue(data, out Func<Task>? action))
             {
-                await action();
+                await action().ConfigureAwait(false);
+                return; // Action found and executed, so we're done.
             }
-            else
+
+            // 3. CLARITY: Use a more explicit loop for prefix matching.
+            // If no exact match, check for a prefix match.
+            foreach (var (prefix, prefixAction) in prefixMatchActions)
             {
-                KeyValuePair<string, Func<Task>> prefixAction = prefixActionMap.FirstOrDefault(p => data.StartsWith(p.Key));
-                if (prefixAction.Value != null)
+                if (data.StartsWith(prefix))
                 {
-                    await prefixAction.Value();
-                }
-                else
-                {
-                    _logger.LogWarning("Unhandled CallbackQuery data in Settings context: {CallbackData}", data);
-                    await _messageSender.SendTextMessageAsync(chatId, "This action is not recognized.", cancellationToken: cancellationToken);
+                    await prefixAction().ConfigureAwait(false);
+                    return; // Action found and executed, so we're done.
                 }
             }
+
+            // 4. BETTER UX: If no action is found, log it and provide direct feedback to the user.
+            _logger.LogWarning("Unhandled CallbackQuery data in Settings context: '{CallbackData}' from User {TelegramUserId}", data, telegramUserId);
+            await AnswerCallbackQuerySilentAsync(
+                callbackQuery.Id,
+                cancellationToken,
+                "This action is no longer valid or recognized.",
+                showAlert: true).ConfigureAwait(false);
         }
 
 
@@ -726,108 +787,120 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
             await EditMessageOrSendNewAsync(chatId, messageIdToEdit, text, finalKeyboard, ParseMode.MarkdownV2, cancellationToken);
         }
 
-        /// <summary>
-        /// Handles toggling a specific notification setting. It fetches the user,
-        /// modifies the setting, saves it to the database, and then immediately
-        /// refreshes the UI by passing the modified entity to the display method,
-        /// guaranteeing UI consistency.
-        /// </summary>
-        /// <summary>
-        /// Handles toggling a specific notification setting. It fetches the user,
-        /// modifies the setting, saves it to the database, and then immediately
-        /// refreshes the UI by passing the modified entity to the display method,
-        /// guaranteeing UI consistency.
-        /// </summary>
-        private async Task HandleToggleNotificationAsync(long telegramUserId, long chatId, int messageIdToEdit, string callbackData, string originalCallbackQueryId, CancellationToken cancellationToken)
+
+private async Task HandleToggleNotificationAsync(long telegramUserId, long chatId, int messageIdToEdit, string callbackData, string originalCallbackQueryId, CancellationToken cancellationToken)
+    {
+        // Fetch the user with all their related data to ensure we have the full context.
+        Domain.Entities.User? userEntity = await _userRepository.GetByTelegramIdWithNotificationsAsync(telegramUserId.ToString(), cancellationToken).ConfigureAwait(false);
+        if (userEntity == null)
         {
-            // **FIX 2: USE THE OPTIMIZED FETCH METHOD**
-            // Fetch the user with all their related data to ensure we have the full context.
-            Domain.Entities.User? userEntity = await _userRepository.GetByTelegramIdWithNotificationsAsync(telegramUserId.ToString(), cancellationToken);
-            if (userEntity == null)
-            {
-                _logger.LogWarning("Cannot toggle notification, user not found for Telegram ID {TelegramUserId}", telegramUserId);
-                await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken, "Your user profile could not be found.", showAlert: true);
-                return;
-            }
-
-            string notificationType = callbackData[ToggleNotificationPrefix.Length..];
-            _logger.LogInformation("UserID {SystemUserId}: Attempting to toggle setting '{NotificationType}'.", userEntity.Id, notificationType);
-
-            string statusMessage;
-            bool newStatus;
-
-            switch (notificationType)
-            {
-                case NotificationTypeGeneral:
-                    userEntity.EnableGeneralNotifications = !userEntity.EnableGeneralNotifications;
-                    newStatus = userEntity.EnableGeneralNotifications;
-                    statusMessage = $"General Updates are now {(newStatus ? "ENABLED" : "DISABLED")}.";
-                    break;
-                case NotificationTypeVipSignal:
-                    bool isVipUser = userEntity.Subscriptions.Any(s => s.Status == "Active" && s.EndDate > DateTime.UtcNow);
-                    if (!isVipUser)
-                    {
-                        await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken, "VIP subscription required to change this setting.", showAlert: true);
-                        return;
-                    }
-                    userEntity.EnableVipSignalNotifications = !userEntity.EnableVipSignalNotifications;
-                    newStatus = userEntity.EnableVipSignalNotifications;
-                    statusMessage = $"VIP Signal Alerts are now {(newStatus ? "ENABLED" : "DISABLED")}.";
-                    break;
-                case NotificationTypeRssNews:
-                    userEntity.EnableRssNewsNotifications = !userEntity.EnableRssNewsNotifications;
-                    newStatus = userEntity.EnableRssNewsNotifications;
-                    statusMessage = $"RSS News Updates are now {(newStatus ? "ENABLED" : "DISABLED")}.";
-                    break;
-                default:
-                    _logger.LogWarning("Unknown notification type '{Type}' for user {UserId}", notificationType, userEntity.Id);
-                    await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken, "Unknown setting.", showAlert: true);
-                    return;
-            }
-
-            // Instead of calling the full UpdateAsync, we can let EF Core's change tracker handle this.
-            // If UpdateAsync from the repository is desired, ensure it doesn't have side effects.
-            // For now, we will use the DbContext directly as it's cleaner.
-            userEntity.UpdatedAt = DateTime.UtcNow;
-
-            // Note: Since we fetched the entity from the context implicitly via the repository (if it's EF-backed)
-            // or need to attach it if it's Dapper-backed, saving changes should work.
-            // If using a Dapper repository, you might need to call `_userRepository.UpdateAsync(userEntity, cancellationToken)` instead.
-            // Assuming the `_appDbContext` is the source of truth for saving.
-            try
-            {
-                // This call assumes the userEntity is being tracked by the DbContext.
-                // If the repository is Dapper-only, we MUST call its UpdateAsync method.
-                // Let's assume the safe path is to call the repository's update method.
-                await _userRepository.UpdateAsync(userEntity, cancellationToken);
-                // If using EF Core IAppDbContext directly:
-                // await _appDbContext.SaveChangesAsync(cancellationToken);
-
-                _logger.LogInformation("Notification '{Type}' for user {UserId} successfully set to {Status}", notificationType, userEntity.Id, newStatus);
-
-                await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken, statusMessage);
-
-                // **FIX 3: PASS THE UPDATED ENTITY TO THE DISPLAY METHOD**
-                // This is the crucial step. We pass the entity that we just modified and saved.
-                await ShowNotificationSettingsAsync(telegramUserId, chatId, messageIdToEdit, cancellationToken, userEntity);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to save or update UI for notification settings for UserID {SystemUserId}.", userEntity.Id);
-                await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken, "Error saving your setting. Please try again.", showAlert: true);
-            }
+            _logger.LogWarning("Cannot toggle notification, user not found for Telegram ID {TelegramUserId}", telegramUserId);
+            await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken, "Your user profile could not be found.", showAlert: true).ConfigureAwait(false);
+            return;
         }
 
-        #endregion
+        string notificationType = callbackData[ToggleNotificationPrefix.Length..];
+        _logger.LogInformation("UserID {SystemUserId}: Attempting to toggle setting '{NotificationType}'.", userEntity.Id, notificationType);
 
-        #region Subscription Info Methods
-        /// <summary>
-        /// Displays the user's current subscription status and provides options to view/manage plans.
-        /// </summary>
-        // File: TelegramPanel/Application/CommandHandlers/SettingsCallbackQueryHandler.cs
-        // در متد ShowMySubscriptionInfoAsync:
+        // 1. PRE-COMPUTE VIP STATUS FOR CLEANER LOGIC
+        // This makes the switch statement easier to read. The logic itself is preserved from your original code.
+        bool isVipUser = userEntity.Subscriptions.Any(s => s.Status == "Active" && s.EndDate > DateTime.UtcNow);
 
-        private async Task ShowMySubscriptionInfoAsync(long telegramUserId, long chatId, int messageIdToEdit, CancellationToken cancellationToken)
+        // This section modifies the entity in memory. We do this before the `try` block for saving.
+        switch (notificationType)
+        {
+            case NotificationTypeGeneral:
+                userEntity.EnableGeneralNotifications = !userEntity.EnableGeneralNotifications;
+                break;
+            case NotificationTypeVipSignal:
+                if (!isVipUser)
+                {
+                    await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken, "VIP subscription required to change this setting.", showAlert: true).ConfigureAwait(false);
+                    // We still want to refresh the UI to ensure it's not left in a weird state.
+                    await ShowNotificationSettingsAsync(telegramUserId, chatId, messageIdToEdit, cancellationToken, userEntity).ConfigureAwait(false);
+                    return;
+                }
+                userEntity.EnableVipSignalNotifications = !userEntity.EnableVipSignalNotifications;
+                break;
+            case NotificationTypeRssNews:
+                userEntity.EnableRssNewsNotifications = !userEntity.EnableRssNewsNotifications;
+                break;
+            default:
+                _logger.LogWarning("Unknown notification type '{Type}' for user {UserId}", notificationType, userEntity.Id);
+                await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken, "Unknown setting.", showAlert: true).ConfigureAwait(false);
+                return;
+        }
+
+        // Now, attempt to persist the changes and update the UI.
+        try
+        {
+            userEntity.UpdatedAt = DateTime.UtcNow;
+
+            // This is your original, safe logic. It works perfectly.
+            await _userRepository.UpdateAsync(userEntity, cancellationToken).ConfigureAwait(false);
+
+            // On success, construct the message and log it.
+            bool newStatus = GetNotificationStatus(userEntity, notificationType);
+            string statusMessage = GetStatusMessage(notificationType, newStatus);
+
+            _logger.LogInformation("Notification '{Type}' for user {UserId} successfully set to {Status}", notificationType, userEntity.Id, newStatus);
+
+            // Answer the callback to give the user immediate feedback.
+            await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken, statusMessage).ConfigureAwait(false);
+        }
+        // 2. MORE SPECIFIC ERROR HANDLING
+        catch (DbUpdateException dbEx) // Catch database-specific errors first
+        {
+            _logger.LogError(dbEx, "Database error while updating notification settings for UserID {SystemUserId}.", userEntity.Id);
+            await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken, "Error: Could not save setting due to a database issue.", showAlert: true).ConfigureAwait(false);
+        }
+        catch (Exception ex) // Catch any other unexpected errors
+        {
+            _logger.LogError(ex, "Failed to save notification settings for UserID {SystemUserId}.", userEntity.Id);
+            await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken, "Error saving your setting. Please try again.", showAlert: true).ConfigureAwait(false);
+        }
+        finally
+        {
+            // 3. GUARANTEED UI CONSISTENCY
+            // This block executes whether the `try` succeeded or failed. This ensures that the user's
+            // menu is ALWAYS refreshed, preventing a stale UI. If the save failed, the menu will
+            // revert to its original state visually, which is the correct behavior.
+            await ShowNotificationSettingsAsync(telegramUserId, chatId, messageIdToEdit, cancellationToken, userEntity).ConfigureAwait(false);
+        }
+    }
+
+    // Helper to get the status without repeating the switch statement
+    private bool GetNotificationStatus(Domain.Entities.User user, string notificationType) => notificationType switch
+    {
+        NotificationTypeGeneral => user.EnableGeneralNotifications,
+        NotificationTypeVipSignal => user.EnableVipSignalNotifications,
+        NotificationTypeRssNews => user.EnableRssNewsNotifications,
+        _ => false
+    };
+
+    // Helper to get the message without repeating the switch statement
+    private string GetStatusMessage(string notificationType, bool newStatus)
+    {
+        string subject = notificationType switch
+        {
+            NotificationTypeGeneral => "General Updates",
+            NotificationTypeVipSignal => "VIP Signal Alerts",
+            NotificationTypeRssNews => "RSS News Updates",
+            _ => "Unknown Setting"
+        };
+        return $"{subject} are now {(newStatus ? "ENABLED" : "DISABLED")}.";
+    }
+
+    #endregion
+
+    #region Subscription Info Methods
+    /// <summary>
+    /// Displays the user's current subscription status and provides options to view/manage plans.
+    /// </summary>
+    // File: TelegramPanel/Application/CommandHandlers/SettingsCallbackQueryHandler.cs
+    // در متد ShowMySubscriptionInfoAsync:
+
+    private async Task ShowMySubscriptionInfoAsync(long telegramUserId, long chatId, int messageIdToEdit, CancellationToken cancellationToken)
         {
             // ✅ FIX: The method now accepts 'telegramUserId' and fetches the User entity itself.
             Domain.Entities.User? userEntity = await _userRepository.GetByTelegramIdAsync(telegramUserId.ToString(), cancellationToken);
@@ -1055,30 +1128,76 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
         #region Menu Display & Helper Methods
         /// <summary>
         /// Re-displays the main settings menu by editing the previous message.
+        /// This version includes robust validation and error handling.
         /// </summary>
         private async Task ReshowSettingsMenuAsync(long chatId, int messageIdToEdit, CancellationToken cancellationToken)
         {
-            _logger.LogInformation("Reshowing main settings menu for ChatID {ChatId}, MessageID {MessageIdToEdit}", chatId, messageIdToEdit);
-            // Uses the static method from SettingsCommandHandler to get consistent menu markup
-            (string settingsMenuText, InlineKeyboardMarkup settingsKeyboard) = SettingsCommandHandler.GetSettingsMenuMarkup();
-            await EditMessageOrSendNewAsync(chatId, messageIdToEdit, settingsMenuText, settingsKeyboard, ParseMode.MarkdownV2, cancellationToken);
-        }
+            _logger.LogInformation("Attempting to reshow main settings menu for ChatID {ChatId}, MessageID {MessageIdToEdit}", chatId, messageIdToEdit);
 
+            try
+            {
+                // Uses the static method from SettingsCommandHandler to get consistent menu markup
+                (string settingsMenuText, InlineKeyboardMarkup settingsKeyboard) = SettingsCommandHandler.GetSettingsMenuMarkup();
+
+                // 1. VALIDATION: Ensure the generated markup is valid before attempting to use it.
+                // This prevents passing null or invalid data to the Telegram API.
+                if (string.IsNullOrWhiteSpace(settingsMenuText) || settingsKeyboard is null)
+                {
+                    // This is a critical developer error. The menu content generator failed.
+                    _logger.LogCritical(
+                        "Failed to generate settings menu markup in SettingsCommandHandler.GetSettingsMenuMarkup(). " +
+                        "Text or Keyboard was null/empty. Cannot reshow menu for ChatID {ChatId}.",
+                        chatId);
+                    // We exit gracefully without crashing the handler.
+                    // Consider answering the callback query with an error message here if this becomes a recurring issue.
+                    return;
+                }
+
+                // 2. API CALL: The call is now safely inside the try block.
+                await EditMessageOrSendNewAsync(
+                    chatId,
+                    messageIdToEdit,
+                    settingsMenuText,
+                    settingsKeyboard,
+                    ParseMode.MarkdownV2,
+                    cancellationToken
+                ).ConfigureAwait(false);
+
+                _logger.LogInformation("Successfully reshown settings menu for ChatID {ChatId}", chatId);
+            }
+            catch (Exception ex)
+            {
+                // 3. EXCEPTION HANDLING: Catch any exception during the process.
+                // This could be an ApiRequestException from Telegram (e.g., message not found, bot blocked)
+                // or any other runtime error. This ensures the handler does not crash.
+                _logger.LogError(
+                    ex,
+                    "An unexpected error occurred while trying to reshow the settings menu for ChatID {ChatId} and MessageID {MessageIdToEdit}.",
+                    chatId,
+                    messageIdToEdit);
+
+                // Although the operation failed, the calling method will still proceed to answer the callback query,
+                // preventing the user from seeing a frozen "loading" state on the button.
+            }
+        }
         /// <summary>
-        /// Silently answers a callback query to remove the loading state from the button.
-        /// Optionally shows a short text notification (toast) to the user.
+        /// Answers a callback query, either silently or with a toast/alert notification.
+        /// This method includes enhanced, specific error handling for common Telegram API exceptions.
         /// </summary>
+        /// <param name="callbackQueryId">The unique identifier for the callback query to be answered.</param>
+        /// <param name="cancellationToken">A token to cancel the asynchronous operation.</param>
+        /// <param name="text">The text to show in the notification. Can be null for a silent answer.</param>
+        /// <param name="showAlert">If true, an alert will be shown to the user instead of a toast notification.</param>
         private async Task AnswerCallbackQuerySilentAsync(string callbackQueryId, CancellationToken cancellationToken, string? text = null, bool showAlert = false)
         {
             try
             {
-                // ✅ FIX: Use named arguments in the call to the bot client for clarity and correctness.
                 await _botClient.AnswerCallbackQuery(
                     callbackQueryId: callbackQueryId,
                     text: text,
                     showAlert: showAlert,
                     cancellationToken: cancellationToken
-                );
+                ).ConfigureAwait(false);
 
                 if (!string.IsNullOrWhiteSpace(text))
                 {
@@ -1089,13 +1208,65 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
                     _logger.LogDebug("Answered CallbackQueryID: {CallbackQueryId} silently.", callbackQueryId);
                 }
             }
+            // Specific Catch: The query is too old or has already been answered. This is a common, non-critical scenario.
             catch (ApiRequestException apiEx) when (apiEx.ErrorCode == 400 && (apiEx.Message.Contains("query is too old", StringComparison.OrdinalIgnoreCase) || apiEx.Message.Contains("QUERY_ID_INVALID", StringComparison.OrdinalIgnoreCase)))
             {
-                _logger.LogWarning("Attempted to answer callback query {CallbackQueryId}, but it was too old, invalid, or already answered. Telegram API Error: {ApiErrorMessage}", callbackQueryId, apiEx.Message);
+                // This is a common occurrence if the user double-clicks, or the network is slow causing a delayed response.
+                // We log this as a warning because it's expected behavior and not a critical bot failure.
+                _logger.LogWarning(
+                    "Attempted to answer callback query {CallbackQueryId}, but it was too old, invalid, or already answered. This is often a non-critical issue. Telegram API Error: {ApiErrorMessage}",
+                    callbackQueryId,
+                    apiEx.Message);
             }
+            // Specific Catch: Being rate-limited by Telegram (Error 429).
+            catch (ApiRequestException apiEx) when (apiEx.ErrorCode == 429)
+            {
+                // This is a critical warning. It indicates the bot is sending too many requests and is being throttled.
+                // The `Retry-After` header (if present) gives a hint on how long to wait.
+                var retryAfter = apiEx.Parameters?.RetryAfter;
+                _logger.LogWarning(
+                    apiEx,
+                    "Rate limit hit (429 Too Many Requests) while answering callback query {CallbackQueryId}. Telegram suggests waiting for {RetryAfter} seconds. Consider adjusting bot's request frequency. Telegram API Error: {ApiErrorMessage}",
+                    callbackQueryId,
+                    retryAfter.HasValue ? retryAfter.Value.ToString() : "an unspecified duration",
+                    apiEx.Message);
+                // Optional: For a resilient system, you could add `await Task.Delay(TimeSpan.FromSeconds(retryAfter ?? 5), cancellationToken)`
+                // here if a retry mechanism is implemented for this specific action.
+            }
+            // Specific Catch: The text for the toast notification is invalid (e.g., malformed HTML/Markdown).
+            catch (ApiRequestException apiEx) when (apiEx.ErrorCode == 400 && apiEx.Message.Contains("MESSAGE_TEXT_INVALID", StringComparison.OrdinalIgnoreCase))
+            {
+                // This indicates a developer error in the text being sent. It's crucial to log the problematic text.
+                _logger.LogError(
+                    apiEx,
+                    "Invalid message text format detected while answering callback query {CallbackQueryId}. The text was likely malformed. Text sent: '{Text}'. Telegram API Error: {ApiErrorMessage}",
+                    callbackQueryId,
+                    text, // Log the problematic text for easy debugging.
+                    apiEx.Message);
+                // A potential mitigation could be to retry with a generic, safe message, but logging the developer error is the primary action.
+            }
+            // General Catch for other Telegram API errors.
+            catch (ApiRequestException apiEx)
+            {
+                // This catches any other API-related errors that weren't handled by the specific cases above.
+                // Logging the ErrorCode and full message is essential for diagnosing new or unexpected API issues.
+                _logger.LogError(
+                    apiEx,
+                    "An unhandled Telegram API error occurred while answering callback query {CallbackQueryId}. Error Code: {ErrorCode}. Telegram API Error: {ApiErrorMessage}",
+                    callbackQueryId,
+                    apiEx.ErrorCode,
+                    apiEx.Message);
+            }
+            // Catch-all for any other non-API exceptions (e.g., network issues, null references, TaskCanceledException).
             catch (Exception ex)
             {
-                _logger.LogError(ex, "An unexpected error occurred while trying to answer CallbackQueryID {CallbackQueryId}.", callbackQueryId);
+                // This is the final safety net. It could be a network failure, a bug in our code, or a cancellation.
+                // We log this as critical because it represents an unexpected failure in the application's code or its environment.
+                _logger.LogCritical(
+                    ex,
+                    "A critical, non-API error occurred while trying to answer CallbackQueryID {CallbackQueryId}. Text sent: '{Text}'",
+                    callbackQueryId,
+                    text);
             }
         }
 

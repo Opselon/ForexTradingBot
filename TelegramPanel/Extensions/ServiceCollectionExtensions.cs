@@ -53,7 +53,7 @@ namespace TelegramPanel.Extensions
 
             // 4. Register ITelegramUpdateChannel and related services
             _ = services.AddSingleton<ITelegramUpdateChannel, TelegramUpdateChannel>();
-
+            _ = services.AddScoped<IUserContext, UserContext>();
             //  5. Register ITelegramUpdateProcessor and related services
             _ = services.AddScoped<ITelegramUpdateProcessor, UpdateProcessingService>();
 

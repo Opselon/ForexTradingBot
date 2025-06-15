@@ -105,7 +105,7 @@ namespace BackgroundTasks.Services
                 }
 
                 // 1. Fetch all news item entities from the database.
-                List<NewsItem> newsItems = new();
+                List<NewsItem> newsItems = [];
                 foreach (Guid id in newsItemIds)
                 {
                     NewsItem? item = await _newsItemRepository.GetByIdAsync(id, CancellationToken.None);
@@ -305,26 +305,21 @@ namespace BackgroundTasks.Services
 
             await _telegramApiRetryPolicy.ExecuteAsync(async (ctx) =>
             {
-                if (!string.IsNullOrWhiteSpace(payload.ImageUrl))
-                {
-                    _ = await _botClient.SendPhoto(
+                _ = !string.IsNullOrWhiteSpace(payload.ImageUrl)
+                    ? await _botClient.SendPhoto(
                         chatId: payload.TargetTelegramUserId,
                         photo: InputFile.FromUri(payload.ImageUrl),
                         caption: payload.MessageText,
                         parseMode: ParseMode.MarkdownV2,
                         replyMarkup: finalKeyboard,
-                        cancellationToken: cancellationToken);
-                }
-                else
-                {
-                    _ = await _botClient.SendMessage(
+                        cancellationToken: cancellationToken)
+                    : await _botClient.SendMessage(
                         chatId: payload.TargetTelegramUserId,
                         text: payload.MessageText,
                         parseMode: ParseMode.MarkdownV2,
                         replyMarkup: finalKeyboard,
                         linkPreviewOptions: new LinkPreviewOptions { IsDisabled = true },
                         cancellationToken: cancellationToken);
-                }
             }, pollyContext);
             _logger.LogInformation("Notification sent successfully to User {UserId}", payload.TargetTelegramUserId);
         }
@@ -409,7 +404,7 @@ namespace BackgroundTasks.Services
 
         private List<NotificationButton> BuildSimpleNotificationButtons(NewsItem newsItem)
         {
-            List<NotificationButton> buttons = new();
+            List<NotificationButton> buttons = [];
             if (!string.IsNullOrWhiteSpace(newsItem.Link) && Uri.TryCreate(newsItem.Link, UriKind.Absolute, out _))
             {
                 buttons.Add(new NotificationButton { Text = "Read More", CallbackDataOrUrl = newsItem.Link, IsUrl = true });

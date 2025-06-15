@@ -419,6 +419,7 @@ namespace Infrastructure.Repositories
         }
 
         /// <inheritdoc />
+        // In Infrastructure/Repositories/UserRepository.cs
         public async Task<User?> GetByEmailAsync(string email, CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(email))
@@ -426,42 +427,60 @@ namespace Infrastructure.Repositories
                 _logger.LogWarning("UserRepository: GetByEmailAsync called with null or empty email.");
                 return null;
             }
+
             string lowerEmail = email.ToLowerInvariant();
-            _logger.LogTrace("UserRepository: Fetching user by Email (case-insensitive): {Email}.", lowerEmail);
+
+            // Secure Logging: Sanitize the email before logging it.
+            var sanitizedEmail = SanitizeSensitiveData(lowerEmail);
+            _logger.LogTrace("UserRepository: Fetching user by Email (case-insensitive): {SanitizedEmail}.", sanitizedEmail);
+
             return await _retryPolicy.ExecuteAsync(async () =>
             {
                 using var connection = CreateConnection();
                 await connection.OpenAsync(cancellationToken);
 
-                // Fetch user ID first
+                // Step 1: Fetch only the user's ID using their email.
+                // The original, unaltered 'lowerEmail' is used for the query.
                 var userIdQuery = "SELECT Id FROM Users WHERE LOWER(Email) = LOWER(@Email);";
                 var userId = await connection.ExecuteScalarAsync<Guid?>(userIdQuery, new { Email = lowerEmail });
+
+                // If no user is found with that email, we can stop immediately.
                 if (!userId.HasValue)
                 {
+                    _logger.LogDebug("User with email {SanitizedEmail} not found.", sanitizedEmail);
                     return null;
                 }
 
+                // Step 2: Now that we have the ID, fetch the user and all related data.
                 var sql = @"
-                    SELECT Id, Username, TelegramId, Email, Level, CreatedAt, UpdatedAt, EnableGeneralNotifications, EnableVipSignalNotifications, EnableRssNewsNotifications, PreferredLanguage
-                    FROM Users WHERE Id = @UserId;
+            SELECT Id, Username, TelegramId, Email, Level, CreatedAt, UpdatedAt, EnableGeneralNotifications, EnableVipSignalNotifications, EnableRssNewsNotifications, PreferredLanguage
+            FROM Users WHERE Id = @UserId;
 
-                    SELECT Id, UserId, Balance, IsActive, CreatedAt, UpdatedAt
-                    FROM TokenWallets WHERE UserId = @UserId;
+            SELECT Id, UserId, Balance, IsActive, CreatedAt, UpdatedAt
+            FROM TokenWallets WHERE UserId = @UserId;
 
-                    SELECT Id, UserId, StartDate, EndDate, Status, ActivatingTransactionId, CreatedAt, UpdatedAt
-                    FROM Subscriptions WHERE UserId = @UserId;
+            SELECT Id, UserId, StartDate, EndDate, Status, ActivatingTransactionId, CreatedAt, UpdatedAt
+            FROM Subscriptions WHERE UserId = @UserId;
 
-                    SELECT Id, UserId, CategoryId, CreatedAt
-                    FROM UserSignalPreferences WHERE UserId = @UserId;";
+            SELECT Id, UserId, CategoryId, CreatedAt
+            FROM UserSignalPreferences WHERE UserId = @UserId;";
 
-                using var multi = await connection.QueryMultipleAsync(sql, new { UserId = userId.Value, Email = lowerEmail }); // Pass email for the main user select, UserId for related
+                // ==========================================================
+                // THIS IS THE FIX
+                // ==========================================================
+                // The SQL queries above only require the @UserId parameter.
+                // We pass only the necessary parameter to the QueryMultipleAsync call.
+                using var multi = await connection.QueryMultipleAsync(sql, new { UserId = userId.Value });
+                // ==========================================================
 
                 var userDto = await multi.ReadFirstOrDefaultAsync<UserDbDto>();
+                // This check is technically redundant since we already found the ID, but it's a good safeguard.
                 if (userDto == null)
                 {
                     return null;
                 }
 
+                // Hydrate the user object with all its related collections.
                 var user = userDto.ToDomainEntity();
                 user.TokenWallet = (await multi.ReadFirstOrDefaultAsync<TokenWalletDbDto>())?.ToDomainEntity() ?? TokenWallet.Create(user.Id);
                 user.Subscriptions = (await multi.ReadAsync<SubscriptionDbDto>()).Select(s => s.ToDomainEntity()).ToList();
@@ -523,6 +542,16 @@ namespace Infrastructure.Repositories
                                             "Please use specific query methods (e.g., GetByTelegramIdAsync, GetByEmailAsync) " +
                                             "or extend the repository with methods that accept SQL query parts and parameters.");
         }
+        private string SanitizeSensitiveData(string? input)
+        {
+            if (string.IsNullOrEmpty(input))
+            {
+                return string.Empty;
+            }
+            // Simple regex to find and redact email-like patterns.
+            // This prevents leaking PII like emails into logs.
+            return System.Text.RegularExpressions.Regex.Replace(input, @"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", "[REDACTED_EMAIL]");
+        }
 
         /// <inheritdoc />
         public async Task AddAsync(User user, CancellationToken cancellationToken = default)
@@ -532,7 +561,15 @@ namespace Infrastructure.Repositories
                 _logger.LogError("UserRepository: Attempted to add a null User object.");
                 throw new ArgumentNullException(nameof(user));
             }
-            _logger.LogInformation("UserRepository: Adding new user. Username: {Username}, Email: {Email}.", user.Username, user.Email);
+
+            // ==========================================================
+            // VULNERABILITY REMEDIATION
+            // ==========================================================
+            // Redact the email before logging to prevent exposure of PII.
+            var sanitizedEmail = SanitizeSensitiveData(user.Email);
+            _logger.LogInformation("UserRepository: Adding new user. Username: {Username}, Email: {SanitizedEmail}.",
+                                    user.Username,
+                                    sanitizedEmail);
             try
             {
                 await _retryPolicy.ExecuteAsync(async () =>
@@ -826,6 +863,8 @@ namespace Infrastructure.Repositories
         }
 
         /// <inheritdoc />
+        // In Infrastructure/Repositories/UserRepository.cs
+
         public async Task<bool> ExistsByEmailAsync(string email, CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(email))
@@ -834,21 +873,39 @@ namespace Infrastructure.Repositories
             }
 
             string lowerEmail = email.ToLowerInvariant();
-            _logger.LogTrace("UserRepository: Checking existence by Email (case-insensitive): {Email}.", lowerEmail);
+
+            // ==========================================================
+            // VULNERABILITY REMEDIATION
+            // ==========================================================
+            // 1. Sanitize the email before logging to prevent exposure of PII.
+            var sanitizedEmail = SanitizeSensitiveData(lowerEmail);
+            _logger.LogTrace("UserRepository: Checking existence by Email (case-insensitive): {SanitizedEmail}.", sanitizedEmail);
+            // ==========================================================
+
             try
             {
                 return await _retryPolicy.ExecuteAsync(async () =>
                 {
                     using var connection = CreateConnection();
                     await connection.OpenAsync(cancellationToken);
+
+                    // Use the original, unaltered 'lowerEmail' for the query to ensure correctness.
                     var count = await connection.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Users WHERE LOWER(Email) = LOWER(@Email);", new { Email = lowerEmail });
+
                     return count > 0;
                 });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "UserRepository: Error checking existence by email {Email}.", lowerEmail);
-                throw new RepositoryException($"Failed to check existence by email '{lowerEmail}'.", ex);
+                // ==========================================================
+                // VULNERABILITY REMEDIATION
+                // ==========================================================
+                // 2. Log the sanitized version of the email in the error message.
+                _logger.LogError(ex, "UserRepository: Error checking existence by email {SanitizedEmail}.", sanitizedEmail);
+
+                // 3. Throw a sanitized exception message to prevent leaking PII.
+                throw new RepositoryException($"Failed to check existence by email '{sanitizedEmail}'.", ex);
+                // ==========================================================
             }
         }
 

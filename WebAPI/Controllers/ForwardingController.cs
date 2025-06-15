@@ -260,50 +260,54 @@ namespace WebAPI.Controllers
         [HttpPut("rules/{ruleName}")]
         public async Task<ActionResult> UpdateRule(string ruleName, [FromBody] ForwardingRuleDto dto, CancellationToken cancellationToken)
         {
+            // Sanitize URL input immediately
             var sanitizedUrlRuleName = ruleName?.Replace(Environment.NewLine, "").Replace("\n", "").Replace("\r", "") ?? string.Empty;
             if (string.IsNullOrWhiteSpace(sanitizedUrlRuleName) || dto == null) return BadRequest("Rule name is invalid or request body is missing.");
 
-            // Even though we use the sanitized version later, we must also sanitize the raw version before logging it.
-            var sanitizedDtoRuleNameForComparison = dto.RuleName?.Replace(Environment.NewLine, "").Replace("\n", "").Replace("\r", "") ?? string.Empty;
+            // Sanitize DTO body input immediately
+            var sanitizedDtoRuleName = dto.RuleName?.Replace(Environment.NewLine, "").Replace("\n", "").Replace("\r", "") ?? string.Empty;
 
-            if (sanitizedUrlRuleName != sanitizedDtoRuleNameForComparison)
+            // Perform comparison with sanitized values
+            if (sanitizedUrlRuleName != sanitizedDtoRuleName)
             {
-                // ==========================================================
-                // VULNERABILITY REMEDIATION
-                // ==========================================================
-                // Use the sanitized version of the body's rule name for logging.
+                // Log is already safe because both inputs have been sanitized
                 _logger.LogWarning("Potential parameter tampering in UpdateRule. URL: '{UrlRuleName}', Body (Sanitized): '{BodyRuleName}'.",
                                     sanitizedUrlRuleName,
-                                    sanitizedDtoRuleNameForComparison);
-                // ==========================================================
-
+                                    sanitizedDtoRuleName);
                 return BadRequest("Rule name in URL must match the rule name in the request body.");
             }
 
             // Assign the sanitized name back to the DTO for mapping
-            dto.RuleName = sanitizedDtoRuleNameForComparison;
+            dto.RuleName = sanitizedDtoRuleName;
 
             try
             {
                 var updatedRule = _mapper.Map<ForwardingRule>(dto);
 
                 await _forwardingService.UpdateRuleAsync(updatedRule, cancellationToken);
-                _logger.LogInformation("CONTROLLER.UpdateRule: Rule '{RuleName}' updated successfully.", dto.RuleName);
+                _logger.LogInformation("CONTROLLER.UpdateRule: Rule '{RuleName}' updated successfully.", sanitizedDtoRuleName);
                 return NoContent();
             }
             catch (AutoMapperMappingException ex)
             {
                 _logger.LogError(ex, "AutoMapper configuration error for UpdateRule. Check MappingProfile.");
-                return StatusCode(500, "An internal error occurred.");
+                return StatusCode(500, "An internal configuration error occurred.");
             }
             catch (InvalidOperationException opEx)
             {
-                _logger.LogWarning(opEx, "CONTROLLER.UpdateRule: Error updating rule {RuleName}.", dto.RuleName);
+                // ==========================================================
+                // VULNERABILITY REMEDIATION
+                // ==========================================================
+                // The vulnerable line is now fixed by using the sanitized variable.
+                _logger.LogWarning(opEx, "CONTROLLER.UpdateRule: Error updating rule {RuleName}.", sanitizedDtoRuleName);
+                // ==========================================================
+
                 return NotFound("The specified rule could not be found or updated.");
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "CONTROLLER.UpdateRule: General error updating rule {RuleName}.", dto.RuleName);
+                // This log point is also now secure by using the sanitized variable.
+                _logger.LogError(ex, "CONTROLLER.UpdateRule: General error updating rule {RuleName}.", sanitizedDtoRuleName);
                 return StatusCode(500, "An internal error occurred.");
             }
         }

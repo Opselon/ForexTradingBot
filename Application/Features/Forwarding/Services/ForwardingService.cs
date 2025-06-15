@@ -98,48 +98,53 @@ namespace Application.Features.Forwarding.Services
             // Basic validation
             if (string.IsNullOrWhiteSpace(ruleName))
             {
-                // Log warning or throw ArgumentException depending on strictness
                 _logger.LogWarning("Attempted to get rule with null or empty name.");
                 return null; // Treat invalid input as not found
             }
 
-            _logger.LogDebug("Fetching forwarding rule by name: {RuleName}", ruleName);
+            // ==========================================================
+            // VULNERABILITY REMEDIATION
+            // ==========================================================
+            // 1. Sanitize the user-controlled ruleName at the start of the method.
+            //    This prevents CRLF injection (log forging).
+            var sanitizedRuleName = ruleName
+                                        .Replace(Environment.NewLine, "[NL]")
+                                        .Replace("\n", "[NL]")
+                                        .Replace("\r", "[CR]");
+
+            // 2. Use the sanitized variable for all logging statements.
+            _logger.LogDebug("Fetching forwarding rule by name: {RuleName}", sanitizedRuleName);
+            // ==========================================================
 
             try
             {
-                // Fetch the rule from the repository. Potential database interaction.
+                // Use the ORIGINAL, unaltered ruleName for the repository call to ensure functionality.
                 ForwardingRule? rule = await _ruleRepository.GetByIdAsync(ruleName, cancellationToken);
 
                 // Handle case where rule is not found (normal outcome).
                 if (rule == null)
                 {
-                    _logger.LogDebug("Forwarding rule with name {RuleName} not found.", ruleName);
+                    // The vulnerable line is now fixed by using the sanitized variable.
+                    _logger.LogDebug("Forwarding rule with name {RuleName} not found.", sanitizedRuleName);
                     return null; // Return null as the rule was not found.
                 }
 
-                _logger.LogDebug("Forwarding rule with name {RuleName} found.", ruleName);
+                _logger.LogDebug("Forwarding rule with name {RuleName} found.", sanitizedRuleName);
                 return rule; // Return the found entity.
             }
             catch (OperationCanceledException ex) when (cancellationToken.IsCancellationRequested)
             {
-                // Handle cancellation specifically.
-                _logger.LogInformation(ex, "Fetching forwarding rule '{RuleName}' was cancelled.", ruleName);
+                // All log points are now secure.
+                _logger.LogInformation(ex, "Fetching forwarding rule '{RuleName}' was cancelled.", sanitizedRuleName);
                 throw; // Re-throw the cancellation exception.
             }
-            // Catch specific database exceptions if desired.
-            // catch (DbException dbEx)
-            // {
-            //     _logger.LogError(dbEx, "Database error while fetching forwarding rule '{RuleName}'.", ruleName);
-            //     throw new ApplicationException($"Database error occurred while retrieving rule '{ruleName}'.", dbEx);
-            // }
             catch (Exception ex)
             {
-                // Catch any other unexpected technical exceptions.
-                // Log the general error.
-                _logger.LogError(ex, "An unexpected error occurred while fetching forwarding rule '{RuleName}'.", ruleName);
+                // All log points are now secure.
+                _logger.LogError(ex, "An unexpected error occurred while fetching forwarding rule '{RuleName}'.", sanitizedRuleName);
 
-                // Throw a generic application exception indicating a critical failure.
-                throw new ApplicationException($"An error occurred while retrieving rule '{ruleName}'. Please try again.", ex);
+                // Throw a sanitized exception message to avoid echoing potentially malicious input.
+                throw new ApplicationException($"An error occurred while retrieving rule '{sanitizedRuleName}'. Please try again.", ex);
             }
         }
 
@@ -275,75 +280,47 @@ namespace Application.Features.Forwarding.Services
         /// <exception cref="ApplicationException">Thrown on critical technical errors during the creation process.</exception>
         public async Task CreateRuleAsync(ForwardingRule rule, CancellationToken cancellationToken = default)
         {
-            // Input validation
-            if (rule == null)
-            {
-                throw new ArgumentNullException(nameof(rule));
-            }
+            if (rule == null) throw new ArgumentNullException(nameof(rule));
             if (string.IsNullOrWhiteSpace(rule.RuleName))
             {
                 _logger.LogWarning("Attempted to create rule with null or empty name.");
                 throw new ArgumentException("Rule name cannot be null or empty.", nameof(rule.RuleName));
             }
 
-
-            _logger.LogInformation("Attempting to create forwarding rule: {RuleName}", rule.RuleName);
+            // ==========================================================
+            // VULNERABILITY REMEDIATION
+            // ==========================================================
+            var sanitizedRuleName = rule.RuleName.Replace(Environment.NewLine, "[NL]").Replace("\n", "[NL]").Replace("\r", "[CR]");
+            _logger.LogInformation("Attempting to create forwarding rule: {RuleName}", sanitizedRuleName);
+            // ==========================================================
 
             try
             {
-                // Business validation: Check if a rule with this name already exists. Potential database interaction.
+                // Use original rule name for business logic
                 ForwardingRule? existingRule = await _ruleRepository.GetByIdAsync(rule.RuleName, cancellationToken);
                 if (existingRule != null)
                 {
-                    _logger.LogWarning("Rule creation failed: A rule with name '{RuleName}' already exists.", rule.RuleName);
-                    // Throw specific business exception
-                    throw new InvalidOperationException($"A rule with name '{rule.RuleName}' already exists.");
+                    _logger.LogWarning("Rule creation failed: A rule with name '{RuleName}' already exists.", sanitizedRuleName);
+                    throw new InvalidOperationException($"A rule with name '{sanitizedRuleName}' already exists.");
                 }
 
-                // Add the new rule entity to the repository context. Potential database interaction preparation.
                 await _ruleRepository.AddAsync(rule, cancellationToken);
+                _ = await _context.SaveChangesAsync(cancellationToken);
 
-                // Assuming AddAsync triggers SaveChangesAsync internally or you have a separate Unit of Work SaveChangesAsync call.
-                // If SaveChangesAsync is called here or within the Repository, this is the critical point of failure.
-                // If AddAsync just adds to context and SaveChanges is elsewhere (e.g., in calling service/handler),
-                // the try-catch should ideally wrap the SaveChanges call in the caller.
-                // Assuming SaveChangesAsync happens within or immediately after this AddAsync call for simplicity here.
-                // If SaveChanges is separate, consider moving the catch blocks there.
-                _ = await _context.SaveChangesAsync(cancellationToken); // Explicitly adding SaveChangesAsync if it's not in Repository.AddAsync
-
-                _logger.LogInformation("Forwarding rule '{RuleName}' created successfully.", rule.RuleName);
+                _logger.LogInformation("Forwarding rule '{RuleName}' created successfully.", sanitizedRuleName);
             }
-            catch (InvalidOperationException) // Catch specific business rule exception (Rule already exists)
+            catch (InvalidOperationException)
             {
-                // Re-throw the business exception.
                 throw;
             }
             catch (OperationCanceledException ex) when (cancellationToken.IsCancellationRequested)
             {
-                // Handle cancellation specifically.
-                _logger.LogInformation(ex, "Rule creation for '{RuleName}' was cancelled.", rule.RuleName);
-                throw; // Re-throw cancellation.
+                _logger.LogInformation(ex, "Rule creation for '{RuleName}' was cancelled.", sanitizedRuleName);
+                throw;
             }
-            // Catch specific database/ORM exceptions if desired (e.g., DbUpdateException for constraint violations during SaveChanges).
-            // catch (DbUpdateException dbEx) // Example: For unique constraint violation during SaveChanges
-            // {
-            //     _logger.LogError(dbEx, "Database update error during rule creation for '{RuleName}'.", rule.RuleName);
-            //     // You might inspect dbEx for specific error codes (like SQL unique violation) if needed.
-            //     throw new ApplicationException($"Database error occurred while creating rule '{rule.RuleName}'.", dbEx);
-            // }
-            // catch (RepositoryException repEx) // If your repository wraps DB errors
-            // {
-            //      _logger.LogError(repEx, "Repository error during rule creation for '{RuleName}'.", rule.RuleName);
-            //      throw new ApplicationException($"Data access error while creating rule '{rule.RuleName}'.", repEx);
-            // }
             catch (Exception ex)
             {
-                // Catch any other unexpected technical exceptions.
-                // Log the critical technical error.
-                _logger.LogError(ex, "An unexpected error occurred during rule creation process for '{RuleName}'.", rule.RuleName);
-
-                // Throw a generic application exception indicating a critical failure.
-                // The caller should catch this and handle it.
+                _logger.LogError(ex, "An unexpected error occurred during rule creation process for '{RuleName}'.", sanitizedRuleName);
                 throw new ApplicationException("An unexpected error occurred during rule creation. Please try again later.", ex);
             }
         }

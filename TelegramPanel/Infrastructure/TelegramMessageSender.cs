@@ -166,26 +166,30 @@ namespace TelegramPanel.Infrastructure
             // Example: Redact email addresses
             return System.Text.RegularExpressions.Regex.Replace(input, @"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", "[REDACTED]");
         }
+
         public async Task SendTextMessageToTelegramAsync(
-            long chatId,
-            string text,
-            ParseMode? parseMode,
-            ReplyMarkup? replyMarkup,
-            bool disableNotification,
-            LinkPreviewOptions? linkPreviewOptions,
-            CancellationToken cancellationToken)
+     long chatId,
+     string text,
+     ParseMode? parseMode,
+     ReplyMarkup? replyMarkup,
+     bool disableNotification,
+     LinkPreviewOptions? linkPreviewOptions,
+     CancellationToken cancellationToken)
         {
+            // Create a truncated and sanitized version of the text for logging
             string logText = text.Length > 100 ? text.Substring(0, 100) + "..." : text;
+            // This variable already exists and should be used in all log statements.
             string sanitizedLogText = SanitizeSensitiveData(logText);
+
             _logger.LogDebug("Hangfire Job (ActualSend): Sending text message. ChatID: {ChatId}, Text (partial): '{LogText}'", chatId, sanitizedLogText);
 
             string telegramIdString = chatId.ToString();
 
             var pollyContext = new Polly.Context($"SendText_{chatId}_{Guid.NewGuid():N}", new Dictionary<string, object>
-            {
-                { "ChatId", chatId },
-                { "MessagePreview", logText }
-            });
+    {
+        { "ChatId", chatId },
+        { "MessagePreview", sanitizedLogText } // Use sanitized text here as well
+    });
 
             try
             {
@@ -213,29 +217,43 @@ namespace TelegramPanel.Infrastructure
                       (apiEx.ErrorCode == 403 && apiEx.Message.Contains("bot was blocked by the user", StringComparison.OrdinalIgnoreCase))
                 )
             {
-                _logger.LogWarning(apiEx, "Hangfire Job (ActualSend): Telegram API reported chat not found or user deactivated/blocked (Code: {ApiErrorCode}) for ChatID {ChatId} while sending text message. Text (partial): '{LogText}'. Attempting to remove user from local database.", apiEx.ErrorCode, chatId, sanitizedLogText);
+                // ==========================================================
+                // VULNERABILITY REMEDIATION
+                // ==========================================================
+                // Use the 'sanitizedLogText' variable that was already created.
+                _logger.LogWarning(apiEx, "Hangfire Job (ActualSend): Telegram API reported chat not found or user deactivated/blocked (Code: {ApiErrorCode}) for ChatID {ChatId} while sending text message. Text (partial): '{LogText}'. Attempting to remove user from local database.",
+                                    apiEx.ErrorCode,
+                                    chatId,
+                                    sanitizedLogText); // <-- CORRECTED: Use the sanitized variable.
+                                                       // ==========================================================
 
+                // ... (rest of the catch block is unchanged) ...
                 try
                 {
                     Domain.Entities.User? userToDelete = await _userRepository.GetByTelegramIdAsync(telegramIdString, cancellationToken);
                     if (userToDelete != null)
                     {
                         await _userRepository.DeleteAndSaveAsync(userToDelete, cancellationToken);
-                        _logger.LogInformation("Hangfire Job (ActualSend): Successfully removed user with Telegram ID {TelegramId} (ChatID: {ChatId}) from database due to 'chat not found' or deactivated/blocked status after text message attempt.", userToDelete.TelegramId, chatId);
+                        _logger.LogInformation("Hangfire Job (ActualSend): Successfully removed user with Telegram ID {TelegramId} (ChatID: {ChatId}) from database...", userToDelete.TelegramId, chatId);
                     }
                     else
                     {
-                        _logger.LogWarning("Hangfire Job (ActualSend): User with Telegram ID {ChatId} was not found in the local database for removal (might have been already removed or never existed) after text message attempt.", chatId);
+                        _logger.LogWarning("Hangfire Job (ActualSend): User with Telegram ID {ChatId} was not found in the local database for removal...", chatId);
                     }
                 }
                 catch (Exception dbEx)
                 {
-                    _logger.LogError(dbEx, "Hangfire Job (ActualSend): Failed to remove user with Telegram ID {ChatId} from database after Telegram API error during text message send. The original Telegram error was: {TelegramErrorMessage}", chatId, apiEx.Message);
+                    // Sanitize the exception message as well, as it can contain user-controlled data.
+                    var sanitizedApiExMessage = apiEx.Message.Replace(Environment.NewLine, "[NL]");
+                    _logger.LogError(dbEx, "Hangfire Job (ActualSend): Failed to remove user with Telegram ID {ChatId} from database... Original Telegram error: {TelegramErrorMessage}",
+                                        chatId,
+                                        sanitizedApiExMessage);
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Hangfire Job (ActualSend): Error sending text message to ChatID {ChatId} after retries. Text (partial): '{LogText}'", chatId, logText);
+                // Use the sanitizedLogText variable here as well for consistency and security.
+                _logger.LogError(ex, "Hangfire Job (ActualSend): Error sending text message to ChatID {ChatId} after retries. Text (partial): '{LogText}'", chatId, sanitizedLogText);
                 throw;
             }
         }

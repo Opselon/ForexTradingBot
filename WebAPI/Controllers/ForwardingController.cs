@@ -262,21 +262,24 @@ namespace WebAPI.Controllers
             {
                 return BadRequest("Rule name cannot be empty.");
             }
+
+            // Sanitize the ruleName to prevent log forging
+            var sanitizedRuleName = ruleName.Replace(Environment.NewLine, "").Replace("\n", "").Replace("\r", "");
+
             try
             {
                 await _forwardingService.DeleteRuleAsync(ruleName, cancellationToken);
-                var sanitizedRuleName = ruleName.Replace(Environment.NewLine, "").Replace("\n", "").Replace("\r", "");
                 _logger.LogInformation("CONTROLLER.DeleteRule: Rule '{RuleName}' deleted successfully.", sanitizedRuleName);
                 return Ok();
             }
             catch (InvalidOperationException opEx)
             {
-                _logger.LogWarning(opEx, "CONTROLLER.DeleteRule: Error deleting forwarding rule {RuleName}.", ruleName);
+                _logger.LogWarning(opEx, "CONTROLLER.DeleteRule: Error deleting forwarding rule {RuleName}.", sanitizedRuleName);
                 return NotFound(opEx.Message);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "CONTROLLER.DeleteRule: General error deleting forwarding rule {RuleName}.", ruleName);
+                _logger.LogError(ex, "CONTROLLER.DeleteRule: General error deleting forwarding rule {RuleName}.", sanitizedRuleName);
                 return StatusCode(500, "Error deleting forwarding rule.");
             }
         }

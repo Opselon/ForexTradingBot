@@ -1,8 +1,11 @@
-﻿using Domain.Features.Forwarding.Entities; // For ForwardingRule entity used in GET/POST/PUT rules
+﻿using AutoMapper;
+using Domain.Features.Forwarding.Entities; // For ForwardingRule entity used in GET/POST/PUT rules
 using Hangfire;
 using Infrastructure.Jobs; // For ForwardingJob
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using WebAPI.Models;
+using static StackExchange.Redis.Role;
 
 namespace WebAPI.Controllers
 {
@@ -70,9 +73,10 @@ namespace WebAPI.Controllers
     {
         private readonly IForwardingService _forwardingService;
         private readonly ILogger<ForwardingController> _logger;
-
-        public ForwardingController(IForwardingService forwardingService, ILogger<ForwardingController> logger)
+        private readonly IMapper _mapper;
+        public ForwardingController(IForwardingService forwardingService, ILogger<ForwardingController> logger, IMapper mapper)
         {
+            _mapper = mapper ?? throw new ArgumentNullException(nameof(mapper));
             _forwardingService = forwardingService ?? throw new ArgumentNullException(nameof(forwardingService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
@@ -178,8 +182,10 @@ namespace WebAPI.Controllers
 
 
         [HttpGet("rules/channel/{sourceChannelId}")]
-        public async Task<ActionResult<IEnumerable<ForwardingRule>>> GetRulesBySourceChannel(long sourceChannelId, CancellationToken cancellationToken)
+        // The return type is now the clean DTO, not the domain entity
+        public async Task<ActionResult<IEnumerable<ForwardingRuleSummaryDto>>> GetRulesBySourceChannel(long sourceChannelId, CancellationToken cancellationToken)
         {
+            // Input validation is good. No change needed here.
             if (sourceChannelId == 0)
             {
                 return BadRequest("Source channel ID cannot be zero.");
@@ -187,100 +193,138 @@ namespace WebAPI.Controllers
             try
             {
                 IEnumerable<ForwardingRule> rules = await _forwardingService.GetRulesBySourceChannelAsync(sourceChannelId, cancellationToken);
-                return Ok(rules);
+
+                // SECURE: Map the internal domain entities to clean public-facing DTOs.
+                // This prevents leaking the internal model structure.
+                var rulesDto = _mapper.Map<IEnumerable<ForwardingRuleSummaryDto>>(rules);
+
+                return Ok(rulesDto);
             }
             catch (Exception ex)
             {
+                // Logging is safe as sourceChannelId is a long.
                 _logger.LogError(ex, "CONTROLLER.GetRulesBySourceChannel: Error retrieving forwarding rules for channel {ChannelId}.", sourceChannelId);
-                return StatusCode(500, "Error retrieving forwarding rules.");
+
+                // SECURE: Return a generic error message.
+                return StatusCode(500, "An internal error occurred while retrieving forwarding rules.");
             }
         }
+
 
 
 
 
         [HttpPost("rules")]
-        public async Task<ActionResult> CreateRule([FromBody] ForwardingRule rule, CancellationToken cancellationToken)
+        public async Task<ActionResult> CreateRule([FromBody] ForwardingRuleDto dto, CancellationToken cancellationToken)
         {
-            if (rule == null || string.IsNullOrWhiteSpace(rule.RuleName))
-            {
-                return BadRequest("Invalid rule data or rule name missing.");
-            }
+            if (dto == null) return BadRequest("Invalid rule data.");
+
+            // Sanitize user input before it's used anywhere
+            var sanitizedRuleName = dto.RuleName?.Replace(Environment.NewLine, "").Replace("\n", "").Replace("\r", "") ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(sanitizedRuleName)) return BadRequest("Rule name is required.");
+
+            dto.RuleName = sanitizedRuleName;
+
             try
             {
-                await _forwardingService.CreateRuleAsync(rule, cancellationToken);
-                _logger.LogInformation("CONTROLLER.CreateRule: Rule '{RuleName}' created successfully.", rule.RuleName);
-                return CreatedAtAction(nameof(GetRule), new { ruleName = rule.RuleName }, rule);
+                var newRule = _mapper.Map<ForwardingRule>(dto);
+
+                await _forwardingService.CreateRuleAsync(newRule, cancellationToken);
+                _logger.LogInformation("CONTROLLER.CreateRule: Rule '{RuleName}' created successfully.", sanitizedRuleName);
+                return CreatedAtAction(nameof(GetRule), new { ruleName = sanitizedRuleName }, newRule);
+            }
+            catch (AutoMapperMappingException ex)
+            {
+                _logger.LogError(ex, "AutoMapper configuration error for CreateRule. Check MappingProfile against domain constructors.");
+                return StatusCode(500, "An internal configuration error occurred.");
             }
             catch (InvalidOperationException opEx)
             {
-                _logger.LogWarning(opEx, "CONTROLLER.CreateRule: Error creating forwarding rule {RuleName}.", rule.RuleName);
-                return Conflict(opEx.Message);
+                _logger.LogWarning(opEx, "CONTROLLER.CreateRule: Error creating rule {RuleName}.", sanitizedRuleName);
+                return Conflict("A rule with this name may already exist.");
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "CONTROLLER.CreateRule: General error creating forwarding rule {RuleName}.", rule.RuleName);
-                return StatusCode(500, "Error creating forwarding rule.");
+                _logger.LogError(ex, "CONTROLLER.CreateRule: General error creating rule {RuleName}.", sanitizedRuleName);
+                return StatusCode(500, "An internal error occurred.");
             }
         }
-
-
 
         [HttpPut("rules/{ruleName}")]
-        public async Task<ActionResult> UpdateRule(string ruleName, [FromBody] ForwardingRule rule, CancellationToken cancellationToken)
+        public async Task<ActionResult> UpdateRule(string ruleName, [FromBody] ForwardingRuleDto dto, CancellationToken cancellationToken)
         {
-            if (string.IsNullOrWhiteSpace(ruleName) || rule == null || ruleName != rule.RuleName)
+            var sanitizedUrlRuleName = ruleName?.Replace(Environment.NewLine, "").Replace("\n", "").Replace("\r", "") ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(sanitizedUrlRuleName) || dto == null) return BadRequest("Rule name is invalid or request body is missing.");
+
+            var sanitizedDtoRuleName = dto.RuleName?.Replace(Environment.NewLine, "").Replace("\n", "").Replace("\r", "") ?? string.Empty;
+            if (sanitizedUrlRuleName != sanitizedDtoRuleName)
             {
-                return BadRequest("Rule name mismatch or invalid rule data.");
+                _logger.LogWarning("Potential parameter tampering in UpdateRule. URL: '{UrlRuleName}', Body: '{BodyRuleName}'.", sanitizedUrlRuleName, dto.RuleName);
+                return BadRequest("Rule name in URL must match the rule name in the request body.");
             }
+
+            dto.RuleName = sanitizedDtoRuleName;
 
             try
             {
-                await _forwardingService.UpdateRuleAsync(rule, cancellationToken);
-                var sanitizedRuleName = rule.RuleName.Replace(Environment.NewLine, "").Replace("\n", "").Replace("\r", "");
-                _logger.LogInformation("CONTROLLER.UpdateRule: Rule '{RuleName}' updated successfully.", sanitizedRuleName);
-                return Ok();
+                var updatedRule = _mapper.Map<ForwardingRule>(dto);
+
+                await _forwardingService.UpdateRuleAsync(updatedRule, cancellationToken);
+                _logger.LogInformation("CONTROLLER.UpdateRule: Rule '{RuleName}' updated successfully.", sanitizedDtoRuleName);
+                return NoContent();
+            }
+            catch (AutoMapperMappingException ex)
+            {
+                _logger.LogError(ex, "AutoMapper configuration error for UpdateRule. Check MappingProfile.");
+                return StatusCode(500, "An internal configuration error occurred.");
             }
             catch (InvalidOperationException opEx)
             {
-                _logger.LogWarning(opEx, "CONTROLLER.UpdateRule: Error updating forwarding rule {RuleName}.", rule.RuleName);
-                return NotFound(opEx.Message);
+                _logger.LogWarning(opEx, "CONTROLLER.UpdateRule: Error updating rule {RuleName}.", sanitizedDtoRuleName);
+                return NotFound("The specified rule could not be found or updated.");
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "CONTROLLER.UpdateRule: General error updating forwarding rule {RuleName}.", ruleName);
-                return StatusCode(500, "Error updating forwarding rule.");
+                _logger.LogError(ex, "CONTROLLER.UpdateRule: General error updating rule {RuleName}.", sanitizedDtoRuleName);
+                return StatusCode(500, "An internal error occurred.");
             }
         }
-
-
 
         [HttpDelete("rules/{ruleName}")]
         public async Task<ActionResult> DeleteRule(string ruleName, CancellationToken cancellationToken)
         {
-            if (string.IsNullOrWhiteSpace(ruleName))
+            // 1. Sanitize the input IMMEDIATELY.
+            var sanitizedRuleName = ruleName?.Replace(Environment.NewLine, "").Replace("\n", "").Replace("\r", "") ?? string.Empty;
+
+            // 2. Validate the SANITIZED input.
+            if (string.IsNullOrWhiteSpace(sanitizedRuleName))
             {
                 return BadRequest("Rule name cannot be empty.");
             }
 
-            // Sanitize the ruleName to prevent log forging
-            var sanitizedRuleName = ruleName.Replace(Environment.NewLine, "").Replace("\n", "").Replace("\r", "");
-
             try
             {
-                await _forwardingService.DeleteRuleAsync(ruleName, cancellationToken);
+                // 3. SECURE: Pass ONLY the sanitized input to the service layer.
+                await _forwardingService.DeleteRuleAsync(sanitizedRuleName, cancellationToken);
+
+                // Logging is already safe with the sanitized variable.
                 _logger.LogInformation("CONTROLLER.DeleteRule: Rule '{RuleName}' deleted successfully.", sanitizedRuleName);
-                return Ok();
+
+                return NoContent(); // 204 NoContent is a more appropriate response for a successful DELETE.
             }
             catch (InvalidOperationException opEx)
             {
                 _logger.LogWarning(opEx, "CONTROLLER.DeleteRule: Error deleting forwarding rule {RuleName}.", sanitizedRuleName);
-                return NotFound(opEx.Message);
+
+                // 4. SECURE: Return a generic, safe error message instead of ex.Message.
+                return NotFound("The specified rule could not be found.");
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "CONTROLLER.DeleteRule: General error deleting forwarding rule {RuleName}.", sanitizedRuleName);
-                return StatusCode(500, "Error deleting forwarding rule.");
+
+                // SECURE: Return a generic error message.
+                return StatusCode(500, "An internal error occurred while deleting the rule.");
             }
         }
 

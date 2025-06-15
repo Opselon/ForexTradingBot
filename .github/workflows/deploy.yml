@@ -23,7 +23,8 @@
     "REMOTE_TEMP_PATH": "C:\\Apps\\Temp",
     "SESSION_FOLDER": "Session"
   },
-  "jobs": {
+  "jobs":
+    {
     "docker_build_and_save": {
       "name": "🐳 Build & Save Docker Image",
       "runs-on": "ubuntu-latest",
@@ -294,6 +295,7 @@
           }
         }
       ]
+      
     }
   }
 }

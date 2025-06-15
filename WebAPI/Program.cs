@@ -409,7 +409,7 @@ try
     });
 
     #endregion
-
+    builder.Services.AddAutoMapper(typeof(Program));
     Log.Information("Mandatory startup tasks completed.");
 
 

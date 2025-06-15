@@ -237,7 +237,8 @@ namespace WebAPI.Controllers
             try
             {
                 await _forwardingService.UpdateRuleAsync(rule, cancellationToken);
-                _logger.LogInformation("CONTROLLER.UpdateRule: Rule '{RuleName}' updated successfully.", rule.RuleName);
+                var sanitizedRuleName = rule.RuleName.Replace(Environment.NewLine, "").Replace("\n", "").Replace("\r", "");
+                _logger.LogInformation("CONTROLLER.UpdateRule: Rule '{RuleName}' updated successfully.", sanitizedRuleName);
                 return Ok();
             }
             catch (InvalidOperationException opEx)
@@ -264,7 +265,8 @@ namespace WebAPI.Controllers
             try
             {
                 await _forwardingService.DeleteRuleAsync(ruleName, cancellationToken);
-                _logger.LogInformation("CONTROLLER.DeleteRule: Rule '{RuleName}' deleted successfully.", ruleName);
+                var sanitizedRuleName = ruleName.Replace(Environment.NewLine, "").Replace("\n", "").Replace("\r", "");
+                _logger.LogInformation("CONTROLLER.DeleteRule: Rule '{RuleName}' deleted successfully.", sanitizedRuleName);
                 return Ok();
             }
             catch (InvalidOperationException opEx)

@@ -52,7 +52,7 @@ try
     _ = builder.WebHost.UseKestrel();
 
     // This is more reliable than GetValue<bool> for environment variables.
-    string smokeTestFlag = builder.Configuration["IsSmokeTest"];
+    string smokeTestFlag = builder.Configuration["IsSmokeTest"] ?? "false";
     bool isSmokeTest = "true".Equals(smokeTestFlag, StringComparison.OrdinalIgnoreCase);
     #region Configure Serilog Logging
     // ------------------- ۱. پیکربندی Serilog با تنظیمات از appsettings.json -------------------
@@ -74,6 +74,9 @@ try
            retainedFileCountLimit: 1, // حداکثر ۷ فایل لاگ (۷ روز) را نگه دار
            outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] ({SourceContext}) {Message:lj}{NewLine}{Exception}")
    );
+
+    builder.Services.AddAutoMapper(typeof(Program));
+
     #endregion
 
     #region Add Core ASP.NET Core Services
@@ -409,7 +412,7 @@ try
     });
 
     #endregion
-    builder.Services.AddAutoMapper(typeof(Program));
+
     Log.Information("Mandatory startup tasks completed.");
 
 

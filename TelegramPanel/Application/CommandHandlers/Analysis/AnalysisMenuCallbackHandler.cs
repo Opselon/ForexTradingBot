@@ -7,6 +7,7 @@ using TelegramPanel.Application.CommandHandlers.MainMenu;
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Infrastructure;
 using TelegramPanel.Infrastructure.Helper;
+using static TelegramPanel.Infrastructure.ActualTelegramMessageActions;
 
 namespace TelegramPanel.Application.CommandHandlers.Analysis
 {

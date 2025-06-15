@@ -76,7 +76,7 @@ try
    );
 
     builder.Services.AddAutoMapper(typeof(Program));
-
+    builder.Services.AddSingleton<Application.Common.Interfaces.ILoggingSanitizer, Infrastructure.Security.PiiLoggingSanitizer>();
     #endregion
 
     #region Add Core ASP.NET Core Services

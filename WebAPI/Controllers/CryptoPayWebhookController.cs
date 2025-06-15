@@ -7,6 +7,7 @@ using Microsoft.Extensions.Options;
 using Shared.Settings;                // ✅ برای CryptoPaySettings (از پروژه Shared)
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 #endregion
 
 namespace WebAPI.Controllers // ✅ Namespace صحیح
@@ -35,6 +36,7 @@ namespace WebAPI.Controllers // ✅ Namespace صحیح
 
         #region Action Methods
         [HttpPost]
+        [RequestSizeLimit(10_240)] // 10 KB limit
         public async Task<IActionResult> Post(
             [FromBody] CryptoPayWebhookUpdateDto webhookUpdate, // ✅ استفاده از DTO صحیح
             [FromHeader(Name = "crypto-pay-api-signature")] string? signatureHeader,
@@ -90,38 +92,40 @@ namespace WebAPI.Controllers // ✅ Namespace صحیح
 
         private bool VerifyCryptoPaySignature(string rawRequestBody, string? signatureHeader, string appApiToken)
         {
+            // 1. Guard Clauses for improved readability and early exit.
             if (string.IsNullOrWhiteSpace(signatureHeader) || string.IsNullOrWhiteSpace(appApiToken))
             {
+                _logger.LogWarning("Signature verification skipped: header or app token is missing.");
                 return false;
             }
 
             try
             {
                 byte[] secretKeyBytes;
-                using (SHA256 sha256 = SHA256.Create()) { secretKeyBytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(appApiToken)); }
-                using HMACSHA256 hmac = new(secretKeyBytes);
+                using (var sha256 = SHA256.Create())
+                {
+                    secretKeyBytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(appApiToken));
+                }
+
+                using var hmac = new HMACSHA256(secretKeyBytes);
                 byte[] bodyBytes = Encoding.UTF8.GetBytes(rawRequestBody);
                 byte[] computedHashBytes = hmac.ComputeHash(bodyBytes);
                 string computedHashHex = Convert.ToHexString(computedHashBytes).ToLowerInvariant();
 
+                // 2. Perform comparison on the original, non-sanitized header.
                 bool isValid = computedHashHex.Equals(signatureHeader.ToLowerInvariant(), StringComparison.Ordinal);
 
                 if (!isValid)
                 {
-                    // ==========================================================
-                    // VULNERABILITY REMEDIATION
-                    // ==========================================================
-                    // 1. Sanitize the user-provided header to prevent log forging (CRLF Injection).
-                    //    Replace newline and carriage return characters with a safe placeholder.
-                    var sanitizedSignatureHeader = signatureHeader
-                                                       .Replace(Environment.NewLine, "[NL]")
-                                                       .Replace("\n", "[NL]")
-                                                       .Replace("\r", "[CR]");
+                    // 3. VULNERABILITY REMEDIATION (ENHANCED)
+                    // Sanitize the received header using a whitelist regex before logging to prevent injection.
+                    // This ensures only valid hexadecimal characters are logged.
+                    var sanitizedSignatureHeader = SanitizeHexForLogging(signatureHeader);
 
-                    // 2. Log the sanitized input.
-                    _logger.LogWarning("CryptoPay signature mismatch. Computed: {Computed}, Received (Sanitized): {Received}",
-                                        computedHashHex,
-                                        sanitizedSignatureHeader);
+                    _logger.LogWarning(
+                        "CryptoPay signature mismatch. Computed: {ComputedHash}, Received (Sanitized): {SanitizedReceivedHash}",
+                        computedHashHex,
+                        sanitizedSignatureHeader);
                 }
 
                 return isValid;
@@ -129,8 +133,25 @@ namespace WebAPI.Controllers // ✅ Namespace صحیح
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Exception during CryptoPay signature verification.");
-                return false;
+                return false; // Fail securely in case of any exception.
             }
+        }
+        /// <summary>
+        /// Sanitizes a string for logging by removing any characters that are not
+        /// valid in a hexadecimal string (a-f, 0-9). This is a robust "whitelist"
+        /// approach against log forging.
+        /// </summary>
+        /// <param name="inputValue">The potentially unsafe string to sanitize.</param>
+        /// <returns>A sanitized string containing only hexadecimal characters.</returns>
+        private static string SanitizeHexForLogging(string inputValue)
+        {
+            if (string.IsNullOrEmpty(inputValue))
+            {
+                return string.Empty;
+            }
+            // Whitelist: Allow only characters from 'a' through 'f' (case-insensitive) and '0' through '9'.
+            // Anything else is removed.
+            return Regex.Replace(inputValue, "[^a-fA-F0-9]", string.Empty);
         }
 
         [HttpGet]

@@ -127,8 +127,9 @@ namespace Infrastructure.Repositories
             }
         }
         private readonly AsyncTimeoutPolicy _timeoutPolicy;
+        private readonly ILoggingSanitizer _logSanitizer;
         // --- Constructor ---
-        public UserRepository(IConfiguration configuration, ILogger<UserRepository> logger)
+        public UserRepository(IConfiguration configuration, ILogger<UserRepository> logger, ILoggingSanitizer logSanitizer)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
@@ -149,12 +150,22 @@ namespace Infrastructure.Repositories
                             "UserRepository: Transient database error encountered. Retrying in {TimeSpan} for attempt {RetryAttempt}. Error: {Message}",
                             timeSpan, retryAttempt, exception.Message);
                     });
+            logSanitizer = logSanitizer ?? throw new ArgumentNullException(nameof(logSanitizer));
         }
 
         // --- Helper to create a new SqlConnection ---
         private SqlConnection CreateConnection()
         {
-            return new SqlConnection(_connectionString);
+            try
+            {
+                return new SqlConnection(_connectionString);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "UserRepository: Error creating database connection. ConnectionString: {ConnectionString}", _connectionString);
+                throw;
+            }
+         
         }
 
         // --- Read Operations ---
@@ -418,8 +429,12 @@ namespace Infrastructure.Repositories
             }
         }
 
+        /// <summary>
+        /// Fetches a user and their complete related entity graph by their email address.
+        /// This method is optimized to prevent duplicate code by finding the user's ID and
+        /// then delegating the full entity fetch to GetByIdAsync.
+        /// </summary>
         /// <inheritdoc />
-        // In Infrastructure/Repositories/UserRepository.cs
         public async Task<User?> GetByEmailAsync(string email, CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(email))
@@ -430,65 +445,41 @@ namespace Infrastructure.Repositories
 
             string lowerEmail = email.ToLowerInvariant();
 
-            // Secure Logging: Sanitize the email before logging it.
-            var sanitizedEmail = SanitizeSensitiveData(lowerEmail);
-            _logger.LogTrace("UserRepository: Fetching user by Email (case-insensitive): {SanitizedEmail}.", sanitizedEmail);
+            // REFACTOR: Injected ILoggingSanitizer is used for all sanitization, adhering to SRP & DIP.
+            var sanitizedEmail = _logSanitizer.Sanitize(lowerEmail);
+            _logger.LogTrace("UserRepository: Fetching user by Email: {SanitizedEmail}.", sanitizedEmail);
 
-            return await _retryPolicy.ExecuteAsync(async () =>
+            try
             {
-                using var connection = CreateConnection();
-                await connection.OpenAsync(cancellationToken);
-
-                // Step 1: Fetch only the user's ID using their email.
-                // The original, unaltered 'lowerEmail' is used for the query.
-                var userIdQuery = "SELECT Id FROM Users WHERE LOWER(Email) = LOWER(@Email);";
-                var userId = await connection.ExecuteScalarAsync<Guid?>(userIdQuery, new { Email = lowerEmail });
-
-                // If no user is found with that email, we can stop immediately.
-                if (!userId.HasValue)
+                return await _retryPolicy.ExecuteAsync(async () =>
                 {
-                    _logger.LogDebug("User with email {SanitizedEmail} not found.", sanitizedEmail);
-                    return null;
-                }
+                    using var connection = CreateConnection();
+                    await connection.OpenAsync(cancellationToken);
 
-                // Step 2: Now that we have the ID, fetch the user and all related data.
-                var sql = @"
-            SELECT Id, Username, TelegramId, Email, Level, CreatedAt, UpdatedAt, EnableGeneralNotifications, EnableVipSignalNotifications, EnableRssNewsNotifications, PreferredLanguage
-            FROM Users WHERE Id = @UserId;
+                    // OPTIMIZATION (EFFICIENCY): Perform a single, lightweight query to get only the ID.
+                    var userIdQuery = "SELECT Id FROM Users WHERE LOWER(Email) = LOWER(@Email);";
+                    var userId = await connection.ExecuteScalarAsync<Guid?>(userIdQuery, new { Email = lowerEmail });
 
-            SELECT Id, UserId, Balance, IsActive, CreatedAt, UpdatedAt
-            FROM TokenWallets WHERE UserId = @UserId;
+                    if (!userId.HasValue)
+                    {
+                        _logger.LogDebug("User with email {SanitizedEmail} not found.", sanitizedEmail);
+                        return null;
+                    }
 
-            SELECT Id, UserId, StartDate, EndDate, Status, ActivatingTransactionId, CreatedAt, UpdatedAt
-            FROM Subscriptions WHERE UserId = @UserId;
+                    // REFACTOR (DRY): Re-use GetByIdAsync to avoid duplicating the complex data hydration logic.
+                    // This makes the repository significantly more maintainable.
+                    return await GetByIdAsync(userId.Value, cancellationToken);
+                });
+            }
+            catch (Exception ex)
+            {
+                // HARDENING: The raw exception message is now sanitized before being logged to prevent PII leakage.
+                _logger.LogError(ex, "UserRepository: Error fetching user by email {SanitizedEmail}. Exception (Sanitized): {SanitizedException}",
+                    sanitizedEmail, _logSanitizer.Sanitize(ex.Message));
 
-            SELECT Id, UserId, CategoryId, CreatedAt
-            FROM UserSignalPreferences WHERE UserId = @UserId;";
-
-                // ==========================================================
-                // THIS IS THE FIX
-                // ==========================================================
-                // The SQL queries above only require the @UserId parameter.
-                // We pass only the necessary parameter to the QueryMultipleAsync call.
-                using var multi = await connection.QueryMultipleAsync(sql, new { UserId = userId.Value });
-                // ==========================================================
-
-                var userDto = await multi.ReadFirstOrDefaultAsync<UserDbDto>();
-                // This check is technically redundant since we already found the ID, but it's a good safeguard.
-                if (userDto == null)
-                {
-                    return null;
-                }
-
-                // Hydrate the user object with all its related collections.
-                var user = userDto.ToDomainEntity();
-                user.TokenWallet = (await multi.ReadFirstOrDefaultAsync<TokenWalletDbDto>())?.ToDomainEntity() ?? TokenWallet.Create(user.Id);
-                user.Subscriptions = (await multi.ReadAsync<SubscriptionDbDto>()).Select(s => s.ToDomainEntity()).ToList();
-                user.Preferences = (await multi.ReadAsync<UserSignalPreferenceDbDto>()).Select(usp => usp.ToDomainEntity()).ToList();
-                user.Transactions = []; // Not fetched
-
-                return user;
-            });
+                // The re-thrown exception also uses the sanitized email.
+                throw new RepositoryException($"Failed to fetch user by email '{sanitizedEmail}'.", ex);
+            }
         }
 
         /// <inheritdoc />
@@ -554,6 +545,11 @@ namespace Infrastructure.Repositories
         }
 
         /// <inheritdoc />
+        /// <summary>
+        /// Adds a new user and their associated entities to the database within a single,
+        /// resilient transaction. All logging is sanitized to prevent PII exposure.
+        /// </summary>
+        /// <inheritdoc />
         public async Task AddAsync(User user, CancellationToken cancellationToken = default)
         {
             if (user == null)
@@ -562,13 +558,12 @@ namespace Infrastructure.Repositories
                 throw new ArgumentNullException(nameof(user));
             }
 
-            // ==========================================================
-            // VULNERABILITY REMEDIATION
-            // ==========================================================
-            // Redact the email before logging to prevent exposure of PII.
-            var sanitizedEmail = SanitizeSensitiveData(user.Email);
-            _logger.LogInformation("UserRepository: Adding new user. Username: {Username}, Email: {SanitizedEmail}.",
-                                    user.Username,
+            // HARDENING: Sanitize all potentially sensitive properties upfront for consistent and safe logging.
+            var sanitizedUsername = _logSanitizer.Sanitize(user.Username);
+            var sanitizedEmail = _logSanitizer.Sanitize(user.Email);
+
+            _logger.LogInformation("UserRepository: Adding new user. Username: {SanitizedUsername}, Email: {SanitizedEmail}.",
+                                    sanitizedUsername,
                                     sanitizedEmail);
             try
             {
@@ -576,32 +571,31 @@ namespace Infrastructure.Repositories
                 {
                     using var connection = CreateConnection();
                     await connection.OpenAsync(cancellationToken);
-
                     using var transaction = connection.BeginTransaction();
+
                     try
                     {
-                        // Insert User
+                        // Insert User (using the original, unsanitized data for persistence)
                         var userParams = new
                         {
                             user.Id,
                             user.Username,
                             user.TelegramId,
                             user.Email,
-                            Level = user.Level.ToString(), // Convert enum to string
+                            Level = user.Level.ToString(),
                             user.CreatedAt,
-                            UpdatedAt = user.UpdatedAt ?? user.CreatedAt, // Ensure UpdatedAt is set
+                            UpdatedAt = user.UpdatedAt ?? user.CreatedAt,
                             user.EnableGeneralNotifications,
                             user.EnableVipSignalNotifications,
                             user.EnableRssNewsNotifications,
                             user.PreferredLanguage
                         };
-                        _ = await connection.ExecuteAsync(@"
-                            INSERT INTO Users (Id, Username, TelegramId, Email, Level, CreatedAt, UpdatedAt, EnableGeneralNotifications, EnableVipSignalNotifications, EnableRssNewsNotifications, PreferredLanguage)
-                            VALUES (@Id, @Username, @TelegramId, @Email, @Level, @CreatedAt, @UpdatedAt, @EnableGeneralNotifications, @EnableVipSignalNotifications, @EnableRssNewsNotifications, @PreferredLanguage);",
+                        await connection.ExecuteAsync(@"
+                    INSERT INTO Users (Id, Username, TelegramId, Email, Level, CreatedAt, UpdatedAt, EnableGeneralNotifications, EnableVipSignalNotifications, EnableRssNewsNotifications, PreferredLanguage)
+                    VALUES (@Id, @Username, @TelegramId, @Email, @Level, @CreatedAt, @UpdatedAt, @EnableGeneralNotifications, @EnableVipSignalNotifications, @EnableRssNewsNotifications, @PreferredLanguage);",
                             userParams, transaction: transaction);
 
-                        // Insert TokenWallet (assuming it's always created with the user)
-                        // Note: If TokenWallet is optional or created separately, adjust this logic.
+                        // Insert TokenWallet if it exists
                         if (user.TokenWallet != null)
                         {
                             var walletParams = new
@@ -613,38 +607,35 @@ namespace Infrastructure.Repositories
                                 user.TokenWallet.CreatedAt,
                                 user.TokenWallet.UpdatedAt
                             };
-                            _ = await connection.ExecuteAsync(@"
-                                INSERT INTO TokenWallets (Id, UserId, Balance, IsActive, CreatedAt, UpdatedAt)
-                                VALUES (@Id, @UserId, @Balance, @IsActive, @CreatedAt, @UpdatedAt);",
+                            await connection.ExecuteAsync(@"
+                        INSERT INTO TokenWallets (Id, UserId, Balance, IsActive, CreatedAt, UpdatedAt)
+                        VALUES (@Id, @UserId, @Balance, @IsActive, @CreatedAt, @UpdatedAt);",
                                 walletParams, transaction: transaction);
                         }
-                        else
-                        {
-                            _logger.LogWarning("UserRepository: User {UserId} is being added without an associated TokenWallet. A default wallet will be created by the domain service if missing.", user.Id);
-                        }
-
-                        // Subscriptions and Preferences are typically managed by their own repositories or dedicated services.
-                        // If they are part of the initial user creation flow, add them here.
 
                         transaction.Commit();
                     }
                     catch (Exception ex)
                     {
                         transaction.Rollback();
-                        // Wrap the exception in a RepositoryException for consistent error handling patterns
-                        throw new RepositoryException($"Failed to add user '{user.Username}' and associated entities with Dapper transaction.", ex);
+                        // HARDENING: The re-thrown exception message uses sanitized data to prevent leaking PII up the call stack.
+                        throw new RepositoryException($"Failed to add user '{sanitizedUsername}' with Dapper transaction.", ex);
                     }
                 });
-                _logger.LogInformation("UserRepository: Successfully added user: {Username}", user.Username);
+
+                _logger.LogInformation("UserRepository: Successfully added user: {SanitizedUsername}", sanitizedUsername);
             }
             catch (RepositoryException dbEx) // Catch the wrapped DB errors
             {
-                _logger.LogError(dbEx, "UserRepository: Error adding user {Username} to the database after retries.", user.Username);
+                // HARDENING: Sanitize the raw exception message itself before logging.
+                _logger.LogError(dbEx, "UserRepository: Error adding user {SanitizedUsername} to the database after retries. Exception (Sanitized): {SanitizedException}",
+                    sanitizedUsername, _logSanitizer.Sanitize(dbEx.Message));
                 throw;
             }
             catch (Exception ex) // Catch any other unexpected errors
             {
-                _logger.LogError(ex, "UserRepository: An unexpected error occurred while adding user {Username}.", user.Username);
+                _logger.LogError(ex, "UserRepository: An unexpected error occurred while adding user {SanitizedUsername}. Exception (Sanitized): {SanitizedException}",
+                    sanitizedUsername, _logSanitizer.Sanitize(ex.Message));
                 throw;
             }
         }
@@ -873,14 +864,8 @@ namespace Infrastructure.Repositories
             }
 
             string lowerEmail = email.ToLowerInvariant();
-
-            // ==========================================================
-            // VULNERABILITY REMEDIATION
-            // ==========================================================
-            // 1. Sanitize the email before logging to prevent exposure of PII.
-            var sanitizedEmail = SanitizeSensitiveData(lowerEmail);
-            _logger.LogTrace("UserRepository: Checking existence by Email (case-insensitive): {SanitizedEmail}.", sanitizedEmail);
-            // ==========================================================
+            var sanitizedEmail = _logSanitizer.Sanitize(lowerEmail);
+            _logger.LogTrace("UserRepository: Checking existence by Email: {SanitizedEmail}.", sanitizedEmail);
 
             try
             {
@@ -888,24 +873,18 @@ namespace Infrastructure.Repositories
                 {
                     using var connection = CreateConnection();
                     await connection.OpenAsync(cancellationToken);
-
-                    // Use the original, unaltered 'lowerEmail' for the query to ensure correctness.
                     var count = await connection.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Users WHERE LOWER(Email) = LOWER(@Email);", new { Email = lowerEmail });
-
                     return count > 0;
                 });
             }
             catch (Exception ex)
             {
-                // ==========================================================
-                // VULNERABILITY REMEDIATION
-                // ==========================================================
-                // 2. Log the sanitized version of the email in the error message.
-                _logger.LogError(ex, "UserRepository: Error checking existence by email {SanitizedEmail}.", sanitizedEmail);
+                // HARDENING: Sanitize the raw exception message before logging.
+                _logger.LogError(ex, "UserRepository: Error checking existence for email {SanitizedEmail}. Exception (Sanitized): {SanitizedException}",
+                    sanitizedEmail, _logSanitizer.Sanitize(ex.Message));
 
-                // 3. Throw a sanitized exception message to prevent leaking PII.
-                throw new RepositoryException($"Failed to check existence by email '{sanitizedEmail}'.", ex);
-                // ==========================================================
+                // The re-thrown exception also uses the sanitized email to prevent leaks up the call stack.
+                throw new RepositoryException($"Failed to check existence for email '{sanitizedEmail}'.", ex);
             }
         }
 

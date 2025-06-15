@@ -14,7 +14,8 @@ using Telegram.Bot.Types.ReplyMarkups;
 using TelegramPanel.Application.CommandHandlers.MainMenu;
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Formatters;
-using TelegramPanel.Infrastructure; // Needed for TelegramMessageFormatter etc.
+using TelegramPanel.Infrastructure;
+using static TelegramPanel.Infrastructure.ActualTelegramMessageActions; // Needed for TelegramMessageFormatter etc.
 
 // FIX: Changed namespace to match the new location
 namespace TelegramPanel.Application.CommandHandlers.Features.CoinGecko

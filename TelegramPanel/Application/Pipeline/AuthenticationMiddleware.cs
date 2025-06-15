@@ -4,7 +4,8 @@ using Application.Interfaces;
 using Microsoft.Extensions.Logging;
 using Telegram.Bot.Types;
 using TelegramPanel.Application.Interfaces;
-using TelegramPanel.Infrastructure;     // For the User entity
+using TelegramPanel.Infrastructure;
+using static TelegramPanel.Infrastructure.ActualTelegramMessageActions;     // For the User entity
 
 namespace TelegramPanel.Application.Pipeline
 {

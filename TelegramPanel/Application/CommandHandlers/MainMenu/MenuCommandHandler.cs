@@ -12,6 +12,7 @@ using TelegramPanel.Formatters;
 using TelegramPanel.Infrastructure;
 using TelegramPanel.Infrastructure.Helper;
 using static TelegramPanel.Application.CommandHandlers.Features.CoinGecko.CryptoCallbackHandler;
+using static TelegramPanel.Infrastructure.ActualTelegramMessageActions;
 #endregion
 
 namespace TelegramPanel.Application.CommandHandlers.MainMenu

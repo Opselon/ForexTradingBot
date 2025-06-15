@@ -5,7 +5,8 @@ using Polly.Retry; // اضافه شده برای سیاست‌های Retry
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums; // Required for UpdateType
 using TelegramPanel.Application.Interfaces;
-using TelegramPanel.Application.Pipeline; // برای TelegramPipelineDelegate
+using TelegramPanel.Application.Pipeline;
+using static TelegramPanel.Infrastructure.ActualTelegramMessageActions; // برای TelegramPipelineDelegate
 
 namespace TelegramPanel.Infrastructure // یا Application اگر در آن لایه است
 {

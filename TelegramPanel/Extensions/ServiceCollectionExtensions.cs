@@ -23,6 +23,7 @@ using TelegramPanel.Infrastructure;         // For concrete service implementati
 using TelegramPanel.Infrastructure.Services; // For concrete service implementations like TelegramMessageSender
 using TelegramPanel.Queue;
 using TelegramPanel.Settings;
+using static TelegramPanel.Infrastructure.ActualTelegramMessageActions;
 // using Scrutor; // Scrutor is available via IServiceCollection extensions, no direct using needed here
 
 #endregion

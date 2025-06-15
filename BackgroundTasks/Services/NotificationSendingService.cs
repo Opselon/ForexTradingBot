@@ -24,6 +24,7 @@ using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
 using TelegramPanel.Formatters; // For TelegramMessageFormatter
 using TelegramPanel.Infrastructure;
+using static TelegramPanel.Infrastructure.ActualTelegramMessageActions;
 #endregion
 
 namespace BackgroundTasks.Services

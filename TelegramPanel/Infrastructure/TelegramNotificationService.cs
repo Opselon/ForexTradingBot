@@ -4,7 +4,8 @@ using Application.Common.Interfaces; // برای INotificationService (از پر
 using Microsoft.Extensions.Logging;
 using Polly;                      // ✅ اضافه شده برای Polly
 using Polly.Retry;                // ✅ اضافه شده برای سیاست‌های Retry
-using Telegram.Bot.Types.Enums;   // برای ParseMode
+using Telegram.Bot.Types.Enums;
+using static TelegramPanel.Infrastructure.ActualTelegramMessageActions;   // برای ParseMode
 // ITelegramMessageSender باید در همین namespace یا یک using صحیح داشته باشد.
 // فرض می‌کنیم ITelegramMessageSender در TelegramPanel.Infrastructure تعریف شده.
 #endregion

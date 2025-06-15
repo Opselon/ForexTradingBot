@@ -158,27 +158,34 @@ namespace WebAPI.Controllers
         [HttpGet("rules/{ruleName}")]
         public async Task<ActionResult<ForwardingRule>> GetRule(string ruleName, CancellationToken cancellationToken)
         {
-            if (string.IsNullOrWhiteSpace(ruleName))
+            // 1. Sanitize the input IMMEDIATELY.
+            var sanitizedRuleName = ruleName?.Replace(Environment.NewLine, "").Replace("\n", "").Replace("\r", "") ?? string.Empty;
+
+            // 2. Validate the SANITIZED input.
+            if (string.IsNullOrWhiteSpace(sanitizedRuleName))
             {
                 return BadRequest("Rule name cannot be empty.");
             }
             try
             {
-                ForwardingRule? rule = await _forwardingService.GetRuleAsync(ruleName, cancellationToken);
+                // 3. Use the SANITIZED input for the service call.
+                ForwardingRule? rule = await _forwardingService.GetRuleAsync(sanitizedRuleName, cancellationToken);
                 if (rule == null)
                 {
-                    _logger.LogWarning("CONTROLLER.GetRule: Rule '{RuleName}' not found.", ruleName);
-                    return NotFound($"Rule '{ruleName}' not found.");
+                    // Logging is now safe.
+                    _logger.LogWarning("CONTROLLER.GetRule: Rule '{RuleName}' not found.", sanitizedRuleName);
+                    // Return the sanitized name to the client to prevent echoing malicious script content (minor XSS vector).
+                    return NotFound($"Rule '{sanitizedRuleName}' not found.");
                 }
                 return Ok(rule);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "CONTROLLER.GetRule: Error retrieving forwarding rule {RuleName}.", ruleName);
+                // Logging is now safe.
+                _logger.LogError(ex, "CONTROLLER.GetRule: Error retrieving forwarding rule {RuleName}.", sanitizedRuleName);
                 return StatusCode(500, "Error retrieving forwarding rule.");
             }
         }
-
 
 
         [HttpGet("rules/channel/{sourceChannelId}")]
@@ -256,39 +263,51 @@ namespace WebAPI.Controllers
             var sanitizedUrlRuleName = ruleName?.Replace(Environment.NewLine, "").Replace("\n", "").Replace("\r", "") ?? string.Empty;
             if (string.IsNullOrWhiteSpace(sanitizedUrlRuleName) || dto == null) return BadRequest("Rule name is invalid or request body is missing.");
 
-            var sanitizedDtoRuleName = dto.RuleName?.Replace(Environment.NewLine, "").Replace("\n", "").Replace("\r", "") ?? string.Empty;
-            if (sanitizedUrlRuleName != sanitizedDtoRuleName)
+            // Even though we use the sanitized version later, we must also sanitize the raw version before logging it.
+            var sanitizedDtoRuleNameForComparison = dto.RuleName?.Replace(Environment.NewLine, "").Replace("\n", "").Replace("\r", "") ?? string.Empty;
+
+            if (sanitizedUrlRuleName != sanitizedDtoRuleNameForComparison)
             {
-                _logger.LogWarning("Potential parameter tampering in UpdateRule. URL: '{UrlRuleName}', Body: '{BodyRuleName}'.", sanitizedUrlRuleName, dto.RuleName);
+                // ==========================================================
+                // VULNERABILITY REMEDIATION
+                // ==========================================================
+                // Use the sanitized version of the body's rule name for logging.
+                _logger.LogWarning("Potential parameter tampering in UpdateRule. URL: '{UrlRuleName}', Body (Sanitized): '{BodyRuleName}'.",
+                                    sanitizedUrlRuleName,
+                                    sanitizedDtoRuleNameForComparison);
+                // ==========================================================
+
                 return BadRequest("Rule name in URL must match the rule name in the request body.");
             }
 
-            dto.RuleName = sanitizedDtoRuleName;
+            // Assign the sanitized name back to the DTO for mapping
+            dto.RuleName = sanitizedDtoRuleNameForComparison;
 
             try
             {
                 var updatedRule = _mapper.Map<ForwardingRule>(dto);
 
                 await _forwardingService.UpdateRuleAsync(updatedRule, cancellationToken);
-                _logger.LogInformation("CONTROLLER.UpdateRule: Rule '{RuleName}' updated successfully.", sanitizedDtoRuleName);
+                _logger.LogInformation("CONTROLLER.UpdateRule: Rule '{RuleName}' updated successfully.", dto.RuleName);
                 return NoContent();
             }
             catch (AutoMapperMappingException ex)
             {
                 _logger.LogError(ex, "AutoMapper configuration error for UpdateRule. Check MappingProfile.");
-                return StatusCode(500, "An internal configuration error occurred.");
+                return StatusCode(500, "An internal error occurred.");
             }
             catch (InvalidOperationException opEx)
             {
-                _logger.LogWarning(opEx, "CONTROLLER.UpdateRule: Error updating rule {RuleName}.", sanitizedDtoRuleName);
+                _logger.LogWarning(opEx, "CONTROLLER.UpdateRule: Error updating rule {RuleName}.", dto.RuleName);
                 return NotFound("The specified rule could not be found or updated.");
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "CONTROLLER.UpdateRule: General error updating rule {RuleName}.", sanitizedDtoRuleName);
+                _logger.LogError(ex, "CONTROLLER.UpdateRule: General error updating rule {RuleName}.", dto.RuleName);
                 return StatusCode(500, "An internal error occurred.");
             }
         }
+
 
         [HttpDelete("rules/{ruleName}")]
         public async Task<ActionResult> DeleteRule(string ruleName, CancellationToken cancellationToken)

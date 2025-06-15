@@ -168,6 +168,8 @@ namespace Infrastructure.Features.Forwarding.Repositories
         /// <param name="ruleName">The name of the forwarding rule.</param>
         /// <param name="cancellationToken">Cancellation token for asynchronous operation.</param>
         /// <returns>The found forwarding rule or null if not found.</returns>
+        // In Infrastructure/Features/Forwarding/Repositories/ForwardingRuleRepository.cs
+
         public async Task<ForwardingRule?> GetByIdAsync(string ruleName, CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(ruleName))
@@ -175,13 +177,27 @@ namespace Infrastructure.Features.Forwarding.Repositories
                 _logger.LogWarning("ForwardingRuleRepository: GetByIdAsync called with null or empty ruleName.");
                 return null;
             }
-            _logger.LogTrace("ForwardingRuleRepository: Fetching forwarding rule by RuleName: {RuleName}", ruleName);
 
-            return await _retryPolicy.ExecuteAsync(async () => // Apply retry policy
+            // ==========================================================
+            // VULNERABILITY REMEDIATION
+            // ==========================================================
+            // 1. Sanitize the user-controlled ruleName to prevent log forging (CRLF Injection).
+            //    This is done specifically for logging, not for the database query.
+            var sanitizedRuleNameForLogging = ruleName
+                                                .Replace(Environment.NewLine, "[NL]")
+                                                .Replace("\n", "[NL]")
+                                                .Replace("\r", "[CR]");
+
+            // 2. Log the sanitized input.
+            _logger.LogTrace("ForwardingRuleRepository: Fetching forwarding rule by RuleName: {RuleName}",
+                                sanitizedRuleNameForLogging);
+            // ==========================================================
+
+
+            return await _retryPolicy.ExecuteAsync(async () =>
             {
                 using var connection = new SqlConnection(_connectionString);
                 await connection.OpenAsync(cancellationToken);
-
                 // Fetch the main rule and its text replacements in a single query using QueryMultiple
                 var sql = @"
                     SELECT
@@ -201,6 +217,7 @@ namespace Infrastructure.Features.Forwarding.Repositories
 
                 using var multi = await connection.QueryMultipleAsync(sql, new { RuleName = ruleName });
 
+      
                 var ruleDto = await multi.ReadFirstOrDefaultAsync<ForwardingRuleDbDto>();
                 if (ruleDto == null)
                 {

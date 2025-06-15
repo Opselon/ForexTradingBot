@@ -56,29 +56,43 @@ namespace TelegramPanel.Controllers // یا namespace پروژه WebAPI شما
         /// <see cref="StatusCodeResult"/> با کد 500 (Internal Server Error) برای سایر خطاهای پیش‌بینی نشده.
         /// </returns>
         [HttpPost]
-        public async Task<IActionResult> Post(
-            [FromBody] Update update, //  ASP.NET Core به طور خودکار JSON را به آبجکت Update تبدیل می‌کند.
-            [FromHeader(Name = "X-Telegram-Bot-Api-Secret-Token")] string? secretTokenHeader, //  دریافت هدر برای امنیت.
-            CancellationToken cancellationToken)
+       public async Task<IActionResult> Post(
+       [FromBody] Update update,
+       [FromHeader(Name = "X-Telegram-Bot-Api-Secret-Token")] string? secretTokenHeader,
+       CancellationToken cancellationToken)
         {
-            // مرحله ۱: اعتبارسنجی Secret Token (اگر در تنظیمات فعال شده باشد)
-            // این یک لایه امنیتی مهم برای جلوگیری از درخواست‌های جعلی به Webhook شماست.
+            // ...
             if (!string.IsNullOrWhiteSpace(_settings.WebhookSecretToken))
             {
                 if (_settings.WebhookSecretToken != secretTokenHeader)
                 {
+                    // ==========================================================
+                    // VULNERABILITY REMEDIATION
+                    // ==========================================================
+                    // 1. Sanitize the user-provided header to prevent log forging (CRLF Injection).
+                    var sanitizedTokenHeader = (secretTokenHeader ?? "NULL")
+                                                   .Replace(Environment.NewLine, "[NL]")
+                                                   .Replace("\n", "[NL]")
+                                                   .Replace("\r", "[CR]");
+
+                    // 2. Mask the expected token to avoid leaking secrets in logs.
+                    var maskedExpectedToken = string.IsNullOrWhiteSpace(_settings.WebhookSecretToken)
+                                                  ? "NOT_SET"
+                                                  : $"{_settings.WebhookSecretToken.Substring(0, Math.Min(4, _settings.WebhookSecretToken.Length))}...";
+
+                    // 3. Log the sanitized and masked data.
                     _logger.LogWarning(
-                        "Invalid Webhook Secret Token received from IP {RemoteIpAddress}. Expected: '{ExpectedToken}', Got: '{ActualToken}'",
-                        HttpContext.Connection.RemoteIpAddress?.ToString() ?? "N/A", //  لاگ کردن IP درخواست‌دهنده برای بررسی‌های امنیتی
-                        _settings.WebhookSecretToken, //  از نمایش کامل توکن در لاگ Production خودداری کنید یا آن را Mask کنید.
-                        secretTokenHeader ?? "NULL"
+                        "Invalid Webhook Secret Token received from IP {RemoteIpAddress}. Expected (Masked): '{ExpectedToken}', Got (Sanitized): '{ActualToken}'",
+                        HttpContext.Connection.RemoteIpAddress?.ToString() ?? "N/A",
+                        maskedExpectedToken,
+                        sanitizedTokenHeader
                     );
-                    // بازگرداندن خطای 401 Unauthorized بدون هیچ اطلاعات اضافی.
+                    // ==========================================================
+
                     return StatusCode(StatusCodes.Status401Unauthorized, new { ErrorMessage = "Invalid secret token." });
                 }
                 _logger.LogDebug("Webhook Secret Token validated successfully.");
             }
-
             // مرحله ۲: بررسی null بودن آپدیت دریافتی
             if (update == null)
             {

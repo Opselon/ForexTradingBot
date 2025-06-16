@@ -1063,6 +1063,7 @@ namespace Infrastructure.Services
         /// <summary>
         /// Saves a list of <see cref="NewsItem"/> entities to the database using Dapper within a single, resilient transaction.
         /// This method ensures that all items are either successfully persisted together or none are, maintaining data consistency.
+        /// It incorporates a duplicate check based on `Title` and `Summary` to prevent semantic duplicates from being saved.
         /// It utilizes a configured retry policy (`_dbRetryPolicy`) to handle transient database connection or operation failures,
         /// making the save operation robust against temporary database unavailability.
         /// </summary>
@@ -1072,8 +1073,8 @@ namespace Infrastructure.Services
         /// database connection establishment, transaction management, and SQL execution. If cancellation is requested,
         /// the operation will attempt to gracefully terminate.</param>
         /// <returns>
-        /// A <see cref="Task"/> that represents the asynchronous save operation. The task completes when all items have been successfully
-        /// inserted into the database and the transaction has been committed.
+        /// A <see cref="Task"/> that represents the asynchronous save operation. The task completes when all unique items
+        /// have been successfully inserted into the database and the transaction has been committed.
         /// </returns>
         /// <exception cref="RepositoryException">
         /// Thrown if any error occurs during the database interaction that prevents successful completion of the transaction
@@ -1099,13 +1100,26 @@ namespace Infrastructure.Services
 
                 try
                 {
+                    // SQL INSERT statement modified to include a WHERE NOT EXISTS clause.
+                    // This ensures that a news item is only inserted if no existing item
+                    // has the same Title (case-insensitive) and Summary (case-insensitive, handling NULLs).
+                    // COALESCE(column, '') treats NULLs as empty strings for comparison, ensuring proper matching.
                     var sql = @"
-                        INSERT INTO NewsItems (Id, Title, Link, Summary, FullContent, ImageUrl, PublishedDate, CreatedAt, LastProcessedAt, SourceName, SourceItemId, SentimentScore, SentimentLabel, DetectedLanguage, AffectedAssets, RssSourceId, IsVipOnly, AssociatedSignalCategoryId) 
-                        VALUES (@Id, @Title, @Link, @Summary, @FullContent, @ImageUrl, @PublishedDate, @CreatedAt, @LastProcessedAt, @SourceName, @SourceItemId, @SentimentScore, @SentimentLabel, @DetectedLanguage, @AffectedAssets, @RssSourceId, @IsVipOnly, @AssociatedSignalCategoryId);";
+                   INSERT INTO NewsItems (Id, Title, Link, Summary, FullContent, ImageUrl, PublishedDate, CreatedAt, LastProcessedAt, SourceName, SourceItemId, SentimentScore, SentimentLabel, DetectedLanguage, AffectedAssets, RssSourceId, IsVipOnly, AssociatedSignalCategoryId) 
+                   SELECT
+                       @Id, @Title, @Link, @Summary, @FullContent, @ImageUrl, @PublishedDate, @CreatedAt, @LastProcessedAt, @SourceName, @SourceItemId, @SentimentScore, @SentimentLabel, @DetectedLanguage, @AffectedAssets, @RssSourceId, @IsVipOnly, @AssociatedSignalCategoryId
+                   WHERE NOT EXISTS (
+                       SELECT 1
+                       FROM NewsItems AS existing
+                       WHERE LOWER(existing.Title) = LOWER(@Title)
+                         AND COALESCE(LOWER(existing.Summary), '') = COALESCE(LOWER(@Summary), '')
+                   );";
 
+                    // Dapper's ExecuteAsync when given a list of items will execute the SQL for each item.
+                    // The WHERE NOT EXISTS clause will prevent insertion of duplicates.
                     var rowsAffected = await connection.ExecuteAsync(sql, items, transaction);
                     await transaction.CommitAsync(cancellationToken);
-                    _logger.LogInformation("Database save successful. Transaction committed. {RowsAffected} rows affected.", rowsAffected);
+                    _logger.LogInformation("Database save successful. Transaction committed. {RowsAffected} unique items actually inserted.", rowsAffected);
                 }
                 catch (Exception ex)
                 {
@@ -1118,7 +1132,6 @@ namespace Infrastructure.Services
 
             _logger.LogTrace("Exiting {MethodName}", methodName);
         }
-
 
         /// <summary>
         /// Implements the specific business logic for dispatching news notifications based on content characteristics.

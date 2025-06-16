@@ -12,10 +12,37 @@ using System.Net;                    // For HttpStatusCode (for analyzing perman
 namespace Infrastructure.Services
 {
     /// <summary>
-    /// Service for coordinating and managing the fetching and processing of RSS feeds.
-    /// This service retrieves active RSS feeds from the repository and passes each one for processing to the <see cref="IRssReaderService"/>.
-    /// Each individual feed fetch operation is protected by a Polly policy for enhanced resilience against transient errors.
+    /// Serves as the central coordinator and orchestrator for fetching and processing RSS feeds within the AI analysis program.
+    /// This service is responsible for maintaining a continuous and resilient flow of fresh news data into the system,
+    /// which is then consumed and analyzed by the AI models.
+    /// <br/><br/>
+    /// It identifies all active RSS feed sources, manages concurrent fetching operations to optimize throughput,
+    /// and leverages robust retry mechanisms (using Polly) to ensure that transient failures during individual
+    /// feed processing attempts do not halt the entire ingestion pipeline.
     /// </summary>
+    /// <remarks>
+    /// Role for AI Analysis:
+    /// This service is foundational for the entire AI analysis program. Its operational health and efficiency directly
+    /// dictate the timeliness, completeness, and quality of the raw data available to the AI models.
+    /// <list type="bullet">
+    ///     <item><description>
+    ///         Data Freshness: Ensures AI models always have access to the latest news, critical for real-time signal generation and analysis.
+    ///     </description></item>
+    ///     <item><description>
+    ///         Pipeline Resilience: By handling transient errors and managing concurrency, it guarantees a continuous data supply, minimizing
+    ///         disruptions to AI processing even when external RSS sources or network conditions are unstable.
+    ///     </description></item>
+    ///     <item><description>
+    ///         Operational Insight (MLOps): Provides comprehensive logging at various levels (coordinator, per-feed, retry attempts). This telemetry is
+    ///         invaluable for MLOps teams to monitor the health of the data ingestion pipeline, diagnose source-specific issues,
+    ///         and optimize resource allocation for AI data preparation.
+    ///     </description></item>
+    ///     <item><description>
+    ///         Scalability: The concurrent processing capabilities allow the system to scale its data ingestion efforts
+    ///         as the number of monitored RSS sources grows, without linearly increasing processing time.
+    ///     </description></item>
+    /// </list>
+    /// </remarks>
     public class RssFetchingCoordinatorService : IRssFetchingCoordinatorService
     {
         private readonly IRssSourceRepository _rssSourceRepository;
@@ -27,11 +54,51 @@ namespace Infrastructure.Services
         private const int MaxConcurrentFeedFetches = 4; // Adjust based on VPS cores and I/O capacity (e.g., 2x-4x cores)
 
         /// <summary>
-        /// Constructor for <see cref="RssFetchingCoordinatorService"/>.
+        /// Initializes a new instance of the <see cref="RssFetchingCoordinatorService"/> class.
+        /// This constructor sets up the essential dependencies required for coordinating RSS feed fetching
+        /// and configures a robust Polly retry policy specifically for handling transient errors
+        /// that may occur during the processing of individual RSS feeds by the underlying reader service.
         /// </summary>
-        /// <param name="rssSourceRepository">Repository for accessing RSS sources.</param>
-        /// <param name="rssReaderService">Service for reading and processing RSS feeds.</param>
-        /// <param name="logger">Logger for logging information and errors.</param>
+        /// <param name="rssSourceRepository">The repository responsible for accessing and managing RSS source configurations in the database. This is a mandatory dependency.</param>
+        /// <param name="rssReaderService">The service responsible for the actual fetching, parsing, and initial processing of individual RSS feeds. This is a mandatory dependency.</param>
+        /// <param name="logger">The logger instance used for capturing operational information, warnings, and errors throughout the coordinator's lifecycle. This is a mandatory dependency.</param>
+        /// <returns>
+        /// A new instance of <see cref="RssFetchingCoordinatorService"/>, fully initialized and ready to orchestrate
+        /// the fetching of active RSS feeds. The `_coordinatorRetryPolicy` is configured to enhance the resilience
+        /// of the overall data ingestion pipeline.
+        /// </returns>
+        /// <exception cref="ArgumentNullException">
+        /// Thrown if any of the required constructor parameters (<paramref name="rssSourceRepository"/>,
+        /// <paramref name="rssReaderService"/>, or <paramref name="logger"/>) are <c>null</c>.
+        /// </exception>
+        /// <remarks>
+        /// **Role for AI Analysis and Data Pipeline Reliability:**
+        /// This constructor's configuration of the `_coordinatorRetryPolicy` is vital for the reliability
+        /// of the data pipeline that feeds our AI analysis.
+        /// <list type="bullet">
+        ///     <item><description>
+        ///         **Data Flow Consistency:** By retrying transient failures at the coordinator level, it helps
+        ///         ensure that data from individual RSS sources continues to flow into the system even when
+        ///         faced with temporary external issues (e.g., source server temporary unavailability, network blips).
+        ///     </description></item>
+        ///     <item><description>
+        ///         **Resource Management:** It explicitly avoids retrying permanent errors (like 404 Not Found or explicit cancellations).
+        ///         This prevents wasting computational resources on operations that are guaranteed to fail, allowing the system to
+        ///         focus on healthy data sources. This distinction is critical for efficient MLOps.
+        ///     </description></item>
+        ///     <item><description>
+        ///         **Operational Insight for AI/MLOps:** The structured logging within the `onRetryAsync` callback provides
+        ///         valuable telemetry. AI/MLOps teams can monitor these logs to:
+        ///         <list type="circle">
+        ///             <item><description>Track the frequency and types of transient errors affecting specific RSS feeds.</description></item>
+        ///             <item><description>Identify RSS sources that consistently cause retries, which might indicate
+        ///             degrading quality or intermittent issues that need deeper investigation.</description></item>
+        ///             <item><description>Analyze the effectiveness of the retry policy itself and potentially
+        ///             tune its parameters (retry count, delays) using AI/ML-driven optimization.</description></item>
+        ///         </list>
+        ///     </description></item>
+        /// </list>
+        /// </remarks>
         public RssFetchingCoordinatorService(
             IRssSourceRepository rssSourceRepository,
             IRssReaderService rssReaderService,
@@ -95,12 +162,47 @@ namespace Infrastructure.Services
         }
 
         #region FetchAllActiveFeedsAsync (Public Hangfire Job - Level 5: Parallel.ForEachAsync)
+
+
         /// <summary>
-        /// Fetches and processes all active RSS feeds asynchronously.
-        /// This method is executed as a Hangfire job.
-        /// Each feed is processed in parallel with limited concurrency to optimize resource usage.
+        /// Orchestrates the asynchronous fetching and processing of all currently active RSS feeds.
+        /// This method is designed as a Hangfire background job, serving as the central coordinator
+        /// for continuously ingesting fresh news data into the system, which is then utilized by AI analysis models.
+        /// It fetches a list of active RSS sources from the repository and processes each feed concurrently
+        /// using structured parallelism, optimizing resource usage while ensuring all eligible feeds are attempted.
         /// </summary>
-        /// <param name="cancellationToken">Cancellation token for cancelling the operation.</param>
+        /// <param name="cancellationToken">A <see cref="CancellationToken"/> that allows for external cancellation of the entire fetching operation. If cancelled, the job will stop processing new feeds and attempt to gracefully terminate ongoing fetches.</param>
+        /// <returns>
+        /// A <see cref="Task"/> that represents the asynchronous operation of fetching and processing all active RSS feeds.
+        /// <list type="bullet">
+        ///     <item><description>The task completes successfully when all active RSS feeds have been processed (or attempts have been made) according to the configured concurrency, and the job is marked 'Succeeded' in Hangfire.</description></item>
+        ///     <item><description>The task will transition to a cancelled state (and the Hangfire job marked 'Cancelled') if the <paramref name="cancellationToken"/> is signaled during the operation.</description></item>
+        ///     <item><description>Any individual feed processing failures are handled internally by <c>ProcessSingleFeedWithLoggingAndRetriesAsync</c> without causing this orchestrator job to fail, unless a critical, unhandled exception occurs in the orchestration itself (which would then cause this job to fail in Hangfire).</description></item>
+        /// </list>
+        /// </returns>
+        /// <remarks>
+        /// **Role for AI Analysis and Operations:**
+        /// This method is a cornerstone of the data ingestion pipeline. Its effective and timely execution
+        /// directly impacts the freshness and completeness of data available for AI models.
+        /// <list type="bullet">
+        ///     <item><description>
+        ///         **Data Freshness:** The frequency and success of this job dictate how quickly new information
+        ///         is available for AI processing, directly influencing the real-time capability of AI signals.
+        ///     </description></item>
+        ///     <item><description>
+        ///         **Data Completeness:** Ensuring all active feeds are regularly processed minimizes gaps in the data,
+        ///         leading to more comprehensive AI analysis.
+        ///     </description></item>
+        ///     <item><description>
+        ///         **Operational Monitoring:** Logs generated by this method (start/end times, number of sources found/processed,
+        ///         concurrency levels) are crucial for monitoring the health and throughput of the data pipeline.
+        ///     </description></item>
+        ///     <item><description>
+        ///         **Resource Management:** The `MaxConcurrentFeedFetches` parameter is a critical tuning point;
+        ///         AI/ML Ops teams can analyze system resource utilization and feed processing times to optimize this concurrency level.
+        ///     </description></item>
+        /// </list>
+        /// </remarks>
         [JobDisplayName("Fetch All Active RSS Feeds - Coordinator")] // Display name for Hangfire dashboard
         [AutomaticRetry(Attempts = 0)] // Polly handles retries at the single-feed processing level
         public async Task FetchAllActiveFeedsAsync(CancellationToken cancellationToken = default)
@@ -131,12 +233,51 @@ namespace Infrastructure.Services
         #endregion
 
         #region ProcessSingleFeedWithLoggingAndRetriesAsync (Private Helper - Level 9: Comprehensive Error Reporting)
+
+
         /// <summary>
-        /// Processes a single RSS feed with detailed logging and coordinator-level retries.
-        /// This method uses the Polly policy defined in the constructor to protect the feed reader service call.
+        /// Processes a single RSS feed asynchronously, incorporating detailed logging and resilient retries
+        /// at the coordinator level using a configured Polly policy. This method encapsulates the logic
+        /// for fetching, parsing, and storing news items for one specific RSS source, safeguarding the
+        /// `_rssReaderService.FetchAndProcessFeedAsync` call against transient errors.
         /// </summary>
-        /// <param name="source">The RSS source to process.</param>
-        /// <param name="cancellationToken">Cancellation token for cancelling the operation.</param>
+        /// <remarks>
+        /// This method is a crucial component within the overall RSS feed ingestion pipeline, especially
+        /// for ensuring data freshness for downstream AI analysis. Its robust error handling
+        /// (logging and not re-throwing exceptions after retries) allows the `FetchAllActiveFeedsAsync`
+        /// coordinator job to continue processing other feeds even if a single feed encounters persistent issues.
+        /// <br/><br/>
+        /// **Role for AI Analysis:**
+        /// <list type="bullet">
+        ///     <item><description>
+        ///         **Data Reliability:** By ensuring individual feed fetches are resilient, this method directly
+        ///         contributes to the continuous flow of data for AI models, reducing data gaps.
+        ///     </description></item>
+        ///     <item><description>
+        ///         **Operational Insight:** The detailed logging (using `pollyContext` and logging scopes) provides
+        ///         granular visibility into the success rate, retry attempts, and specific error types for each
+        ///         individual RSS source. This data is invaluable for AI/ML Ops to monitor feed health, diagnose
+        ///         problematic sources (e.g., frequently failing feeds), and inform adaptive scheduling or source
+        ///         prioritization based on AI model needs.
+        ///     </description></item>
+        ///     <item><description>
+        ///         **Proactive Issue Detection:** Persistent errors for a specific feed, even if not causing the
+        ///         main job to fail, are logged critically here, enabling monitoring systems to alert on data
+        ///         ingestion problems for specific AI data streams.
+        ///     </description></item>
+        /// </list>
+        /// </remarks>
+        /// <param name="source">The <see cref="RssSource"/> object representing the specific RSS feed to be processed (containing URL, ID, and name).</param>
+        /// <param name="cancellationToken">A <see cref="CancellationToken"/> to monitor for cancellation requests. This token is propagated from the parallel processing loop and allows for graceful termination of the current feed's fetch operation.</param>
+        /// <returns>
+        /// A <see cref="Task"/> that represents the asynchronous processing of the single RSS feed.
+        /// The task completes when:
+        /// <list type="bullet">
+        ///     <item><description>The feed has been successfully fetched, processed, and its status updated (including any new news items saved and dispatched).</description></item>
+        ///     <item><description>The operation for this feed was explicitly cancelled by the <paramref name="cancellationToken"/>.</description></item>
+        ///     <item><description>The feed processing encountered an error that could not be resolved by the `_coordinatorRetryPolicy` (e.g., after exhausting all retries or encountering a non-retryable exception). In this case, the error is logged, but no exception is re-thrown from this method, allowing other concurrent feed processes to continue undisturbed.</description></item>
+        /// </list>
+        /// </returns>
         private async Task ProcessSingleFeedWithLoggingAndRetriesAsync(RssSource source, CancellationToken cancellationToken)
         {
             // Level 2: Define specific Polly context for this individual feed for granular logging.
@@ -195,7 +336,30 @@ namespace Infrastructure.Services
             }
         }
 
-        // Level 3: Helper method to determine if an HTTP status code indicates a permanent error.
+        /// <summary>
+        /// Determines if a given HTTP status code represents a "permanent" client-side error.
+        /// In the context of our AI analysis program, this method is crucial for intelligently handling
+        /// responses from external data sources like RSS feeds. It helps differentiate between
+        /// transient issues (e.g., network glitches, server overload) that might resolve with retries,
+        /// and fundamental problems (e.g., invalid requests, missing resources) that require
+        /// investigation or deactivation of the data source.
+        /// </summary>
+        /// <param name="statusCode">The nullable <see cref="HttpStatusCode"/> to evaluate, typically received from an HTTP response when fetching an RSS feed.</param>
+        /// <returns>
+        /// <c>true</c> if the <paramref name="statusCode"/> is identified as one of the following permanent client-side error codes:
+        /// <list type="bullet">
+        ///     <item><description><see cref="HttpStatusCode.BadRequest"/> (400): The server cannot or will not process the request due to an apparent client error (e.g., malformed syntax).</description></item>
+        ///     <item><description><see cref="HttpStatusCode.Unauthorized"/> (401): Authentication is required and has failed or has not yet been provided.</description></item>
+        ///     <item><description><see cref="HttpStatusCode.Forbidden"/> (403): The server understood the request but refuses to authorize it.</description></item>
+        ///     <item><description><see cref="HttpStatusCode.NotFound"/> (404): The requested resource could not be found on the server.</description></item>
+        ///     <item><description><see cref="HttpStatusCode.MethodNotAllowed"/> (405): The request method is known by the server but is not supported by the target resource.</description></item>
+        ///     <item><description><see cref="HttpStatusCode.Gone"/> (410): The target resource is no longer available at the origin server and no forwarding address is known.</description></item>
+        ///     <item><description><see cref="HttpStatusCode.UnprocessableEntity"/> (422): The server understands the content type of the request entity, and the syntax of the request entity is correct, but it was unable to process the contained instructions.</description></item>
+        /// </list>
+        /// <c>false</c> otherwise. This includes informational (1xx), success (2xx), redirection (3xx), and
+        /// server error (5xx) status codes, as well as other client error codes not explicitly listed here,
+        /// which are generally considered transient or require different handling (e.g., retries for 5xx errors).
+        /// </returns>
         private bool IsPermanentHttpErrorStatusCode(HttpStatusCode? statusCode)
         {
             return statusCode switch

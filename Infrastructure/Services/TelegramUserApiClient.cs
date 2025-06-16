@@ -805,12 +805,22 @@ namespace Infrastructure.Services
         /// <summary>
         /// Connects to Telegram and logs in the user if needed.
         /// Manages the connection lifecycle and initial data fetching.
+        /// This method is designed to be resilient to transient network issues and
+        /// specific Telegram API errors, gracefully handling them or propagating
+        /// failures to the caller for higher-level retry mechanisms.
         /// </summary>
+        /// <param name="cancellationToken">A <see cref="CancellationToken"/> that signals when the operation should be cancelled.</param>
+        /// <returns>A <see cref="Task"/> that represents the asynchronous operation.</returns>
+        /// <exception cref="InvalidOperationException">Thrown if the WTelegram.Client instance is unexpectedly null.</exception>
+        /// <exception cref="OperationCanceledException">Thrown if the operation is cancelled via the <paramref name="cancellationToken"/>.</exception>
+        /// <exception cref="TL.RpcException">Thrown for unhandled Telegram API (RPC) errors.</exception>
+        /// <exception cref="NullReferenceException">Caught and re-thrown for unexpected NREs from the underlying WTelegram.Client, logged as a warning.</exception>
+        /// <exception cref="Exception">Thrown for any other critical, unclassified errors.</exception>
         public async Task ConnectAndLoginAsync(CancellationToken cancellationToken)
         {
+            // IsConnected should only be true AFTER successful connection and login.
+            // Move this assignment to the success path.
 
-
-            IsConnected = true;
             // Level 3: Use a SemaphoreSlim to prevent multiple concurrent connection attempts.
             // This ensures only one login process runs at a time.
             _logger.LogTrace("ConnectAndLoginAsync: Attempting to acquire connection lock.");
@@ -832,26 +842,26 @@ namespace Infrastructure.Services
                 try
                 {
                     // Level 4: Resilience Pipeline for initial LoginUserIfNeeded.
-                    // This handles transient network issues. Specific RpcExceptions (2FA, DC Migrate)
-                    // are handled in the outer catch blocks below, as they require specific actions.
+                    // This pipeline handles transient network issues and retries.
+                    // Specific RpcExceptions (2FA, DC Migrate) are handled in the outer catch blocks below,
+                    // as they require specific actions beyond simple retry.
                     loggedInUser = await _resiliencePipeline.ExecuteAsync(
                         async (context, token) => await _client.LoginUserIfNeeded().ConfigureAwait(false), // WTelegramClient handles its own CancellationToken integration
                         new Polly.Context(nameof(ConnectAndLoginAsync)),
                         cancellationToken
                     ).ConfigureAwait(false);
                 }
+                // Level 6: Specific RpcException handling for 2FA.
                 catch (TL.RpcException e) when (e.Code == 401 && (e.Message.Contains("SESSION_PASSWORD_NEEDED", StringComparison.OrdinalIgnoreCase) || e.Message.Contains("account_password_input_needed", StringComparison.OrdinalIgnoreCase)))
                 {
-                    // Level 6: Specific RpcException handling for 2FA.
                     _logger.LogWarning(e, "ConnectAndLoginAsync: 2FA needed for login. Attempting re-login with 2FA (via ConfigProvider).");
                     // WTelegramClient's LoginUserIfNeeded() will internally call ConfigProvider("password").
-                    // A direct re-call (without pipeline) is often sufficient here, as it's a specific authentication flow.
                     loggedInUser = await _client!.LoginUserIfNeeded().ConfigureAwait(false);
                     _logger.LogInformation("ConnectAndLoginAsync: User API Logged in with 2FA.");
                 }
+                // Level 6: Specific RpcException handling for DC Migration.
                 catch (TL.RpcException e) when (e.Message.StartsWith("PHONE_MIGRATE_", StringComparison.OrdinalIgnoreCase))
                 {
-                    // Level 6: Specific RpcException handling for DC Migration.
                     if (int.TryParse(e.Message.Split('_').Last(), out int dcNumber))
                     {
                         _logger.LogWarning(e, "ConnectAndLoginAsync: Phone number needs to be migrated to DC{DCNumber}. WTelegramClient will handle reconnection.", dcNumber);
@@ -869,7 +879,7 @@ namespace Infrastructure.Services
                 // Level 1: Post-login validation.
                 if (loggedInUser is null)
                 {
-                    _logger.LogCritical("ConnectAndLoginAsync: User API Login Failed: LoginUserIfNeeded returned null after all attempts. Check configuration and authentication steps.");
+                    _logger.LogError("ConnectAndLoginAsync: User API Login Failed: LoginUserIfNeeded returned null after all attempts. Check configuration and authentication steps.");
                     throw new InvalidOperationException("WTelegramClient failed to log in user.");
                 }
 
@@ -878,21 +888,37 @@ namespace Infrastructure.Services
 
                 // Level 5: After successful login, refresh dialogs and populate caches.
                 await RefreshDialogsAndCachesAsync(cancellationToken).ConfigureAwait(false);
+
+                // Only set IsConnected to true if everything above succeeded.
+                IsConnected = true;
             }
             // Level 6: Consistent Error Handling and Logging for broader exceptions.
             catch (OperationCanceledException oce)
             {
                 _logger.LogInformation(oce, "ConnectAndLoginAsync: Operation cancelled during connection/login process.");
-                throw;
+                IsConnected = false; // Ensure state reflects cancellation
+                throw; // Re-throw to propagate the cancellation
             }
             catch (TL.RpcException rpcEx) // Catch any remaining RpcExceptions not handled by specific clauses
             {
-                _logger.LogError(rpcEx, "ConnectAndLoginAsync: Telegram API (RPC) error during connection/login: {ErrorTypeString}, Code: {ErrorCode}", rpcEx.Message, rpcEx.Code);
-                throw;
+                // Log RPC errors as ERROR, indicating a problem but allowing the caller's retry policy to take over.
+                _logger.LogError(rpcEx, "ConnectAndLoginAsync: Telegram API (RPC) error during connection/login: {ErrorTypeString}, Code: {ErrorCode}. This might be a transient issue or require investigation.", rpcEx.Message, rpcEx.Code);
+                IsConnected = false;
+                throw; // Re-throw for caller to handle retries/degradation.
             }
-            catch (Exception ex)
+            catch (NullReferenceException nre) // Specifically catch the NullReferenceException observed
             {
-                _logger.LogCritical(ex, "ConnectAndLoginAsync: Critical error occurred during connect/login process. Service may be unrecoverable without manual intervention.");
+                // CHANGE HERE: Log as a WARNING instead of ERROR if you want to reduce log severity for individual occurrences.
+                _logger.LogWarning(nre, "ConnectAndLoginAsync: Unexpected NullReferenceException from WTelegram.Client during connection/login process. This may indicate a transient client library issue or network problem.");
+                IsConnected = false;
+                throw; // Re-throw to ensure the calling policy retries.
+            }
+            catch (Exception ex) // General catch-all for any other unexpected, unclassified exceptions.
+            {
+                // Log any other unhandled exceptions as CRITICAL, as they might indicate truly unexpected
+                // problems requiring immediate attention.
+                _logger.LogCritical(ex, "ConnectAndLoginAsync: Critical, unclassified error occurred during connect/login process. Service may be unrecoverable without manual intervention.");
+                IsConnected = false;
                 throw; // Re-throw to propagate the failure.
             }
             finally
@@ -909,7 +935,6 @@ namespace Infrastructure.Services
                 }
             }
         }
-
         /// <summary>
         /// Helper method to fetch all dialogs and populate internal user/chat caches.
         /// This method uses the resilience pipeline.

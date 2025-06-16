@@ -13,6 +13,7 @@ using TelegramPanel.Application.CommandHandlers.Settings;
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Application.States;
 using TelegramPanel.Formatters;
+using TelegramPanel.Infrastructure;
 using TelegramPanel.Infrastructure.Helper;
 using static TelegramPanel.Infrastructure.ActualTelegramMessageActions;
 #endregion
@@ -114,7 +115,7 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
         public async Task HandleAsync(Update update, CancellationToken cancellationToken = default)
         {
             // استخراج اطلاعات ضروری از CallbackQuery
-            CallbackQuery? callbackQuery = update.CallbackQuery;
+            var callbackQuery = update.CallbackQuery;
             // بررسی null بودن callbackQuery و Message آن در ابتدای متد، قبل از استفاده
             if (callbackQuery?.Message?.Chat == null || callbackQuery.From == null || string.IsNullOrWhiteSpace(callbackQuery.Data))
             {
@@ -127,10 +128,10 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
                 return;
             }
 
-            long chatId = callbackQuery.Message.Chat.Id;          // شناسه چتی که پیام در آن قرار دارد
-            long userId = callbackQuery.From.Id;                 // شناسه کاربر تلگرامی که دکمه را فشار داده
-            int messageId = callbackQuery.Message.MessageId;    // شناسه پیامی که دکمه‌ها روی آن قرار دارند (برای ویرایش پیام)
-            string callbackData = callbackQuery.Data;              // داده مرتبط با دکمه فشرده شده
+            var chatId = callbackQuery.Message.Chat.Id;          // شناسه چتی که پیام در آن قرار دارد
+            var userId = callbackQuery.From.Id;                 // شناسه کاربر تلگرامی که دکمه را فشار داده
+            var messageId = callbackQuery.Message.MessageId;    // شناسه پیامی که دکمه‌ها روی آن قرار دارند (برای ویرایش پیام)
+            var callbackData = callbackQuery.Data;              // داده مرتبط با دکمه فشرده شده
 
             using (_logger.BeginScope(new Dictionary<string, object> // ایجاد Log Scope برای ردیابی بهتر
             {
@@ -211,10 +212,10 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
         {
             _logger.LogInformation("Showing news analysis menu to ChatID {ChatId}", chatId);
 
-            string text = TelegramMessageFormatter.Bold("🔍 News Analysis Tools") + "\n\n" +
+            var text = TelegramMessageFormatter.Bold("🔍 News Analysis Tools") + "\n\n" +
                        "Select a tool to analyze news content from our indexed sources:";
 
-            InlineKeyboardMarkup? keyboard = MarkupBuilder.CreateInlineKeyboard(
+            var keyboard = MarkupBuilder.CreateInlineKeyboard(
                  new[]
                 {
                     // VVVVVV NEW BUTTON VVVVVV
@@ -245,7 +246,7 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
         private async Task HandlePlanSelectionAsync(long chatId, long telegramUserId, int messageIdToEdit, string callbackData, CancellationToken cancellationToken)
         {
             _logger.LogInformation("UserID {TelegramUserId} selected a plan. CallbackData: {CallbackData}", telegramUserId, callbackData);
-            string planIdString = callbackData[SelectPlanPrefix.Length..];
+            string planIdString = callbackData.Substring(SelectPlanPrefix.Length);
             if (!Guid.TryParse(planIdString, out Guid selectedPlanId))
             {
                 _logger.LogWarning("Invalid PlanID format in callback data: {CallbackData}", callbackData);
@@ -260,11 +261,11 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
             _logger.LogInformation("UserID {TelegramUserId} selected PlanID: {PlanId} ({PlanName})", telegramUserId, selectedPlanId, planNameForDisplay);
 
             // استفاده از DefaultParseMode برای TelegramMessageFormatter
-            string paymentOptionsText = $"You have selected: {TelegramMessageFormatter.Bold(planNameForDisplay)}.\n\n" + // اطمینان از escapePlainText صحیح
+            var paymentOptionsText = $"You have selected: {TelegramMessageFormatter.Bold(planNameForDisplay)}.\n\n" + // اطمینان از escapePlainText صحیح
                                      "Please choose your preferred cryptocurrency for payment:";
 
             // ساخت paymentKeyboard با MarkupBuilder
-            InlineKeyboardMarkup? paymentKeyboard = MarkupBuilder.CreateInlineKeyboard(
+            var paymentKeyboard = MarkupBuilder.CreateInlineKeyboard(
      new[] { InlineKeyboardButton.WithCallbackData("💳 Pay with USDT", $"{PayWithCryptoPrefix}usdt_for_plan_{selectedPlanId}") },
      new[] { InlineKeyboardButton.WithCallbackData("💳 Pay with TON", $"{PayWithCryptoPrefix}ton_for_plan_{selectedPlanId}") },
      new[] { InlineKeyboardButton.WithCallbackData("💳 Pay with BTC", $"{PayWithCryptoPrefix}btc_for_plan_{selectedPlanId}") },
@@ -280,7 +281,7 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
         private async Task HandleCryptoPaymentSelectionAsync(long chatId, long telegramUserId, int messageIdToEdit, string callbackData, CancellationToken cancellationToken)
         {
             _logger.LogInformation("UserID {TelegramUserId} selected crypto payment option. CallbackData: {CallbackData}", telegramUserId, callbackData);
-            string[] parts = callbackData[PayWithCryptoPrefix.Length..].Split(new[] { "_for_plan_" }, StringSplitOptions.None);
+            var parts = callbackData.Substring(PayWithCryptoPrefix.Length).Split(new[] { "_for_plan_" }, StringSplitOptions.None);
             if (parts.Length != 2)
             {
                 _logger.LogWarning("Invalid payment callback data format: {CallbackData}", callbackData);
@@ -299,7 +300,7 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
             _logger.LogInformation("UserID {TelegramUserId} attempting to pay for PlanID {PlanId} with Asset {Asset}", telegramUserId, selectedPlanId, selectedCryptoAsset);
             await EditMessageOrSendNewAsync(chatId, messageIdToEdit, $"⏳ Please wait, generating payment invoice for {selectedCryptoAsset}...", null, ParseMode.MarkdownV2, cancellationToken);
 
-            global::Application.DTOs.UserDto? userDto = await _userService.GetUserByTelegramIdAsync(telegramUserId.ToString(), cancellationToken);
+            var userDto = await _userService.GetUserByTelegramIdAsync(telegramUserId.ToString(), cancellationToken);
             if (userDto == null)
             {
                 _logger.LogError("CRITICAL: User with TelegramID {TelegramUserId} not found when creating payment invoice.", telegramUserId);
@@ -307,19 +308,19 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
                 return;
             }
 
-            Shared.Results.Result<global::Application.DTOs.CryptoPay.CryptoPayInvoiceDto> invoiceResult = await _paymentService.CreateCryptoPaymentInvoiceAsync(userDto.Id, selectedPlanId, selectedCryptoAsset, cancellationToken);
+            var invoiceResult = await _paymentService.CreateCryptoPaymentInvoiceAsync(userDto.Id, selectedPlanId, selectedCryptoAsset, cancellationToken);
 
             if (invoiceResult.Succeeded && invoiceResult.Data != null)
             {
-                global::Application.DTOs.CryptoPay.CryptoPayInvoiceDto invoice = invoiceResult.Data;
+                var invoice = invoiceResult.Data;
                 _logger.LogInformation("CryptoPay invoice created for UserID {UserId}. InvoiceID: {CryptoInvoiceId}, BotPayUrl: {PayUrl}", userDto.Id, invoice.InvoiceId, invoice.BotInvoiceUrl);
-                string paymentMessage = $"✅ Your payment invoice for {TelegramMessageFormatter.Bold(selectedCryptoAsset, escapePlainText: false)} has been created!\n\n" +
+                var paymentMessage = $"✅ Your payment invoice for {TelegramMessageFormatter.Bold(selectedCryptoAsset, escapePlainText: false)} has been created!\n\n" +
                                      $"Please use the button below or copy the link to complete your payment:\n" +
                                      $"{TelegramMessageFormatter.Link("➡️ Click here to Pay ⬅️", invoice.BotInvoiceUrl!)}\n\n" +
                                      $"Invoice ID: {TelegramMessageFormatter.Code(invoice.InvoiceId.ToString())}\n" +
                                      $"Status: {TelegramMessageFormatter.Italic(invoice.Status ?? "Unknown")}\n\n" +
                                      "This link may expire. Please complete your payment promptly.";
-                InlineKeyboardMarkup? paymentLinkKeyboard = MarkupBuilder.CreateInlineKeyboard(new[] { InlineKeyboardButton.WithUrl($"🚀 Pay with {selectedCryptoAsset} Now", invoice.BotInvoiceUrl!) },
+                var paymentLinkKeyboard = MarkupBuilder.CreateInlineKeyboard(new[] { InlineKeyboardButton.WithUrl($"🚀 Pay with {selectedCryptoAsset} Now", invoice.BotInvoiceUrl!) },
                                                                              new[] { InlineKeyboardButton.WithCallbackData("⬅️ Back to Main Menu", BackToMainMenuGeneral) });
                 _ = await _botClient.SendMessage(chatId, paymentMessage, ParseMode.Markdown, replyMarkup: paymentLinkKeyboard, cancellationToken: cancellationToken);
                 //  می‌توانید پیام "در حال پردازش" را حذف کنید
@@ -328,7 +329,7 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
             else
             {
                 _logger.LogError("Failed to create CryptoPay invoice for UserID {UserId}. Errors: {Errors}", userDto.Id, string.Join("; ", invoiceResult.Errors));
-                string failureMessage = $"⚠️ Sorry, we couldn't create your payment invoice for {TelegramMessageFormatter.Bold(selectedCryptoAsset, escapePlainText: false)}.\n" +
+                var failureMessage = $"⚠️ Sorry, we couldn't create your payment invoice for {TelegramMessageFormatter.Bold(selectedCryptoAsset, escapePlainText: false)}.\n" +
                                      $"Details: {string.Join("; ", invoiceResult.Errors)}\n\n" +
                                      "Please try a different payment method or contact support.";
                 _ = await _botClient.SendMessage(chatId, failureMessage, ParseMode.Markdown, cancellationToken: cancellationToken);
@@ -356,14 +357,14 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
 
             //  اطلاعات پلن‌ها باید از یک منبع معتبر (سرویس، دیتابیس، کانفیگ) خوانده شود.
             //  فعلاً متن و قیمت‌ها به صورت ثابت تعریف شده‌اند. 
-            string plansText = TelegramMessageFormatter.Bold("💎 Available Subscription Plans:", escapePlainText: false) + "\n\n" +
+            var plansText = TelegramMessageFormatter.Bold("💎 Available Subscription Plans:", escapePlainText: false) + "\n\n" +
                             $"1. {TelegramMessageFormatter.Bold("Premium Monthly")} - Access to all signals and features for 30 days. " +
                             $"(Price: ~$10 USD)\n\n" +
                             $"2. {TelegramMessageFormatter.Bold("Premium Quarterly")} - Same as monthly, but for 90 days with a discount! " +
                             $"(Price: ~$25 USD)\n\n" +
                             "Select a plan to proceed with payment options:";
 
-            InlineKeyboardMarkup? plansKeyboard = MarkupBuilder.CreateInlineKeyboard(
+            var plansKeyboard = MarkupBuilder.CreateInlineKeyboard(
              new[] { InlineKeyboardButton.WithCallbackData("🌟 Premium Monthly", $"{SelectPlanPrefix}{PremiumMonthlyPlanId}") },
              new[] { InlineKeyboardButton.WithCallbackData("✨ Premium Quarterly", $"{SelectPlanPrefix}{PremiumQuarterlyPlanId}") },
              new[] { InlineKeyboardButton.WithCallbackData("⬅️ Back to Main Menu", BackToMainMenuGeneral) }
@@ -379,16 +380,16 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
         private async Task HandleViewSignalsAsync(long chatId, long telegramUserId, int messageIdToEdit, CancellationToken cancellationToken)
         {
             _logger.LogInformation("User {TelegramUserId} requested to view signals.", telegramUserId);
-            IEnumerable<global::Application.DTOs.SignalDto> signals = await _signalService.GetRecentSignalsAsync(3, includeCategory: true, cancellationToken: cancellationToken); //  تعداد سیگنال‌ها کمتر برای نمایش بهتر
-            StringBuilder sb = new();
+            var signals = await _signalService.GetRecentSignalsAsync(3, includeCategory: true, cancellationToken: cancellationToken); //  تعداد سیگنال‌ها کمتر برای نمایش بهتر
+            var sb = new StringBuilder();
 
             if (signals.Any())
             {
                 _ = sb.AppendLine(TelegramMessageFormatter.Bold("📊 Recent Trading Signals:"));
                 _ = sb.AppendLine(); // Add a blank line for better readability
-                foreach (global::Application.DTOs.SignalDto signalDto in signals)
+                foreach (var signalDto in signals)
                 {
-                    string formattedSignal = SignalFormatter.FormatSignal(signalDto, ParseMode.Markdown);
+                    var formattedSignal = SignalFormatter.FormatSignal(signalDto, ParseMode.Markdown);
                     _ = sb.AppendLine(formattedSignal);
                     _ = sb.AppendLine("─".PadRight(20, '─')); // Separator line
                 }
@@ -398,7 +399,7 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
                 _ = sb.AppendLine("No active signals available at the moment. Please check back later!");
             }
 
-            InlineKeyboardMarkup? backKeyboard = MarkupBuilder.CreateInlineKeyboard(
+            var backKeyboard = MarkupBuilder.CreateInlineKeyboard(
         InlineKeyboardButton.WithCallbackData("⬅️ Back to Main Menu", BackToMainMenuGeneral)
         );
 
@@ -423,7 +424,7 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
         private async Task HandleMyProfileAsync(long chatId, long telegramUserId, int messageIdToEdit, CancellationToken cancellationToken)
         {
             _logger.LogInformation("User {TelegramUserId} requested to view profile.", telegramUserId);
-            global::Application.DTOs.UserDto? userDto = await _userService.GetUserByTelegramIdAsync(telegramUserId.ToString(), cancellationToken);
+            var userDto = await _userService.GetUserByTelegramIdAsync(telegramUserId.ToString(), cancellationToken);
 
             if (userDto == null)
             {
@@ -431,7 +432,7 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
                 return;
             }
 
-            StringBuilder sb = new();
+            var sb = new StringBuilder();
             _ = sb.AppendLine(TelegramMessageFormatter.Bold("🔐 Your Profile:"));
             _ = sb.AppendLine($"👤 Username: {TelegramMessageFormatter.Code(userDto.Username)}");
             _ = sb.AppendLine($"📧 Email: {TelegramMessageFormatter.Code(userDto.Email)}");
@@ -440,7 +441,7 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
             _ = sb.AppendLine($"💰 Token Balance: {TelegramMessageFormatter.Code(userDto.TokenBalance.ToString("N2"))}");
 
             // تابع داخلی برای نمایش سطح دسترسی بدون نیاز به enum خارجی
-            static string GetLevelTitle(int level)
+            string GetLevelTitle(int level)
             {
                 return level switch
                 {
@@ -468,7 +469,7 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
                 _ = sb.AppendLine("Subscription: No active subscription.");
             }
 
-            InlineKeyboardMarkup? backKeyboard = MarkupBuilder.CreateInlineKeyboard(
+            var backKeyboard = MarkupBuilder.CreateInlineKeyboard(
      InlineKeyboardButton.WithCallbackData("⬅️ Back to Main Menu", BackToMainMenuGeneral));
             await EditMessageOrSendNewAsync(chatId, messageIdToEdit, sb.ToString(), backKeyboard, ParseMode.MarkdownV2, cancellationToken);
         }
@@ -491,11 +492,11 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
             //  (به صورت یک متد استاتیک یا یک متد در یک سرویس که هر دو Handler به آن دسترسی دارند) تعریف کنید.
 
             //  فعلاً، منطق را مستقیماً اینجا بازنویسی می‌کنیم:
-            string settingsMenuText = TelegramMessageFormatter.Bold("⚙️ User Settings", escapePlainText: false) + "\n\n" +
+            var settingsMenuText = TelegramMessageFormatter.Bold("⚙️ User Settings", escapePlainText: false) + "\n\n" +
                                    "Please choose a category to configure:";
 
             // دکمه‌های منوی تنظیمات (اینها باید با ثابت‌های CallbackData در SettingsCommandHandler و SettingsCallbackQueryHandler مطابقت داشته باشند)
-            InlineKeyboardMarkup? settingsKeyboard = MarkupBuilder.CreateInlineKeyboard(
+            var settingsKeyboard = MarkupBuilder.CreateInlineKeyboard(
      new[] { InlineKeyboardButton.WithCallbackData("📊 My Signal Preferences", SettingsCommandHandler.PrefsSignalCategoriesCallback) },
      new[] { InlineKeyboardButton.WithCallbackData("🔔 Notification Settings", SettingsCommandHandler.PrefsNotificationsCallback) },
      new[] { InlineKeyboardButton.WithCallbackData("⭐ My Subscription", SettingsCommandHandler.MySubscriptionInfoCallback) },
@@ -524,7 +525,7 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
         {
             _logger.LogInformation("Showing main menu again for ChatID {ChatId}", chatId);
             // Use the static GetMainMenuMarkup method from MenuCommandHandler
-            (string text, InlineKeyboardMarkup inlineKeyboard) = MenuCommandHandler.GetMainMenuMarkup();
+            var (text, inlineKeyboard) = MenuCommandHandler.GetMainMenuMarkup();
             await EditMessageOrSendNewAsync(chatId, messageIdToEdit, text, inlineKeyboard, cancellationToken: cancellationToken);
         }
 

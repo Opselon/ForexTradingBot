@@ -59,7 +59,7 @@ namespace Infrastructure.Repositories
         public async Task SetUserPreferencesAsync(Guid userId, IEnumerable<Guid> categoryIds, CancellationToken cancellationToken = default)
         {
             // 1. حذف تنظیمات برگزیده موجود کاربر
-            List<UserSignalPreference> existingPreferences = await _context.UserSignalPreferences
+            var existingPreferences = await _context.UserSignalPreferences
                 .Where(usp => usp.UserId == userId)
                 .ToListAsync(cancellationToken);
 
@@ -71,7 +71,7 @@ namespace Infrastructure.Repositories
             // 2. اضافه کردن تنظیمات برگزیده جدید
             if (categoryIds != null && categoryIds.Any())
             {
-                IEnumerable<UserSignalPreference> newPreferences = categoryIds.Select(categoryId => new UserSignalPreference
+                var newPreferences = categoryIds.Select(categoryId => new UserSignalPreference
                 {
                     Id = Guid.NewGuid(), // اگر Id توسط دیتابیس تولید نمی‌شود
                     UserId = userId,
@@ -98,7 +98,7 @@ namespace Infrastructure.Repositories
 
         public async Task<bool> DeleteAsync(Guid userId, Guid categoryId, CancellationToken cancellationToken = default)
         {
-            UserSignalPreference? preferenceToDelete = await _context.UserSignalPreferences
+            var preferenceToDelete = await _context.UserSignalPreferences
                 .FirstOrDefaultAsync(usp => usp.UserId == userId && usp.CategoryId == categoryId, cancellationToken);
 
             if (preferenceToDelete != null)

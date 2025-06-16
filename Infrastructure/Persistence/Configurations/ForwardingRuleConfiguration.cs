@@ -12,7 +12,7 @@ namespace Infrastructure.Persistence.Configurations // یا Infrastructure.Data.
 {
     public class ForwardingRuleConfiguration : IEntityTypeConfiguration<ForwardingRule>
     {
-        private static readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = false };
+        private static readonly JsonSerializerOptions _jsonOptions = new JsonSerializerOptions { WriteIndented = false };
 
         public void Configure(EntityTypeBuilder<ForwardingRule> builder)
         {

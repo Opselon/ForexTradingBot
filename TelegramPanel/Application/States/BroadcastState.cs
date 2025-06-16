@@ -3,6 +3,7 @@ using Application.Interfaces;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using TelegramPanel.Application.Interfaces;
+using TelegramPanel.Infrastructure;
 using static TelegramPanel.Infrastructure.ActualTelegramMessageActions;
 
 namespace TelegramPanel.Application.States
@@ -33,8 +34,8 @@ namespace TelegramPanel.Application.States
                 return Name; // "Name" refers to "WaitingForBroadcastMessage", keeping the user in this state.
             }
 
-            Message message = update.Message;
-            long adminId = message.From.Id;
+            var message = update.Message;
+            var adminId = message.From.Id;
 
             // --- Handle Cancellation Command ---
             if (message.Text?.Trim().Equals("/cancel", StringComparison.OrdinalIgnoreCase) == true)
@@ -45,7 +46,7 @@ namespace TelegramPanel.Application.States
             }
 
             // --- Process the Broadcast Content ---
-            List<long> userChatIds = await _adminService.GetAllActiveUserChatIdsAsync(cancellationToken);
+            var userChatIds = await _adminService.GetAllActiveUserChatIdsAsync(cancellationToken);
             if (!userChatIds.Any())
             {
                 await _messageSender.SendTextMessageAsync(adminId, "⚠️ No active users found. Broadcast aborted.", cancellationToken: cancellationToken);
@@ -53,7 +54,7 @@ namespace TelegramPanel.Application.States
             }
 
             // Enqueue the broadcast jobs
-            foreach (long userChatId in userChatIds)
+            foreach (var userChatId in userChatIds)
             {
                 // This will now copy any type of message: text, photo, video, etc.
                 _broadcastScheduler.EnqueueBroadcastMessage(userChatId, message.Chat.Id, message.MessageId);
@@ -61,7 +62,7 @@ namespace TelegramPanel.Application.States
 
 
 
-            string confirmationText = $"✅ Broadcast has been successfully enqueued for delivery to *{userChatIds.Count}* users.";
+            var confirmationText = $"✅ Broadcast has been successfully enqueued for delivery to *{userChatIds.Count}* users.";
             await _messageSender.SendTextMessageAsync(adminId, confirmationText, ParseMode.Markdown, cancellationToken: cancellationToken);
 
             // Return null to signify that this conversation is complete and the user's state should be cleared.

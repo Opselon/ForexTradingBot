@@ -8,7 +8,7 @@ namespace TelegramPanel.Formatters
     {
         public static string FormatSignal(SignalDto signal, ParseMode parseMode = ParseMode.MarkdownV2)
         {
-            StringBuilder sb = new();
+            var sb = new StringBuilder();
 
             //  از ایموجی‌ها و فرمت‌بندی حرفه‌ای استفاده کنید
             string typeEmoji = signal.Type.Equals("Buy", StringComparison.OrdinalIgnoreCase) ? "🟢" : "🔴";
@@ -39,9 +39,9 @@ namespace TelegramPanel.Formatters
             if (signal.Analyses != null && signal.Analyses.Any())
             {
                 _ = sb.AppendLine("\n*Analysis:*");
-                foreach (SignalAnalysisDto? analysis in signal.Analyses.Take(1)) // نمایش اولین تحلیل به عنوان مثال
+                foreach (var analysis in signal.Analyses.Take(1)) // نمایش اولین تحلیل به عنوان مثال
                 {
-                    _ = sb.AppendLine($"- _{analysis.AnalystName}_: {analysis.Notes[..Math.Min(analysis.Notes.Length, 100)]}...");
+                    _ = sb.AppendLine($"- _{analysis.AnalystName}_: {analysis.Notes.Substring(0, Math.Min(analysis.Notes.Length, 100))}...");
                 }
             }
             else
@@ -60,9 +60,9 @@ namespace TelegramPanel.Formatters
         //  متد کمکی برای escape کردن کاراکترهای MarkdownV2 (اگر ParseMode.MarkdownV2 استفاده می‌شود)
         public static string EscapeMarkdownV2(string text)
         {
-            string[] escapeChars = new[] { "_", "*", "[", "]", "(", ")", "~", "`", ">", "#", "+", "-", "=", "|", "{", "}", ".", "!" };
-            string result = text;
-            foreach (string? esc in escapeChars)
+            var escapeChars = new[] { "_", "*", "[", "]", "(", ")", "~", "`", ">", "#", "+", "-", "=", "|", "{", "}", ".", "!" };
+            var result = text;
+            foreach (var esc in escapeChars)
             {
                 result = result.Replace(esc, "\\" + esc);
             }

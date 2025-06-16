@@ -75,8 +75,8 @@ try
            outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] ({SourceContext}) {Message:lj}{NewLine}{Exception}")
    );
 
-    _ = builder.Services.AddAutoMapper(typeof(Program));
-    _ = builder.Services.AddSingleton<Application.Common.Interfaces.ILoggingSanitizer, Infrastructure.Security.PiiLoggingSanitizer>();
+    builder.Services.AddAutoMapper(typeof(Program));
+    builder.Services.AddSingleton<Application.Common.Interfaces.ILoggingSanitizer, Infrastructure.Security.PiiLoggingSanitizer>();
     #endregion
 
     #region Add Core ASP.NET Core Services

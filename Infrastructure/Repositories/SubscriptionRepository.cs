@@ -81,7 +81,7 @@ namespace Infrastructure.Repositories
         /// <inheritdoc />
         public async Task<Subscription?> GetActiveSubscriptionByUserIdAsync(Guid userId, CancellationToken cancellationToken = default)
         {
-            DateTime now = DateTime.UtcNow; // Consistency: Use a single 'now' value for the query.
+            var now = DateTime.UtcNow; // Consistency: Use a single 'now' value for the query.
             _logger.LogTrace("SubscriptionRepository: Fetching active subscription for UserID: {UserId} as of {CurrentTimeUtc}.", userId, now);
 
             // Performance: The Where clause should leverage database indexes on UserId, StartDate, EndDate.
@@ -99,7 +99,7 @@ namespace Infrastructure.Repositories
         /// <inheritdoc />
         public async Task<bool> HasActiveSubscriptionAsync(Guid userId, CancellationToken cancellationToken = default)
         {
-            DateTime now = DateTime.UtcNow;
+            var now = DateTime.UtcNow;
             _logger.LogTrace("SubscriptionRepository: Checking for active subscription for UserID: {UserId} as of {CurrentTimeUtc}.", userId, now);
 
             // Performance: AnyAsync is very efficient (translates to SQL EXISTS).
@@ -132,7 +132,7 @@ namespace Infrastructure.Repositories
             }
 
             // Robustness: Set timestamps if managed by application.
-            DateTime now = DateTime.UtcNow;
+            var now = DateTime.UtcNow;
             subscription.CreatedAt = now; // Assuming CreatedAt property exists
             subscription.UpdatedAt = now; // Assuming UpdatedAt property exists
 
@@ -166,7 +166,7 @@ namespace Infrastructure.Repositories
 
             // EF Core tracks changes on entities fetched from the context.
             // Explicitly setting state is useful if entity was created outside or attached from detached state.
-            Microsoft.EntityFrameworkCore.ChangeTracking.EntityEntry<Subscription> entry = _context.Subscriptions.Entry(subscription);
+            var entry = _context.Subscriptions.Entry(subscription);
             if (entry.State == EntityState.Detached)
             {
                 _logger.LogTrace("SubscriptionRepository: Attaching detached subscription entity (ID: {SubscriptionId}) for update.", subscription.Id);
@@ -202,7 +202,7 @@ namespace Infrastructure.Repositories
         public async Task<bool> DeleteByIdAsync(Guid id, CancellationToken cancellationToken = default)
         {
             _logger.LogInformation("SubscriptionRepository: Attempting to delete subscription by ID: {SubscriptionId}", id);
-            Subscription? subscriptionToDelete = await _context.Subscriptions.FindAsync(new object[] { id }, cancellationToken); // More direct than GetByIdAsync if no Includes are needed.
+            var subscriptionToDelete = await _context.Subscriptions.FindAsync(new object[] { id }, cancellationToken); // More direct than GetByIdAsync if no Includes are needed.
 
             if (subscriptionToDelete == null)
             {

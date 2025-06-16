@@ -148,7 +148,7 @@ namespace Application.Services // ✅ Namespace صحیح برای پیاده‌�
                 // Assumed: This method includes TokenWallet information.
                 IEnumerable<User> users = await _userRepository.GetAllAsync(cancellationToken);
 
-                List<UserDto> userDtos = [];
+                List<UserDto> userDtos = new();
                 foreach (User user in users)
                 {
                     // Map User entity to UserDto. Potential mapping error point.

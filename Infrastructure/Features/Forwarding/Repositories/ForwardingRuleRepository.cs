@@ -32,7 +32,7 @@ namespace Infrastructure.Features.Forwarding.Repositories
         private readonly string _connectionString; // Changed from AppDbContext to connection string
         private readonly ILogger<ForwardingRuleRepository> _logger;
         private readonly AsyncRetryPolicy _retryPolicy;
-        private static readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = false };
+        private static readonly JsonSerializerOptions _jsonOptions = new JsonSerializerOptions { WriteIndented = false };
 
         /// <summary>
         /// Initializes a new instance of the ForwardingRuleRepository class.
@@ -98,7 +98,7 @@ namespace Infrastructure.Features.Forwarding.Repositories
             // Converts the DTO to the domain entity
             public ForwardingRule ToDomainEntity(IReadOnlyList<TextReplacement>? textReplacements = null)
             {
-                MessageEditOptions editOptions = new(
+                var editOptions = new MessageEditOptions(
                     EditOptions_PrependText,
                     EditOptions_AppendText,
                     textReplacements, // Pass the separately fetched TextReplacements
@@ -111,7 +111,7 @@ namespace Infrastructure.Features.Forwarding.Repositories
                     EditOptions_NoForwards
                 );
 
-                MessageFilterOptions filterOptions = new(
+                var filterOptions = new MessageFilterOptions(
                     JsonSerializer.Deserialize<List<string>>(FilterOptions_AllowedMessageTypes ?? "[]", _jsonOptions),
                     JsonSerializer.Deserialize<List<string>>(FilterOptions_AllowedMimeTypes ?? "[]", _jsonOptions),
                     FilterOptions_ContainsText,
@@ -183,7 +183,7 @@ namespace Infrastructure.Features.Forwarding.Repositories
             // ==========================================================
             // 1. Sanitize the user-controlled ruleName to prevent log forging (CRLF Injection).
             //    This is done specifically for logging, not for the database query.
-            string sanitizedRuleNameForLogging = ruleName
+            var sanitizedRuleNameForLogging = ruleName
                                                 .Replace(Environment.NewLine, "[NL]")
                                                 .Replace("\n", "[NL]")
                                                 .Replace("\r", "[CR]");
@@ -196,10 +196,10 @@ namespace Infrastructure.Features.Forwarding.Repositories
 
             return await _retryPolicy.ExecuteAsync(async () =>
             {
-                using SqlConnection connection = new(_connectionString);
+                using var connection = new SqlConnection(_connectionString);
                 await connection.OpenAsync(cancellationToken);
                 // Fetch the main rule and its text replacements in a single query using QueryMultiple
-                string sql = @"
+                var sql = @"
                     SELECT
                         RuleName, IsEnabled, SourceChannelId, TargetChannelIds,
                         EditOptions_PrependText, EditOptions_AppendText, EditOptions_RemoveSourceForwardHeader, EditOptions_RemoveLinks,
@@ -215,17 +215,17 @@ namespace Infrastructure.Features.Forwarding.Repositories
                     FROM TextReplacement -- <--- CORRECTED TABLE NAME HERE
                     WHERE EditOptionsForwardingRuleName = @RuleName;";
 
-                using SqlMapper.GridReader multi = await connection.QueryMultipleAsync(sql, new { RuleName = ruleName });
+                using var multi = await connection.QueryMultipleAsync(sql, new { RuleName = ruleName });
 
-
-                ForwardingRuleDbDto? ruleDto = await multi.ReadFirstOrDefaultAsync<ForwardingRuleDbDto>();
+      
+                var ruleDto = await multi.ReadFirstOrDefaultAsync<ForwardingRuleDbDto>();
                 if (ruleDto == null)
                 {
                     return null;
                 }
 
-                List<TextReplacementDbDto> textReplacementDtos = (await multi.ReadAsync<TextReplacementDbDto>()).ToList();
-                List<TextReplacement> textReplacements = textReplacementDtos.Select(dto => dto.ToDomainEntity()).ToList();
+                var textReplacementDtos = (await multi.ReadAsync<TextReplacementDbDto>()).ToList();
+                var textReplacements = textReplacementDtos.Select(dto => dto.ToDomainEntity()).ToList();
 
                 return ruleDto.ToDomainEntity(textReplacements);
             });
@@ -243,10 +243,10 @@ namespace Infrastructure.Features.Forwarding.Repositories
 
             return await _retryPolicy.ExecuteAsync(async () => // Apply retry policy
             {
-                using SqlConnection connection = new(_connectionString);
+                using var connection = new SqlConnection(_connectionString);
                 await connection.OpenAsync(cancellationToken);
 
-                string sql = @"
+                var sql = @"
                     SELECT
                         RuleName, IsEnabled, SourceChannelId, TargetChannelIds,
                         EditOptions_PrependText, EditOptions_AppendText, EditOptions_RemoveSourceForwardHeader, EditOptions_RemoveLinks,
@@ -261,15 +261,15 @@ namespace Infrastructure.Features.Forwarding.Repositories
                         Id, EditOptionsForwardingRuleName, Find, ReplaceWith, IsRegex, RegexOptions
                     FROM TextReplacement;";
 
-                using SqlMapper.GridReader multi = await connection.QueryMultipleAsync(sql);
+                using var multi = await connection.QueryMultipleAsync(sql);
 
-                List<ForwardingRuleDbDto> ruleDtos = (await multi.ReadAsync<ForwardingRuleDbDto>()).ToList();
-                List<TextReplacementDbDto> allTextReplacementDtos = (await multi.ReadAsync<TextReplacementDbDto>()).ToList();
+                var ruleDtos = (await multi.ReadAsync<ForwardingRuleDbDto>()).ToList();
+                var allTextReplacementDtos = (await multi.ReadAsync<TextReplacementDbDto>()).ToList();
 
-                List<ForwardingRule> rules = new();
-                foreach (ForwardingRuleDbDto? ruleDto in ruleDtos)
+                var rules = new List<ForwardingRule>();
+                foreach (var ruleDto in ruleDtos)
                 {
-                    List<TextReplacement> ruleTextReplacements = allTextReplacementDtos
+                    var ruleTextReplacements = allTextReplacementDtos
                         .Where(tr => tr.EditOptionsForwardingRuleName == ruleDto.RuleName)
                         .Select(dto => dto.ToDomainEntity())
                         .ToList();
@@ -292,10 +292,10 @@ namespace Infrastructure.Features.Forwarding.Repositories
 
             return await _retryPolicy.ExecuteAsync(async () => // Apply retry policy
             {
-                using SqlConnection connection = new(_connectionString);
+                using var connection = new SqlConnection(_connectionString);
                 await connection.OpenAsync(cancellationToken);
 
-                string sql = @"
+                var sql = @"
                     SELECT
                         RuleName, IsEnabled, SourceChannelId, TargetChannelIds,
                         EditOptions_PrependText, EditOptions_AppendText, EditOptions_RemoveSourceForwardHeader, EditOptions_RemoveLinks,
@@ -312,15 +312,15 @@ namespace Infrastructure.Features.Forwarding.Repositories
                     FROM TextReplacement -- <--- CORRECTED TABLE NAME HERE
                     WHERE EditOptionsForwardingRuleName IN (SELECT RuleName FROM ForwardingRules WHERE SourceChannelId = @SourceChannelId);"; // Only fetch relevant replacements
 
-                using SqlMapper.GridReader multi = await connection.QueryMultipleAsync(sql, new { SourceChannelId = sourceChannelId });
+                using var multi = await connection.QueryMultipleAsync(sql, new { SourceChannelId = sourceChannelId });
 
-                List<ForwardingRuleDbDto> ruleDtos = (await multi.ReadAsync<ForwardingRuleDbDto>()).ToList();
-                List<TextReplacementDbDto> allTextReplacementDtos = (await multi.ReadAsync<TextReplacementDbDto>()).ToList();
+                var ruleDtos = (await multi.ReadAsync<ForwardingRuleDbDto>()).ToList();
+                var allTextReplacementDtos = (await multi.ReadAsync<TextReplacementDbDto>()).ToList();
 
-                List<ForwardingRule> rules = new();
-                foreach (ForwardingRuleDbDto? ruleDto in ruleDtos)
+                var rules = new List<ForwardingRule>();
+                foreach (var ruleDto in ruleDtos)
                 {
-                    List<TextReplacement> ruleTextReplacements = allTextReplacementDtos
+                    var ruleTextReplacements = allTextReplacementDtos
                         .Where(tr => tr.EditOptionsForwardingRuleName == ruleDto.RuleName)
                         .Select(dto => dto.ToDomainEntity())
                         .ToList();
@@ -354,19 +354,19 @@ namespace Infrastructure.Features.Forwarding.Repositories
 
             return await _retryPolicy.ExecuteAsync(async () => // Apply retry policy
             {
-                using SqlConnection connection = new(_connectionString);
+                using var connection = new SqlConnection(_connectionString);
                 await connection.OpenAsync(cancellationToken);
 
-                int offset = (pageNumber - 1) * pageSize;
+                var offset = (pageNumber - 1) * pageSize;
 
                 // First, fetch RuleNames for the current page to limit the subsequent join
-                string ruleNamesInPageSql = @"
+                var ruleNamesInPageSql = @"
                     SELECT RuleName
                     FROM ForwardingRules
                     ORDER BY RuleName
                     OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;";
 
-                List<string> pagedRuleNames = (await connection.QueryAsync<string>(ruleNamesInPageSql, new { Offset = offset, PageSize = pageSize })).ToList();
+                var pagedRuleNames = (await connection.QueryAsync<string>(ruleNamesInPageSql, new { Offset = offset, PageSize = pageSize })).ToList();
 
                 if (!pagedRuleNames.Any())
                 {
@@ -374,7 +374,7 @@ namespace Infrastructure.Features.Forwarding.Repositories
                 }
 
                 // Now fetch the full rules and their text replacements for the identified rule names
-                string sql = @"
+                var sql = @"
                     SELECT
                         RuleName, IsEnabled, SourceChannelId, TargetChannelIds,
                         EditOptions_PrependText, EditOptions_AppendText, EditOptions_RemoveSourceForwardHeader, EditOptions_RemoveLinks,
@@ -391,15 +391,15 @@ namespace Infrastructure.Features.Forwarding.Repositories
                     FROM TextReplacement -- <--- CORRECTED TABLE NAME HERE
                     WHERE EditOptionsForwardingRuleName IN @RuleNames;"; // Fetch replacements for the paged rules
 
-                using SqlMapper.GridReader multi = await connection.QueryMultipleAsync(sql, new { RuleNames = pagedRuleNames });
+                using var multi = await connection.QueryMultipleAsync(sql, new { RuleNames = pagedRuleNames });
 
-                List<ForwardingRuleDbDto> ruleDtos = (await multi.ReadAsync<ForwardingRuleDbDto>()).ToList();
-                List<TextReplacementDbDto> allTextReplacementDtos = (await multi.ReadAsync<TextReplacementDbDto>()).ToList();
+                var ruleDtos = (await multi.ReadAsync<ForwardingRuleDbDto>()).ToList();
+                var allTextReplacementDtos = (await multi.ReadAsync<TextReplacementDbDto>()).ToList();
 
-                List<ForwardingRule> rules = new();
-                foreach (ForwardingRuleDbDto? ruleDto in ruleDtos)
+                var rules = new List<ForwardingRule>();
+                foreach (var ruleDto in ruleDtos)
                 {
-                    List<TextReplacement> ruleTextReplacements = allTextReplacementDtos
+                    var ruleTextReplacements = allTextReplacementDtos
                         .Where(tr => tr.EditOptionsForwardingRuleName == ruleDto.RuleName)
                         .Select(dto => dto.ToDomainEntity())
                         .ToList();
@@ -421,10 +421,10 @@ namespace Infrastructure.Features.Forwarding.Repositories
 
             return await _retryPolicy.ExecuteAsync(async () => // Apply retry policy
             {
-                using SqlConnection connection = new(_connectionString);
+                using var connection = new SqlConnection(_connectionString);
                 await connection.OpenAsync(cancellationToken);
 
-                string sql = "SELECT COUNT(*) FROM ForwardingRules;";
+                var sql = "SELECT COUNT(*) FROM ForwardingRules;";
                 return await connection.ExecuteScalarAsync<int>(sql);
             });
         }
@@ -457,14 +457,14 @@ namespace Infrastructure.Features.Forwarding.Repositories
             {
                 await _retryPolicy.ExecuteAsync(async () => // Apply retry policy for write operations
                 {
-                    using SqlConnection connection = new(_connectionString);
+                    using var connection = new SqlConnection(_connectionString);
                     await connection.OpenAsync(cancellationToken);
 
                     // Start a transaction for atomicity
-                    using SqlTransaction transaction = connection.BeginTransaction();
+                    using var transaction = connection.BeginTransaction();
                     try
                     {
-                        string insertRuleSql = @"
+                        var insertRuleSql = @"
                             INSERT INTO ForwardingRules (
                                 RuleName, IsEnabled, SourceChannelId, TargetChannelIds,
                                 EditOptions_PrependText, EditOptions_AppendText, EditOptions_RemoveSourceForwardHeader,
@@ -519,14 +519,14 @@ namespace Infrastructure.Features.Forwarding.Repositories
                         // Insert TextReplacements if any
                         if (rule.EditOptions.TextReplacements != null && rule.EditOptions.TextReplacements.Any())
                         {
-                            string insertReplacementSql = @"
+                            var insertReplacementSql = @"
                                 INSERT INTO TextReplacement ( -- <--- CORRECTED TABLE NAME HERE
                                     EditOptionsForwardingRuleName, Find, ReplaceWith, IsRegex, RegexOptions
                                 ) VALUES (
                                     @EditOptionsForwardingRuleName, @Find, @ReplaceWith, @IsRegex, @RegexOptions
                                 );";
 
-                            foreach (TextReplacement replacement in rule.EditOptions.TextReplacements)
+                            foreach (var replacement in rule.EditOptions.TextReplacements)
                             {
                                 var replacementParams = new
                                 {
@@ -585,13 +585,13 @@ namespace Infrastructure.Features.Forwarding.Repositories
             {
                 await _retryPolicy.ExecuteAsync(async () => // Apply retry policy for write operations
                 {
-                    using SqlConnection connection = new(_connectionString);
+                    using var connection = new SqlConnection(_connectionString);
                     await connection.OpenAsync(cancellationToken);
 
-                    using SqlTransaction transaction = connection.BeginTransaction();
+                    using var transaction = connection.BeginTransaction();
                     try
                     {
-                        string updateRuleSql = @"
+                        var updateRuleSql = @"
                             UPDATE ForwardingRules SET
                                 IsEnabled = @IsEnabled,
                                 SourceChannelId = @SourceChannelId,
@@ -647,7 +647,7 @@ namespace Infrastructure.Features.Forwarding.Repositories
                             FilterOptions_MaxMessageLength = rule.FilterOptions.MaxMessageLength
                         };
 
-                        int rowsAffected = await connection.ExecuteAsync(updateRuleSql, ruleParams, transaction: transaction);
+                        var rowsAffected = await connection.ExecuteAsync(updateRuleSql, ruleParams, transaction: transaction);
 
                         if (rowsAffected == 0)
                         {
@@ -657,20 +657,20 @@ namespace Infrastructure.Features.Forwarding.Repositories
                         }
 
                         // Delete existing TextReplacements for this rule
-                        string deleteReplacementsSql = "DELETE FROM TextReplacement WHERE EditOptionsForwardingRuleName = @RuleName;"; // <--- CORRECTED TABLE NAME HERE
+                        var deleteReplacementsSql = "DELETE FROM TextReplacement WHERE EditOptionsForwardingRuleName = @RuleName;"; // <--- CORRECTED TABLE NAME HERE
                         _ = await connection.ExecuteAsync(deleteReplacementsSql, new { rule.RuleName }, transaction: transaction);
 
                         // Insert new TextReplacements
                         if (rule.EditOptions.TextReplacements != null && rule.EditOptions.TextReplacements.Any())
                         {
-                            string insertReplacementSql = @"
+                            var insertReplacementSql = @"
                                 INSERT INTO TextReplacement ( -- <--- CORRECTED TABLE NAME HERE
                                     EditOptionsForwardingRuleName, Find, ReplaceWith, IsRegex, RegexOptions
                                 ) VALUES (
                                     @EditOptionsForwardingRuleName, @Find, @ReplaceWith, @IsRegex, @RegexOptions
                                 );";
 
-                            foreach (TextReplacement replacement in rule.EditOptions.TextReplacements)
+                            foreach (var replacement in rule.EditOptions.TextReplacements)
                             {
                                 var replacementParams = new
                                 {
@@ -733,11 +733,11 @@ namespace Infrastructure.Features.Forwarding.Repositories
 
             // First, check if the rule exists to provide more specific logging and potential concurrency handling
             // This initial check also benefits from Polly's retry.
-            bool ruleExists = await _retryPolicy.ExecuteAsync(async () =>
+            var ruleExists = await _retryPolicy.ExecuteAsync(async () =>
             {
-                using SqlConnection connection = new(_connectionString);
+                using var connection = new SqlConnection(_connectionString);
                 await connection.OpenAsync(cancellationToken);
-                string sql = "SELECT COUNT(*) FROM ForwardingRules WHERE RuleName = @RuleName;";
+                var sql = "SELECT COUNT(*) FROM ForwardingRules WHERE RuleName = @RuleName;";
                 return await connection.ExecuteScalarAsync<int>(sql, new { RuleName = ruleName }) > 0;
             });
 
@@ -751,19 +751,19 @@ namespace Infrastructure.Features.Forwarding.Repositories
             {
                 await _retryPolicy.ExecuteAsync(async () => // Apply retry policy for delete and save operations
                 {
-                    using SqlConnection connection = new(_connectionString);
+                    using var connection = new SqlConnection(_connectionString);
                     await connection.OpenAsync(cancellationToken);
 
-                    using SqlTransaction transaction = connection.BeginTransaction();
+                    using var transaction = connection.BeginTransaction();
                     try
                     {
                         // Delete TextReplacements first due to foreign key constraint
-                        string deleteReplacementsSql = "DELETE FROM TextReplacement WHERE EditOptionsForwardingRuleName = @RuleName;"; // <--- CORRECTED TABLE NAME HERE
+                        var deleteReplacementsSql = "DELETE FROM TextReplacement WHERE EditOptionsForwardingRuleName = @RuleName;"; // <--- CORRECTED TABLE NAME HERE
                         _ = await connection.ExecuteAsync(deleteReplacementsSql, new { RuleName = ruleName }, transaction: transaction);
 
                         // Then delete the main rule
-                        string deleteRuleSql = "DELETE FROM ForwardingRules WHERE RuleName = @RuleName;";
-                        int rowsAffected = await connection.ExecuteAsync(deleteRuleSql, new { RuleName = ruleName }, transaction: transaction);
+                        var deleteRuleSql = "DELETE FROM ForwardingRules WHERE RuleName = @RuleName;";
+                        var rowsAffected = await connection.ExecuteAsync(deleteRuleSql, new { RuleName = ruleName }, transaction: transaction);
 
                         if (rowsAffected == 0)
                         {

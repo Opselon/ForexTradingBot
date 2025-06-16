@@ -3,6 +3,7 @@
 using Microsoft.Extensions.Logging;
 using Telegram.Bot.Types;
 using TelegramPanel.Application.Interfaces;
+using TelegramPanel.Infrastructure;
 using static TelegramPanel.Infrastructure.ActualTelegramMessageActions;
 
 namespace TelegramPanel.Application.States
@@ -58,7 +59,7 @@ namespace TelegramPanel.Application.States
         /// <returns></returns>
         public async Task<ITelegramState?> GetCurrentStateAsync(long userId, CancellationToken cancellationToken = default)
         {
-            UserConversationState? userConvState = await _stateService.GetAsync(userId, cancellationToken);
+            var userConvState = await _stateService.GetAsync(userId, cancellationToken);
             return userConvState == null || string.IsNullOrWhiteSpace(userConvState.CurrentStateName)
                 ? null
                 : _availableStates.FirstOrDefault(s => s.Name.Equals(userConvState.CurrentStateName, StringComparison.OrdinalIgnoreCase));
@@ -66,11 +67,11 @@ namespace TelegramPanel.Application.States
 
         public async Task ProcessUpdateInCurrentStateAsync(long userId, Update update, CancellationToken cancellationToken = default)
         {
-            ITelegramState? currentState = await GetCurrentStateAsync(userId, cancellationToken);
+            var currentState = await GetCurrentStateAsync(userId, cancellationToken);
             if (currentState != null)
             {
                 _logger.LogDebug("Processing update for UserID {UserId} in state {StateName}", userId, currentState.Name);
-                string? nextStateName = await currentState.ProcessUpdateAsync(update, cancellationToken);
+                var nextStateName = await currentState.ProcessUpdateAsync(update, cancellationToken);
 
                 // If the state changes (i.e., returns a new state name or null)
                 if (nextStateName != currentState.Name)
@@ -91,7 +92,7 @@ namespace TelegramPanel.Application.States
         /// <returns></returns>
         public async Task SetStateAsync(long userId, string? stateName, Update? triggerUpdate = null, CancellationToken cancellationToken = default)
         {
-            UserConversationState userConvState = await _stateService.GetAsync(userId, cancellationToken) ?? new UserConversationState();
+            var userConvState = await _stateService.GetAsync(userId, cancellationToken) ?? new UserConversationState();
 
             if (string.IsNullOrWhiteSpace(stateName))
             {
@@ -101,7 +102,7 @@ namespace TelegramPanel.Application.States
             }
 
             // Verify the state exists before setting it.
-            ITelegramState? newState = _availableStates.FirstOrDefault(s => s.Name.Equals(stateName, StringComparison.OrdinalIgnoreCase));
+            var newState = _availableStates.FirstOrDefault(s => s.Name.Equals(stateName, StringComparison.OrdinalIgnoreCase));
             if (newState == null)
             {
                 _logger.LogError("Attempted to set unknown state '{StateName}' for UserID {UserId}. Clearing state as a safeguard.", stateName, userId);

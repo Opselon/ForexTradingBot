@@ -1,12 +1,12 @@
 ﻿// In a new file, e.g., Infrastructure/Queue/RedisUpdateChannel.cs
-using Microsoft.Extensions.Logging;
+using StackExchange.Redis;
+using System.Text.Json;
 using Polly;
 using Polly.Retry;
-using StackExchange.Redis;
+using Microsoft.Extensions.Logging;
 using System.Runtime.CompilerServices;
-using System.Text.Json;
-using Telegram.Bot.Types;
 using TelegramPanel.Queue;
+using Telegram.Bot.Types;
 
 public class RedisUpdateChannel : ITelegramUpdateChannel
 {
@@ -38,10 +38,10 @@ public class RedisUpdateChannel : ITelegramUpdateChannel
             try
             {
                 // Serialize the Update object to JSON
-                string jsonUpdate = JsonSerializer.Serialize(update);
+                var jsonUpdate = JsonSerializer.Serialize(update);
 
                 // LPUSH the JSON string to the head of the Redis List
-                _ = await _redisDb.ListLeftPushAsync(UpdateQueueKey, jsonUpdate);
+                await _redisDb.ListLeftPushAsync(UpdateQueueKey, jsonUpdate);
 
                 _logger.LogTrace("Enqueued update {UpdateId} to Redis queue '{QueueKey}'.", update.Id, UpdateQueueKey);
             }
@@ -63,7 +63,7 @@ public class RedisUpdateChannel : ITelegramUpdateChannel
             {
                 // BRPOP is the blocking pop command. It waits for 5 seconds for an item.
                 // This is much more efficient than a tight loop with a manual delay.
-                RedisValue redisValue = await _redisDb.ListRightPopAsync(UpdateQueueKey);
+                var redisValue = await _redisDb.ListRightPopAsync(UpdateQueueKey);
 
                 if (redisValue.HasValue)
                 {
@@ -76,7 +76,7 @@ public class RedisUpdateChannel : ITelegramUpdateChannel
                     {
                         _logger.LogError(jsonEx, "Failed to deserialize update from Redis. Value: '{RedisValue}'. Moving to dead-letter queue.", redisValue);
                         // Move malformed message to a dead-letter queue for inspection
-                        _ = await _redisDb.ListLeftPushAsync($"{UpdateQueueKey}:deadletter", redisValue);
+                        await _redisDb.ListLeftPushAsync($"{UpdateQueueKey}:deadletter", redisValue);
                     }
                 }
             });

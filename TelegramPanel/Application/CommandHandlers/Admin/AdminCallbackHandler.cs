@@ -13,6 +13,7 @@ using Telegram.Bot.Types.ReplyMarkups;
 using TelegramPanel.Application.CommandHandlers.MainMenu;
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Formatters;
+using TelegramPanel.Infrastructure;
 using TelegramPanel.Infrastructure.Helper;
 using TelegramPanel.Settings;
 using static TelegramPanel.Infrastructure.ActualTelegramMessageActions;
@@ -70,7 +71,7 @@ namespace TelegramPanel.Application.CommandHandlers.Admin
                 return false;
             }
 
-            string data = update.CallbackQuery.Data;
+            var data = update.CallbackQuery.Data;
 
             // This handler is now responsible for all these stateless admin actions.
             return data is AdminServerStatsCallback or
@@ -81,12 +82,12 @@ namespace TelegramPanel.Application.CommandHandlers.Admin
 
         public async Task HandleAsync(Update update, CancellationToken cancellationToken = default)
         {
-            CallbackQuery callbackQuery = update.CallbackQuery!;
+            var callbackQuery = update.CallbackQuery!;
             await _messageSender.AnswerCallbackQueryAsync(callbackQuery.Id, cancellationToken: cancellationToken);
 
             _logger.LogInformation("Admin {UserId} initiated action: {Action}", callbackQuery.From.Id, callbackQuery.Data);
 
-            Task handlerTask = callbackQuery.Data switch
+            var handlerTask = callbackQuery.Data switch
             {
                 AdminServerStatsCallback => HandleServerStatsAsync(callbackQuery.Message!.Chat.Id, callbackQuery.Message.MessageId, cancellationToken),
                 AdminManualRssFetchCallback => HandleManualRssFetchAsync(callbackQuery.Message!.Chat.Id, callbackQuery.Message.MessageId, cancellationToken),
@@ -103,7 +104,7 @@ namespace TelegramPanel.Application.CommandHandlers.Admin
 
             (int userCount, int newsItemCount) = await _adminService.GetDashboardStatsAsync(cancellationToken);
 
-            StringBuilder stats = new();
+            var stats = new StringBuilder();
             _ = stats.AppendLine(TelegramMessageFormatter.Bold("📊 Server & Bot Status"));
             _ = stats.AppendLine("`------------------------------`");
             _ = stats.AppendLine($"👥 Total Users: `{userCount:N0}`");
@@ -118,7 +119,7 @@ namespace TelegramPanel.Application.CommandHandlers.Admin
         private async Task HandleManualRssFetchAsync(long chatId, int messageId, CancellationToken cancellationToken)
         {
             await _messageSender.EditMessageTextAsync(chatId, messageId, "⏳ Triggering RSS fetch job...", cancellationToken: cancellationToken);
-            string text = "✅ The `fetch-all-active-rss-feeds` job has been triggered. Check Hangfire dashboard for progress.";
+            var text = "✅ The `fetch-all-active-rss-feeds` job has been triggered. Check Hangfire dashboard for progress.";
             try
             {
                 _recurringJobManager.Trigger("fetch-all-active-rss-feeds");
@@ -137,7 +138,7 @@ namespace TelegramPanel.Application.CommandHandlers.Admin
             await _messageSender.EditMessageTextAsync(chatId, messageId, "⏳ Purging completed Hangfire jobs...", cancellationToken: cancellationToken);
             try
             {
-                string connectionString = _configuration.GetConnectionString("DefaultConnection")!;
+                var connectionString = _configuration.GetConnectionString("DefaultConnection")!;
                 _hangfireCleaner.PurgeCompletedAndFailedJobs(connectionString);
                 _logger.LogInformation("Admin manually purged Hangfire jobs.");
                 await _messageSender.EditMessageTextAsync(chatId, messageId, "✅ Hangfire 'Succeeded' and 'Failed' job lists have been cleared.", replyMarkup: GetBackToAdminPanelKeyboard(), cancellationToken: cancellationToken);
@@ -151,8 +152,8 @@ namespace TelegramPanel.Application.CommandHandlers.Admin
 
         private Task ShowAdminPanelAsync(long chatId, int messageId, CancellationToken cancellationToken)
         {
-            string text = TelegramMessageFormatter.Bold("🛠️ Administrator Panel") + "\n\nSelect an action:";
-            InlineKeyboardMarkup keyboard = GetAdminPanelKeyboard();
+            var text = TelegramMessageFormatter.Bold("🛠️ Administrator Panel") + "\n\nSelect an action:";
+            var keyboard = GetAdminPanelKeyboard();
             return _messageSender.EditMessageTextAsync(chatId, messageId, text, ParseMode.Markdown, keyboard, cancellationToken);
         }
 

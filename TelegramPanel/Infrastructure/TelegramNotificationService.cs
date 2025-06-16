@@ -44,8 +44,8 @@ namespace TelegramPanel.Infrastructure
                     sleepDurationProvider: retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)), // تأخیر نمایی: 2s, 4s, 8s
                     onRetry: (exception, timeSpan, retryAttempt, context) =>
                     {
-                        long? chatId = context.TryGetValue("ChatId", out object? id) ? (long?)id : null;
-                        string? messagePreview = context.TryGetValue("MessagePreview", out object? msg) ? msg?.ToString() : "N/A";
+                        var chatId = context.TryGetValue("ChatId", out var id) ? (long?)id : null;
+                        var messagePreview = context.TryGetValue("MessagePreview", out var msg) ? msg?.ToString() : "N/A";
                         _logger.LogWarning(exception,
                             "PollyRetry: Failed to send Telegram notification to ChatID {ChatId}. Retrying in {TimeSpan} for attempt {RetryAttempt}. Message preview: '{MessagePreview}'. Error: {Message}",
                             chatId, timeSpan, retryAttempt, messagePreview, exception.Message);
@@ -86,13 +86,13 @@ namespace TelegramPanel.Infrastructure
 
 
             _logger.LogInformation("Sending Telegram notification to ChatID {ChatId}. RichText: {UseRichText}, Message (partial): {MessagePartial}",
-                chatId, useRichText, message.Length > 50 ? message[..50] + "..." : message);
+                chatId, useRichText, message.Length > 50 ? message.Substring(0, 50) + "..." : message);
 
             // ✅ آماده‌سازی Context برای Polly با اطلاعات مرتبط با پیام برای لاگ‌گذاری بهتر.
-            Context pollyContext = new($"NotificationToChat_{chatId}", new Dictionary<string, object>
+            var pollyContext = new Polly.Context($"NotificationToChat_{chatId}", new Dictionary<string, object>
             {
                 { "ChatId", chatId },
-                { "MessagePreview", message.Length > 100 ? message[..100] + "..." : message }
+                { "MessagePreview", message.Length > 100 ? message.Substring(0, 100) + "..." : message }
             });
 
             try

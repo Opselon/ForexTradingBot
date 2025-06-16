@@ -31,7 +31,7 @@ namespace Application.Features.Rss.Queries
             _logger.LogInformation("Handling FetchRssSourceManualQuery. RssSourceId: {RssSourceId}, ForceFetch: {ForceFetch}",
                 request.RssSourceId?.ToString() ?? "All Active", request.ForceFetch);
 
-            List<NewsItemDto> allFetchedNews = [];
+            List<NewsItemDto> allFetchedNews = new();
             List<string> errors = [];
 
             IEnumerable<RssSource> sourcesToFetch;

@@ -121,7 +121,7 @@ namespace Infrastructure.Repositories
             rssSource.Url = SanitizeAndNormalizeUrl(rssSource.Url);
             rssSource.SourceName = SanitizeString(rssSource.SourceName);
 
-            DateTime now = DateTime.UtcNow;
+            var now = DateTime.UtcNow;
             rssSource.CreatedAt = now;
             rssSource.UpdatedAt = now;
 
@@ -147,7 +147,7 @@ namespace Infrastructure.Repositories
             rssSource.UpdatedAt = DateTime.UtcNow;
 
             _logger.LogInformation("RssSourceRepository: Marking RssSource for update. ID: {Id}, Name: {SourceName}, URL: {Url}", rssSource.Id, rssSource.SourceName, rssSource.Url);
-            Microsoft.EntityFrameworkCore.ChangeTracking.EntityEntry<RssSource> entry = _context.RssSources.Entry(rssSource);
+            var entry = _context.RssSources.Entry(rssSource);
             if (entry.State == EntityState.Detached)
             {
                 _ = _context.RssSources.Attach(rssSource);
@@ -177,7 +177,7 @@ namespace Infrastructure.Repositories
             _logger.LogInformation("RssSourceRepository: Attempting to delete RssSource by ID: {Id}", id);
             return await _dbRetryPolicy.ExecuteAsync(async () => // ✅ Polly applied
             {
-                RssSource? sourceToDelete = await GetByIdAsync(id, cancellationToken); // Uses GetByIdAsync which is also Polly-protected.
+                var sourceToDelete = await GetByIdAsync(id, cancellationToken); // Uses GetByIdAsync which is also Polly-protected.
                 if (sourceToDelete == null)
                 {
                     _logger.LogWarning("RssSourceRepository: RssSource with ID {Id} not found for deletion.", id);
@@ -206,7 +206,7 @@ namespace Infrastructure.Repositories
 
             return await _dbRetryPolicy.ExecuteAsync(async () => // ✅ Polly applied
             {
-                IQueryable<RssSource> query = _context.RssSources
+                var query = _context.RssSources
                     .Where(rs => rs.Url == normalizedUrl || rs.Url == url.Trim());
 
                 if (excludeId.HasValue)
@@ -227,11 +227,11 @@ namespace Infrastructure.Repositories
                 return string.Empty;
             }
 
-            UriBuilder uriBuilder = new(url.Trim());
+            var uriBuilder = new UriBuilder(url.Trim());
             uriBuilder.Scheme = uriBuilder.Scheme.ToLowerInvariant();
             uriBuilder.Host = uriBuilder.Host.ToLowerInvariant();
 
-            if (uriBuilder.Host.StartsWith("www.")) { uriBuilder.Host = uriBuilder.Host[4..]; }
+            if (uriBuilder.Host.StartsWith("www.")) { uriBuilder.Host = uriBuilder.Host.Substring(4); }
 
             string path = uriBuilder.Path.TrimEnd(UrlPathSeparator);
             uriBuilder.Path = string.IsNullOrEmpty(path) || path == "/" ? "/" : path;
@@ -247,7 +247,7 @@ namespace Infrastructure.Repositories
             string trimmedUrl = url.Trim();
             try
             {
-                UriBuilder uriBuilder = new(trimmedUrl);
+                UriBuilder uriBuilder = new UriBuilder(trimmedUrl);
                 if (string.IsNullOrWhiteSpace(uriBuilder.Scheme)) { uriBuilder.Scheme = "https"; uriBuilder.Port = -1; _logger.LogInformation("RssSourceRepository: URL '{OriginalUrl}' had no scheme, defaulted to https. New URL: '{NewUrl}'", trimmedUrl, uriBuilder.Uri.AbsoluteUri); }
                 return NormalizeUrlForComparison(uriBuilder.Uri.AbsoluteUri);
             }

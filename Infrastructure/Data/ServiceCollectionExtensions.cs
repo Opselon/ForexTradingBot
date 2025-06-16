@@ -204,16 +204,16 @@ namespace Infrastructure.Data
             _ = services.AddHttpClient<ICryptoPayApiClient, CryptoPayApiClient>(); // برای ارتباط با CryptoPay API
             _ = services.AddScoped<IRssFetchingCoordinatorService, RssFetchingCoordinatorService>(); // هماهنگ کننده برای خواندن RSS
                                                                                                      // This line reads the "RssReaderService" section from your appsettings.json
-            _ = services.Configure<RssReaderServiceSettings>(
+            services.Configure<RssReaderServiceSettings>(
                 configuration.GetSection(RssReaderServiceSettings.ConfigurationSectionName)
             );
 
             // رجیستر کردن یک HttpClient نام‌گذاری شده برای سرویس <see cref="RssReaderService"/>.
             // این رویکرد امکان پیکربندی خاص برای HttpClient‌های مختلف را فراهم می‌کند.
-            _ = services.AddHttpClient(RssReaderService.HttpClientNamedClient, (serviceProvider, client) =>
+            services.AddHttpClient(RssReaderService.HttpClientNamedClient, (serviceProvider, client) =>
             {
                 // Get the strongly-typed settings from the DI container.
-                RssReaderServiceSettings settings = serviceProvider.GetRequiredService<IOptions<RssReaderServiceSettings>>().Value;
+                var settings = serviceProvider.GetRequiredService<IOptions<RssReaderServiceSettings>>().Value;
 
                 // Set the User-Agent from the centralized settings class.
                 client.DefaultRequestHeaders.UserAgent.ParseAdd(settings.UserAgent);

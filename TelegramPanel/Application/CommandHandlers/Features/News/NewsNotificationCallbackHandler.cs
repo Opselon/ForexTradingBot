@@ -59,19 +59,19 @@ namespace TelegramPanel.Application.CommandHandlers.Features.News
 
         public async Task HandleAsync(Update update, CancellationToken cancellationToken = default)
         {
-            CallbackQuery callbackQuery = update.CallbackQuery!;
-            Message message = callbackQuery.Message!;
-            Telegram.Bot.Types.User fromUser = callbackQuery.From;
+            var callbackQuery = update.CallbackQuery!;
+            var message = callbackQuery.Message!;
+            var fromUser = callbackQuery.From;
 
-            long chatId = message.Chat.Id;
-            long telegramUserId = fromUser.Id;
-            string callbackData = callbackQuery.Data!;
+            var chatId = message.Chat.Id;
+            var telegramUserId = fromUser.Id;
+            var callbackData = callbackQuery.Data!;
 
             //  پاسخ اولیه به CallbackQuery
             await AnswerCallbackQuerySilentAsync(callbackQuery.Id, cancellationToken, "Updating your preference...");
 
             //  دریافت User.Id (Guid) از طریق telegramUserId (long)
-            global::Application.DTOs.UserDto? userDto = await _userService.GetUserByTelegramIdAsync(telegramUserId.ToString(), cancellationToken);
+            var userDto = await _userService.GetUserByTelegramIdAsync(telegramUserId.ToString(), cancellationToken);
             if (userDto == null)
             {
                 _logger.LogWarning("User not found for TelegramID {TelegramUserId} while handling news preference callback.", telegramUserId);
@@ -88,7 +88,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.News
 
                 if (callbackData.StartsWith(SubscribeToCategoryPrefix))
                 {
-                    if (!Guid.TryParse(callbackData[SubscribeToCategoryPrefix.Length..], out categoryId))
+                    if (!Guid.TryParse(callbackData.Substring(SubscribeToCategoryPrefix.Length), out categoryId))
                     {
                         _logger.LogWarning("Invalid CategoryID in subscribe callback: {CallbackData}", callbackData);
                         return;
@@ -97,7 +97,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.News
                 }
                 else if (callbackData.StartsWith(UnsubscribeFromCategoryPrefix))
                 {
-                    if (!Guid.TryParse(callbackData[UnsubscribeFromCategoryPrefix.Length..], out categoryId))
+                    if (!Guid.TryParse(callbackData.Substring(UnsubscribeFromCategoryPrefix.Length), out categoryId))
                     {
                         _logger.LogWarning("Invalid CategoryID in unsubscribe callback: {CallbackData}", callbackData);
                         return;
@@ -110,7 +110,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.News
                     return;
                 }
 
-                SignalCategory? category = await _categoryRepository.GetByIdAsync(categoryId, cancellationToken);
+                var category = await _categoryRepository.GetByIdAsync(categoryId, cancellationToken);
                 if (category == null)
                 {
                     _logger.LogWarning("Category with ID {CategoryId} not found for news preference update.", categoryId);

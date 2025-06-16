@@ -4,6 +4,7 @@ using System.Text;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using TelegramPanel.Application.Interfaces;
+using TelegramPanel.Infrastructure;
 using static TelegramPanel.Infrastructure.ActualTelegramMessageActions;
 
 namespace TelegramPanel.Application.States.Admin
@@ -35,8 +36,8 @@ namespace TelegramPanel.Application.States.Admin
                 return Name;
             }
 
-            Message message = update.Message;
-            long adminId = message.From.Id;
+            var message = update.Message;
+            var adminId = message.From.Id;
 
             if (message.Text.Trim() == "/cancel")
             {
@@ -44,16 +45,16 @@ namespace TelegramPanel.Application.States.Admin
                 return null;
             }
 
-            if (!long.TryParse(message.Text, out long targetUserId))
+            if (!long.TryParse(message.Text, out var targetUserId))
             {
                 await _messageSender.SendTextMessageAsync(adminId, "⚠️ Invalid format. Please send a numerical Telegram ID.", cancellationToken: cancellationToken);
                 return Name;
             }
 
             // ✅ FIX: Call the correct method name from the IAdminService interface.
-            global::Application.DTOs.Admin.AdminUserDetailDto? userDetail = await _adminService.GetUserDetailByTelegramIdAsync(targetUserId, cancellationToken);
+            var userDetail = await _adminService.GetUserDetailByTelegramIdAsync(targetUserId, cancellationToken);
 
-            StringBuilder response = new();
+            var response = new StringBuilder();
             if (userDetail == null)
             {
                 _ = response.AppendLine($"❌ User with Telegram ID `{targetUserId}` not found.");

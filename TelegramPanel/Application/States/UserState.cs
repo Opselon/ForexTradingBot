@@ -31,11 +31,11 @@ namespace TelegramPanel.Application.States // ✅ Namespace صحیح
     public class InMemoryUserConversationStateService : IUserConversationStateService
     {
         // استفاده از ConcurrentDictionary برای thread-safety پایه
-        private readonly ConcurrentDictionary<long, UserConversationState> _userStates = new();
+        private readonly ConcurrentDictionary<long, UserConversationState> _userStates = new ConcurrentDictionary<long, UserConversationState>();
 
         public Task<UserConversationState?> GetAsync(long userId, CancellationToken cancellationToken = default)
         {
-            _ = _userStates.TryGetValue(userId, out UserConversationState? state);
+            _ = _userStates.TryGetValue(userId, out var state);
             return Task.FromResult(state);
         }
 

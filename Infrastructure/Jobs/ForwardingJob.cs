@@ -114,7 +114,7 @@ namespace Infrastructure.Jobs
         /// <returns>رشته کوتاه شده یا "[null_or_empty]" اگر رشته ورودی null یا خالی باشد.</returns>
         private string TruncateString(string? str, int maxLength)
         {
-            return string.IsNullOrEmpty(str) ? "[null_or_empty]" : str.Length <= maxLength ? str : str[..maxLength] + "...";
+            return string.IsNullOrEmpty(str) ? "[null_or_empty]" : str.Length <= maxLength ? str : str.Substring(0, maxLength) + "...";
         }
     }
 }

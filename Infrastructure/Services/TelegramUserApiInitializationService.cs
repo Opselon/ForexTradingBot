@@ -2,6 +2,7 @@
 using Microsoft.Extensions.Hosting; // For BackgroundService
 using Microsoft.Extensions.Logging; // For ILogger
 using Polly; // For Polly resilience policies
+using System.Net.Sockets;
 using TL; // For SocketException (common network error)
 
 namespace Infrastructure.Services
@@ -59,7 +60,7 @@ namespace Infrastructure.Services
         {
             _logger.LogInformation("Telegram User API Initialization Service is starting.");
 
-            Polly.Retry.AsyncRetryPolicy retryPolicy = Policy
+            var retryPolicy = Policy
                 // We handle any exception...
                 .Handle<Exception>(ex =>
                     // ...EXCEPT for our custom "permanent failure" exception...
@@ -71,9 +72,9 @@ namespace Infrastructure.Services
                     MaxConnectionRetries,
                     retryAttempt =>
                     {
-                        TimeSpan delay = TimeSpan.FromMilliseconds(InitialRetryDelayMilliseconds * Math.Pow(RetryBackoffFactor, retryAttempt - 1));
-                        TimeSpan jitter = TimeSpan.FromMilliseconds(delay.TotalMilliseconds * 0.25 * (new Random().NextDouble() - 0.5));
-                        TimeSpan finalDelay = delay + jitter;
+                        var delay = TimeSpan.FromMilliseconds(InitialRetryDelayMilliseconds * Math.Pow(RetryBackoffFactor, retryAttempt - 1));
+                        var jitter = TimeSpan.FromMilliseconds(delay.TotalMilliseconds * 0.25 * (new Random().NextDouble() - 0.5));
+                        var finalDelay = delay + jitter;
                         return TimeSpan.FromMilliseconds(Math.Min(finalDelay.TotalMilliseconds, MaxRetryDelayMilliseconds));
                     },
                     onRetryAsync: (exception, timespan, retryAttempt, context) =>
@@ -84,7 +85,7 @@ namespace Infrastructure.Services
                     }
                 );
 
-            PolicyResult policyResult = await retryPolicy.ExecuteAndCaptureAsync(async (ct) =>
+            var policyResult = await retryPolicy.ExecuteAndCaptureAsync(async (ct) =>
             {
                 _logger.LogInformation("Attempting to connect and login to Telegram User API...");
                 try
@@ -126,5 +127,5 @@ namespace Infrastructure.Services
                 }
             }
         }
-    }
+        }
 }

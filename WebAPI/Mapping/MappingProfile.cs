@@ -10,7 +10,7 @@ namespace WebAPI.Mapping
         public MappingProfile()
         {
             // This mapping is now 100% accurate based on the provided MessageEditOptions.cs
-            _ = CreateMap<MessageEditOptionsDto, MessageEditOptions>()
+            CreateMap<MessageEditOptionsDto, MessageEditOptions>()
                 .ConstructUsing(src => new MessageEditOptions(
                     src.PrependText,
                     src.AppendText,
@@ -25,7 +25,7 @@ namespace WebAPI.Mapping
                 ));
 
             // This mapping is now 100% accurate based on the provided MessageFilterOptions.cs
-            _ = CreateMap<MessageFilterOptionsDto, MessageFilterOptions>()
+            CreateMap<MessageFilterOptionsDto, MessageFilterOptions>()
                 .ConstructUsing(src => new MessageFilterOptions(
                     src.AllowedMessageTypes,
                     src.AllowedMimeTypes,
@@ -41,7 +41,7 @@ namespace WebAPI.Mapping
                 ));
 
             // This mapping correctly uses the above configurations to build the final entity.
-            _ = CreateMap<ForwardingRuleDto, ForwardingRule>()
+            CreateMap<ForwardingRuleDto, ForwardingRule>()
                 .ConstructUsing((src, context) => new ForwardingRule(
                     src.RuleName,
                     src.IsEnabled,
@@ -52,7 +52,7 @@ namespace WebAPI.Mapping
                 ));
 
             // NEW MAPPING: From the Domain Entity to the Summary DTO for GET requests
-            _ = CreateMap<ForwardingRule, ForwardingRuleSummaryDto>();
+            CreateMap<ForwardingRule, ForwardingRuleSummaryDto>();
         }
     }
 }

@@ -102,20 +102,20 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
             Func<CancellationToken, Task<TResult>> operationToExecute,
             CancellationToken cancellationToken)
         {
-            string[] animationFrames = new[] { " .", " . .", " . . .", " . . . ." };
-            int frameIndex = 0;
+            var animationFrames = new[] { " .", " . .", " . . .", " . . . ." };
+            var frameIndex = 0;
 
             // This CTS allows us to cancel the animation loop from within this method
             // once the main data fetching task is complete.
-            using CancellationTokenSource animationCts = new();
+            using var animationCts = new CancellationTokenSource();
             // This linked CTS ensures that if the original caller cancels, BOTH the data fetch AND the animation stop.
-            using CancellationTokenSource linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, animationCts.Token);
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, animationCts.Token);
 
             // Start the long-running data fetch operation but do not await it yet.
-            Task<TResult> dataFetchTask = operationToExecute(linkedCts.Token);
+            var dataFetchTask = operationToExecute(linkedCts.Token);
 
             // This task runs the UI animation loop in a separate thread.
-            Task animationTask = Task.Run(async () =>
+            var animationTask = Task.Run(async () =>
             {
                 // This state variable prevents us from sending redundant API calls
                 // if the animation frame text happens to be the same as the last one.
@@ -125,8 +125,8 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                 {
                     while (!linkedCts.Token.IsCancellationRequested)
                     {
-                        string currentFrame = animationFrames[frameIndex++ % animationFrames.Length];
-                        string newText = $"{baseLoadingText}{currentFrame}";
+                        var currentFrame = animationFrames[frameIndex++ % animationFrames.Length];
+                        var newText = $"{baseLoadingText}{currentFrame}";
 
                         // **Proactive Check:** Only edit the message if the content has actually changed.
                         if (newText != lastSentText)
@@ -191,10 +191,10 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                 return;
             }
 
-            CallbackQuery callbackQuery = update.CallbackQuery;
-            string? callbackData = callbackQuery.Data;
-            long chatId = callbackQuery.Message.Chat.Id;
-            int messageId = callbackQuery.Message.MessageId;
+            var callbackQuery = update.CallbackQuery;
+            var callbackData = callbackQuery.Data;
+            var chatId = callbackQuery.Message.Chat.Id;
+            var messageId = callbackQuery.Message.MessageId;
 
             if (string.IsNullOrEmpty(callbackData))
             {
@@ -296,7 +296,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                 // Optionally, edit the message to provide a "start over" option
                 try
                 {
-                    InlineKeyboardMarkup startOverKeyboard = new(InlineKeyboardButton.WithCallbackData("🔄 Start Over", MarketAnalysisCallback)); // Use the main menu callback
+                    var startOverKeyboard = new InlineKeyboardMarkup(InlineKeyboardButton.WithCallbackData("🔄 Start Over", MarketAnalysisCallback)); // Use the main menu callback
                     await _messageSender.EditMessageTextAsync(
                         chatId,
                         messageId,
@@ -333,7 +333,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
 
                 // Build button rows using LINQ (operations are generally safe)
                 // 3 columns per row
-                InlineKeyboardButton[][] buttonRowsArray = SupportedSymbols
+                var buttonRowsArray = SupportedSymbols
                     .Select((pair, i) => new { pair, i })
                     .GroupBy(x => x.i / 3) // Grouping for rows
                     .Select(group => group.Select(item => // Each group is a row
@@ -343,17 +343,17 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
 
 
                 // Add the "Back to Main Menu" button row
-                InlineKeyboardButton[] backButtonRow = new[] // This is a single row array of buttons
+                var backButtonRow = new[] // This is a single row array of buttons
                 {
                 InlineKeyboardButton.WithCallbackData("⬅️ Back to Main Menu", MenuCallbackQueryHandler.BackToMainMenuGeneral)
             };
 
                 // Concatenate currency button rows with the back button row
-                InlineKeyboardButton[][] allButtonRowsArray = buttonRowsArray.Concat(new[] { backButtonRow }).ToArray();
+                var allButtonRowsArray = buttonRowsArray.Concat(new[] { backButtonRow }).ToArray();
 
 
                 // Use MarkupBuilder to create the final keyboard. Assumed safe.
-                InlineKeyboardMarkup? keyboard = MarkupBuilder.CreateInlineKeyboard(allButtonRowsArray);
+                var keyboard = MarkupBuilder.CreateInlineKeyboard(allButtonRowsArray);
                 _logger.LogTrace("Currency selection keyboard built with {RowCount} rows.", allButtonRowsArray.Length);
 
 
@@ -413,7 +413,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
             try
             {
                 // Execute the operation with the animation and await its combined result.
-                MarketData marketData = await AnimateWhileExecutingAsync(
+                var marketData = await AnimateWhileExecutingAsync(
                     chatId,
                     messageId,
                     loadingMessageBase,
@@ -445,11 +445,11 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
 
         private async Task HandleSuccessAsync(long chatId, int messageId, string symbol, bool isRefresh, string callbackQueryId, MarketData marketData, CancellationToken cancellationToken)
         {
-            string newMessageText = FormatMarketAnalysisMessage(marketData);
-            InlineKeyboardMarkup newKeyboard = GetMarketAnalysisKeyboard(symbol);
+            var newMessageText = FormatMarketAnalysisMessage(marketData);
+            var newKeyboard = GetMarketAnalysisKeyboard(symbol);
 
             // Create the task to edit the message. DO NOT await it yet.
-            Task editMessageTask = _messageSender.EditMessageTextAsync(
+            var editMessageTask = _messageSender.EditMessageTextAsync(
                 chatId,
                 messageId,
                 newMessageText,
@@ -462,7 +462,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                 // For refresh actions, we also want to send a non-blocking "up-to-date" toast.
                 if (isRefresh)
                 {
-                    Task ackTask = _messageSender.AnswerCallbackQueryAsync(callbackQueryId, "Data refreshed!", showAlert: false);
+                    var ackTask = _messageSender.AnswerCallbackQueryAsync(callbackQueryId, "Data refreshed!", showAlert: false);
                     // Execute both the message edit and the acknowledgement IN PARALLEL.
                     await Task.WhenAll(editMessageTask, ackTask);
                 }
@@ -514,10 +514,10 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
             // Prepare the status message and keyboard (these operations are safe and don't need try-catch)
             string errorText = $"⚠️ Live market data for *{TelegramMessageFormatter.EscapeMarkdownV2(symbol)}* is currently unavailable.\n\n" + // Escape symbol for MarkdownV2
                       $"However, you can fetch the latest fundamental news for this pair using the button below.";
-            InlineKeyboardMarkup errorKeyboard = GetMarketAnalysisKeyboard(symbol); // Assumes this method is safe
+            var errorKeyboard = GetMarketAnalysisKeyboard(symbol); // Assumes this method is safe
 
             // Use a list of Tasks to collect reporting attempts
-            List<Task> reportingTasks = new()
+            var reportingTasks = new List<Task>
             {
                 // --- Attempt 1: Edit the message to show the "unavailable" state ---
                 Task.Run(async () => // Use Task.Run to make this attempt independent
@@ -600,10 +600,10 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
 
             // Prepare the error message and keyboard (these operations are safe and don't need try-catch)
             string errorText = $"❌ An unexpected error occurred while fetching data for *{TelegramMessageFormatter.EscapeMarkdownV2(symbol)}*."; // Escape symbol for MarkdownV2
-            InlineKeyboardMarkup errorKeyboard = GetMarketAnalysisKeyboard(symbol); // Assumes this method is safe and purely building UI markup
+            var errorKeyboard = GetMarketAnalysisKeyboard(symbol); // Assumes this method is safe and purely building UI markup
 
             // Use a list of Tasks to collect reporting attempts
-            List<Task> reportingTasks = new()
+            var reportingTasks = new List<Task>
             {
                 // --- Attempt 1: Edit the message to show the error state ---
                 Task.Run(async () => // Use Task.Run to make this attempt independent and handle its own error
@@ -683,8 +683,8 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
 
         private string FormatMarketAnalysisMessage(MarketData data)
         {
-            string priceChangeEmoji = data.Change24h >= 0 ? "📈" : "📉";
-            string trendEmoji = data.Trend switch
+            var priceChangeEmoji = data.Change24h >= 0 ? "📈" : "📉";
+            var trendEmoji = data.Trend switch
             {
                 "Strong Uptrend" => "🚀",
                 "Strong Downtrend" => "📉",
@@ -692,7 +692,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
                 "Weak Downtrend" => "↘️",
                 _ => "➡️"
             };
-            string sentimentEmoji = data.MarketSentiment switch
+            var sentimentEmoji = data.MarketSentiment switch
             {
                 "Extremely Bullish" => "🟢🟢",
                 "Extremely Bearish" => "🔴🔴",

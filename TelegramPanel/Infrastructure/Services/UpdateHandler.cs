@@ -5,6 +5,11 @@ using Telegram.Bot.Polling; // Required for IUpdateHandler
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums; // Required for UpdateType
 using TelegramPanel.Application.Interfaces;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace TelegramPanel.Infrastructure.Services
 {
@@ -30,7 +35,7 @@ namespace TelegramPanel.Infrastructure.Services
         public async Task HandleUpdateAsync(ITelegramBotClient botClient, Update update, CancellationToken cancellationToken)
         {
             // Use a logging scope to correlate all logs for a single update.
-            using IDisposable? logScope = _logger.BeginScope("Processing Update {UpdateId}", update.Id);
+            using var logScope = _logger.BeginScope("Processing Update {UpdateId}", update.Id);
 
             // 1. STRUCTURED DISPATCHING: Use a switch expression for cleaner, more maintainable routing.
             await (update.Type switch
@@ -50,7 +55,7 @@ namespace TelegramPanel.Infrastructure.Services
         public Task HandleErrorAsync(ITelegramBotClient botClient, Exception exception, HandleErrorSource source, CancellationToken cancellationToken)
         {
             // 2. ENHANCED ERROR LOGGING: Provide specific logging for different exception types.
-            string errorMessage = exception switch
+            var errorMessage = exception switch
             {
                 // This is an expected exception when the bot is shutting down. Log as Information.
                 OperationCanceledException or TaskCanceledException => "Operation was canceled by user or host.",
@@ -86,8 +91,8 @@ namespace TelegramPanel.Infrastructure.Services
             // TODO: Here you would typically route to a command handler, state machine, etc.
             // For now, we'll process the helper tasks as in your example.
 
-            Task processingTask = ProcessMessageTextAsync(message, cancellationToken);
-            Task analyticsTask = NotifyAnalyticsAsync(message, cancellationToken);
+            var processingTask = ProcessMessageTextAsync(message, cancellationToken);
+            var analyticsTask = NotifyAnalyticsAsync(message, cancellationToken);
 
             // 3. ROBUST CONCURRENT TASK HANDLING
             await HandleConcurrentTasksAsync(processingTask, analyticsTask).ConfigureAwait(false);
@@ -129,14 +134,14 @@ namespace TelegramPanel.Infrastructure.Services
         /// </summary>
         private async Task HandleConcurrentTasksAsync(params Task[] tasks)
         {
-            Task whenAllTask = Task.WhenAll(tasks);
+            var whenAllTask = Task.WhenAll(tasks);
             try
             {
                 await whenAllTask;
             }
             catch
             {
-                IEnumerable<Exception> allExceptions = tasks
+                var allExceptions = tasks
                     .Where(t => t.IsFaulted && t.Exception != null)
                     .SelectMany(t => t.Exception!.InnerExceptions);
 

@@ -1,7 +1,7 @@
 ﻿using Domain.Entities;
 using TelegramPanel.Application.Interfaces;
 
-namespace TelegramPanel.Infrastructure
+namespace TelegramPanel.Infrastructure.Services
 {
     public class UserContext : IUserContext
     {

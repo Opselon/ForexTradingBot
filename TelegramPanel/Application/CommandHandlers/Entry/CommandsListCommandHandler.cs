@@ -6,6 +6,7 @@ using Telegram.Bot.Types.ReplyMarkups;
 using TelegramPanel.Application.CommandHandlers.MainMenu;
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Formatters;
+using TelegramPanel.Infrastructure;
 using TelegramPanel.Infrastructure.Helper;
 using static TelegramPanel.Infrastructure.ActualTelegramMessageActions;
 
@@ -32,16 +33,16 @@ namespace TelegramPanel.Application.CommandHandlers.Entry
 
         public async Task HandleAsync(Update update, CancellationToken cancellationToken = default)
         {
-            Message? message = update.Message;
+            var message = update.Message;
             if (message == null)
             {
                 return;
             }
 
-            long chatId = message.Chat.Id;
+            var chatId = message.Chat.Id;
             _logger.LogInformation("Handling /commands command for ChatID {ChatId}", chatId);
 
-            StringBuilder commandsText = new();
+            var commandsText = new StringBuilder();
 
             // Header
             _ = commandsText.AppendLine(TelegramMessageFormatter.Bold("📋 Available Commands"));
@@ -80,7 +81,7 @@ namespace TelegramPanel.Application.CommandHandlers.Entry
             _ = commandsText.AppendLine(TelegramMessageFormatter.Italic("Tip: Use /help for detailed information about each command"));
 
             // Create inline keyboard for quick access to main features
-            InlineKeyboardMarkup? keyboard = MarkupBuilder.CreateInlineKeyboard(
+            var keyboard = MarkupBuilder.CreateInlineKeyboard(
          new[]
          {
             InlineKeyboardButton.WithCallbackData("📊 View Signals", MenuCommandHandler.SignalsCallbackData),

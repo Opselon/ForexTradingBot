@@ -9,6 +9,7 @@ using Telegram.Bot.Types.ReplyMarkups;
 using TelegramPanel.Application.CommandHandlers.Features.CoinGecko;
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Formatters;
+using TelegramPanel.Infrastructure;
 using TelegramPanel.Infrastructure.Helper;
 using static TelegramPanel.Application.CommandHandlers.Features.CoinGecko.CryptoCallbackHandler;
 using static TelegramPanel.Infrastructure.ActualTelegramMessageActions;
@@ -54,8 +55,8 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
         /// <returns></returns>
         public static (string text, InlineKeyboardMarkup keyboard) GetMainMenuMarkup()
         {
-            StringBuilder text = new StringBuilder()
-
+            var text = new StringBuilder()
+           
                // Header
                .AppendLine(TelegramMessageFormatter.Bold("👋 Welcome to Your Trading Bot!").Replace("\\.", ""))
                 .AppendLine(TelegramMessageFormatter.Italic("Your comprehensive tool for market insights and signals.").Replace("\\.", ""))
@@ -79,7 +80,7 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
                 .AppendLine();
 
 
-            InlineKeyboardMarkup? keyboard = MarkupBuilder.CreateInlineKeyboard(
+            var keyboard = MarkupBuilder.CreateInlineKeyboard(
                 new[] // Row 1: Core Features
                 {
                    InlineKeyboardButton.WithCallbackData("📈 View Signals", SignalsCallbackData),
@@ -106,9 +107,12 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
             );
 
             // Ensure the keyboard is not null to match the expected return type.
-            return keyboard == null
-                ? throw new InvalidOperationException("Keyboard generation failed.")
-                : (text: text.ToString(), keyboard);
+            if (keyboard == null)
+            {
+                throw new InvalidOperationException("Keyboard generation failed.");
+            }
+
+            return (text: text.ToString(), keyboard: keyboard);
         }
 
         #endregion
@@ -131,7 +135,7 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
         {
 
             // This logic correctly handles the /menu command by sending the menu.
-            Message? message = update.Message; // This is now guaranteed to be from a Message update based on CanHandle.
+            var message = update.Message; // This is now guaranteed to be from a Message update based on CanHandle.
 
 
             // Basic null check, though CanHandle should prevent this.
@@ -142,11 +146,11 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
                 return; // Exit early if message is unexpectedly null.
             }
             // Check if the message is a command and if it matches /menu
-            if (!_uiCache.TryGetValue(MainMenuCacheKey, out _))
+            if (!_uiCache.TryGetValue(MainMenuCacheKey, out var cachedMenu))
             {
                 _logger.LogInformation("Main menu cache MISS. Generating and caching menu.");
-                (string text, InlineKeyboardMarkup keyboard) = GetMainMenuMarkup();
-                UiCacheEntry? cachedMenu = new UiCacheEntry(text, keyboard);
+                var (text, keyboard) = GetMainMenuMarkup();
+                cachedMenu = new UiCacheEntry(text, keyboard);
                 _uiCache.Set(MainMenuCacheKey, cachedMenu, TimeSpan.FromHours(5)); // Cache for 5 hours
             }
             else
@@ -155,8 +159,8 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
             }
 
 
-            long chatId = message.Chat.Id;
-            long? userId = message.From?.Id; // For logging purposes
+            var chatId = message.Chat.Id;
+            var userId = message.From?.Id; // For logging purposes
 
             _logger.LogInformation("Handling /menu command for ChatID {ChatId}, UserID {UserId}", chatId, userId);
 
@@ -166,7 +170,7 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
 
                 // Use the static GetMainMenuMarkup method to get the message content and keyboard.
                 // Ensure GetMainMenuMarkup is implemented to return both text and inline keyboard.
-                (string text, InlineKeyboardMarkup inlineKeyboard) = GetMainMenuMarkup();
+                var (text, inlineKeyboard) = GetMainMenuMarkup();
 
                 // Send the main menu message to the user.
                 // This call is a potential point of failure (Telegram API communication).

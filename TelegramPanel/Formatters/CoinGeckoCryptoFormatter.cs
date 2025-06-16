@@ -19,19 +19,19 @@ namespace TelegramPanel.Formatters
         /// </summary>
         public static string FormatCoinDetails(CoinDetailsDto crypto)
         {
-            StringBuilder sb = new();
-            CultureInfo culture = CultureInfo.InvariantCulture;
+            var sb = new StringBuilder();
+            var culture = CultureInfo.InvariantCulture;
 
             // --- HEADER ---
             _ = sb.AppendLine(TelegramMessageFormatter.Bold($"💎 {crypto.Name} ({crypto.Symbol.ToUpper()})"));
             _ = sb.AppendLine();
 
             // --- DESCRIPTION ---
-            if (crypto.Description?.TryGetValue("en", out string? description) == true && !string.IsNullOrWhiteSpace(description))
+            if (crypto.Description?.TryGetValue("en", out var description) == true && !string.IsNullOrWhiteSpace(description))
             {
-                string cleanDescription = Regex.Replace(description, "<.*?>", "").Trim();
+                var cleanDescription = Regex.Replace(description, "<.*?>", "").Trim();
                 _ = sb.AppendLine(TelegramMessageFormatter.Italic(TelegramMessageFormatter.EscapeMarkdownV2(
-                    cleanDescription.Length > 250 ? cleanDescription[..250].Trim() + "..." : cleanDescription
+                    cleanDescription.Length > 250 ? cleanDescription.Substring(0, 250).Trim() + "..." : cleanDescription
                 )));
                 _ = sb.AppendLine();
             }
@@ -39,7 +39,7 @@ namespace TelegramPanel.Formatters
             // --- MARKET DATA SECTION ---
             if (crypto.MarketData != null)
             {
-                MarketDataDto md = crypto.MarketData;
+                var md = crypto.MarketData;
                 string priceEmoji = md.PriceChangePercentage24h.HasValue && md.PriceChangePercentage24h >= 0 ? "📈" : "📉";
 
                 _ = sb.AppendLine("`----------------------------------`");
@@ -52,7 +52,7 @@ namespace TelegramPanel.Formatters
 
                 _ = sb.AppendLine($"💰 *Price:* `{currentPrice?.ToString(priceFormat, culture) ?? "N/A"}`");
 
-                double? change24h = md.PriceChangePercentage24h;
+                var change24h = md.PriceChangePercentage24h;
                 string changeText = change24h.HasValue
                     ? (change24h >= 0 ? "+" : "") + $"{change24h:F2}%"
                     : "N/A";

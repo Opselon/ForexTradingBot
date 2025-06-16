@@ -714,7 +714,7 @@ namespace Application.Features.Forwarding.Services
                 _logger.LogDebug("Job:{JobId}: ApplyEditOptions: Processing {Count} custom emoji entities for removal.", jobId, currentEntities.Count(e => e is TL.MessageEntityCustomEmoji));
 
                 StringBuilder tempStringBuilder = new();
-                List<MessageEntity> updatedEntities = [];
+                List<MessageEntity> updatedEntities = new();
                 int currentSourceIndex = 0; // Tracks position in the `currentText` (source)
                 int currentDestIndex = 0;   // Tracks position in the `tempStringBuilder` (destination)
 
@@ -835,7 +835,7 @@ namespace Application.Features.Forwarding.Services
 
                 if (currentEntities != null && currentEntities.Any())
                 {
-                    List<MessageEntity> remappedEntities = [];
+                    List<MessageEntity> remappedEntities = new();
                     // Re-scan entities against the *new* text.
                     // This re-mapping is brittle if the text within the entity itself was replaced.
                     // A more robust solution would re-generate entities from the new text based on its formatting.
@@ -879,7 +879,7 @@ namespace Application.Features.Forwarding.Services
                 {
                     int offsetShift = options.PrependText.Length;
                     _logger.LogTrace("Job:{JobId}: ApplyEditOptions: Adjusting {EntitiesCount} entities by offset {OffsetShift} due to prepend.", jobId, currentEntities.Count, offsetShift);
-                    List<MessageEntity> adjustedEntities = [];
+                    List<MessageEntity> adjustedEntities = new();
                     foreach (MessageEntity? e in currentEntities)
                     {
                         if (e != null)

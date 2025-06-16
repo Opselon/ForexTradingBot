@@ -23,18 +23,18 @@ namespace TelegramPanel.Application.Interfaces
 
         public async Task<(int UserCount, int NewsItemCount)> GetDashboardStatsAsync(CancellationToken cancellationToken = default)
         {
-            await using SqlConnection connection = new(_configuration.GetConnectionString("DefaultConnection"));
+            await using var connection = new SqlConnection(_configuration.GetConnectionString("DefaultConnection"));
 
             // A multi-result query that is highly efficient.
-            string sql = @"
+            var sql = @"
                 SELECT COUNT(1) FROM dbo.Users;
                 SELECT COUNT(1) FROM dbo.NewsItems;
             ";
 
-            using SqlMapper.GridReader multi = await connection.QueryMultipleAsync(new CommandDefinition(sql, cancellationToken: cancellationToken));
+            using var multi = await connection.QueryMultipleAsync(new CommandDefinition(sql, cancellationToken: cancellationToken));
 
-            int userCount = await multi.ReadSingleAsync<int>();
-            int newsItemCount = await multi.ReadSingleAsync<int>();
+            var userCount = await multi.ReadSingleAsync<int>();
+            var newsItemCount = await multi.ReadSingleAsync<int>();
 
             return (userCount, newsItemCount);
         }

@@ -24,6 +24,7 @@ using TelegramPanel.Application.CommandHandlers.MainMenu;
 using TelegramPanel.Application.Interfaces; // برای ITelegramCommandHandler, ITelegramStateMachine
 using TelegramPanel.Application.States;   // برای IUserConversationStateService, UserConversationState
 using TelegramPanel.Formatters;           // برای TelegramMessageFormatter
+using TelegramPanel.Infrastructure;
 using TelegramPanel.Infrastructure.Helper;
 using static TelegramPanel.Infrastructure.ActualTelegramMessageActions;
 #endregion
@@ -173,7 +174,7 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
 
             // --- 3. Contextual Logging ---
             // CORRECTED: Use a 'using' statement to ensure the logging scope is properly disposed, preventing leaks.
-            using IDisposable? logScope = _logger.BeginScope(new Dictionary<string, object>
+            using var logScope = _logger.BeginScope(new Dictionary<string, object>
             {
                 ["TelegramUserId"] = telegramUserId,
                 ["CallbackQueryId"] = callbackQuery.Id,
@@ -353,8 +354,8 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
 
             // The dictionaries are kept local because their lambdas need to capture the method's local variables.
             // This is a reasonable trade-off for clean, self-contained handlers.
-            Dictionary<string, Func<Task>> exactMatchActions = new()
-            {
+            var exactMatchActions = new Dictionary<string, Func<Task>>
+    {
         { SettingsCommandHandler.ShowSettingsMenuCallback, () => ReshowSettingsMenuAsync(chatId, messageId, cancellationToken) },
         { MenuCallbackQueryHandler.BackToMainMenuGeneral, async () => {
             (string text, InlineKeyboardMarkup k) = MenuCommandHandler.GetMainMenuMarkup();
@@ -370,8 +371,8 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
         { DeselectAllSignalCategoriesCallback, () => HandleDeselectAllSignalCategoriesAsync(telegramUserId, chatId, messageId, callbackQuery.Id, cancellationToken) }
     };
 
-            Dictionary<string, Func<Task>> prefixMatchActions = new()
-            {
+            var prefixMatchActions = new Dictionary<string, Func<Task>>
+    {
         { ToggleSignalCategoryPrefix, () => HandleToggleSignalCategoryAsync(telegramUserId, chatId, messageId, data, callbackQuery.Id, cancellationToken) },
         { ToggleNotificationPrefix, () => HandleToggleNotificationAsync(telegramUserId, chatId, messageId, data, callbackQuery.Id, cancellationToken) },
         { SelectLanguagePrefix, () => HandleSelectLanguageAsync(telegramUserId, chatId, messageId, data, callbackQuery.Id, cancellationToken) }
@@ -387,7 +388,7 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
 
             // 3. CLARITY: Use a more explicit loop for prefix matching.
             // If no exact match, check for a prefix match.
-            foreach ((string prefix, Func<Task> prefixAction) in prefixMatchActions)
+            foreach (var (prefix, prefixAction) in prefixMatchActions)
             {
                 if (data.StartsWith(prefix))
                 {
@@ -788,122 +789,119 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
         }
 
 
-        private async Task HandleToggleNotificationAsync(long telegramUserId, long chatId, int messageIdToEdit, string callbackData, string originalCallbackQueryId, CancellationToken cancellationToken)
+private async Task HandleToggleNotificationAsync(long telegramUserId, long chatId, int messageIdToEdit, string callbackData, string originalCallbackQueryId, CancellationToken cancellationToken)
+    {
+        // Fetch the user with all their related data to ensure we have the full context.
+        Domain.Entities.User? userEntity = await _userRepository.GetByTelegramIdWithNotificationsAsync(telegramUserId.ToString(), cancellationToken).ConfigureAwait(false);
+        if (userEntity == null)
         {
-            // Fetch the user with all their related data to ensure we have the full context.
-            Domain.Entities.User? userEntity = await _userRepository.GetByTelegramIdWithNotificationsAsync(telegramUserId.ToString(), cancellationToken).ConfigureAwait(false);
-            if (userEntity == null)
-            {
-                _logger.LogWarning("Cannot toggle notification, user not found for Telegram ID {TelegramUserId}", telegramUserId);
-                await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken, "Your user profile could not be found.", showAlert: true).ConfigureAwait(false);
-                return;
-            }
+            _logger.LogWarning("Cannot toggle notification, user not found for Telegram ID {TelegramUserId}", telegramUserId);
+            await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken, "Your user profile could not be found.", showAlert: true).ConfigureAwait(false);
+            return;
+        }
 
-            string notificationType = callbackData[ToggleNotificationPrefix.Length..];
-            _logger.LogInformation("UserID {SystemUserId}: Attempting to toggle setting '{NotificationType}'.", userEntity.Id, notificationType);
+        string notificationType = callbackData[ToggleNotificationPrefix.Length..];
+        _logger.LogInformation("UserID {SystemUserId}: Attempting to toggle setting '{NotificationType}'.", userEntity.Id, notificationType);
 
-            // 1. PRE-COMPUTE VIP STATUS FOR CLEANER LOGIC
-            // This makes the switch statement easier to read. The logic itself is preserved from your original code.
-            bool isVipUser = userEntity.Subscriptions.Any(s => s.Status == "Active" && s.EndDate > DateTime.UtcNow);
+        // 1. PRE-COMPUTE VIP STATUS FOR CLEANER LOGIC
+        // This makes the switch statement easier to read. The logic itself is preserved from your original code.
+        bool isVipUser = userEntity.Subscriptions.Any(s => s.Status == "Active" && s.EndDate > DateTime.UtcNow);
 
-            // This section modifies the entity in memory. We do this before the `try` block for saving.
-            switch (notificationType)
-            {
-                case NotificationTypeGeneral:
-                    userEntity.EnableGeneralNotifications = !userEntity.EnableGeneralNotifications;
-                    break;
-                case NotificationTypeVipSignal:
-                    if (!isVipUser)
-                    {
-                        await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken, "VIP subscription required to change this setting.", showAlert: true).ConfigureAwait(false);
-                        // We still want to refresh the UI to ensure it's not left in a weird state.
-                        await ShowNotificationSettingsAsync(telegramUserId, chatId, messageIdToEdit, cancellationToken, userEntity).ConfigureAwait(false);
-                        return;
-                    }
-                    userEntity.EnableVipSignalNotifications = !userEntity.EnableVipSignalNotifications;
-                    break;
-                case NotificationTypeRssNews:
-                    userEntity.EnableRssNewsNotifications = !userEntity.EnableRssNewsNotifications;
-                    break;
-                default:
-                    _logger.LogWarning("Unknown notification type '{Type}' for user {UserId}", notificationType, userEntity.Id);
-                    await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken, "Unknown setting.", showAlert: true).ConfigureAwait(false);
+        // This section modifies the entity in memory. We do this before the `try` block for saving.
+        switch (notificationType)
+        {
+            case NotificationTypeGeneral:
+                userEntity.EnableGeneralNotifications = !userEntity.EnableGeneralNotifications;
+                break;
+            case NotificationTypeVipSignal:
+                if (!isVipUser)
+                {
+                    await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken, "VIP subscription required to change this setting.", showAlert: true).ConfigureAwait(false);
+                    // We still want to refresh the UI to ensure it's not left in a weird state.
+                    await ShowNotificationSettingsAsync(telegramUserId, chatId, messageIdToEdit, cancellationToken, userEntity).ConfigureAwait(false);
                     return;
-            }
-
-            // Now, attempt to persist the changes and update the UI.
-            try
-            {
-                userEntity.UpdatedAt = DateTime.UtcNow;
-
-                // This is your original, safe logic. It works perfectly.
-                await _userRepository.UpdateAsync(userEntity, cancellationToken).ConfigureAwait(false);
-
-                // On success, construct the message and log it.
-                bool newStatus = GetNotificationStatus(userEntity, notificationType);
-                string statusMessage = GetStatusMessage(notificationType, newStatus);
-
-                _logger.LogInformation("Notification '{Type}' for user {UserId} successfully set to {Status}", notificationType, userEntity.Id, newStatus);
-
-                // Answer the callback to give the user immediate feedback.
-                await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken, statusMessage).ConfigureAwait(false);
-            }
-            // 2. MORE SPECIFIC ERROR HANDLING
-            catch (DbUpdateException dbEx) // Catch database-specific errors first
-            {
-                _logger.LogError(dbEx, "Database error while updating notification settings for UserID {SystemUserId}.", userEntity.Id);
-                await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken, "Error: Could not save setting due to a database issue.", showAlert: true).ConfigureAwait(false);
-            }
-            catch (Exception ex) // Catch any other unexpected errors
-            {
-                _logger.LogError(ex, "Failed to save notification settings for UserID {SystemUserId}.", userEntity.Id);
-                await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken, "Error saving your setting. Please try again.", showAlert: true).ConfigureAwait(false);
-            }
-            finally
-            {
-                // 3. GUARANTEED UI CONSISTENCY
-                // This block executes whether the `try` succeeded or failed. This ensures that the user's
-                // menu is ALWAYS refreshed, preventing a stale UI. If the save failed, the menu will
-                // revert to its original state visually, which is the correct behavior.
-                await ShowNotificationSettingsAsync(telegramUserId, chatId, messageIdToEdit, cancellationToken, userEntity).ConfigureAwait(false);
-            }
+                }
+                userEntity.EnableVipSignalNotifications = !userEntity.EnableVipSignalNotifications;
+                break;
+            case NotificationTypeRssNews:
+                userEntity.EnableRssNewsNotifications = !userEntity.EnableRssNewsNotifications;
+                break;
+            default:
+                _logger.LogWarning("Unknown notification type '{Type}' for user {UserId}", notificationType, userEntity.Id);
+                await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken, "Unknown setting.", showAlert: true).ConfigureAwait(false);
+                return;
         }
 
-        // Helper to get the status without repeating the switch statement
-        private bool GetNotificationStatus(Domain.Entities.User user, string notificationType)
+        // Now, attempt to persist the changes and update the UI.
+        try
         {
-            return notificationType switch
-            {
-                NotificationTypeGeneral => user.EnableGeneralNotifications,
-                NotificationTypeVipSignal => user.EnableVipSignalNotifications,
-                NotificationTypeRssNews => user.EnableRssNewsNotifications,
-                _ => false
-            };
-        }
+            userEntity.UpdatedAt = DateTime.UtcNow;
 
-        // Helper to get the message without repeating the switch statement
-        private string GetStatusMessage(string notificationType, bool newStatus)
+            // This is your original, safe logic. It works perfectly.
+            await _userRepository.UpdateAsync(userEntity, cancellationToken).ConfigureAwait(false);
+
+            // On success, construct the message and log it.
+            bool newStatus = GetNotificationStatus(userEntity, notificationType);
+            string statusMessage = GetStatusMessage(notificationType, newStatus);
+
+            _logger.LogInformation("Notification '{Type}' for user {UserId} successfully set to {Status}", notificationType, userEntity.Id, newStatus);
+
+            // Answer the callback to give the user immediate feedback.
+            await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken, statusMessage).ConfigureAwait(false);
+        }
+        // 2. MORE SPECIFIC ERROR HANDLING
+        catch (DbUpdateException dbEx) // Catch database-specific errors first
         {
-            string subject = notificationType switch
-            {
-                NotificationTypeGeneral => "General Updates",
-                NotificationTypeVipSignal => "VIP Signal Alerts",
-                NotificationTypeRssNews => "RSS News Updates",
-                _ => "Unknown Setting"
-            };
-            return $"{subject} are now {(newStatus ? "ENABLED" : "DISABLED")}.";
+            _logger.LogError(dbEx, "Database error while updating notification settings for UserID {SystemUserId}.", userEntity.Id);
+            await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken, "Error: Could not save setting due to a database issue.", showAlert: true).ConfigureAwait(false);
         }
+        catch (Exception ex) // Catch any other unexpected errors
+        {
+            _logger.LogError(ex, "Failed to save notification settings for UserID {SystemUserId}.", userEntity.Id);
+            await AnswerCallbackQuerySilentAsync(originalCallbackQueryId, cancellationToken, "Error saving your setting. Please try again.", showAlert: true).ConfigureAwait(false);
+        }
+        finally
+        {
+            // 3. GUARANTEED UI CONSISTENCY
+            // This block executes whether the `try` succeeded or failed. This ensures that the user's
+            // menu is ALWAYS refreshed, preventing a stale UI. If the save failed, the menu will
+            // revert to its original state visually, which is the correct behavior.
+            await ShowNotificationSettingsAsync(telegramUserId, chatId, messageIdToEdit, cancellationToken, userEntity).ConfigureAwait(false);
+        }
+    }
 
-        #endregion
+    // Helper to get the status without repeating the switch statement
+    private bool GetNotificationStatus(Domain.Entities.User user, string notificationType) => notificationType switch
+    {
+        NotificationTypeGeneral => user.EnableGeneralNotifications,
+        NotificationTypeVipSignal => user.EnableVipSignalNotifications,
+        NotificationTypeRssNews => user.EnableRssNewsNotifications,
+        _ => false
+    };
 
-        #region Subscription Info Methods
-        /// <summary>
-        /// Displays the user's current subscription status and provides options to view/manage plans.
-        /// </summary>
-        // File: TelegramPanel/Application/CommandHandlers/SettingsCallbackQueryHandler.cs
-        // در متد ShowMySubscriptionInfoAsync:
+    // Helper to get the message without repeating the switch statement
+    private string GetStatusMessage(string notificationType, bool newStatus)
+    {
+        string subject = notificationType switch
+        {
+            NotificationTypeGeneral => "General Updates",
+            NotificationTypeVipSignal => "VIP Signal Alerts",
+            NotificationTypeRssNews => "RSS News Updates",
+            _ => "Unknown Setting"
+        };
+        return $"{subject} are now {(newStatus ? "ENABLED" : "DISABLED")}.";
+    }
 
-        private async Task ShowMySubscriptionInfoAsync(long telegramUserId, long chatId, int messageIdToEdit, CancellationToken cancellationToken)
+    #endregion
+
+    #region Subscription Info Methods
+    /// <summary>
+    /// Displays the user's current subscription status and provides options to view/manage plans.
+    /// </summary>
+    // File: TelegramPanel/Application/CommandHandlers/SettingsCallbackQueryHandler.cs
+    // در متد ShowMySubscriptionInfoAsync:
+
+    private async Task ShowMySubscriptionInfoAsync(long telegramUserId, long chatId, int messageIdToEdit, CancellationToken cancellationToken)
         {
             // ✅ FIX: The method now accepts 'telegramUserId' and fetches the User entity itself.
             Domain.Entities.User? userEntity = await _userRepository.GetByTelegramIdAsync(telegramUserId.ToString(), cancellationToken);
@@ -1226,7 +1224,7 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
             {
                 // This is a critical warning. It indicates the bot is sending too many requests and is being throttled.
                 // The `Retry-After` header (if present) gives a hint on how long to wait.
-                int? retryAfter = apiEx.Parameters?.RetryAfter;
+                var retryAfter = apiEx.Parameters?.RetryAfter;
                 _logger.LogWarning(
                     apiEx,
                     "Rate limit hit (429 Too Many Requests) while answering callback query {CallbackQueryId}. Telegram suggests waiting for {RetryAfter} seconds. Consider adjusting bot's request frequency. Telegram API Error: {ApiErrorMessage}",

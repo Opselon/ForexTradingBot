@@ -52,7 +52,7 @@ namespace Infrastructure.ExternalServices
             try
             {
                 HttpResponseMessage response;
-                Uri requestUri = new(_httpClient.BaseAddress!, endpoint); // اطمینان از اینکه BaseAddress null نیست
+                var requestUri = new Uri(_httpClient.BaseAddress!, endpoint); // اطمینان از اینکه BaseAddress null نیست
 
                 _logger.LogDebug("Sending CryptoPay API request. Method: {Method}, Endpoint: {Endpoint}, Body: {@RequestBody}",
                     method, endpoint, requestBody);
@@ -69,10 +69,10 @@ namespace Infrastructure.ExternalServices
                 else
                 {
                     // برای سایر متدها (PUT, DELETE) می‌توانید مشابه Post عمل کنید
-                    HttpRequestMessage request = new(method, endpoint);
+                    var request = new HttpRequestMessage(method, endpoint);
                     if (requestBody != null)
                     {
-                        string jsonContent = JsonSerializer.Serialize(requestBody, _jsonSerializerOptions);
+                        var jsonContent = JsonSerializer.Serialize(requestBody, _jsonSerializerOptions);
                         request.Content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
                     }
                     response = await _httpClient.SendAsync(request, cancellationToken);
@@ -82,7 +82,7 @@ namespace Infrastructure.ExternalServices
 
                 if (response.IsSuccessStatusCode)
                 {
-                    CryptoPayApiResponse<TResponse>? apiResponse = await response.Content.ReadFromJsonAsync<CryptoPayApiResponse<TResponse>>(_jsonSerializerOptions, cancellationToken);
+                    var apiResponse = await response.Content.ReadFromJsonAsync<CryptoPayApiResponse<TResponse>>(_jsonSerializerOptions, cancellationToken);
                     if (apiResponse != null && apiResponse.Ok && apiResponse.Result != null)
                     {
                         return Result<TResponse>.Success(apiResponse.Result);
@@ -99,13 +99,13 @@ namespace Infrastructure.ExternalServices
                 }
                 else
                 {
-                    string errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
+                    var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
                     _logger.LogError("CryptoPay API request failed. Endpoint: {Endpoint}, Status: {StatusCode}, Reason: {ReasonPhrase}, Content: {ErrorContent}",
                         endpoint, response.StatusCode, response.ReasonPhrase, errorContent);
                     // تلاش برای خواندن خطای ساختاریافته CryptoPay
                     try
                     {
-                        CryptoPayApiResponse<object>? errorResponse = JsonSerializer.Deserialize<CryptoPayApiResponse<object>>(errorContent, _jsonSerializerOptions);
+                        var errorResponse = JsonSerializer.Deserialize<CryptoPayApiResponse<object>>(errorContent, _jsonSerializerOptions);
                         if (errorResponse != null && errorResponse.Error != null)
                         {
                             return Result<TResponse>.Failure($"CryptoPay API Error (HTTP {(int)response.StatusCode}): {errorResponse.Error.Name} (Code: {errorResponse.Error.Code})");
@@ -172,7 +172,7 @@ namespace Infrastructure.ExternalServices
             string endpoint = "getInvoices";
             if (request != null)
             {
-                List<string> queryParams = new();
+                var queryParams = new List<string>();
                 if (!string.IsNullOrWhiteSpace(request.Asset))
                 {
                     queryParams.Add($"asset={request.Asset}");

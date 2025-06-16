@@ -5,6 +5,7 @@ using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
 using TelegramPanel.Application.CommandHandlers.MainMenu;
 using TelegramPanel.Application.Interfaces;
+using TelegramPanel.Infrastructure;
 using TelegramPanel.Infrastructure.Helper;
 using static TelegramPanel.Infrastructure.ActualTelegramMessageActions;
 
@@ -36,12 +37,12 @@ namespace TelegramPanel.Application.CommandHandlers.Analysis
 
         public async Task HandleAsync(Update update, CancellationToken cancellationToken = default)
         {
-            CallbackQuery callbackQuery = update.CallbackQuery!;
+            var callbackQuery = update.CallbackQuery!;
             await _messageSender.AnswerCallbackQueryAsync(callbackQuery.Id, cancellationToken: cancellationToken);
 
-            long chatId = callbackQuery.Message!.Chat.Id;
-            long userId = callbackQuery.From.Id;
-            int messageId = callbackQuery.Message.MessageId;
+            var chatId = callbackQuery.Message!.Chat.Id;
+            var userId = callbackQuery.From.Id;
+            var messageId = callbackQuery.Message.MessageId;
 
             _logger.LogInformation("User {UserId} is entering news keyword search state.", userId);
 
@@ -50,7 +51,7 @@ namespace TelegramPanel.Application.CommandHandlers.Analysis
             await _stateMachine.SetStateAsync(userId, nextStateName, update, cancellationToken);
 
             // Get the state object to retrieve its entry message
-            ITelegramState? newState = _stateMachine.GetState(nextStateName);
+            var newState = _stateMachine.GetState(nextStateName);
             if (newState == null)
             {
                 _logger.LogError("Could not retrieve state object for '{StateName}'.", nextStateName);
@@ -59,9 +60,9 @@ namespace TelegramPanel.Application.CommandHandlers.Analysis
             }
 
             // Get the entry message from the state itself
-            string? entryMessage = await newState.GetEntryMessageAsync(chatId, update, cancellationToken);
+            var entryMessage = await newState.GetEntryMessageAsync(chatId, update, cancellationToken);
 
-            InlineKeyboardMarkup? keyboard = MarkupBuilder.CreateInlineKeyboard(
+            var keyboard = MarkupBuilder.CreateInlineKeyboard(
                 new[] { InlineKeyboardButton.WithCallbackData("⬅️ Cancel Search", MenuCallbackQueryHandler.BackToMainMenuGeneral) });
 
             // Edit the existing message to show the prompt from the state

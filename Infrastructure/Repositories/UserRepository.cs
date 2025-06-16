@@ -165,7 +165,7 @@ namespace Infrastructure.Repositories
                 _logger.LogError(ex, "UserRepository: Error creating database connection. ConnectionString: {ConnectionString}", _connectionString);
                 throw;
             }
-
+         
         }
 
         // --- Read Operations ---
@@ -184,10 +184,10 @@ namespace Infrastructure.Repositories
             {
                 return await _retryPolicy.ExecuteAsync(async () =>
                 {
-                    using SqlConnection connection = CreateConnection();
+                    using var connection = CreateConnection();
                     await connection.OpenAsync(cancellationToken);
 
-                    DynamicParameters parameters = new();
+                    var parameters = new DynamicParameters();
                     if (newsItemSignalCategoryId.HasValue)
                     {
                         parameters.Add("NewsItemSignalCategoryId", newsItemSignalCategoryId.Value);
@@ -195,7 +195,7 @@ namespace Infrastructure.Repositories
 
                     // SQL Server specific query. Columns should match DTO properties for auto-mapping.
                     // SELECT u.*, tw.*, s.*, usp.* is used for Dapper's multi-mapping to grab all fields.
-                    string sql = @"
+                    var sql = @"
                         SELECT
                             u.Id, u.Username, u.TelegramId, u.Email, u.Level, u.CreatedAt, u.UpdatedAt,
                             u.EnableGeneralNotifications, u.EnableVipSignalNotifications, u.EnableRssNewsNotifications, u.PreferredLanguage,
@@ -222,17 +222,17 @@ namespace Infrastructure.Repositories
                     }
 
                     // Use a Dictionary to maintain unique User objects and aggregate their collections
-                    Dictionary<Guid, User> userMap = new();
+                    var userMap = new Dictionary<Guid, User>();
 
                     // Dapper's QueryAsync with multi-mapping
                     // The splitOn parameter needs to match the column names where new entities begin
                     // Ensure the order of column names in the SELECT clause matches the order of DTOs here.
-                    IEnumerable<User> result = await connection.QueryAsync<UserDbDto, TokenWalletDbDto, SubscriptionDbDto, UserSignalPreferenceDbDto, User>(
+                    var result = await connection.QueryAsync<UserDbDto, TokenWalletDbDto, SubscriptionDbDto, UserSignalPreferenceDbDto, User>(
                         sql,
                         (userDto, tokenWalletDto, subscriptionDto, userSignalPreferenceDto) =>
                         {
                             // Get or create the User entity
-                            if (!userMap.TryGetValue(userDto.Id, out User? user))
+                            if (!userMap.TryGetValue(userDto.Id, out var user))
                             {
                                 user = userDto.ToDomainEntity();
                                 user.Subscriptions = [];
@@ -270,7 +270,7 @@ namespace Infrastructure.Repositories
 
                     // The 'result' IEnumerable will contain duplicate User objects (one for each related row).
                     // userMap.Values already contains the unique, fully hydrated User objects.
-                    List<User> eligibleUsers = userMap.Values.ToList();
+                    var eligibleUsers = userMap.Values.ToList();
 
                     _logger.LogInformation("UserRepository: Found {UserCount} eligible users for news notification.", eligibleUsers.Count);
                     return eligibleUsers;
@@ -290,11 +290,11 @@ namespace Infrastructure.Repositories
             _logger.LogTrace("UserRepository: Fetching user by ID: {UserId}.", id);
             return await _retryPolicy.ExecuteAsync(async () =>
             {
-                using SqlConnection connection = CreateConnection();
+                using var connection = CreateConnection();
                 await connection.OpenAsync(cancellationToken);
 
                 // Use QueryMultiple to fetch main user and related entities in one roundtrip
-                string sql = @"
+                var sql = @"
                     SELECT Id, Username, TelegramId, Email, Level, CreatedAt, UpdatedAt, EnableGeneralNotifications, EnableVipSignalNotifications, EnableRssNewsNotifications, PreferredLanguage
                     FROM Users WHERE Id = @Id;
 
@@ -307,15 +307,15 @@ namespace Infrastructure.Repositories
                     SELECT Id, UserId, CategoryId, CreatedAt
                     FROM UserSignalPreferences WHERE UserId = @Id;";
 
-                using SqlMapper.GridReader multi = await connection.QueryMultipleAsync(sql, new { Id = id });
+                using var multi = await connection.QueryMultipleAsync(sql, new { Id = id });
 
-                UserDbDto? userDto = await multi.ReadFirstOrDefaultAsync<UserDbDto>();
+                var userDto = await multi.ReadFirstOrDefaultAsync<UserDbDto>();
                 if (userDto == null)
                 {
                     return null;
                 }
 
-                User user = userDto.ToDomainEntity();
+                var user = userDto.ToDomainEntity();
                 user.TokenWallet = (await multi.ReadFirstOrDefaultAsync<TokenWalletDbDto>())?.ToDomainEntity() ?? TokenWallet.Create(user.Id);
                 user.Subscriptions = (await multi.ReadAsync<SubscriptionDbDto>()).Select(s => s.ToDomainEntity()).ToList();
                 user.Preferences = (await multi.ReadAsync<UserSignalPreferenceDbDto>()).Select(usp => usp.ToDomainEntity()).ToList();
@@ -374,38 +374,38 @@ namespace Infrastructure.Repositories
                 // --- THIS IS THE CORE CHANGE ---
                 // We create a combined policy on the fly. The timeout policy wraps the retry policy.
                 // This means the 5-minute timer starts, and WITHIN that time, Polly can perform its retries.
-                Polly.Wrap.AsyncPolicyWrap combinedPolicy = _timeoutPolicy.WrapAsync(_retryPolicy);
+                var combinedPolicy = _timeoutPolicy.WrapAsync(_retryPolicy);
 
                 return await combinedPolicy.ExecuteAsync(async (ct) =>
                 {
                     // The 'ct' CancellationToken passed here is now managed by the Pessimistic Timeout policy.
                     // If the timeout is reached, this token will be cancelled.
 
-                    using SqlConnection connection = CreateConnection();
+                    using var connection = CreateConnection();
                     // Pass the policy-managed token to OpenAsync
                     await connection.OpenAsync(ct);
 
                     // Dapper's CommandDefinition will respect the cancellation token.
-                    using SqlMapper.GridReader multi = await connection.QueryMultipleAsync(
+                    using var multi = await connection.QueryMultipleAsync(
                         new CommandDefinition(combinedSql, new { TelegramId = telegramId }, cancellationToken: ct)
                     );
 
-                    UserDbDto? userDto = await multi.ReadFirstOrDefaultAsync<UserDbDto>();
+                    var userDto = await multi.ReadFirstOrDefaultAsync<UserDbDto>();
                     if (userDto == null)
                     {
                         _logger.LogTrace("User with TelegramID {TelegramId} not found.", telegramId);
                         return null;
                     }
 
-                    User user = userDto.ToDomainEntity();
+                    var user = userDto.ToDomainEntity();
 
-                    TokenWalletDbDto? walletDto = await multi.ReadFirstOrDefaultAsync<TokenWalletDbDto>();
+                    var walletDto = await multi.ReadFirstOrDefaultAsync<TokenWalletDbDto>();
                     user.TokenWallet = walletDto?.ToDomainEntity() ?? TokenWallet.Create(user.Id);
 
-                    IEnumerable<SubscriptionDbDto> subscriptionsDto = await multi.ReadAsync<SubscriptionDbDto>();
+                    var subscriptionsDto = await multi.ReadAsync<SubscriptionDbDto>();
                     user.Subscriptions = subscriptionsDto.Select(s => s.ToDomainEntity()).ToList();
 
-                    IEnumerable<UserSignalPreferenceDbDto> preferencesDto = await multi.ReadAsync<UserSignalPreferenceDbDto>();
+                    var preferencesDto = await multi.ReadAsync<UserSignalPreferenceDbDto>();
                     user.Preferences = preferencesDto.Select(usp => usp.ToDomainEntity()).ToList();
 
                     user.Transactions = [];
@@ -446,19 +446,19 @@ namespace Infrastructure.Repositories
             string lowerEmail = email.ToLowerInvariant();
 
             // REFACTOR: Injected ILoggingSanitizer is used for all sanitization, adhering to SRP & DIP.
-            string sanitizedEmail = _logSanitizer.Sanitize(lowerEmail);
+            var sanitizedEmail = _logSanitizer.Sanitize(lowerEmail);
             _logger.LogTrace("UserRepository: Fetching user by Email: {SanitizedEmail}.", sanitizedEmail);
 
             try
             {
                 return await _retryPolicy.ExecuteAsync(async () =>
                 {
-                    using SqlConnection connection = CreateConnection();
+                    using var connection = CreateConnection();
                     await connection.OpenAsync(cancellationToken);
 
                     // OPTIMIZATION (EFFICIENCY): Perform a single, lightweight query to get only the ID.
-                    string userIdQuery = "SELECT Id FROM Users WHERE LOWER(Email) = LOWER(@Email);";
-                    Guid? userId = await connection.ExecuteScalarAsync<Guid?>(userIdQuery, new { Email = lowerEmail });
+                    var userIdQuery = "SELECT Id FROM Users WHERE LOWER(Email) = LOWER(@Email);";
+                    var userId = await connection.ExecuteScalarAsync<Guid?>(userIdQuery, new { Email = lowerEmail });
 
                     if (!userId.HasValue)
                     {
@@ -488,24 +488,24 @@ namespace Infrastructure.Repositories
             _logger.LogTrace("UserRepository: Fetching all users.");
             return await _retryPolicy.ExecuteAsync(async () =>
             {
-                using SqlConnection connection = CreateConnection();
+                using var connection = CreateConnection();
                 await connection.OpenAsync(cancellationToken);
 
                 // Fetch all users first
-                List<User> users = (await connection.QueryAsync<UserDbDto>("SELECT Id, Username, TelegramId, Email, Level, CreatedAt, UpdatedAt, EnableGeneralNotifications, EnableVipSignalNotifications, EnableRssNewsNotifications, PreferredLanguage FROM Users ORDER BY Username;")).Select(dto => dto.ToDomainEntity()).ToList();
+                var users = (await connection.QueryAsync<UserDbDto>("SELECT Id, Username, TelegramId, Email, Level, CreatedAt, UpdatedAt, EnableGeneralNotifications, EnableVipSignalNotifications, EnableRssNewsNotifications, PreferredLanguage FROM Users ORDER BY Username;")).Select(dto => dto.ToDomainEntity()).ToList();
 
                 if (users.Any())
                 {
-                    List<Guid> userIds = users.Select(u => u.Id).ToList();
+                    var userIds = users.Select(u => u.Id).ToList();
 
                     // Batch fetch all related data for all users in one go
                     // This is more efficient for N-many users than individual QueryMultiple calls
-                    List<TokenWalletDbDto> wallets = (await connection.QueryAsync<TokenWalletDbDto>("SELECT Id, UserId, Balance, IsActive, CreatedAt, UpdatedAt FROM TokenWallets WHERE UserId IN @UserIds;", new { UserIds = userIds })).ToList();
-                    List<SubscriptionDbDto> subscriptions = (await connection.QueryAsync<SubscriptionDbDto>("SELECT Id, UserId, StartDate, EndDate, Status, ActivatingTransactionId, CreatedAt, UpdatedAt FROM Subscriptions WHERE UserId IN @UserIds;", new { UserIds = userIds })).ToList();
-                    List<UserSignalPreferenceDbDto> preferences = (await connection.QueryAsync<UserSignalPreferenceDbDto>("SELECT Id, UserId, CategoryId, CreatedAt FROM UserSignalPreferences WHERE UserId IN @UserIds;", new { UserIds = userIds })).ToList();
+                    var wallets = (await connection.QueryAsync<TokenWalletDbDto>("SELECT Id, UserId, Balance, IsActive, CreatedAt, UpdatedAt FROM TokenWallets WHERE UserId IN @UserIds;", new { UserIds = userIds })).ToList();
+                    var subscriptions = (await connection.QueryAsync<SubscriptionDbDto>("SELECT Id, UserId, StartDate, EndDate, Status, ActivatingTransactionId, CreatedAt, UpdatedAt FROM Subscriptions WHERE UserId IN @UserIds;", new { UserIds = userIds })).ToList();
+                    var preferences = (await connection.QueryAsync<UserSignalPreferenceDbDto>("SELECT Id, UserId, CategoryId, CreatedAt FROM UserSignalPreferences WHERE UserId IN @UserIds;", new { UserIds = userIds })).ToList();
 
                     // Manually map collections back to the parent users
-                    foreach (User? user in users)
+                    foreach (var user in users)
                     {
                         user.TokenWallet = wallets.FirstOrDefault(tw => tw.UserId == user.Id)?.ToDomainEntity() ?? TokenWallet.Create(user.Id);
                         user.Subscriptions = subscriptions.Where(s => s.UserId == user.Id).Select(s => s.ToDomainEntity()).ToList();
@@ -559,8 +559,8 @@ namespace Infrastructure.Repositories
             }
 
             // HARDENING: Sanitize all potentially sensitive properties upfront for consistent and safe logging.
-            string sanitizedUsername = _logSanitizer.Sanitize(user.Username);
-            string sanitizedEmail = _logSanitizer.Sanitize(user.Email);
+            var sanitizedUsername = _logSanitizer.Sanitize(user.Username);
+            var sanitizedEmail = _logSanitizer.Sanitize(user.Email);
 
             _logger.LogInformation("UserRepository: Adding new user. Username: {SanitizedUsername}, Email: {SanitizedEmail}.",
                                     sanitizedUsername,
@@ -569,9 +569,9 @@ namespace Infrastructure.Repositories
             {
                 await _retryPolicy.ExecuteAsync(async () =>
                 {
-                    using SqlConnection connection = CreateConnection();
+                    using var connection = CreateConnection();
                     await connection.OpenAsync(cancellationToken);
-                    using SqlTransaction transaction = connection.BeginTransaction();
+                    using var transaction = connection.BeginTransaction();
 
                     try
                     {
@@ -590,7 +590,7 @@ namespace Infrastructure.Repositories
                             user.EnableRssNewsNotifications,
                             user.PreferredLanguage
                         };
-                        _ = await connection.ExecuteAsync(@"
+                        await connection.ExecuteAsync(@"
                     INSERT INTO Users (Id, Username, TelegramId, Email, Level, CreatedAt, UpdatedAt, EnableGeneralNotifications, EnableVipSignalNotifications, EnableRssNewsNotifications, PreferredLanguage)
                     VALUES (@Id, @Username, @TelegramId, @Email, @Level, @CreatedAt, @UpdatedAt, @EnableGeneralNotifications, @EnableVipSignalNotifications, @EnableRssNewsNotifications, @PreferredLanguage);",
                             userParams, transaction: transaction);
@@ -607,7 +607,7 @@ namespace Infrastructure.Repositories
                                 user.TokenWallet.CreatedAt,
                                 user.TokenWallet.UpdatedAt
                             };
-                            _ = await connection.ExecuteAsync(@"
+                            await connection.ExecuteAsync(@"
                         INSERT INTO TokenWallets (Id, UserId, Balance, IsActive, CreatedAt, UpdatedAt)
                         VALUES (@Id, @UserId, @Balance, @IsActive, @CreatedAt, @UpdatedAt);",
                                 walletParams, transaction: transaction);
@@ -653,10 +653,10 @@ namespace Infrastructure.Repositories
             {
                 await _retryPolicy.ExecuteAsync(async () =>
                 {
-                    using SqlConnection connection = CreateConnection();
+                    using var connection = CreateConnection();
                     await connection.OpenAsync(cancellationToken);
 
-                    using SqlTransaction transaction = connection.BeginTransaction();
+                    using var transaction = connection.BeginTransaction();
                     try
                     {
                         // Update User
@@ -673,7 +673,7 @@ namespace Infrastructure.Repositories
                             user.EnableRssNewsNotifications,
                             user.PreferredLanguage
                         };
-                        int rowsAffected = await connection.ExecuteAsync(@"
+                        var rowsAffected = await connection.ExecuteAsync(@"
                             UPDATE Users SET
                                 Username = @Username,
                                 TelegramId = @TelegramId,
@@ -793,24 +793,24 @@ namespace Infrastructure.Repositories
 
             try
             {
-                Polly.Wrap.AsyncPolicyWrap combinedPolicy = _timeoutPolicy.WrapAsync(_retryPolicy);
+                var combinedPolicy = _timeoutPolicy.WrapAsync(_retryPolicy);
 
                 return await combinedPolicy.ExecuteAsync(async (ct) =>
                 {
-                    using SqlConnection connection = CreateConnection();
+                    using var connection = CreateConnection();
                     await connection.OpenAsync(ct);
 
-                    using SqlMapper.GridReader multi = await connection.QueryMultipleAsync(new CommandDefinition(combinedSql, new { TelegramId = telegramId }, cancellationToken: ct));
+                    using var multi = await connection.QueryMultipleAsync(new CommandDefinition(combinedSql, new { TelegramId = telegramId }, cancellationToken: ct));
 
-                    UserDbDto? userDto = await multi.ReadFirstOrDefaultAsync<UserDbDto>();
+                    var userDto = await multi.ReadFirstOrDefaultAsync<UserDbDto>();
                     if (userDto == null)
                     {
                         _logger.LogTrace("User with TelegramID {TelegramId} not found.", telegramId);
                         return null;
                     }
 
-                    User user = userDto.ToDomainEntity();
-                    TokenWalletDbDto? walletDto = await multi.ReadFirstOrDefaultAsync<TokenWalletDbDto>();
+                    var user = userDto.ToDomainEntity();
+                    var walletDto = await multi.ReadFirstOrDefaultAsync<TokenWalletDbDto>();
                     user.TokenWallet = walletDto?.ToDomainEntity() ?? TokenWallet.Create(user.Id);
 
                     user.Subscriptions = (await multi.ReadAsync<SubscriptionDbDto>()).Select(s => s.ToDomainEntity()).ToList();
@@ -864,16 +864,16 @@ namespace Infrastructure.Repositories
             }
 
             string lowerEmail = email.ToLowerInvariant();
-            string sanitizedEmail = _logSanitizer.Sanitize(lowerEmail);
+            var sanitizedEmail = _logSanitizer.Sanitize(lowerEmail);
             _logger.LogTrace("UserRepository: Checking existence by Email: {SanitizedEmail}.", sanitizedEmail);
 
             try
             {
                 return await _retryPolicy.ExecuteAsync(async () =>
                 {
-                    using SqlConnection connection = CreateConnection();
+                    using var connection = CreateConnection();
                     await connection.OpenAsync(cancellationToken);
-                    int count = await connection.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Users WHERE LOWER(Email) = LOWER(@Email);", new { Email = lowerEmail });
+                    var count = await connection.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Users WHERE LOWER(Email) = LOWER(@Email);", new { Email = lowerEmail });
                     return count > 0;
                 });
             }
@@ -901,9 +901,9 @@ namespace Infrastructure.Repositories
             {
                 return await _retryPolicy.ExecuteAsync(async () =>
                 {
-                    using SqlConnection connection = CreateConnection();
+                    using var connection = CreateConnection();
                     await connection.OpenAsync(cancellationToken);
-                    int count = await connection.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Users WHERE TelegramId = @TelegramId;", new { TelegramId = telegramId });
+                    var count = await connection.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Users WHERE TelegramId = @TelegramId;", new { TelegramId = telegramId });
                     return count > 0;
                 });
             }
@@ -949,14 +949,14 @@ namespace Infrastructure.Repositories
             {
                 await _retryPolicy.ExecuteAsync(async () =>
                 {
-                    using SqlConnection connection = CreateConnection();
+                    using var connection = CreateConnection();
                     await connection.OpenAsync(cancellationToken);
 
-                    using SqlTransaction transaction = connection.BeginTransaction();
+                    using var transaction = connection.BeginTransaction();
                     try
                     {
                         // Check if the user exists before attempting to delete
-                        int userExists = await connection.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Users WHERE Id = @Id;", new { Id = userId }, transaction: transaction);
+                        var userExists = await connection.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Users WHERE Id = @Id;", new { Id = userId }, transaction: transaction);
                         if (userExists == 0)
                         {
                             _logger.LogWarning("UserRepository: User with ID {UserId} not found for deletion in DeleteUserAndRelatedData.", userId);
@@ -969,7 +969,7 @@ namespace Infrastructure.Repositories
                         // in 'TokenWallets', 'Subscriptions', 'Transactions', and 'UserSignalPreferences'.
                         // If you did NOT have ON DELETE CASCADE, you would need explicit DELETE statements
                         // for child tables BEFORE deleting from the Users table, respecting foreign key order.
-                        int rowsAffected = await connection.ExecuteAsync("DELETE FROM Users WHERE Id = @Id;", new { Id = userId }, transaction: transaction);
+                        var rowsAffected = await connection.ExecuteAsync("DELETE FROM Users WHERE Id = @Id;", new { Id = userId }, transaction: transaction);
 
                         if (rowsAffected == 0)
                         {

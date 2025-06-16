@@ -29,7 +29,7 @@ namespace Infrastructure.ExternalServices
 
         public async Task<Result<FredReleaseTablesResponseDto>> GetReleaseTablesAsync(int releaseId, int? elementId = null, CancellationToken cancellationToken = default)
         {
-            string requestUri = $"release/tables?release_id={releaseId}&api_key={_apiKey}&file_type=json";
+            var requestUri = $"release/tables?release_id={releaseId}&api_key={_apiKey}&file_type=json";
             if (elementId.HasValue)
             {
                 requestUri += $"&element_id={elementId.Value}";
@@ -37,7 +37,7 @@ namespace Infrastructure.ExternalServices
 
             try
             {
-                FredReleaseTablesResponseDto? response = await _httpClient.GetFromJsonAsync<FredReleaseTablesResponseDto>(requestUri, cancellationToken);
+                var response = await _httpClient.GetFromJsonAsync<FredReleaseTablesResponseDto>(requestUri, cancellationToken);
                 return response == null
                     ? Result<FredReleaseTablesResponseDto>.Failure("Failed to deserialize release tables response from FRED API.")
                     : Result<FredReleaseTablesResponseDto>.Success(response);
@@ -51,12 +51,12 @@ namespace Infrastructure.ExternalServices
 
         public async Task<Result<FredSeriesSearchResponseDto>> SearchEconomicSeriesAsync(string searchText, int limit = 10, CancellationToken cancellationToken = default)
         {
-            string encodedSearchText = System.Net.WebUtility.UrlEncode(searchText);
-            string requestUri = $"series/search?api_key={_apiKey}&search_text={encodedSearchText}&file_type=json&limit={limit}";
+            var encodedSearchText = System.Net.WebUtility.UrlEncode(searchText);
+            var requestUri = $"series/search?api_key={_apiKey}&search_text={encodedSearchText}&file_type=json&limit={limit}";
 
             try
             {
-                FredSeriesSearchResponseDto? response = await _httpClient.GetFromJsonAsync<FredSeriesSearchResponseDto>(requestUri, cancellationToken);
+                var response = await _httpClient.GetFromJsonAsync<FredSeriesSearchResponseDto>(requestUri, cancellationToken);
                 return response == null
                     ? Result<FredSeriesSearchResponseDto>.Failure("Failed to deserialize series search response from FRED API.")
                     : Result<FredSeriesSearchResponseDto>.Success(response);
@@ -76,11 +76,11 @@ namespace Infrastructure.ExternalServices
         public async Task<Result<FredReleasesResponseDto>> GetEconomicReleasesAsync(int limit = 50, int offset = 0, CancellationToken cancellationToken = default)
         {
             // Now that _apiKey is guaranteed to exist, we can build the URI simply.
-            string requestUri = $"releases?api_key={_apiKey}&file_type=json&limit={limit}&offset={offset}";
+            var requestUri = $"releases?api_key={_apiKey}&file_type=json&limit={limit}&offset={offset}";
 
             try
             {
-                FredReleasesResponseDto? response = await _httpClient.GetFromJsonAsync<FredReleasesResponseDto>(requestUri, cancellationToken);
+                var response = await _httpClient.GetFromJsonAsync<FredReleasesResponseDto>(requestUri, cancellationToken);
                 return response == null
                     ? Result<FredReleasesResponseDto>.Failure("Failed to deserialize response from FRED API.")
                     : Result<FredReleasesResponseDto>.Success(response);

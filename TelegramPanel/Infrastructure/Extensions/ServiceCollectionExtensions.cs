@@ -17,7 +17,7 @@ namespace TelegramPanel.Infrastructure.Extensions
                 configuration.GetSection(CurrencyInfoSettings.SectionName));
 
             // Get market data settings
-            MarketDataSettings? marketDataSettings = configuration
+            var marketDataSettings = configuration
                 .GetSection(MarketDataSettings.SectionName)
                 .Get<MarketDataSettings>();
 
@@ -27,7 +27,7 @@ namespace TelegramPanel.Infrastructure.Extensions
             }
 
             // Register named HTTP clients for each provider
-            foreach (KeyValuePair<string, ProviderSettings> provider in marketDataSettings.Providers)
+            foreach (var provider in marketDataSettings.Providers)
             {
                 if (!provider.Value.IsEnabled)
                 {

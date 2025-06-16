@@ -27,7 +27,7 @@ namespace Infrastructure.Repositories
         public async Task<SignalCategory?> GetByNameAsync(string name, CancellationToken cancellationToken = default)
         {
             // مقایسه case-insensitive برای نام دسته
-            string normalizedName = name.Trim().ToLowerInvariant();
+            var normalizedName = name.Trim().ToLowerInvariant();
             return await _context.SignalCategories
                 .FirstOrDefaultAsync(sc => sc.Name.ToLower() == normalizedName, cancellationToken);
         }
@@ -84,7 +84,7 @@ namespace Infrastructure.Repositories
 
         public async Task<bool> DeleteAsync(Guid id, CancellationToken cancellationToken = default)
         {
-            SignalCategory? categoryToDelete = await GetByIdAsync(id, cancellationToken);
+            var categoryToDelete = await GetByIdAsync(id, cancellationToken);
             if (categoryToDelete == null)
             {
                 return false; // پیدا نشد
@@ -95,8 +95,8 @@ namespace Infrastructure.Repositories
 
         public async Task<bool> ExistsByNameAsync(string name, Guid? excludeId = null, CancellationToken cancellationToken = default)
         {
-            string normalizedName = name.Trim().ToLowerInvariant();
-            IQueryable<SignalCategory> query = _context.SignalCategories.Where(sc => sc.Name.ToLower() == normalizedName);
+            var normalizedName = name.Trim().ToLowerInvariant();
+            var query = _context.SignalCategories.Where(sc => sc.Name.ToLower() == normalizedName);
 
             if (excludeId.HasValue)
             {

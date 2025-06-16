@@ -41,7 +41,7 @@ namespace TelegramPanel.Extensions
             // 2. Register ITelegramBotClient
             _ = services.AddSingleton<ITelegramBotClient>(serviceProvider =>
             {
-                TelegramPanelSettings settings = serviceProvider.GetRequiredService<IOptions<TelegramPanelSettings>>().Value;
+                var settings = serviceProvider.GetRequiredService<IOptions<TelegramPanelSettings>>().Value;
                 return string.IsNullOrWhiteSpace(settings.BotToken)
                     ? throw new ArgumentNullException(nameof(settings.BotToken), "TelegramPanel: Bot Token is not configured.")
                     : (ITelegramBotClient)new TelegramBotClient(settings.BotToken);
@@ -65,17 +65,17 @@ namespace TelegramPanel.Extensions
             _ = services.AddSingleton<ITelegramUpdateChannel>(serviceProvider =>
             {
                 // 1. Get the necessary services from the DI container.
-                ILoggerFactory loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
+                var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
 
                 // 2. Try to get the Redis connection. Use GetService, which returns null
                 // if the service is not registered, preventing a crash.
-                IConnectionMultiplexer? redisConnection = serviceProvider.GetService<IConnectionMultiplexer>();
+                var redisConnection = serviceProvider.GetService<IConnectionMultiplexer>();
 
                 // 3. The DECISION LOGIC.
                 if (redisConnection != null && redisConnection.IsConnected)
                 {
                     // --- Strategy 1: Redis is available and connected ---
-                    ILogger<RedisUpdateChannel> redisLogger = loggerFactory.CreateLogger<RedisUpdateChannel>();
+                    var redisLogger = loggerFactory.CreateLogger<RedisUpdateChannel>();
                     Log.Information("✅ Redis connection is active. Registering RedisUpdateChannel for the queue.");
 
                     // Create and return the Redis-based implementation.
@@ -84,7 +84,7 @@ namespace TelegramPanel.Extensions
                 else
                 {
                     // --- Strategy 2: Redis is not available, fall back to in-memory ---
-                    ILogger<TelegramUpdateChannel> inMemoryLogger = loggerFactory.CreateLogger<TelegramUpdateChannel>();
+                    var inMemoryLogger = loggerFactory.CreateLogger<TelegramUpdateChannel>();
                     Log.Warning("⚠️ Redis connection is NOT active or not registered. Falling back to In-Memory queue. Note: Updates will be lost on application restart.");
 
                     // Create and return the original, in-memory implementation.
@@ -93,17 +93,17 @@ namespace TelegramPanel.Extensions
             });
 
             // 7. Register IConnectionMultiplexer for Redis
-            _ = services.AddSingleton<IConnectionMultiplexer>(sp =>
+            services.AddSingleton<IConnectionMultiplexer>(sp =>
             {
-                IConfiguration config = sp.GetRequiredService<IConfiguration>();
-                string? connectionString = config.GetConnectionString("Redis");
+                var config = sp.GetRequiredService<IConfiguration>();
+                var connectionString = config.GetConnectionString("Redis");
 
                 if (string.IsNullOrWhiteSpace(connectionString))
                 {
                     throw new InvalidOperationException("Redis connection string is not configured.");
                 }
 
-                ConfigurationOptions options = ConfigurationOptions.Parse(connectionString);
+                var options = ConfigurationOptions.Parse(connectionString);
                 options.AbortOnConnectFail = false; // For startup resiliency  
                 return ConnectionMultiplexer.Connect(options);
             });

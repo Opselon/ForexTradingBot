@@ -40,7 +40,7 @@ namespace Infrastructure.Repositories
             DateTime? endDate = null,
             CancellationToken cancellationToken = default)
         {
-            IQueryable<Transaction> query = _context.Transactions.Where(t => t.UserId == userId);
+            var query = _context.Transactions.Where(t => t.UserId == userId);
 
             if (type.HasValue)
             {
@@ -55,7 +55,7 @@ namespace Infrastructure.Repositories
             if (endDate.HasValue)
             {
                 // برای شامل کردن کل روز endDate، معمولاً آن را به پایان روز تنظیم می‌کنیم
-                DateTime inclusiveEndDate = endDate.Value.Date.AddDays(1).AddTicks(-1);
+                var inclusiveEndDate = endDate.Value.Date.AddDays(1).AddTicks(-1);
                 query = query.Where(t => t.Timestamp <= inclusiveEndDate);
             }
 

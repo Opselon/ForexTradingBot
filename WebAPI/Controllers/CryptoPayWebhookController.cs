@@ -102,12 +102,12 @@ namespace WebAPI.Controllers // ✅ Namespace صحیح
             try
             {
                 byte[] secretKeyBytes;
-                using (SHA256 sha256 = SHA256.Create())
+                using (var sha256 = SHA256.Create())
                 {
                     secretKeyBytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(appApiToken));
                 }
 
-                using HMACSHA256 hmac = new(secretKeyBytes);
+                using var hmac = new HMACSHA256(secretKeyBytes);
                 byte[] bodyBytes = Encoding.UTF8.GetBytes(rawRequestBody);
                 byte[] computedHashBytes = hmac.ComputeHash(bodyBytes);
                 string computedHashHex = Convert.ToHexString(computedHashBytes).ToLowerInvariant();
@@ -120,7 +120,7 @@ namespace WebAPI.Controllers // ✅ Namespace صحیح
                     // 3. VULNERABILITY REMEDIATION (ENHANCED)
                     // Sanitize the received header using a whitelist regex before logging to prevent injection.
                     // This ensures only valid hexadecimal characters are logged.
-                    string sanitizedSignatureHeader = SanitizeHexForLogging(signatureHeader);
+                    var sanitizedSignatureHeader = SanitizeHexForLogging(signatureHeader);
 
                     _logger.LogWarning(
                         "CryptoPay signature mismatch. Computed: {ComputedHash}, Received (Sanitized): {SanitizedReceivedHash}",

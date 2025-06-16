@@ -9,6 +9,7 @@ using Application.Interfaces;
 using Domain.Entities;
 using Domain.Enums; // For UserLevel enum
 using Hangfire;
+using Microsoft.Data.SqlClient;
 using Polly;
 using Polly.Retry;
 using Shared.Extensions;
@@ -301,7 +302,7 @@ namespace BackgroundTasks.Services
         /// </returns>
         [DisableConcurrentExecution(timeoutInSeconds: 600)]
         [JobDisplayName("Process RSS Notification: News {0}, UserIndex {2}")]
-        [AutomaticRetry(Attempts = 0)]
+        [AutomaticRetry(Attempts = 3)]
         public async Task ProcessNotificationFromCacheAsync(Guid newsItemId, string userListCacheKey, int userIndex)
         {
             // --- Configuration: Define business rules for this job ---
@@ -392,33 +393,140 @@ namespace BackgroundTasks.Services
 
                 // --- END OF LOGIC CHANGE ---
             }
-            catch (ApiRequestException apiEx) when (apiEx.ErrorCode == 403 || apiEx.Message.Contains("chat not found"))
-            {
-                // A send failed because the user blocked the bot.
-                // THE KEY FIX: The rate limit counter was NOT incremented. The user can still receive other news.
-                _logger.LogWarning(apiEx, "Permanent Send Failure for User {TargetUserId}: Bot was blocked or chat deleted. Initiating self-healing. Rate limit was not incremented.", targetUserId);
-                try
-                {
-                    await _userService.MarkUserAsUnreachableAsync(targetUserId.ToString(), "BotBlockedOrChatNotFound", CancellationToken.None);
-                }
-                catch (Exception markEx)
-                {
-                    _logger.LogError(markEx, "Failed to mark user {TargetUserId} as unreachable after send failure.", targetUserId);
-                }
-                // We DO NOT re-throw here. The job has successfully handled the error.
-            }
             catch (Exception ex)
             {
-                // Any other failure (e.g., Telegram API down, invalid message format).
-                // THE KEY FIX: The rate limit counter was NOT incremented.
-                _logger.LogCritical(ex, "A critical failure occurred during the cached notification job for User {TargetUserId}. Rate limit was not incremented.", targetUserId);
-                // We re-throw to mark the Hangfire job as "Failed".
+                bool isTransient = IsTransientException(ex); // Helper method to check exception type
+                if (isTransient)
+                {
+                    _logger.LogError(ex, "Transient failure during cached notification job for User {TargetUserId}. Retrying via Hangfire. Rate limit was not incremented.", targetUserId);
+                }
+                else
+                {
+                    _logger.LogCritical(ex, "Fatal failure during cached notification job for User {TargetUserId}. Rate limit was not incremented.", targetUserId);
+                }
+                // Always re-throw so Hangfire processes the exception state (either retrying or failing)
                 throw;
+
+                // Helper method (example) - you need to define what constitutes a transient error
+                bool IsTransientException(Exception e)
+                {
+                    // Check for specific DB exceptions (e.g., SqlException transient error codes)
+                    if (e is SqlException sqlEx && (sqlEx.Number == 4060 || sqlEx.Number == 18456)) return true; // Example SQL errors
+                                                                                                                 // Check for specific Telegram API errors (e.g., gateway timeout) - requires knowing ApiRequestException details
+                    if (e is ApiRequestException apiEx && apiEx.ErrorCode >= 500) return true; // Example: treat 5xx as transient
+                                                                                               // Check for network errors
+                    if (e is System.Net.Sockets.SocketException) return true;
+                    // ... add other known transient exceptions ...
+                    return false;
+                }
             }
         }
 
         #region Private Helpers
+        /// <summary>
+        /// Determines if a given exception represents a transient error that is potentially
+        /// recoverable by retrying the operation. This is used to decide whether Hangfire
+        /// should retry a job or if the error requires investigation/manual intervention.
+        /// </summary>
+        /// <param name="e">The exception to evaluate.</param>
+        /// <returns><c>true</c> if the exception is likely transient; otherwise, <c>false</c>.</returns>
+        private bool IsTransientException(Exception e)
+        {
+            // --- Check the exception itself ---
 
+            // Database Exceptions (Specific transient error codes often used by cloud databases like Azure SQL)
+            // *** CHANGE HERE: Use Microsoft.Data.SqlClient.SqlException ***
+            if (e is Microsoft.Data.SqlClient.SqlException sqlEx)
+            {
+                // Common SQL transient error codes (e.g., from Azure SQL Database)
+                switch (sqlEx.Number)
+                {
+                    case 4060: // Cannot open database requested by the login. The login failed.
+                    case 40197: // The service encountered an error processing your request. Please try again.
+                    case 10928: // Resource ID: %d. The %s limit for the database is %d and has been reached.
+                    case 10929: // Resource ID: %d. The %s minimum guarantee is %d, maximum limit is %d and the current usage for the database is %d.
+                    case 10053: // A transport-level error has occurred when receiving results from the server.
+                    case 10054: // A transport-level error has occurred when sending the request to the server.
+                    case 10060: // A network-related or instance-specific error occurred while establishing a connection to SQL Server.
+                    case 40143: // The service has encountered an error processing your request. Please try again.
+                    case 233: // The client was unable to establish a connection because of an error during the prelogin process.
+                    case 64: // A specified network name is no longer available.
+                    case 20: // SQL Server General Network error.
+                        return true;
+                    default:
+                        // Check if it's a deadlock error (can sometimes be transient and retryable)
+                        if (sqlEx.Message.Contains("deadlock", StringComparison.OrdinalIgnoreCase)) return true;
+                        break;
+                }
+            }
+
+            // Other common database driver exceptions
+            if (e is Npgsql.NpgsqlException) // MySQL driver exception
+            {
+                // Without specific error code knowledge, treat DB driver exceptions as potentially transient
+                // unless they are clearly configuration or data errors. This is a judgment call.
+                // A more robust approach would be checking specific driver error codes if available and known to be transient.
+                // For simplicity here, we'll lean towards true for general DB driver exceptions.
+                return true;
+            }
+
+            // Redis Exceptions (StackExchange.Redis specific)
+            if (e is StackExchange.Redis.RedisConnectionException ||
+                e is StackExchange.Redis.RedisTimeoutException ||
+                e is StackExchange.Redis.RedisServerException && e.Message.Contains("LOADING", StringComparison.OrdinalIgnoreCase)) // Redis is loading data
+            {
+                return true;
+            }
+
+            // API Exceptions (Assuming ApiRequestException is from your Telegram client or a similar library)
+            if (e is ApiRequestException apiEx)
+            {
+                // Treat server errors (5xx) and potentially rate limits (429) as transient
+                if (apiEx.ErrorCode >= 500 || apiEx.ErrorCode == 429) // 429 Too Many Requests might indicate a temporary API limit
+                {
+                    // Note: Your internal rate limiter handles user-specific limits *before* calling SendToTelegramAsync.
+                    // A 429 from Telegram would be a global or application-wide limit, or maybe specific to the bot.
+                    // Retrying on 429 often requires respecting 'Retry-After' header, which Polly or the API client might handle.
+                    return true;
+                }
+                // Note: 403 is handled specifically in the job method, so it won't reach this generic transient check.
+            }
+
+            // General Network/HTTP Exceptions
+            if (e is System.Net.Sockets.SocketException ||
+                e is System.IO.IOException || // Could indicate network stream issues
+                e is System.Net.Http.HttpRequestException) // Generic HTTP client errors
+            {
+                return true;
+            }
+
+            // Timeout/Cancellation Exceptions
+            if (e is System.TimeoutException ||
+                e is System.Threading.Tasks.TaskCanceledException || // Often results from timeouts
+                e is OperationCanceledException) // General cancellation
+            {
+                // Filter out intentional cancellations if needed, but for background jobs
+                // cancellation often implies a timeout or shutdown, which might be transient.
+                return true;
+            }
+
+            // --- Check Inner Exceptions ---
+            // Sometimes the true transient cause is wrapped inside another exception
+            if (e.InnerException != null)
+            {
+                // Recursively check the inner exception
+                if (IsTransientException(e.InnerException))
+                {
+                    return true;
+                }
+            }
+
+            // --- Default: Not considered transient ---
+            // If none of the above conditions are met, assume it's a non-transient error
+            // (e.g., ArgumentNullException, InvalidOperationException, configuration errors,
+            // data errors like malformed input, permissions errors other than 403, etc.)
+            return false;
+        }
 
         /// <summary>
         /// Converts a list of custom <see cref="NotificationButton"/> objects (which define generic button properties)

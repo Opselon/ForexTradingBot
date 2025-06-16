@@ -305,14 +305,12 @@ namespace BackgroundTasks.Services
         public async Task ProcessNotificationFromCacheAsync(Guid newsItemId, string userListCacheKey, int userIndex)
         {
             // --- Configuration: Define business rules for this job ---
-            const int freeUserRssHourlyLimit = 20;
+            const int freeUserRssHourlyLimit = 30;
             const int vipUserRssHourlyLimit = 100;
             TimeSpan rssLimitPeriod = TimeSpan.FromHours(1);
 
-            // Initialize targetUserId to a known invalid state for better error logging in the final catch block.
             long targetUserId = -1;
 
-            // Use a logging scope to automatically add these details to all logs within this method.
             using IDisposable? logScope = _logger.BeginScope(new Dictionary<string, object?>
             {
                 ["NewsItemId"] = newsItemId,
@@ -322,32 +320,25 @@ namespace BackgroundTasks.Services
 
             try
             {
-                // STEP 1: Retrieve this job's assigned User ID from the Redis cache.
-                // This logic is now self-contained and clear.
+                // STEP 1: Retrieve User ID from Redis (No change here)
                 RedisValue serializedUserIds = await _redisDb.StringGetAsync(userListCacheKey);
-                if (!serializedUserIds.HasValue)
-                {
-                    _logger.LogError("Job aborted: Cache key not found. It may have expired or was never set.");
-                    return; // Gracefully stop the job.
-                }
                 if (!serializedUserIds.HasValue || serializedUserIds.IsNullOrEmpty)
                 {
                     _logger.LogError("Job aborted: Cache key not found or empty. It may have expired or was never set.");
-                    return; // Gracefully stop the job.
+                    return;
                 }
 
                 List<long>? allUserIds = JsonSerializer.Deserialize<List<long>>(serializedUserIds.ToString());
                 if (allUserIds == null || userIndex >= allUserIds.Count)
                 {
                     _logger.LogError("Job aborted: User index is out of bounds for the cached list (Size: {ListSize}).", allUserIds?.Count ?? 0);
-                    return; // Gracefully stop the job.
+                    return;
                 }
 
                 targetUserId = allUserIds[userIndex];
                 _logger.LogInformation("Processing job for UserID: {TargetUserId}", targetUserId);
 
-                // STEP 2: Fetch the user's full profile to determine their level for rate limiting.
-                // This call is fast because UserService uses its own Redis cache (Cache-Aside pattern).
+                // STEP 2: Fetch user profile (No change here)
                 Application.DTOs.UserDto? userDto = await _userService.GetUserByTelegramIdAsync(targetUserId.ToString(), CancellationToken.None);
                 if (userDto == null)
                 {
@@ -355,28 +346,31 @@ namespace BackgroundTasks.Services
                     return;
                 }
 
-                // STEP 3: Apply the correct rate limit based on the user's level.
+                // --- START OF LOGIC CHANGE ---
+
+                // STEP 3: REVISED RATE LIMIT CHECK
+                // First, we CHECK if the user is ALREADY over their limit WITHOUT incrementing the counter.
                 int applicableLimit = (userDto.Level is UserLevel.Platinum or UserLevel.Bronze)
                     ? vipUserRssHourlyLimit
                     : freeUserRssHourlyLimit;
 
-                if (await _rateLimiter.IsUserOverLimitAsync(targetUserId, applicableLimit, rssLimitPeriod))
+                // NOTE: This uses the new method that only checks, it does not increment.
+                if (await _rateLimiter.IsUserAtOrOverLimitAsync(targetUserId, applicableLimit, rssLimitPeriod))
                 {
-                    _logger.LogInformation("FAST SKIP: User {TargetUserId} (Level: {UserLevel}) has exceeded the hourly RSS limit of {Limit}.",
+                    _logger.LogInformation("SKIP: User {TargetUserId} (Level: {UserLevel}) has already met the hourly RSS limit of {Limit}. No action taken.",
                         targetUserId, userDto.Level, applicableLimit);
-                    return; // This is a successful, intentional stop.
+                    return; // This is a successful stop, the user is correctly rate-limited.
                 }
 
-                // STEP 4: Fetch the news article data. This is the only required database hit for content.
+                // STEP 4: Fetch news item (No change here)
                 NewsItem? newsItem = await _newsItemRepository.GetByIdAsync(newsItemId, CancellationToken.None);
                 if (newsItem == null)
                 {
-                    // If the news item was deleted between dispatch and execution, we can't proceed.
                     _logger.LogError("Job failed: NewsItem with ID {NewsItemId} could not be found.", newsItemId);
                     throw new InvalidOperationException($"NewsItem {newsItemId} not found.");
                 }
 
-                // STEP 5: Build the final, fully-formed payload.
+                // STEP 5: Build payload (No change here)
                 NotificationJobPayload payload = new()
                 {
                     TargetTelegramUserId = targetUserId,
@@ -387,13 +381,22 @@ namespace BackgroundTasks.Services
                     NewsItemId = newsItemId
                 };
 
-                // STEP 6: Hand off to the final sender method.
+                // STEP 6: Attempt to send the notification to Telegram.
                 await SendToTelegramAsync(payload, CancellationToken.None);
+
+                // STEP 7: --- NEW --- INCREMENT THE COUNTER ON SUCCESS
+                // This code is only reached if SendToTelegramAsync did NOT throw an exception.
+                // We now increment the user's usage count.
+                await _rateLimiter.IncrementUsageAsync(targetUserId, rssLimitPeriod);
+                _logger.LogTrace("Rate limit counter incremented for user {UserId} after successful send.", targetUserId);
+
+                // --- END OF LOGIC CHANGE ---
             }
             catch (ApiRequestException apiEx) when (apiEx.ErrorCode == 403 || apiEx.Message.Contains("chat not found"))
             {
-                // This catch block specifically handles permanent "user blocked" errors from the Telegram API.
-                _logger.LogWarning(apiEx, "Permanent Send Failure for User {TargetUserId}: Bot was blocked or chat deleted. Initiating self-healing.", targetUserId);
+                // A send failed because the user blocked the bot.
+                // THE KEY FIX: The rate limit counter was NOT incremented. The user can still receive other news.
+                _logger.LogWarning(apiEx, "Permanent Send Failure for User {TargetUserId}: Bot was blocked or chat deleted. Initiating self-healing. Rate limit was not incremented.", targetUserId);
                 try
                 {
                     await _userService.MarkUserAsUnreachableAsync(targetUserId.ToString(), "BotBlockedOrChatNotFound", CancellationToken.None);
@@ -402,13 +405,14 @@ namespace BackgroundTasks.Services
                 {
                     _logger.LogError(markEx, "Failed to mark user {TargetUserId} as unreachable after send failure.", targetUserId);
                 }
-                // We DO NOT re-throw here. The job has successfully handled the error condition.
+                // We DO NOT re-throw here. The job has successfully handled the error.
             }
             catch (Exception ex)
             {
-                // This is a catch-all for any other unexpected error (e.g., Redis timeout, DB error, serialization issue).
-                _logger.LogCritical(ex, "A critical failure occurred during the cached notification job for User {TargetUserId}.", targetUserId);
-                // We re-throw here to ensure Hangfire marks the job as "Failed" for manual inspection.
+                // Any other failure (e.g., Telegram API down, invalid message format).
+                // THE KEY FIX: The rate limit counter was NOT incremented.
+                _logger.LogCritical(ex, "A critical failure occurred during the cached notification job for User {TargetUserId}. Rate limit was not incremented.", targetUserId);
+                // We re-throw to mark the Hangfire job as "Failed".
                 throw;
             }
         }

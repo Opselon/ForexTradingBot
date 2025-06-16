@@ -64,6 +64,7 @@ public class RedisNotificationRateLimiter : INotificationRateLimiter
             Window: (long)period.TotalMilliseconds,
             Limit: limit
         );
+         
 
         try
         {

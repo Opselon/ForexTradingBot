@@ -493,7 +493,7 @@ try
             recurringJobManager.AddOrUpdate<IRssFetchingCoordinatorService>(
                 recurringJobId: "fetch-all-active-rss-feeds",
                 methodCall: service => service.FetchAllActiveFeedsAsync(CancellationToken.None),
-                cronExpression: "0 * * * *", // برای تست، هر ۵ دقیقه
+                cronExpression: "*/15 * * * *",
                 options: new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc }
             );
 

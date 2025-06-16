@@ -204,7 +204,7 @@ namespace Infrastructure.Services
         /// </list>
         /// </remarks>
         [JobDisplayName("Fetch All Active RSS Feeds - Coordinator")] // Display name for Hangfire dashboard
-        [AutomaticRetry(Attempts = 0)] // Polly handles retries at the single-feed processing level
+        [AutomaticRetry(Attempts = 2)] // It's quick, a simple retry is fine.
         public async Task FetchAllActiveFeedsAsync(CancellationToken cancellationToken = default)
         {
             _logger.LogInformation("[HANGFIRE JOB] Starting: FetchAllActiveFeedsAsync at {UtcNow}", DateTime.UtcNow);

@@ -305,7 +305,7 @@ namespace BackgroundTasks.Services
         public async Task ProcessNotificationFromCacheAsync(Guid newsItemId, string userListCacheKey, int userIndex)
         {
             // --- Configuration: Define business rules for this job ---
-            const int freeUserRssHourlyLimit = 30;
+            const int freeUserRssHourlyLimit = 20;
             const int vipUserRssHourlyLimit = 100;
             TimeSpan rssLimitPeriod = TimeSpan.FromHours(1);
 

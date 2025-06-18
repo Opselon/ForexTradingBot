@@ -528,7 +528,7 @@ try
 
 
     // In the middleware pipeline section (before app.Run())
-
+    _ = app.UseStaticFiles();
     app.Run(); //  شروع به گوش دادن به درخواست‌های HTTP و اجرای برنامه
     #endregion
 }

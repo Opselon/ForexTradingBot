@@ -10,6 +10,8 @@ namespace Application.DTOs.News // ✅ Namespace صحیح
     /// </summary>
     public class NewsItemDto
     {
+        #region Properties
+
         /// <summary>
         /// Unique identifier of the news item.
         /// </summary>
@@ -33,8 +35,21 @@ namespace Application.DTOs.News // ✅ Namespace صحیح
 
         /// <summary>
         /// URL of the main image associated with the news item, if available.
+        /// If no image is found, a default image will be used.
         /// </summary>
         public string? ImageUrl { get; set; }
+
+        /// <summary>
+        /// The fallback image URL used if no specific image is provided for the news item.
+        /// </summary>
+        private const string DefaultImageUrl = "http://localhost:5000/Breaking_News.jpg"; // Example default image path, adjust as needed
+
+        /// <summary>
+        /// The actual image URL that will be used for display. If <see cref="ImageUrl"/> is null or empty,
+        /// the <see cref="DefaultImageUrl"/> will be used instead.
+        /// </summary>
+        public string ImageUrlOrDefault =>
+            string.IsNullOrWhiteSpace(ImageUrl) ? DefaultImageUrl : ImageUrl;
 
         /// <summary>
         /// The original publication date and time of the news item from the RSS source (UTC).
@@ -66,5 +81,7 @@ namespace Application.DTOs.News // ✅ Namespace صحیح
         /// The date and time when this news item was added to our system (UTC).
         /// </summary>
         public DateTime CreatedAtInSystem { get; set; }
+
+        #endregion
     }
 }

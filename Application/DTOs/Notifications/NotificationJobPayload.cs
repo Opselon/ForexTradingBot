@@ -18,6 +18,11 @@ namespace Application.DTOs.Notifications // ✅ Namespace: Application.DTOs.Noti
         public Guid? NewsItemSignalCategoryId { get; set; }
 
         /// <summary>
+        /// The fallback image URL used if no specific image is provided in the payload.
+        /// </summary>
+        private const string DefaultImageUrl = "http://localhost:5000/Breaking_News.jpg";
+
+        /// <summary>
         /// Gets or sets the name of the news item's signal category, used for display purposes in the notification message.
         /// </summary>
         public string? NewsItemSignalCategoryName { get; set; }
@@ -50,6 +55,14 @@ namespace Application.DTOs.Notifications // ✅ Namespace: Application.DTOs.Noti
         /// (Optional) URL of an image to be included with the notification.
         /// </summary>
         public string? ImageUrl { get; set; }
+
+
+        /// <summary>
+        /// The actual image URL that will be sent. If none is set, the default image URL will be used.
+        /// </summary>
+        public string ImageUrlOrDefault =>
+            string.IsNullOrWhiteSpace(ImageUrl) ? DefaultImageUrl : ImageUrl;
+
 
         /// <summary>
         /// (Optional) A list of buttons to be displayed with the notification.

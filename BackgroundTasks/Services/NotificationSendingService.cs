@@ -45,6 +45,8 @@ namespace BackgroundTasks.Services
         private readonly INotificationRateLimiter _rateLimiter;
         private readonly AsyncRetryPolicy _telegramApiRetryPolicy;
         private readonly ITelegramBotClient _botClient;
+        private readonly int _maxRetries = 5;
+        private readonly TimeSpan _baseDelay = TimeSpan.FromSeconds(2); // Base delay for
         #endregion
 
         #region Constructor
@@ -102,9 +104,70 @@ namespace BackgroundTasks.Services
             _redisDb = redisConnection.GetDatabase();
 
             _telegramApiRetryPolicy = Policy
-                .Handle<ApiRequestException>(ex => ex.ErrorCode == 429) // Rate limit
-                .Or<HttpRequestException>() // Network error
-                .WaitAndRetryAsync(3, retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)));
+         .Handle<ApiRequestException>(ex =>
+         {
+             // Handle Rate Limit Errors (429)
+             if (ex.ErrorCode == 429)
+             {
+                 _logger.LogDebug("Detected Telegram API Rate Limit error (429).");
+                 return true;
+             }
+
+             // Handle Flood Control Errors (often returned as 400 Bad Request)
+             // Telegram API documentation primarily states 429 for flood, but it's common
+             // to see 400 with a flood message. Uncomment if you observe this behavior.
+             /*
+             if (ex.ErrorCode == 400 && ex.Message.Contains("flood", StringComparison.OrdinalIgnoreCase))
+             {
+                 _logger.LogDebug("Detected Telegram API Flood Control error (400 with flood message).");
+                 return true;
+             }
+             */
+
+             // Handle Telegram Server-side Errors (5xx)
+             if (ex.ErrorCode >= 500 && ex.ErrorCode < 600)
+             {
+                 _logger.LogDebug("Detected Telegram API Server Error ({ErrorCode}).", ex.ErrorCode);
+                 return true;
+             }
+
+             // Do NOT retry for other errors like 401 (Unauthorized), 404 (Not Found), etc.
+             return false;
+         })
+         .Or<HttpRequestException>() // Handles general network-related errors
+         .Or<TaskCanceledException>() // Handles timeouts if a cancellation token is used or a timeout policy expires
+         .WaitAndRetryAsync(
+             _maxRetries, // Total number of retries
+             retryAttempt =>
+             {
+                 // Exponential backoff with jitter
+                 // Formula: baseDelay * 2^retryAttempt + random_jitter
+                 double delaySeconds = _baseDelay.TotalSeconds * Math.Pow(2, retryAttempt);
+                 // Add a random jitter (e.g., up to 1 second) to spread out retries
+                 double jitter = Random.Shared.NextDouble() * 1.0; // Use Random.Shared for efficiency
+                 return TimeSpan.FromSeconds(delaySeconds + jitter);
+             },
+             onRetry: (exception, timespan, retryCount, context) =>
+             {
+                 // Log the retry attempt for better visibility
+                 string errorMessage = exception switch
+                 {
+                     ApiRequestException apiEx => $"Telegram API ErrorCode {apiEx.ErrorCode}: {apiEx.Message}",
+                     HttpRequestException reqEx => $"HTTP Request Error: {reqEx.Message}",
+                     TaskCanceledException => "Task Canceled (potential timeout)",
+                     _ => "Unknown Error"
+                 };
+
+                 _logger.LogWarning(
+                     exception, // Pass the exception for detailed logging
+                     "Telegram API operation failed: {ErrorMessage}. Retrying attempt {RetryCount}/{MaxRetries} after {Timespan}...",
+                     errorMessage,
+                     retryCount,
+                     _maxRetries,
+                     timespan
+                 );
+             }
+         );
         }
         #endregion
 
@@ -308,7 +371,7 @@ namespace BackgroundTasks.Services
             // --- Configuration: Define business rules for this job ---
             const int freeUserRssHourlyLimit = 20;
             const int vipUserRssHourlyLimit = 100;
-            TimeSpan rssLimitPeriod = TimeSpan.FromHours(1);
+            TimeSpan rssLimitPeriod = TimeSpan.FromMinutes(15);
 
             long targetUserId = -1;
 
@@ -603,25 +666,31 @@ namespace BackgroundTasks.Services
 
             await _telegramApiRetryPolicy.ExecuteAsync(async (ctx) =>
             {
-                _ = !string.IsNullOrWhiteSpace(payload.ImageUrl)
-                    ? await _botClient.SendPhoto(
+                // اگر مقدار ImageUrl داشت، عکس ارسال می‌شود، در غیر این صورت عکس پیش‌فرض از طریق ImageUrlOrDefault ارسال می‌شود
+                if (!string.IsNullOrWhiteSpace(payload.ImageUrlOrDefault))
+                {
+                    await _botClient.SendPhoto(
                         chatId: payload.TargetTelegramUserId,
-                        photo: InputFile.FromUri(payload.ImageUrl),
+                        photo: InputFile.FromUri(payload.ImageUrlOrDefault),
                         caption: payload.MessageText,
                         parseMode: ParseMode.MarkdownV2,
                         replyMarkup: finalKeyboard,
-                        cancellationToken: cancellationToken)
-                    : await _botClient.SendMessage(
+                        cancellationToken: cancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    await _botClient.SendMessage(
                         chatId: payload.TargetTelegramUserId,
                         text: payload.MessageText,
                         parseMode: ParseMode.MarkdownV2,
                         replyMarkup: finalKeyboard,
                         linkPreviewOptions: new LinkPreviewOptions { IsDisabled = true },
-                        cancellationToken: cancellationToken);
+                        cancellationToken: cancellationToken).ConfigureAwait(false);
+                }
             }, pollyContext);
+
             _logger.LogInformation("Notification sent successfully to User {UserId}", payload.TargetTelegramUserId);
         }
-
 
         /// <summary>
         /// Processes and sends a single notification (typically an AI-generated message or signal) to a specified Telegram user.

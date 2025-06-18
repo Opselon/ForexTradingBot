@@ -36,6 +36,7 @@ using Application.Interfaces;
 using Domain.Entities;
 using Shared.Extensions;
 using Shared.Results;
+using System.Xml.Linq;
 
 #endregion
 
@@ -406,14 +407,27 @@ namespace Infrastructure.Services
             _dbRetryPolicy = Policy
                 .Handle<DbException>(ex =>
                 {
-                    if (ex is SqlException sqlEx && (sqlEx.Number == 2627 || sqlEx.Number == 2601))
+                    // Check for specific SQL Server error numbers that are NOT transient.
+                    if (ex is SqlException sqlEx)
                     {
-                        _logger.LogWarning(sqlEx,
-                            "Polly DB Policy: Encountered non-transient SQL error (Unique Constraint/PK Violation, Error {ErrorNumber}). This indicates a data issue, not a transient fault. Will NOT retry.",
-                            sqlEx.Number);
-                        return false;
+                        // Specific error numbers to NOT retry:
+                        // 2627: Unique constraint violation (PK or unique index).
+                        // 2601: Another unique constraint violation.
+                        // 547: Foreign key constraint violation (this is the key addition).
+                        if (sqlEx.Number == 2627 || sqlEx.Number == 2601 || sqlEx.Number == 547)
+                        {
+                            _logger.LogWarning(
+                                sqlEx,
+                                "Polly DB Policy: Encountered non-transient SQL error (Number {ErrorNumber}: {ErrorMessage}). This indicates a data integrity issue, not a transient fault. Will NOT retry.",
+                                sqlEx.Number, sqlEx.Message);
+                            return false; // Do NOT retry for these specific errors.
+                        }
+                        // For other SQL errors, assume they might be transient and allow retries.
+                        _logger.LogWarning(sqlEx, "Polly DB Policy: Encountered SQL error (Number {ErrorNumber}). Assuming transient, will retry.", sqlEx.Number);
+                        return true;
                     }
-                    _logger.LogWarning(ex, "Polly DB Policy: Encountered a transient database exception. Will retry.");
+                    // For non-SQL DbExceptions (e.g., from other DB providers), assume transient and retry.
+                    _logger.LogWarning(ex, "Polly DB Policy: Encountered a general DbException. Assuming transient, will retry.");
                     return true;
                 })
                 .WaitAndRetryAsync(
@@ -1671,37 +1685,211 @@ namespace Infrastructure.Services
         /// </returns>
         private string? ExtractImageUrlWithHtmlAgility(SyndicationItem item, string? summary, string? content)
         {
+            const string methodName = nameof(ExtractImageUrlWithHtmlAgility);
+            _logger.LogTrace("Entering {MethodName} for item '{ItemTitle}'", methodName, item.Title?.Text.Truncate(50));
+
+            // --- Strategy 1: Enhanced media:content (from Media RSS extension) ---
+            var mediaContentUrl = TryExtractFromMediaContent(item);
+            if (!string.IsNullOrWhiteSpace(mediaContentUrl))
+            {
+                _logger.LogDebug("Found image URL via media:content: {ImageUrl}", mediaContentUrl);
+                return mediaContentUrl;
+            }
+
+            // --- Strategy 2: Enclosure links (with image media type) ---
+            var enclosureUrl = TryExtractFromEnclosure(item);
+            if (!string.IsNullOrWhiteSpace(enclosureUrl))
+            {
+                _logger.LogDebug("Found image URL via enclosure: {ImageUrl}", enclosureUrl);
+                return enclosureUrl;
+            }
+
+            // --- Strategy 3: Open Graph meta tags (og:image) in HTML content/summary ---
+            var metaImageUrl = TryExtractFromMetaTags(item, content, summary);
+            if (!string.IsNullOrWhiteSpace(metaImageUrl))
+            {
+                _logger.LogDebug("Found image URL via Open Graph meta tag: {ImageUrl}", metaImageUrl);
+                return metaImageUrl;
+            }
+
+            // --- Strategy 4: Robust HTML <img> tag parsing ---
+            // Prioritize content over summary for image extraction if both contain HTML.
+            var htmlToParse = !string.IsNullOrWhiteSpace(content) ? content : summary;
+            var imageUrlFromHtml = TryExtractFromHtmlImages(item, htmlToParse);
+            if (!string.IsNullOrWhiteSpace(imageUrlFromHtml))
+            {
+                _logger.LogDebug("Found image URL via <img> tag in HTML: {ImageUrl}", imageUrlFromHtml);
+                return imageUrlFromHtml;
+            }
+
+            _logger.LogDebug("No image URL could be extracted from the item '{ItemTitle}'.", item.Title?.Text.Truncate(50));
+            _logger.LogTrace("Exiting {MethodName}", methodName);
+            return null;
+        }
+
+        /// <summary>
+        /// Extracts an image URL from `media:content` extensions in a `SyndicationItem`.
+        /// Checks for `url`, `type="image/*"`, and `medium="image"`. Includes a fallback for URLs that look like images.
+        /// </summary>
+        private string? TryExtractFromMediaContent(SyndicationItem item)
+        {
+            var mediaContents = item.ElementExtensions.Where(e => e.OuterName == "content" && e.OuterNamespace.Contains("media"));
+            foreach (var extension in mediaContents)
+            {
+                try
+                {
+                    var xElement = extension.GetObject<XElement>();
+                    if (xElement == null) continue;
+
+                    var urlAttribute = xElement.Attribute("url");
+                    var typeAttribute = xElement.Attribute("type");
+                    var mediumAttribute = xElement.Attribute("medium");
+
+                    // Prioritize if explicitly marked as image
+                    bool isImage = typeAttribute?.Value?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) == true ||
+                                   mediumAttribute?.Value?.Equals("image", StringComparison.OrdinalIgnoreCase) == true;
+
+                    if (isImage && urlAttribute?.Value != null)
+                    {
+                        var url = urlAttribute.Value;
+                        if (!string.IsNullOrWhiteSpace(url))
+                        {
+                            return MakeUrlAbsolute(item, url);
+                        }
+                    }
+                    else if (urlAttribute?.Value != null && string.IsNullOrWhiteSpace(typeAttribute?.Value) && string.IsNullOrWhiteSpace(mediumAttribute?.Value))
+                    {
+                        // Fallback for media:content if type/medium are missing but url exists.
+                        var url = urlAttribute.Value;
+                        if (!string.IsNullOrWhiteSpace(url) && LooksLikeImageUrl(url)) // <-- USED HERE
+                        {
+                            return MakeUrlAbsolute(item, url);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Error processing media:content extension for item '{ItemTitle}'.", item.Title?.Text.Truncate(50));
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Extracts an image URL from `enclosure` links in a `SyndicationItem`.
+        /// </summary>
+        private string? TryExtractFromEnclosure(SyndicationItem item)
+        {
+            var enclosure = item.Links.FirstOrDefault(l => l.RelationshipType == "enclosure" && l.MediaType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) == true);
+            if (enclosure?.Uri != null)
+            {
+                return MakeUrlAbsolute(item, enclosure.Uri.ToString());
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Extracts an image URL from Open Graph (`og:image`) meta tags within HTML content.
+        /// </summary>
+        private string? TryExtractFromMetaTags(SyndicationItem item, string? content, string? summary)
+        {
+            var htmlToParse = !string.IsNullOrWhiteSpace(content) ? content : summary;
+            if (string.IsNullOrWhiteSpace(htmlToParse)) return null;
+
             try
             {
-                var mediaContent = item.ElementExtensions.FirstOrDefault(e => e.OuterName == "content" && e.OuterNamespace.Contains("media"));
-                if (mediaContent != null)
-                {
-                    var url = mediaContent.GetObject<System.Xml.Linq.XElement>()?.Attribute("url")?.Value;
-                    if (!string.IsNullOrWhiteSpace(url)) return MakeUrlAbsolute(item, url);
-                }
-
-                var enclosure = item.Links.FirstOrDefault(l => l.RelationshipType == "enclosure" && l.MediaType?.StartsWith("image/") == true);
-                if (enclosure?.Uri != null) return enclosure.Uri.ToString();
-
-                var htmlToParse = !string.IsNullOrWhiteSpace(content) ? content : summary;
-                if (string.IsNullOrWhiteSpace(htmlToParse)) return null;
-
                 var doc = new HtmlDocument();
                 doc.LoadHtml(htmlToParse);
 
-                var imgNode = doc.DocumentNode.SelectSingleNode("//img[@src]");
-                var src = imgNode?.GetAttributeValue("src", null);
+                // Look for <meta property="og:image" content="...">
+                var metaNode = doc.DocumentNode.SelectSingleNode("//meta[@property='og:image' and @content]");
+                var src = metaNode?.GetAttributeValue("content", null);
 
-                if (!string.IsNullOrWhiteSpace(src) && !src.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+                if (!string.IsNullOrWhiteSpace(src))
                 {
                     return MakeUrlAbsolute(item, src);
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "An error occurred during image extraction for item '{ItemTitle}'", item.Title?.Text.Truncate(50));
+                _logger.LogWarning(ex, "Error parsing meta tags for image extraction for item '{ItemTitle}'.", item.Title?.Text.Truncate(50));
             }
             return null;
+        }
+
+        /// <summary>
+        /// Extracts an image URL from `<img>` tags within HTML content, trying multiple common attributes (`src`, `data-src`, etc.).
+        /// </summary>
+        private string? TryExtractFromHtmlImages(SyndicationItem item, string? htmlContent)
+        {
+            if (string.IsNullOrWhiteSpace(htmlContent)) return null;
+
+            try
+            {
+                var doc = new HtmlDocument();
+                doc.LoadHtml(htmlContent);
+
+                // XPath to find <img> tags that have a src-like attribute
+                var imgNodes = doc.DocumentNode.SelectNodes("//img[@src or @data-src or @data-original or @data-src-original or @data-lazy-src]");
+
+                if (imgNodes != null)
+                {
+                    foreach (var imgNode in imgNodes)
+                    {
+                        var src = imgNode.GetAttributeValue("src", null) ??
+                                  imgNode.GetAttributeValue("data-src", null) ??
+                                  imgNode.GetAttributeValue("data-original", null) ??
+                                  imgNode.GetAttributeValue("data-src-original", null) ??
+                                  imgNode.GetAttributeValue("data-lazy-src", null);
+
+                        if (!string.IsNullOrWhiteSpace(src) && !src.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+                        {
+                            return MakeUrlAbsolute(item, src);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error parsing <img> tags for image extraction for item '{ItemTitle}'.", item.Title?.Text.Truncate(50));
+            }
+            return null;
+        }
+
+       
+        /// <summary>
+        /// A simple heuristic to check if a string URL *appears* to be an image URL,
+        /// based on common file extensions. This is a fallback and less reliable than Media Type checks.
+        /// </summary>
+        private bool LooksLikeImageUrl(string url) // <-- THIS IS THE METHOD THAT WAS MISSING
+        {
+            if (string.IsNullOrWhiteSpace(url)) return false;
+            try
+            {
+                // Ensure we treat it as a URI to reliably get the path and extension.
+                // Use AbsoluteUri to handle cases where url might be relative but Parse requires Absolute.
+                // If url is already absolute, Uri(url) works. If relative, BaseUri is needed.
+                // Let's try parsing it directly and handle potential exceptions.
+                var uri = new Uri(url, UriKind.Absolute); // Attempt to parse as absolute first.
+
+                var ext = Path.GetExtension(uri.AbsolutePath)?.ToLowerInvariant();
+                return ext switch
+                {
+                    ".jpg" or ".jpeg" or ".png" or ".gif" or ".bmp" or ".webp" or ".svg" => true,
+                    _ => false,
+                };
+            }
+            catch (UriFormatException)
+            {
+                // If it's not a valid URI format, it's definitely not a URL we can process.
+                return false;
+            }
+            catch (Exception ex)
+            {
+                // Catch any other unexpected errors during URL parsing/extension check.
+                _logger.LogWarning(ex, "Unexpected error checking if URL looks like an image: {Url}", url.Truncate(100));
+                return false;
+            }
         }
 
 
@@ -1723,18 +1911,42 @@ namespace Infrastructure.Services
         ///     <item><description>The original (unmodified and still relative) <paramref name="imageUrl"/> <see cref="string"/> if it was a relative URI but could not be resolved to an absolute URI (e.g., no suitable base URI found in the <paramref name="item"/>, or the combination formed an invalid URI).</description></item>
         /// </list>
         /// </returns>
+        /// <summary>
+        /// Attempts to convert a potentially relative URL into an absolute URL using the item's base URI or links.
+        /// It also filters out `data:` URIs, which are embedded images and not external links.
+        /// </summary>
         private string? MakeUrlAbsolute(SyndicationItem item, string? imageUrl)
         {
             if (string.IsNullOrWhiteSpace(imageUrl)) return null;
-            if (Uri.IsWellFormedUriString(imageUrl, UriKind.Absolute)) return imageUrl;
 
+            // Filter out Data URIs immediately
+            if (imageUrl.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogTrace("Filtered out data URI: {ImageUrl}", imageUrl.Truncate(100));
+                return null;
+            }
+
+            // If it's already absolute, return it.
+            if (Uri.IsWellFormedUriString(imageUrl, UriKind.Absolute))
+            {
+                return imageUrl;
+            }
+
+            // Try to resolve relative URLs.
             var baseUri = item.BaseUri ?? item.Links.FirstOrDefault(l => l.Uri?.IsAbsoluteUri == true)?.Uri;
+
             if (baseUri != null && Uri.TryCreate(baseUri, imageUrl, out var absoluteUri))
             {
-                return absoluteUri.ToString();
+                if (absoluteUri.IsAbsoluteUri)
+                {
+                    return absoluteUri.ToString();
+                }
             }
-            return imageUrl;
+
+            _logger.LogWarning("Failed to resolve relative URL '{ImageUrl}' to an absolute URL. BaseUri was potentially '{BaseUri}'.", imageUrl.Truncate(100), baseUri?.ToString());
+            return null; // Return null if it couldn't be made absolute.
         }
+
 
         #endregion
     }

@@ -42,7 +42,7 @@ namespace Application.DTOs.News // ✅ Namespace صحیح
         /// <summary>
         /// The fallback image URL used if no specific image is provided for the news item.
         /// </summary>
-        private const string DefaultImageUrl = "http://localhost:5000/Breaking_News.jpg"; // Example default image path, adjust as needed
+        private const string DefaultImageUrl = "https://i.postimg.cc/3RmJjBjY/Breaking-News.jpg"; // Example default image path, adjust as needed
 
         /// <summary>
         /// The actual image URL that will be used for display. If <see cref="ImageUrl"/> is null or empty,

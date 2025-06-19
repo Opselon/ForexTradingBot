@@ -20,7 +20,7 @@ namespace Application.DTOs.Notifications // ✅ Namespace: Application.DTOs.Noti
         /// <summary>
         /// The fallback image URL used if no specific image is provided in the payload.
         /// </summary>
-        private const string DefaultImageUrl = "http://localhost:5000/Breaking_News.jpg";
+        private const string DefaultImageUrl = "https://i.postimg.cc/3RmJjBjY/Breaking-News.jpg";
 
         /// <summary>
         /// Gets or sets the name of the news item's signal category, used for display purposes in the notification message.

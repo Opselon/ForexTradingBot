@@ -1,4 +1,4 @@
-﻿// using TelegramPanel.Domain.Interfaces; // Or wherever your IUserRepository is
+﻿// using TelegramPanel.Domain.Interfaces;
 using Application.Common.Interfaces;
 using Application.Interfaces;
 using Microsoft.Extensions.Logging;
@@ -6,18 +6,15 @@ using Telegram.Bot.Types;
 using TelegramPanel.Application.Interfaces;
 using TelegramPanel.Infrastructure;
 using static TelegramPanel.Infrastructure.ActualTelegramMessageActions;
-
-// --- FIX: Added using statements for Domain entities and enums ---
-using Domain.Entities;
-using Domain.Enums;
+using Domain.Entities; // Keep this for IUserContext
 
 namespace TelegramPanel.Application.Pipeline
 {
     public class AuthenticationMiddleware : ITelegramMiddleware
     {
         private readonly ILogger<AuthenticationMiddleware> _logger;
-        private readonly IUserService _userService;         // Returns DTOs
-        private readonly IUserRepository _userRepository;  // Used for both reading and writing
+        private readonly IUserService _userService;
+        private readonly IUserRepository _userRepository;
         private readonly IUserContext _userContext;
         private readonly ITelegramMessageSender _messageSender;
 
@@ -46,84 +43,23 @@ namespace TelegramPanel.Application.Pipeline
             }
 
             var telegramId = telegramUser.Id.ToString();
-            var username = telegramUser.Username ?? telegramUser.FirstName;
 
-            // --- START OF FIX: The /start command logic is now fully handled here ---
+            // --- THE FIX IS HERE ---
+            // The middleware's only job for /start is to let it pass through.
+            // The actual registration is handled by StartCommandHandler.
             if (update.Message?.Text?.StartsWith("/start") == true)
             {
-                _logger.LogInformation("Handling /start command for UserID {UserId} ({Username})", telegramId, username);
-
-                // Step 1: Check if the user is already registered to avoid duplicates.
-                bool userExists = await _userRepository.ExistsByTelegramIdAsync(telegramId, cancellationToken);
-
-                if (userExists)
-                {
-                    _logger.LogInformation("User {UserId} ({Username}) is already registered. Sending welcome back message.", telegramId, username);
-                    await _messageSender.SendTextMessageAsync(
-                        chatId: telegramUser.Id,
-                        text: $"Welcome back, {username}! You are already registered. ✅",
-                        cancellationToken: cancellationToken
-                    ).ConfigureAwait(false);
-                    // Stop processing here; the /start command's job is done.
-                    return;
-                }
-
-                // Step 2: User does not exist, so let's register them.
-                _logger.LogInformation("New user registration started for UserID {UserId} ({Username})", telegramId, username);
-
-                try
-                {
-                    // Create the rich domain entity for the new user
-                    var newUser = new Domain.Entities.User
-                    {
-                        Id = Guid.NewGuid(),
-                        Username = username,
-                        TelegramId = telegramId,
-                        // Use a placeholder email. It's better than null.
-                        Email = $"{username ?? telegramId}@telegram.local",
-                        Level = UserLevel.Free, // Default to Free tier
-                        CreatedAt = DateTime.UtcNow,
-                        UpdatedAt = DateTime.UtcNow,
-                        // Set sensible defaults for notification settings
-                        EnableGeneralNotifications = true,
-                        EnableVipSignalNotifications = false,
-                        EnableRssNewsNotifications = true,
-                        PreferredLanguage = telegramUser.LanguageCode ?? "en"
-                    };
-
-                    // Create and associate a token wallet, as required by the AddAsync logic
-                    newUser.TokenWallet = TokenWallet.Create(newUser.Id);
-
-                    // Step 3: Add the new user to the database
-                    await _userRepository.AddAsync(newUser, cancellationToken);
-                    _logger.LogInformation("Successfully registered new user {UserId} ({Username}) with ID {DomainId}", telegramId, username, newUser.Id);
-
-                    // Step 4: Send a confirmation message
-                    await _messageSender.SendTextMessageAsync(
-                        chatId: telegramUser.Id,
-                        text: $"Welcome, {username}! 🎉 You have been successfully registered.",
-                        cancellationToken: cancellationToken
-                    ).ConfigureAwait(false);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogCritical(ex, "Failed to register new user {UserId} ({Username})", telegramId, username);
-                    await _messageSender.SendTextMessageAsync(
-                        chatId: telegramUser.Id,
-                        text: "🤖 A server error occurred during registration. Please try again later.",
-                        cancellationToken: cancellationToken
-                    ).ConfigureAwait(false);
-                }
-                // Registration is complete, stop pipeline execution for this update.
-                return;
+                _logger.LogInformation("Passing through /start command for UserID {UserId} to the command handler.", telegramId);
+                await next(update, cancellationToken).ConfigureAwait(false);
+                return; // Stop the middleware here after passing the command along.
             }
             // --- END OF FIX ---
 
 
-            // This part handles all OTHER commands for ALREADY REGISTERED users
+            // This logic now ONLY runs for commands OTHER THAN /start.
             try
             {
-                // Use the lightweight DTO check first (good practice)
+                // Lightweight DTO check first
                 var userDto = await _userService.GetUserByTelegramIdAsync(telegramId, cancellationToken).ConfigureAwait(false);
 
                 if (userDto is null)
@@ -137,7 +73,7 @@ namespace TelegramPanel.Application.Pipeline
                     return;
                 }
 
-                // Now fetch the full, rich domain entity to pass to the context
+                // Fetch the full domain entity to populate the context for downstream handlers.
                 var userEntity = await _userRepository.GetByTelegramIdAsync(telegramId, cancellationToken).ConfigureAwait(false);
 
                 if (userEntity is null)
@@ -151,9 +87,7 @@ namespace TelegramPanel.Application.Pipeline
                     return;
                 }
 
-                // Set the current user context for other parts of the application to use
                 _userContext.SetCurrentUser(userEntity);
-
                 _logger.LogInformation("User {UserId} ({Username}) authenticated successfully. Proceeding with pipeline.", userEntity.TelegramId, userEntity.Username);
 
                 await next(update, cancellationToken).ConfigureAwait(false);

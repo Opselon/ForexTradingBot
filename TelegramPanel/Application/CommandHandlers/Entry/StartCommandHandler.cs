@@ -1,5 +1,6 @@
 ﻿// File: TelegramPanel/Application/CommandHandlers/Entry/StartCommandHandler.cs
 
+#region Usings
 using Application.DTOs;              // For RegisterUserDto and UserDto
 using Application.Interfaces;        // For IUserService
 using Microsoft.Extensions.DependencyInjection;
@@ -14,6 +15,12 @@ using TelegramPanel.Application.Interfaces; // For ITelegramCommandHandler
 using TelegramPanel.Formatters;         // For TelegramMessageFormatter
 using TelegramPanel.Infrastructure;
 using static TelegramPanel.Infrastructure.ActualTelegramMessageActions;
+// --- Domain Usings ---
+using Domain.Entities; // For User, TokenWallet
+using Domain.Enums;    // For UserLevel
+// --- Repository Using ---
+using Application.Common.Interfaces; // For IUserRepository
+#endregion
 
 namespace TelegramPanel.Application.CommandHandlers.Entry
 {
@@ -24,6 +31,9 @@ namespace TelegramPanel.Application.CommandHandlers.Entry
         private readonly ITelegramStateMachine? _stateMachine;
         private readonly ITelegramBotClient _botClient;
         private readonly IServiceScopeFactory _scopeFactory;
+
+        // IUserRepository is injected to do a quick existence check before creating entities.
+        private readonly IUserRepository _userRepository;
         private const string ShowMainMenuCallback = "show_main_menu";
 
         public StartCommandHandler(
@@ -31,16 +41,17 @@ namespace TelegramPanel.Application.CommandHandlers.Entry
             ITelegramMessageSender messageSender,
             IServiceScopeFactory scopeFactory,
             ITelegramBotClient botClient,
-            ITelegramStateMachine? stateMachine = null)
+            ITelegramStateMachine? stateMachine = null,
+            IUserRepository userRepository = null)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _messageSender = messageSender ?? throw new ArgumentNullException(nameof(messageSender));
             _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
             _botClient = botClient ?? throw new ArgumentNullException(nameof(botClient));
             _stateMachine = stateMachine;
+            _userRepository = userRepository ?? throw new ArgumentNullException(nameof(userRepository));
         }
 
-        // --- CanHandle, HandleAsync, HandleShowMainMenuCallback, GenerateWelcomeMessageBody methods are all correct and do not need changes. ---
         public bool CanHandle(Update update)
         {
             return update.Type == UpdateType.Message &&
@@ -83,8 +94,6 @@ namespace TelegramPanel.Application.CommandHandlers.Entry
                 var effectiveUsername = !string.IsNullOrWhiteSpace(user.Username) ? user.Username : user.FirstName;
                 var welcomeText = $"🎉 *Welcome back, {TelegramMessageFormatter.EscapeMarkdownV2(effectiveUsername)}!*";
                 var messageBody = GenerateWelcomeMessageBody(welcomeText, isExistingUser: true);
-
-                // Uses the corrected helper method below
                 var keyboard = GetMainMenuKeyboard();
 
                 _ = await _botClient.EditMessageText(
@@ -124,7 +133,6 @@ namespace TelegramPanel.Application.CommandHandlers.Entry
                    "Use the menu below or type /help for more information.";
         }
 
-        // --- The rest of the methods also use GetMainMenuKeyboard, so no further changes are needed in them. ---
         private async Task HandleStartCommand(Message message, CancellationToken cancellationToken)
         {
             var user = message.From!;
@@ -155,11 +163,12 @@ namespace TelegramPanel.Application.CommandHandlers.Entry
                 var userService = scope.ServiceProvider.GetRequiredService<IUserService>();
                 var stateMachine = scope.ServiceProvider.GetService<ITelegramStateMachine>();
                 var messageSender = scope.ServiceProvider.GetRequiredService<ITelegramMessageSender>();
+                var userRepositoryForCheck = scope.ServiceProvider.GetRequiredService<IUserRepository>();
 
                 try
                 {
                     var telegramUserId = user.Id.ToString();
-                    var existingUser = await userService.GetUserByTelegramIdAsync(telegramUserId, cancellationToken);
+                    var existingUser = await userRepositoryForCheck.GetByTelegramIdAsync(telegramUserId, cancellationToken);
 
                     bool isNewRegistration = existingUser == null;
                     string finalUsername;
@@ -175,9 +184,50 @@ namespace TelegramPanel.Application.CommandHandlers.Entry
                             effectiveUsername = $"User_{telegramUserId}";
                         }
 
-                        _ = await userService.RegisterUserAsync(new RegisterUserDto { Username = effectiveUsername, TelegramId = telegramUserId, Email = $"{telegramUserId}@telegram.temp.user" }, cancellationToken);
+                        // --- CONSTRUCT THE USER ENTITY COMPLETELY HERE ---
+                        var userGuid = Guid.NewGuid();
+                        var walletGuid = Guid.NewGuid();
+
+                        var newUserEntityWithWallet = new Domain.Entities.User
+                        {
+                            Id = userGuid,
+                            Username = effectiveUsername,
+                            TelegramId = telegramUserId,
+                            Email = $"{telegramUserId}@telegram.temp.user",
+                            Level = UserLevel.Free,
+                            CreatedAt = DateTime.UtcNow,
+                            UpdatedAt = DateTime.UtcNow,
+                            EnableGeneralNotifications = true,
+                            EnableVipSignalNotifications = false,
+                            EnableRssNewsNotifications = true,
+                            PreferredLanguage = user.LanguageCode ?? "en"
+                        };
+
+                        newUserEntityWithWallet.TokenWallet = new TokenWallet(
+                            walletGuid,
+                            userGuid,
+                            0.0m,
+                            true,
+                            DateTime.UtcNow,
+                            DateTime.UtcNow
+                        );
+                        // --- END OF CONSTRUCTION ---
+
+                        // --- CALL THE USER SERVICE TO REGISTER AND CACHE ---
+                        // The UserService will handle adding to the DB and then populating the Redis cache.
+                        await userService.RegisterUserAsync(
+                            new RegisterUserDto
+                            {
+                                Username = newUserEntityWithWallet.Username,
+                                TelegramId = newUserEntityWithWallet.TelegramId,
+                                Email = newUserEntityWithWallet.Email
+                            },
+                            cancellationToken,
+                            userEntityToRegister: newUserEntityWithWallet
+                        );
+
                         finalUsername = effectiveUsername;
-                        scopedLogger.LogInformation("[BackgroundScope] New user {finalUsername} registered successfully.", finalUsername);
+                        scopedLogger.LogInformation("[BackgroundScope] New user {finalUsername} registered successfully and cached.", finalUsername);
                     }
                     else
                     {
@@ -226,7 +276,6 @@ namespace TelegramPanel.Application.CommandHandlers.Entry
                                                $"Hello {TelegramMessageFormatter.EscapeMarkdownV2(username)}! 👋\n\n🌟 *Welcome to the Forex Trading Bot*";
 
             var messageBody = GenerateWelcomeMessageBody(welcomeText, isExistingUser);
-
             var keyboard = GetMainMenuKeyboard();
 
             return messageSender.EditMessageTextAsync(
@@ -238,15 +287,8 @@ namespace TelegramPanel.Application.CommandHandlers.Entry
                 cancellationToken);
         }
 
-        // --- THE ONLY CHANGE IS HERE ---
-        /// <summary>
-        /// Gets the main menu keyboard from the single, centralized source.
-        /// </summary>
-        /// <returns>An InlineKeyboardMarkup for the main menu.</returns>
         private InlineKeyboardMarkup GetMainMenuKeyboard()
         {
-            // Now calls the static method from MenuCommandHandler to get the keyboard.
-            // This ensures any changes to the main menu are reflected here automatically.
             return MenuCommandHandler.GetMainMenuMarkup().keyboard;
         }
     }

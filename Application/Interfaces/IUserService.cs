@@ -1,4 +1,5 @@
-﻿using Application.DTOs; // برای UserDto, RegisterUserDto, UpdateUserDto
+﻿using Application.DTOs;
+using Domain.Entities; // برای UserDto, RegisterUserDto, UpdateUserDto
 
 namespace Application.Interfaces // ✅ Namespace صحیح برای اینترفیس‌های سرویس
 {
@@ -43,7 +44,7 @@ namespace Application.Interfaces // ✅ Namespace صحیح برای اینترف
         /// <param name="registerDto">اطلاعات لازم برای ثبت نام کاربر.</param>
         /// <param name="cancellationToken">توکن برای لغو عملیات.</param>
         /// <returns>UserDto کاربر ایجاد شده.</returns>
-        Task<UserDto> RegisterUserAsync(RegisterUserDto registerDto, CancellationToken cancellationToken = default); // تغییر ورودی به RegisterUserDto
+        Task<UserDto> RegisterUserAsync(RegisterUserDto registerDto, CancellationToken cancellationToken = default, User? userEntityToRegister = null);
 
         /// <summary>
         /// اطلاعات یک کاربر موجود را به‌روزرسانی می‌کند.

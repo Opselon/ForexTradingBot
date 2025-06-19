@@ -7,14 +7,11 @@
     {
         #region Properties
 
-        /// <summary>
-        /// Gets or sets the current balance of the token wallet
-        /// </summary>
+        public Guid Id { get; set; } // <-- ADD THIS PROPERTY
+        public Guid UserId { get; set; }
         public decimal Balance { get; set; }
-
-        /// <summary>
-        /// Gets or sets the last update timestamp of the wallet
-        /// </summary>
+        public bool IsActive { get; set; }
+        public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
 
         #endregion

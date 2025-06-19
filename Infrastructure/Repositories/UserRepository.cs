@@ -150,7 +150,11 @@ namespace Infrastructure.Repositories
                             "UserRepository: Transient database error encountered. Retrying in {TimeSpan} for attempt {RetryAttempt}. Error: {Message}",
                             timeSpan, retryAttempt, exception.Message);
                     });
-            logSanitizer = logSanitizer ?? throw new ArgumentNullException(nameof(logSanitizer));
+
+            // --- THIS IS THE LINE TO CORRECT ---
+            // It should assign the 'logSanitizer' parameter to the '_logSanitizer' class field.
+            _logSanitizer = logSanitizer ?? throw new ArgumentNullException(nameof(logSanitizer));
+            // --- END OF CORRECTION ---
         }
 
         // --- Helper to create a new SqlConnection ---

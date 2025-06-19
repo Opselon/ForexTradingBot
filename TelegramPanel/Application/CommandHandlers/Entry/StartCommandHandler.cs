@@ -253,19 +253,47 @@ namespace TelegramPanel.Application.CommandHandlers.Entry
         private Task<TGBotTypes.Message> SendInitialWelcomeMessageAsync(long chatId, string firstName, CancellationToken cancellationToken)
         {
             var sanitizedFirstName = _logSanitizer.Sanitize(firstName);
-            var welcomeText = $"Hello {TelegramMessageFormatter.EscapeMarkdownV2(sanitizedFirstName)}! 👋\n\n" +
-                              "🌟 *Welcome to the Forex Trading Bot*\n\n" +
-                              "Initializing your profile, please wait...";
-            return _botClient.SendMessage(chatId, welcomeText, parseMode: TGBotTypes.Enums.ParseMode.Markdown, replyMarkup: GetMainMenuKeyboard(), cancellationToken: cancellationToken);
+            // This is the initial "loading" caption.
+            var loadingCaption = $"Hello {TelegramMessageFormatter.EscapeMarkdownV2(sanitizedFirstName)}! 👋\n\n" +
+                                 "🌟 *Welcome to the Forex AI Analyzer*\n\n" +
+                                 "Initializing your profile, please wait...";
+
+            // This creates an InputFile object from the URL you provided.
+            var photoUrl = TGBotTypes.InputFile.FromUri("https://i.postimg.cc/CL8sSt8h/Chat-GPT-Image-Jun-20-2025-01-07-32-AM.png");
+
+            // Use SendPhotoAsync instead of SendMessageAsync
+            return _botClient.SendPhoto(
+                 chatId: chatId,
+                 photo: photoUrl,
+                 caption: loadingCaption, // Text now goes into the 'caption' parameter
+                 parseMode: TGBotTypes.Enums.ParseMode.Markdown,
+                 replyMarkup: GetMainMenuKeyboard(),
+                 cancellationToken: cancellationToken);
         }
 
         private Task EditWelcomeMessageWithDetailsAsync(long chatId, int messageId, string username, bool isExistingUser, ITelegramMessageSender messageSender, CancellationToken cancellationToken)
         {
             var sanitizedUsername = _logSanitizer.Sanitize(username);
-            var welcomeText = isExistingUser ? $"🎉 *Welcome back, {TelegramMessageFormatter.EscapeMarkdownV2(sanitizedUsername)}!*" : $"Hello {TelegramMessageFormatter.EscapeMarkdownV2(sanitizedUsername)}! 👋\n\n🌟 *Welcome to the Forex Trading Bot*";
-            return messageSender.EditMessageTextAsync(chatId, messageId, GenerateWelcomeMessageBody(welcomeText, isExistingUser), parseMode: TGBotTypes.Enums.ParseMode.Markdown, replyMarkup: GetMainMenuKeyboard(), cancellationToken: cancellationToken);
-        }
 
+            // Determine the final welcome header.
+            var welcomeHeader = isExistingUser
+                ? $"🎉 *Welcome back, {TelegramMessageFormatter.EscapeMarkdownV2(sanitizedUsername)}!*"
+                : $"Hello {TelegramMessageFormatter.EscapeMarkdownV2(sanitizedUsername)}! 👋\n\n🌟 *Welcome to the Forex AI Analyzer*";
+
+            // Generate the full message body, which will become the new caption.
+            var finalCaption = GenerateWelcomeMessageBody(welcomeHeader, isExistingUser);
+
+            // --- THIS IS THE FIX ---
+            // Use EditMessageCaptionAsync to change the caption of a message that already has media.
+            // We call _botClient directly as it's guaranteed to have this method.
+            return _botClient.EditMessageCaption(
+                chatId: chatId,
+                messageId: messageId,
+                caption: finalCaption, // The new text goes into the 'caption' parameter
+                parseMode: TGBotTypes.Enums.ParseMode.Markdown,
+                replyMarkup: (InlineKeyboardMarkup)GetMainMenuKeyboard(), // Cast to the correct type
+                cancellationToken: cancellationToken);
+        }
         private string GenerateWelcomeMessageBody(string welcomeHeader, bool isExistingUser) =>
             $"{welcomeHeader}\n\nYour trusted companion for trading signals and market analysis.\n\n📊 *Available Features:*\n• 📈 Real-time alerts & signals\n• 💎 Professional trading tools\n• 📰 In-depth news analysis\n" +
             (isExistingUser ? "• 💼 Portfolio tracking\n• 🔔 Customizable notifications\n\n" : "• 💼 Portfolio tracking\n\n") +

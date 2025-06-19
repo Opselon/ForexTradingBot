@@ -344,7 +344,7 @@ namespace Application.Services
                 // Explicitly add TokenWallet if User.AddAsync doesn't handle it via cascade or if it's managed separately.
                 if (userEntityToRegister.TokenWallet != null)
                 {
-                    await _tokenWalletRepository.AddAsync(userEntityToRegister.TokenWallet, cancellationToken);
+               //     await _tokenWalletRepository.AddAsync(userEntityToRegister.TokenWallet, cancellationToken);
                 }
                 else
                 {

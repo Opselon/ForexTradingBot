@@ -1,295 +1,276 @@
-﻿// File: TelegramPanel/Application/CommandHandlers/Entry/StartCommandHandler.cs
-
-#region Usings
-using Application.DTOs;              // For RegisterUserDto and UserDto
-using Application.Interfaces;        // For IUserService
+﻿#region Usings
+using Application.Common.Interfaces;
+using Application.DTOs;
+using Application.Interfaces;
+// Explicitly use an alias for the domain entity User to avoid conflicts
+using DomainUser = Domain.Entities.User;
+using Domain.Enums;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Shared.Extensions;
+using System.Text.RegularExpressions;
 using Telegram.Bot;
 using Telegram.Bot.Exceptions;
-using Telegram.Bot.Types;
-using Telegram.Bot.Types.Enums;
-using Telegram.Bot.Types.ReplyMarkups;
-using TelegramPanel.Application.CommandHandlers.MainMenu; // For centralized menu
-using TelegramPanel.Application.Interfaces; // For ITelegramCommandHandler
-using TelegramPanel.Formatters;         // For TelegramMessageFormatter
+// Explicitly specify the Telegram.Bot.Types namespace for all its types
+using TGBotTypes = Telegram.Bot.Types;
+using TelegramPanel.Application.CommandHandlers.MainMenu;
+using TelegramPanel.Application.Interfaces;
+using TelegramPanel.Formatters;
 using TelegramPanel.Infrastructure;
 using static TelegramPanel.Infrastructure.ActualTelegramMessageActions;
-// --- Domain Usings ---
-using Domain.Entities; // For User, TokenWallet
-using Domain.Enums;    // For UserLevel
-// --- Repository Using ---
-using Application.Common.Interfaces; // For IUserRepository
+using Domain.Entities;
+using Telegram.Bot.Types.ReplyMarkups;
+using Telegram.Bot.Extensions;
 #endregion
 
 namespace TelegramPanel.Application.CommandHandlers.Entry
 {
+    /// <summary>
+    /// Handles the /start command with a focus on security, scalability, and resilience.
+    /// It uses Redis for distributed locking to prevent race conditions and ensures all user input is sanitized.
+    /// </summary>
     public class StartCommandHandler : ITelegramCommandHandler, ITelegramCallbackQueryHandler
     {
         private readonly ILogger<StartCommandHandler> _logger;
-        private readonly ITelegramMessageSender _messageSender;
-        private readonly ITelegramStateMachine? _stateMachine;
         private readonly ITelegramBotClient _botClient;
         private readonly IServiceScopeFactory _scopeFactory;
-
-        // IUserRepository is injected to do a quick existence check before creating entities.
-        private readonly IUserRepository _userRepository;
+        private readonly ILoggingSanitizer _logSanitizer;
         private const string ShowMainMenuCallback = "show_main_menu";
 
         public StartCommandHandler(
             ILogger<StartCommandHandler> logger,
-            ITelegramMessageSender messageSender,
             IServiceScopeFactory scopeFactory,
             ITelegramBotClient botClient,
-            ITelegramStateMachine? stateMachine = null,
-            IUserRepository userRepository = null)
+            ILoggingSanitizer logSanitizer)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            _messageSender = messageSender ?? throw new ArgumentNullException(nameof(messageSender));
             _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
             _botClient = botClient ?? throw new ArgumentNullException(nameof(botClient));
-            _stateMachine = stateMachine;
-            _userRepository = userRepository ?? throw new ArgumentNullException(nameof(userRepository));
+            _logSanitizer = logSanitizer ?? throw new ArgumentNullException(nameof(logSanitizer));
         }
 
-        public bool CanHandle(Update update)
+        // --- FIX: Explicitly use Telegram.Bot.Types.Update ---
+        public bool CanHandle(TGBotTypes.Update update) =>
+            (update.Type == TGBotTypes.Enums.UpdateType.Message && update.Message?.Text?.Trim().Equals("/start", StringComparison.OrdinalIgnoreCase) == true) ||
+            (update.Type == TGBotTypes.Enums.UpdateType.CallbackQuery && update.CallbackQuery?.Data == ShowMainMenuCallback);
+
+        // --- FIX: Explicitly use Telegram.Bot.Types.Update ---
+        public async Task HandleAsync(TGBotTypes.Update update, CancellationToken cancellationToken = default)
         {
-            return update.Type == UpdateType.Message &&
-                update.Message?.Text?.Trim().Equals("/start", StringComparison.OrdinalIgnoreCase) == true
-                ? true
-                : update.Type == UpdateType.CallbackQuery &&
-                update.CallbackQuery?.Data == ShowMainMenuCallback;
-        }
-
-        public async Task HandleAsync(Update update, CancellationToken cancellationToken = default)
-        {
-            if (update.Type == UpdateType.Message && update.Message?.From != null)
+            switch (update)
             {
-                await HandleStartCommand(update.Message, cancellationToken);
-            }
-            else if (update.Type == UpdateType.CallbackQuery && update.CallbackQuery?.Message != null && update.CallbackQuery.From != null)
-            {
-                await HandleShowMainMenuCallback(update.CallbackQuery, cancellationToken);
-            }
-            else
-            {
-                _logger.LogWarning("StartCommandHandler: Invalid update type or missing data. UpdateID {UpdateId}.", update.Id);
-            }
-        }
-
-        private async Task HandleShowMainMenuCallback(CallbackQuery callbackQuery, CancellationToken cancellationToken)
-        {
-            var message = callbackQuery.Message!;
-            var user = callbackQuery.From;
-            var chatId = message.Chat.Id;
-            var messageId = message.MessageId;
-
-            _logger.LogInformation("Handling '{Callback}' for UserID: {UserId}, editing message {MessageId} to become main menu.",
-                ShowMainMenuCallback, user.Id, messageId);
-
-            try
-            {
-                await _botClient.AnswerCallbackQuery(callbackQuery.Id, cancellationToken: cancellationToken);
-
-                var effectiveUsername = !string.IsNullOrWhiteSpace(user.Username) ? user.Username : user.FirstName;
-                var welcomeText = $"🎉 *Welcome back, {TelegramMessageFormatter.EscapeMarkdownV2(effectiveUsername)}!*";
-                var messageBody = GenerateWelcomeMessageBody(welcomeText, isExistingUser: true);
-                var keyboard = GetMainMenuKeyboard();
-
-                _ = await _botClient.EditMessageText(
-                    chatId: chatId,
-                    messageId: messageId,
-                    text: messageBody,
-                    parseMode: ParseMode.MarkdownV2,
-                    replyMarkup: keyboard,
-                    cancellationToken: cancellationToken
-                );
-
-                if (_stateMachine != null)
-                {
-                    await _stateMachine.ClearStateAsync(user.Id, cancellationToken);
-                }
-            }
-            catch (ApiRequestException apiEx) when (apiEx.Message.Contains("message is not modified"))
-            {
-                _logger.LogInformation("Message {MessageId} was already the main menu. No action taken.", messageId);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error handling '{Callback}' for UserID {UserId}", ShowMainMenuCallback, user.Id);
+                // --- FIX: Explicitly use Telegram.Bot.Types for Message and User ---
+                case { Message: { From: { } user, Chat: { } chat } }:
+                    await HandleStartCommand(user, chat.Id, cancellationToken);
+                    break;
+                // --- FIX: Explicitly use Telegram.Bot.Types for CallbackQuery, User, and Message ---
+                case { CallbackQuery: { From: { } user, Message: { } message } }:
+                    await HandleShowMainMenuCallback(update.CallbackQuery, user, message, cancellationToken);
+                    break;
+                default:
+                    _logger.LogWarning("StartCommandHandler received an update it cannot handle. UpdateID: {UpdateId}", update.Id);
+                    break;
             }
         }
 
-        private string GenerateWelcomeMessageBody(string welcomeHeader, bool isExistingUser)
+        // --- FIX: Explicitly use Telegram.Bot.Types.User ---
+        private async Task HandleStartCommand(TGBotTypes.User telegramUser, long chatId, CancellationToken cancellationToken)
         {
-            return $"{welcomeHeader}\n\n" +
-                   "Your trusted companion for trading signals and market analysis.\n\n" +
-                   "📊 *Available Features:*\n" +
-                   "• 📈 Real-time alerts & signals\n" +
-                   "• 💎 Professional trading tools\n" +
-                   "• 📰 In-depth news analysis\n" +
-                   (isExistingUser ? "• 💼 Portfolio tracking\n• 🔔 Customizable notifications\n\n" :
-                    "• 💼 Portfolio tracking\n\n") +
-                   "Use the menu below or type /help for more information.";
-        }
+            using var scope = _scopeFactory.CreateScope();
+            var cacheService = scope.ServiceProvider.GetRequiredService<ICacheService>();
+            var registrationLockKey = $"lock:register:{telegramUser.Id}";
 
-        private async Task HandleStartCommand(Message message, CancellationToken cancellationToken)
-        {
-            var user = message.From!;
-            var chatId = message.Chat.Id;
-
-            _logger.LogInformation("FAST /start received for UserID: {UserId}. Sending initial generic welcome.", user.Id);
-
-            Message? sentMessage;
-            try
+            string? lockToken = await cacheService.AcquireLockAsync(registrationLockKey, TimeSpan.FromSeconds(30));
+            if (lockToken == null)
             {
-                sentMessage = await SendInitialWelcomeMessageAsync(chatId, user.FirstName, cancellationToken);
-                if (sentMessage == null)
-                {
-                    _logger.LogError("Failed to send initial welcome message and get its ID for UserID {UserId}.", user.Id);
-                    return;
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Could not send initial /start welcome message to UserID {UserId}. Aborting.", user.Id);
+                _logger.LogWarning("Registration for UserID {UserId} is already in progress (lock held). Ignoring duplicate /start request.", telegramUser.Id);
                 return;
             }
 
-            _ = Task.Run(async () =>
+            try
             {
-                using var scope = _scopeFactory.CreateScope();
-                var scopedLogger = scope.ServiceProvider.GetRequiredService<ILogger<StartCommandHandler>>();
-                var userService = scope.ServiceProvider.GetRequiredService<IUserService>();
-                var stateMachine = scope.ServiceProvider.GetService<ITelegramStateMachine>();
-                var messageSender = scope.ServiceProvider.GetRequiredService<ITelegramMessageSender>();
-                var userRepositoryForCheck = scope.ServiceProvider.GetRequiredService<IUserRepository>();
+                var sanitizedFirstName = _logSanitizer.Sanitize(telegramUser.FirstName);
+                _logger.LogInformation("Lock acquired for UserID {UserId}. Sending initial welcome message to {SanitizedFirstName}.", telegramUser.Id, sanitizedFirstName);
+                var sentMessage = await SendInitialWelcomeMessageAsync(chatId, telegramUser.FirstName, cancellationToken);
 
-                try
+                _ = Task.Run(() => ProcessUserRegistrationAsync(telegramUser, sentMessage.MessageId, registrationLockKey, lockToken, cancellationToken), cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to send initial welcome message to UserID {UserId}. Releasing lock.", telegramUser.Id);
+                await cacheService.ReleaseLockAsync(registrationLockKey, lockToken);
+            }
+        }
+
+        // --- FIX: Explicitly use Telegram.Bot.Types.User ---
+        private async Task ProcessUserRegistrationAsync(TGBotTypes.User telegramUser, int messageId, string lockKey, string lockToken, CancellationToken cancellationToken)
+        {
+            long userId = telegramUser.Id;
+
+            using var scope = _scopeFactory.CreateScope();
+            var userService = scope.ServiceProvider.GetRequiredService<IUserService>();
+            var cacheService = scope.ServiceProvider.GetRequiredService<ICacheService>();
+            var messageSender = scope.ServiceProvider.GetRequiredService<ITelegramMessageSender>();
+            var userRepository = scope.ServiceProvider.GetRequiredService<IUserRepository>();
+            var scopedLogger = scope.ServiceProvider.GetRequiredService<ILogger<StartCommandHandler>>();
+            var sanitizedUsernameForLogs = _logSanitizer.Sanitize(telegramUser.Username ?? telegramUser.FirstName);
+
+            try
+            {
+                // --- UPGRADE: CACHE-FIRST STRATEGY ---
+                var userCacheKey = $"user:telegram_id:{userId}";
+                UserDto? cachedUserDto = await cacheService.GetAsync<UserDto>(userCacheKey);
+
+                string finalUsername;
+                bool isNewUser;
+
+                if (cachedUserDto != null)
                 {
-                    var telegramUserId = user.Id.ToString();
-                    var existingUser = await userRepositoryForCheck.GetByTelegramIdAsync(telegramUserId, cancellationToken);
+                    // --- CACHE HIT: FAST PATH FOR EXISTING USERS ---
+                    scopedLogger.LogInformation("User {UserId} ({SanitizedUsername}) found in Redis cache. Skipping database checks.", userId, sanitizedUsernameForLogs);
+                    finalUsername = cachedUserDto.Username;
+                    isNewUser = false; // User is not new
+                }
+                else
+                {
+                    // --- CACHE MISS: PROCEED WITH DATABASE LOGIC ---
+                    scopedLogger.LogInformation("User {UserId} not found in cache. Checking database.", userId);
+                    var userFromDb = await userRepository.GetByTelegramIdAsync(userId.ToString(), cancellationToken);
 
-                    bool isNewRegistration = existingUser == null;
-                    string finalUsername;
-
-                    if (isNewRegistration)
+                    if (userFromDb == null)
                     {
-                        var firstName = user.FirstName ?? "";
-                        var lastName = user.LastName ?? "";
-                        var username = user.Username;
-                        string effectiveUsername = !string.IsNullOrWhiteSpace(username) ? username : $"{firstName} {lastName}".Trim();
-                        if (string.IsNullOrWhiteSpace(effectiveUsername))
-                        {
-                            effectiveUsername = $"User_{telegramUserId}";
-                        }
+                        // User is genuinely new.
+                        scopedLogger.LogInformation("User {UserId} ({SanitizedUsername}) is confirmed new. Proceeding with registration.", userId, sanitizedUsernameForLogs);
+                        var newUserEntity = CreateNewUserEntity(telegramUser);
 
-                        // --- CONSTRUCT THE USER ENTITY COMPLETELY HERE ---
-                        var userGuid = Guid.NewGuid();
-                        var walletGuid = Guid.NewGuid();
-
-                        var newUserEntityWithWallet = new Domain.Entities.User
-                        {
-                            Id = userGuid,
-                            Username = effectiveUsername,
-                            TelegramId = telegramUserId,
-                            Email = $"{telegramUserId}@telegram.temp.user",
-                            Level = UserLevel.Free,
-                            CreatedAt = DateTime.UtcNow,
-                            UpdatedAt = DateTime.UtcNow,
-                            EnableGeneralNotifications = true,
-                            EnableVipSignalNotifications = false,
-                            EnableRssNewsNotifications = true,
-                            PreferredLanguage = user.LanguageCode ?? "en"
-                        };
-
-                        newUserEntityWithWallet.TokenWallet = new TokenWallet(
-                            walletGuid,
-                            userGuid,
-                            0.0m,
-                            true,
-                            DateTime.UtcNow,
-                            DateTime.UtcNow
-                        );
-                        // --- END OF CONSTRUCTION ---
-
-                        // --- CALL THE USER SERVICE TO REGISTER AND CACHE ---
-                        // The UserService will handle adding to the DB and then populating the Redis cache.
+                        // The UserService will save to the DB and then populate the cache.
                         await userService.RegisterUserAsync(
-                            new RegisterUserDto
-                            {
-                                Username = newUserEntityWithWallet.Username,
-                                TelegramId = newUserEntityWithWallet.TelegramId,
-                                Email = newUserEntityWithWallet.Email
-                            },
+                            new RegisterUserDto { Username = newUserEntity.Username, TelegramId = newUserEntity.TelegramId, Email = newUserEntity.Email },
                             cancellationToken,
-                            userEntityToRegister: newUserEntityWithWallet
+                            userEntityToRegister: newUserEntity
                         );
 
-                        finalUsername = effectiveUsername;
-                        scopedLogger.LogInformation("[BackgroundScope] New user {finalUsername} registered successfully and cached.", finalUsername);
+                        finalUsername = newUserEntity.Username;
+                        isNewUser = true;
+                        scopedLogger.LogInformation("User {UserId} ({SanitizedUsername}) registered and cached successfully.", userId, _logSanitizer.Sanitize(finalUsername));
                     }
                     else
                     {
-                        finalUsername = existingUser!.Username;
-                        scopedLogger.LogInformation("[BackgroundScope] Existing user {finalUsername} found.", finalUsername);
-                        if (stateMachine != null)
-                        {
-                            await stateMachine.ClearStateAsync(user.Id, cancellationToken);
-                        }
+                        // User exists in DB but not cache. This is a "warm-up" scenario.
+                        finalUsername = userFromDb.Username;
+                        isNewUser = false;
+                        scopedLogger.LogInformation("Existing user {UserId} ({SanitizedUsername}) found in database. Cache will be populated by UserService.", userId, _logSanitizer.Sanitize(finalUsername));
+                        // We can proactively warm up the cache here as well.
+                        // Note: The UserService's GetUserByTelegramIdAsync already does this, but for clarity:
+                        // var dto = _mapper.Map<UserDto>(userFromDb);
+                        // await cacheService.SetAsync(userCacheKey, dto, TimeSpan.FromHours(1));
                     }
+                }
 
-                    await EditWelcomeMessageWithDetailsAsync(
-                        chatId,
-                        sentMessage.MessageId,
-                        finalUsername,
-                        !isNewRegistration,
-                        messageSender,
-                        cancellationToken);
-                }
-                catch (Exception ex)
+                // This part is now common for all paths.
+                if (!isNewUser)
                 {
-                    scopedLogger.LogError(ex, "[BackgroundScope] Error during user processing or message edit for TelegramID {UserId}.", user.Id);
+                    var stateMachine = scope.ServiceProvider.GetService<ITelegramStateMachine>();
+                    if (stateMachine != null) await stateMachine.ClearStateAsync(userId, cancellationToken);
                 }
-            }, cancellationToken);
+
+                await EditWelcomeMessageWithDetailsAsync(userId, messageId, finalUsername, !isNewUser, messageSender, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                scopedLogger.LogCritical(ex, "A critical, unhandled error occurred during the background registration process for UserID {UserId}.", userId);
+                await messageSender.EditMessageTextAsync(userId, messageId, "An internal server error occurred. Please try again later.", cancellationToken: CancellationToken.None);
+            }
+            finally
+            {
+                await cacheService.ReleaseLockAsync(lockKey, lockToken);
+                scopedLogger.LogTrace("Registration lock for UserID {UserId} released.", userId);
+            }
+        }
+        // --- FIX: Use DomainUser alias and Telegram.Bot.Types.User explicitly ---
+        private DomainUser CreateNewUserEntity(TGBotTypes.User telegramUser)
+        {
+            var telegramUserId = telegramUser.Id.ToString();
+            string effectiveUsername = GetEffectiveUsername(telegramUser);
+            var sanitizedUsername = _logSanitizer.Sanitize(effectiveUsername);
+
+            var userGuid = Guid.NewGuid();
+            var newUser = new DomainUser
+            {
+                Id = userGuid,
+                Username = sanitizedUsername,
+                TelegramId = telegramUserId,
+                Email = $"{telegramUserId}@telegram.placeholder.email",
+                Level = UserLevel.Free,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow,
+                EnableGeneralNotifications = true,
+                EnableVipSignalNotifications = false,
+                EnableRssNewsNotifications = true,
+                PreferredLanguage = SanitizeLanguageCode(telegramUser.LanguageCode)
+            };
+
+            newUser.TokenWallet = new TokenWallet(Guid.NewGuid(), userGuid, 0.0m, true, DateTime.UtcNow, DateTime.UtcNow);
+            return newUser;
         }
 
-        private Task<Message> SendInitialWelcomeMessageAsync(long chatId, string firstName, CancellationToken cancellationToken)
+        // --- FIX: Explicitly use Telegram.Bot.Types.User ---
+        private string GetEffectiveUsername(TGBotTypes.User telegramUser)
         {
-            var welcomeText = $"Hello {TelegramMessageFormatter.EscapeMarkdownV2(firstName)}! 👋\n\n" +
+            string? name = !string.IsNullOrWhiteSpace(telegramUser.Username)
+                ? telegramUser.Username
+                : $"{telegramUser.FirstName} {telegramUser.LastName}".Trim();
+
+            return string.IsNullOrWhiteSpace(name) ? $"User_{telegramUser.Id}" : name;
+        }
+
+        private string SanitizeLanguageCode(string? langCode)
+        {
+            if (string.IsNullOrWhiteSpace(langCode)) return "en";
+            return Regex.IsMatch(langCode, @"^[a-zA-Z]{2}(-[a-zA-Z]{2})?$") ? langCode : "en";
+        }
+
+        // --- FIX: Explicitly use Telegram.Bot.Types for all parameters ---
+        private async Task HandleShowMainMenuCallback(TGBotTypes.CallbackQuery callbackQuery, TGBotTypes.User user, TGBotTypes.Message message, CancellationToken cancellationToken)
+        {
+            _logger.LogInformation("Handling '{Callback}' for UserID: {UserId}", ShowMainMenuCallback, user.Id);
+            try
+            {
+                await _botClient.AnswerCallbackQuery(callbackQuery.Id, cancellationToken: cancellationToken);
+                var effectiveUsername = GetEffectiveUsername(user);
+                var welcomeText = $"🎉 *Welcome back, {TelegramMessageFormatter.EscapeMarkdownV2(effectiveUsername)}!*";
+                var messageBody = GenerateWelcomeMessageBody(welcomeText, isExistingUser: true);
+                var keyboard = GetMainMenuKeyboard();
+                await _botClient.EditMessageText(message.Chat.Id, message.MessageId, messageBody, parseMode: TGBotTypes.Enums.ParseMode.MarkdownV2, replyMarkup: keyboard, cancellationToken: cancellationToken);
+
+                var stateMachine = _scopeFactory.CreateScope().ServiceProvider.GetService<ITelegramStateMachine>();
+                if (stateMachine != null) await stateMachine.ClearStateAsync(user.Id, cancellationToken);
+            }
+            catch (ApiRequestException apiEx) when (apiEx.Message.Contains("message is not modified")) { /* Ignore */ }
+            catch (Exception ex) { _logger.LogError(ex, "Error handling '{Callback}' for UserID {UserId}", ShowMainMenuCallback, user.Id); }
+        }
+
+        private Task<TGBotTypes.Message> SendInitialWelcomeMessageAsync(long chatId, string firstName, CancellationToken cancellationToken)
+        {
+            var sanitizedFirstName = _logSanitizer.Sanitize(firstName);
+            var welcomeText = $"Hello {TelegramMessageFormatter.EscapeMarkdownV2(sanitizedFirstName)}! 👋\n\n" +
                               "🌟 *Welcome to the Forex Trading Bot*\n\n" +
                               "Initializing your profile, please wait...";
-
-            var keyboard = GetMainMenuKeyboard();
-
-            return _botClient.SendMessage(
-                 chatId: chatId,
-                 text: welcomeText,
-                 parseMode: ParseMode.Markdown,
-                 replyMarkup: keyboard,
-                 cancellationToken: cancellationToken);
+            return _botClient.SendMessage(chatId, welcomeText, parseMode: TGBotTypes.Enums.ParseMode.Markdown, replyMarkup: GetMainMenuKeyboard(), cancellationToken: cancellationToken);
         }
 
         private Task EditWelcomeMessageWithDetailsAsync(long chatId, int messageId, string username, bool isExistingUser, ITelegramMessageSender messageSender, CancellationToken cancellationToken)
         {
-            var welcomeText = isExistingUser ? $"🎉 *Welcome back, {TelegramMessageFormatter.EscapeMarkdownV2(username)}!*" :
-                                               $"Hello {TelegramMessageFormatter.EscapeMarkdownV2(username)}! 👋\n\n🌟 *Welcome to the Forex Trading Bot*";
-
-            var messageBody = GenerateWelcomeMessageBody(welcomeText, isExistingUser);
-            var keyboard = GetMainMenuKeyboard();
-
-            return messageSender.EditMessageTextAsync(
-                chatId,
-                messageId,
-                messageBody,
-                ParseMode.Markdown,
-                keyboard,
-                cancellationToken);
+            var sanitizedUsername = _logSanitizer.Sanitize(username);
+            var welcomeText = isExistingUser ? $"🎉 *Welcome back, {TelegramMessageFormatter.EscapeMarkdownV2(sanitizedUsername)}!*" : $"Hello {TelegramMessageFormatter.EscapeMarkdownV2(sanitizedUsername)}! 👋\n\n🌟 *Welcome to the Forex Trading Bot*";
+            return messageSender.EditMessageTextAsync(chatId, messageId, GenerateWelcomeMessageBody(welcomeText, isExistingUser), parseMode: TGBotTypes.Enums.ParseMode.Markdown, replyMarkup: GetMainMenuKeyboard(), cancellationToken: cancellationToken);
         }
 
-        private InlineKeyboardMarkup GetMainMenuKeyboard()
-        {
-            return MenuCommandHandler.GetMainMenuMarkup().keyboard;
-        }
+        private string GenerateWelcomeMessageBody(string welcomeHeader, bool isExistingUser) =>
+            $"{welcomeHeader}\n\nYour trusted companion for trading signals and market analysis.\n\n📊 *Available Features:*\n• 📈 Real-time alerts & signals\n• 💎 Professional trading tools\n• 📰 In-depth news analysis\n" +
+            (isExistingUser ? "• 💼 Portfolio tracking\n• 🔔 Customizable notifications\n\n" : "• 💼 Portfolio tracking\n\n") +
+            "Use the menu below or type /help for more information.";
+
+        private InlineKeyboardMarkup GetMainMenuKeyboard() => MenuCommandHandler.GetMainMenuMarkup().keyboard;
     }
 }

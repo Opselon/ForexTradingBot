@@ -548,41 +548,71 @@ namespace Infrastructure.Repositories
             return System.Text.RegularExpressions.Regex.Replace(input, @"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", "[REDACTED_EMAIL]");
         }
 
-        /// <inheritdoc />
+        // In Infrastructure/Persistence/Repositories/UserRepository.cs
+
         /// <summary>
-        /// Adds a new user and their associated entities to the database within a single,
-        /// resilient transaction. All logging is sanitized to prevent PII exposure.
+        /// Atomically adds a new user and their associated token wallet to the database using a single,
+        /// efficient, and resilient Dapper transaction. This method is designed for high performance
+        /// and data integrity, with comprehensive, sanitized logging.
         /// </summary>
-        /// <inheritdoc />
         public async Task AddAsync(User user, CancellationToken cancellationToken = default)
         {
+            // --- 1. Input Validation & Security ---
             if (user == null)
             {
                 _logger.LogError("UserRepository: Attempted to add a null User object.");
                 throw new ArgumentNullException(nameof(user));
             }
+            if (user.TokenWallet == null)
+            {
+                _logger.LogError("UserRepository: Attempted to add a User with a null TokenWallet. UserID for logging: {UserId}", user.Id);
+                throw new InvalidOperationException("A User entity must have an associated TokenWallet for registration.");
+            }
+            if (user.Id != user.TokenWallet.UserId)
+            {
+                _logger.LogError("Data integrity violation: User.Id ({UserId}) does not match TokenWallet.UserId ({WalletUserId}).", user.Id, user.TokenWallet.UserId);
+                throw new InvalidOperationException("User ID and TokenWallet User ID must match for a new user.");
+            }
 
-            // HARDENING: Sanitize all potentially sensitive properties upfront for consistent and safe logging.
             var sanitizedUsername = _logSanitizer.Sanitize(user.Username);
             var sanitizedEmail = _logSanitizer.Sanitize(user.Email);
 
-            _logger.LogInformation("UserRepository: Adding new user. Username: {SanitizedUsername}, Email: {SanitizedEmail}.",
-                                    sanitizedUsername,
-                                    sanitizedEmail);
+            _logger.LogInformation("UserRepository: Preparing to add new user '{SanitizedUsername}' with Email '{SanitizedEmail}'.",
+                                   sanitizedUsername, sanitizedEmail);
+
+            // --- 2. Combined SQL for Efficiency ---
+            // Combine both INSERT statements into a single command text.
+            // This reduces network latency by sending one command to the database instead of two.
+            const string insertSql = @"
+        -- Statement 1: Insert the User
+        INSERT INTO Users (Id, Username, TelegramId, Email, Level, CreatedAt, UpdatedAt, EnableGeneralNotifications, EnableVipSignalNotifications, EnableRssNewsNotifications, PreferredLanguage)
+        VALUES (@UserId, @Username, @TelegramId, @Email, @Level, @CreatedAt, @UpdatedAt, @EnableGeneralNotifications, @EnableVipSignalNotifications, @EnableRssNewsNotifications, @PreferredLanguage);
+
+        -- Statement 2: Insert the TokenWallet
+        INSERT INTO TokenWallets (Id, UserId, Balance, IsActive, CreatedAt, UpdatedAt)
+        VALUES (@TokenWalletId, @UserId, @Balance, @IsActive, @TokenWalletCreatedAt, @TokenWalletUpdatedAt);
+    ";
+
             try
             {
-                await _retryPolicy.ExecuteAsync(async () =>
+                // --- 3. Polly Resilience Policy ---
+                // Execute the entire transaction within the retry policy.
+                // If a transient error occurs, the whole transaction will be rolled back and retried.
+                await _retryPolicy.ExecuteAsync(async (ct) =>
                 {
-                    using var connection = CreateConnection();
-                    await connection.OpenAsync(cancellationToken);
-                    using var transaction = connection.BeginTransaction();
+                    await using var connection = CreateConnection();
+                    await connection.OpenAsync(ct);
+                    await using var transaction = await connection.BeginTransactionAsync(ct);
 
                     try
                     {
-                        // Insert User (using the original, unsanitized data for persistence)
-                        var userParams = new
+                        // --- 4. Parameterization for Security ---
+                        // Create a single anonymous object with all required parameters.
+                        // Use distinct names for properties that exist in both tables (e.g., Id, CreatedAt).
+                        var parameters = new
                         {
-                            user.Id,
+                            // User Parameters
+                            UserId = user.Id,
                             user.Username,
                             user.TelegramId,
                             user.Email,
@@ -592,58 +622,51 @@ namespace Infrastructure.Repositories
                             user.EnableGeneralNotifications,
                             user.EnableVipSignalNotifications,
                             user.EnableRssNewsNotifications,
-                            user.PreferredLanguage
+                            user.PreferredLanguage,
+
+                            // TokenWallet Parameters (with distinct names where necessary)
+                            TokenWalletId = user.TokenWallet.Id,
+                            user.TokenWallet.Balance,
+                            user.TokenWallet.IsActive,
+                            TokenWalletCreatedAt = user.TokenWallet.CreatedAt,
+                            TokenWalletUpdatedAt = user.TokenWallet.UpdatedAt
                         };
-                        await connection.ExecuteAsync(@"
-                    INSERT INTO Users (Id, Username, TelegramId, Email, Level, CreatedAt, UpdatedAt, EnableGeneralNotifications, EnableVipSignalNotifications, EnableRssNewsNotifications, PreferredLanguage)
-                    VALUES (@Id, @Username, @TelegramId, @Email, @Level, @CreatedAt, @UpdatedAt, @EnableGeneralNotifications, @EnableVipSignalNotifications, @EnableRssNewsNotifications, @PreferredLanguage);",
-                            userParams, transaction: transaction);
 
-                        // Insert TokenWallet if it exists
-                        if (user.TokenWallet != null)
-                        {
-                            var walletParams = new
-                            {
-                                user.TokenWallet.Id,
-                                user.TokenWallet.UserId,
-                                user.TokenWallet.Balance,
-                                user.TokenWallet.IsActive,
-                                user.TokenWallet.CreatedAt,
-                                user.TokenWallet.UpdatedAt
-                            };
-                            await connection.ExecuteAsync(@"
-                        INSERT INTO TokenWallets (Id, UserId, Balance, IsActive, CreatedAt, UpdatedAt)
-                        VALUES (@Id, @UserId, @Balance, @IsActive, @CreatedAt, @UpdatedAt);",
-                                walletParams, transaction: transaction);
-                        }
+                        // --- 5. Atomic Execution ---
+                        // Execute the combined SQL command within the transaction.
+                        await connection.ExecuteAsync(insertSql, parameters, transaction);
 
-                        transaction.Commit();
+                        // If both inserts succeed without error, commit the transaction.
+                        await transaction.CommitAsync(ct);
                     }
                     catch (Exception ex)
                     {
-                        transaction.Rollback();
-                        // HARDENING: The re-thrown exception message uses sanitized data to prevent leaking PII up the call stack.
-                        throw new RepositoryException($"Failed to add user '{sanitizedUsername}' with Dapper transaction.", ex);
-                    }
-                });
+                        // If any error occurs (e.g., primary key violation, db connection lost),
+                        // roll back the entire transaction.
+                        await transaction.RollbackAsync(ct);
+                        _logger.LogError(ex, "Transaction failed for user '{SanitizedUsername}'. Rolling back.", sanitizedUsername);
 
-                _logger.LogInformation("UserRepository: Successfully added user: {SanitizedUsername}", sanitizedUsername);
+                        // Wrap in a specific repository exception to be caught by the outer block.
+                        throw new RepositoryException($"Dapper transaction failed for user '{sanitizedUsername}'.", ex);
+                    }
+                }, cancellationToken);
+
+                _logger.LogInformation("UserRepository: Successfully added user '{SanitizedUsername}' and their wallet.", sanitizedUsername);
             }
-            catch (RepositoryException dbEx) // Catch the wrapped DB errors
+            catch (RepositoryException dbEx) // Catch our specific, wrapped exceptions
             {
-                // HARDENING: Sanitize the raw exception message itself before logging.
-                _logger.LogError(dbEx, "UserRepository: Error adding user {SanitizedUsername} to the database after retries. Exception (Sanitized): {SanitizedException}",
-                    sanitizedUsername, _logSanitizer.Sanitize(dbEx.Message));
+                _logger.LogError(dbEx, "UserRepository: A database error occurred while adding user '{SanitizedUsername}' after retries. Exception (Sanitized): {SanitizedException}",
+                    sanitizedUsername, _logSanitizer.Sanitize(dbEx.GetBaseException().Message));
+                // Re-throw the original exception to the service layer for handling.
                 throw;
             }
-            catch (Exception ex) // Catch any other unexpected errors
+            catch (Exception ex) // Catch any other unexpected errors (e.g., from Polly itself)
             {
-                _logger.LogError(ex, "UserRepository: An unexpected error occurred while adding user {SanitizedUsername}. Exception (Sanitized): {SanitizedException}",
+                _logger.LogCritical(ex, "UserRepository: An unexpected critical error occurred while adding user '{SanitizedUsername}'. Exception (Sanitized): {SanitizedException}",
                     sanitizedUsername, _logSanitizer.Sanitize(ex.Message));
                 throw;
             }
         }
-
         /// <inheritdoc />
         public async Task UpdateAsync(User user, CancellationToken cancellationToken = default)
         {

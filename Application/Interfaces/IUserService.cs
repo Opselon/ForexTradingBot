@@ -17,6 +17,8 @@ namespace Application.Interfaces // ✅ Namespace صحیح برای اینترف
         /// <returns>UserDto در صورت یافتن؛ در غیر این صورت null.</returns>
         Task<UserDto?> GetUserByTelegramIdAsync(string telegramId, CancellationToken cancellationToken = default);
 
+
+
         /// <summary>
         /// تمام کاربران را به صورت ناهمزمان برمی‌گرداند.
         /// </summary>

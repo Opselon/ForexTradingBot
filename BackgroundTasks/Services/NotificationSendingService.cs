@@ -368,122 +368,104 @@ namespace BackgroundTasks.Services
         [AutomaticRetry(Attempts = 3)]
         public async Task ProcessNotificationFromCacheAsync(Guid newsItemId, string userListCacheKey, int userIndex)
         {
-            // --- Configuration: Define business rules for this job ---
             const int freeUserRssHourlyLimit = 20;
             const int vipUserRssHourlyLimit = 100;
             TimeSpan rssLimitPeriod = TimeSpan.FromMinutes(15);
-
             long targetUserId = -1;
 
-            using IDisposable? logScope = _logger.BeginScope(new Dictionary<string, object?>
-            {
-                ["NewsItemId"] = newsItemId,
-                ["UserIndex"] = userIndex,
-                ["CacheKey"] = userListCacheKey
-            });
+            using IDisposable? logScope = _logger.BeginScope(new Dictionary<string, object?> { ["NewsItemId"] = newsItemId, ["UserIndex"] = userIndex, ["CacheKey"] = userListCacheKey });
 
             try
             {
-                // STEP 1: Retrieve User ID from Redis (No change here)
                 RedisValue serializedUserIds = await _redisDb.StringGetAsync(userListCacheKey);
                 if (!serializedUserIds.HasValue || serializedUserIds.IsNullOrEmpty)
                 {
-                    _logger.LogError("Job aborted: Cache key not found or empty. It may have expired or was never set.");
+                    _logger.LogError("Job aborted: Cache key {CacheKey} not found or empty.", userListCacheKey);
                     return;
                 }
-
                 List<long>? allUserIds = JsonSerializer.Deserialize<List<long>>(serializedUserIds.ToString());
                 if (allUserIds == null || userIndex >= allUserIds.Count)
                 {
-                    _logger.LogError("Job aborted: User index is out of bounds for the cached list (Size: {ListSize}).", allUserIds?.Count ?? 0);
+                    _logger.LogError("Job aborted: User index {UserIndex} is out of bounds for the list (Size: {ListSize}).", userIndex, allUserIds?.Count ?? 0);
                     return;
                 }
-
                 targetUserId = allUserIds[userIndex];
                 _logger.LogInformation("Processing job for UserID: {TargetUserId}", targetUserId);
 
-                // STEP 2: Fetch user profile (No change here)
                 Application.DTOs.UserDto? userDto = await _userService.GetUserByTelegramIdAsync(targetUserId.ToString(), CancellationToken.None);
                 if (userDto == null)
                 {
-                    _logger.LogWarning("Job skipped: User {TargetUserId} was in the dispatch cache but no longer exists in the database.", targetUserId);
+                    _logger.LogWarning("Job skipped: User {TargetUserId} no longer exists.", targetUserId);
                     return;
                 }
 
-                // --- START OF LOGIC CHANGE ---
-
-                // STEP 3: REVISED RATE LIMIT CHECK
-                // First, we CHECK if the user is ALREADY over their limit WITHOUT incrementing the counter.
-                int applicableLimit = (userDto.Level is UserLevel.Platinum or UserLevel.Bronze)
-                    ? vipUserRssHourlyLimit
-                    : freeUserRssHourlyLimit;
-
-                // NOTE: This uses the new method that only checks, it does not increment.
+                int applicableLimit = (userDto.Level is UserLevel.Platinum or UserLevel.Bronze) ? vipUserRssHourlyLimit : freeUserRssHourlyLimit;
                 if (await _rateLimiter.IsUserAtOrOverLimitAsync(targetUserId, applicableLimit, rssLimitPeriod))
                 {
-                    _logger.LogInformation("SKIP: User {TargetUserId} (Level: {UserLevel}) has already met the hourly RSS limit of {Limit}. No action taken.",
-                        targetUserId, userDto.Level, applicableLimit);
-                    return; // This is a successful stop, the user is correctly rate-limited.
+                    _logger.LogInformation("SKIP: User {TargetUserId} has met the rate limit of {Limit}.", targetUserId, applicableLimit);
+                    return;
                 }
 
-                // STEP 4: Fetch news item (No change here)
                 NewsItem? newsItem = await _newsItemRepository.GetByIdAsync(newsItemId, CancellationToken.None);
                 if (newsItem == null)
                 {
-                    _logger.LogError("Job failed: NewsItem with ID {NewsItemId} could not be found.", newsItemId);
+                    _logger.LogError("Job failed: NewsItem {NewsItemId} not found.", newsItemId);
                     throw new InvalidOperationException($"NewsItem {newsItemId} not found.");
                 }
 
-                // STEP 5: Build payload (No change here)
                 NotificationJobPayload payload = new()
                 {
                     TargetTelegramUserId = targetUserId,
-                    MessageText = BuildMessageText(newsItem),
+                    MessageText = EscapeTelegramMarkdownV2(BuildMessageText(newsItem)),
                     UseMarkdown = true,
                     ImageUrl = newsItem.ImageUrl,
                     Buttons = BuildSimpleNotificationButtons(newsItem),
                     NewsItemId = newsItemId
                 };
 
-                // STEP 6: Attempt to send the notification to Telegram.
                 await SendToTelegramAsync(payload, CancellationToken.None);
 
-                // STEP 7: --- NEW --- INCREMENT THE COUNTER ON SUCCESS
-                // This code is only reached if SendToTelegramAsync did NOT throw an exception.
-                // We now increment the user's usage count.
                 await _rateLimiter.IncrementUsageAsync(targetUserId, rssLimitPeriod);
-                _logger.LogTrace("Rate limit counter incremented for user {UserId} after successful send.", targetUserId);
-
-                // --- END OF LOGIC CHANGE ---
+                _logger.LogTrace("Rate limit counter incremented for user {UserId}.", targetUserId);
             }
-            catch (Exception ex)
+            catch (ApiRequestException apiEx)
             {
-                bool isTransient = IsTransientException(ex); // Helper method to check exception type
-                if (isTransient)
+                if (apiEx.ErrorCode >= 400 && apiEx.ErrorCode < 500)
                 {
-                    _logger.LogError(ex, "Transient failure during cached notification job for User {TargetUserId}. Retrying via Hangfire. Rate limit was not incremented.", targetUserId);
+                    _logger.LogCritical(apiEx, "PERMANENT Telegram API failure for User {TargetUserId}. ErrorCode: {ErrorCode}. Job will NOT be retried.", targetUserId, apiEx.ErrorCode);
+                    // We DON'T re-throw, which tells Hangfire the job is "complete" and stops the retry loop.
                 }
                 else
                 {
-                    _logger.LogCritical(ex, "Fatal failure during cached notification job for User {TargetUserId}. Rate limit was not incremented.", targetUserId);
-                }
-                // Always re-throw so Hangfire processes the exception state (either retrying or failing)
-                throw;
-
-                // Helper method (example) - you need to define what constitutes a transient error
-                bool IsTransientException(Exception e)
-                {
-                    // Check for specific DB exceptions (e.g., SqlException transient error codes)
-                    if (e is SqlException sqlEx && (sqlEx.Number == 4060 || sqlEx.Number == 18456)) return true; // Example SQL errors
-                                                                                                                 // Check for specific Telegram API errors (e.g., gateway timeout) - requires knowing ApiRequestException details
-                    if (e is ApiRequestException apiEx && apiEx.ErrorCode >= 500) return true; // Example: treat 5xx as transient
-                                                                                               // Check for network errors
-                    if (e is System.Net.Sockets.SocketException) return true;
-                    // ... add other known transient exceptions ...
-                    return false;
+                    _logger.LogError(apiEx, "TRANSIENT Telegram API failure for User {TargetUserId}. ErrorCode: {ErrorCode}. Hangfire will retry.", targetUserId, apiEx.ErrorCode);
+                    throw; // Re-throw to let Hangfire handle the retry for transient errors (5xx).
                 }
             }
+            catch (Exception ex)
+            {
+                _logger.LogCritical(ex, "FATAL non-API failure during job for User {TargetUserId}. Hangfire will retry.", targetUserId);
+                throw; // Always re-throw for Hangfire to process.
+            }
         }
+        /// <summary>
+        /// Escapes characters in a string that are reserved in Telegram's MarkdownV2 format.
+        /// </summary>
+        /// <param name="text">The raw text to escape.</param>
+        /// <returns>A string safe to be sent with ParseMode.MarkdownV2.</returns>
+        private string EscapeTelegramMarkdownV2(string text)
+        {
+            // List of characters that need to be escaped in MarkdownV2
+            var specialChars = new[] { "_", "*", "[", "]", "(", ")", "~", "`", ">", "#", "+", "-", "=", "|", "{", "}", ".", "!" };
+
+            // Use StringBuilder for efficient string manipulation
+            var sb = new StringBuilder(text);
+            foreach (var specialChar in specialChars)
+            {
+                sb.Replace(specialChar, "\\" + specialChar);
+            }
+            return sb.ToString();
+        }
+
 
         #region Private Helpers
         /// <summary>

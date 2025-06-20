@@ -105,11 +105,7 @@ namespace Infrastructure.Services
                     3 => Microsoft.Extensions.Logging.LogLevel.Warning,
                     4 => Microsoft.Extensions.Logging.LogLevel.Error,
                     _ => Microsoft.Extensions.Logging.LogLevel.None,
-                };
-                if (msLevel != Microsoft.Extensions.Logging.LogLevel.None)
-                {
-                    _logger.Log(msLevel, "[WTelegram] {Message}", message);
-                }
+                };           
             };
 
             // Define custom session loader delegate for WTelegramClient.
@@ -189,60 +185,71 @@ namespace Infrastructure.Services
 
             // Configure Polly for resilience (retry policy for network and specific RPC errors).
             _resiliencePipeline = new ResiliencePipelineBuilder()
-                .AddRetry(new RetryStrategyOptions
+        .AddRetry(new RetryStrategyOptions
+        {
+            ShouldHandle = new PredicateBuilder()
+                .Handle<HttpRequestException>()
+                // <<< CHANGE: Added to handle transient network I/O errors.
+                // This directly addresses the critical IOException seen in the logs.
+                .Handle<IOException>()
+                .Handle<RpcException>(rpcEx =>
                 {
-                    ShouldHandle = new PredicateBuilder()
-                        .Handle<HttpRequestException>()
-                        .Handle<RpcException>(rpcEx =>
-                        {
-                            if (rpcEx.Code is >= 500 and < 600)
-                            {
-                                _logger.LogWarning(rpcEx, "Polly: Retrying RPC error {RpcCode} ({RpcMessage}) as it's a server-side error.", rpcEx.Code, rpcEx.Message);
-                                return true;
-                            }
-                            if (rpcEx.Message.Contains("TOO_MANY_REQUESTS", StringComparison.OrdinalIgnoreCase) ||
-                                rpcEx.Message.Contains("FLOOD_WAIT_", StringComparison.OrdinalIgnoreCase))
-                            {
-                                if (rpcEx.Message.StartsWith("FLOOD_WAIT_") &&
-                                    int.TryParse(rpcEx.Message.Substring("FLOOD_WAIT_".Length), out int seconds))
-                                {
-                                    if (seconds > _retryDelays[_retryDelays.Length - 1].TotalSeconds * 2)
-                                    {
-                                        _logger.LogCritical(rpcEx, "Polly: Encountered a FLOOD_WAIT of {Seconds}s, which greatly exceeds max configured retry delay. Aborting retries for this specific error to prevent resource exhaustion.", seconds);
-                                        return false;
-                                    }
-                                    _logger.LogWarning(rpcEx, "Polly: Retrying FLOOD_WAIT of {Seconds}s.", seconds);
-                                    return true;
-                                }
-                                _logger.LogWarning(rpcEx, "Polly: Retrying TOO_MANY_REQUESTS or unknown FLOOD_WAIT type.");
-                                return true;
-                            }
-                            return false;
-                        }),
-                    DelayGenerator = args =>
+                    // Server-side errors (5xx) are often transient and worth retrying.
+                    if (rpcEx.Code is >= 500 and < 600)
                     {
-                        var retryAttempt = args.AttemptNumber;
-                        if (retryAttempt < _retryDelays.Length)
+                        _logger.LogWarning(rpcEx, "Polly: Retrying RPC error {RpcCode} ({RpcMessage}) as it's a server-side error.", rpcEx.Code, rpcEx.Message);
+                        return true;
+                    }
+                    // Rate-limiting and flood control errors are explicitly retry-able.
+                    if (rpcEx.Message.Contains("TOO_MANY_REQUESTS", StringComparison.OrdinalIgnoreCase) ||
+                        rpcEx.Message.Contains("FLOOD_WAIT_", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // For FLOOD_WAIT, we can be smarter. If the wait time is excessive, we should not retry.
+                        if (rpcEx.Message.StartsWith("FLOOD_WAIT_") &&
+                            int.TryParse(rpcEx.Message.Substring("FLOOD_WAIT_".Length), out int seconds))
                         {
-                            var delay = _retryDelays[retryAttempt];
-                            _logger.LogWarning("Polly Retry: Attempt {AttemptNumber} for operation '{OperationKey}'. Delaying for {Delay}ms due to {ExceptionType}. Outcome: {Outcome}.",
-                                retryAttempt + 1, args.Context.OperationKey ?? "N/A", delay.TotalMilliseconds, args.Outcome.Exception?.GetType().Name ?? "N/A", args.Outcome.Result?.ToString() ?? "N/A");
-                            return ValueTask.FromResult<TimeSpan?>(delay);
+                            // Failsafe: If Telegram requests a wait time longer than our max delay, abort.
+                            if (seconds > _retryDelays[^1].TotalSeconds * 2)
+                            {
+                                _logger.LogCritical(rpcEx, "Polly: Encountered a FLOOD_WAIT of {Seconds}s, which greatly exceeds max configured retry delay. Aborting retries for this specific error to prevent resource exhaustion.", seconds);
+                                return false;
+                            }
+                            _logger.LogWarning(rpcEx, "Polly: Retrying FLOOD_WAIT of {Seconds}s.", seconds);
+                            return true;
                         }
-                        _logger.LogWarning("Polly Retry: Attempt {AttemptNumber} for operation '{OperationKey}'. Max retries ({MaxRetries}) reached. No further retries will be attempted.",
-                            retryAttempt + 1, args.Context.OperationKey ?? "N/A", _retryDelays.Length);
-                        return ValueTask.FromResult<TimeSpan?>(null);
-                    },
-                    MaxRetryAttempts = _retryDelays.Length,
-                    OnRetry = args =>
-                    {
-                        _logger.LogWarning(args.Outcome.Exception,
-                            "Polly OnRetry: Operation '{OperationKey}' failed on attempt {AttemptNumber} with exception {ExceptionType}. Next retry will be after delay.",
-                            args.Context.OperationKey ?? "N/A", args.AttemptNumber + 1, args.Outcome.Exception?.GetType().Name ?? "Unknown");
-                        return default;
-                    },
-                })
-                .Build();
+                        _logger.LogWarning(rpcEx, "Polly: Retrying TOO_MANY_REQUESTS or unknown FLOOD_WAIT type.");
+                        return true;
+                    }
+                    // Any other RpcException is considered non-transient (e.g., auth errors, bad requests) and should fail immediately.
+                    return false;
+                }),
+            DelayGenerator = args =>
+            {
+                var retryAttempt = args.AttemptNumber;
+                if (retryAttempt < _retryDelays.Length)
+                {
+                    var delay = _retryDelays[retryAttempt];
+                    // Note: The original log message was slightly confusing. Simplified for clarity.
+                    _logger.LogWarning(args.Outcome.Exception, "Polly Retry: Attempt {AttemptNumber} for '{OperationKey}' failed with {ExceptionType}. Delaying for {Delay}ms.",
+                        retryAttempt + 1, args.Context.OperationKey ?? "N/A", args.Outcome.Exception?.GetType().Name ?? "N/A", delay.TotalMilliseconds);
+                    return ValueTask.FromResult<TimeSpan?>(delay);
+                }
+                _logger.LogWarning("Polly Retry: Max retries ({MaxRetries}) reached for operation '{OperationKey}'. No further retries will be attempted.",
+                    _retryDelays.Length, args.Context.OperationKey ?? "N/A");
+                return ValueTask.FromResult<TimeSpan?>(null); // Stop retrying
+            },
+            MaxRetryAttempts = _retryDelays.Length,
+            OnRetry = args => // OnRetry is useful for metrics or state changes, logging is often better in DelayGenerator
+            {
+                // Logging is already handled well in DelayGenerator, so this could be simplified or used for other side-effects.
+                // For now, keeping it as is for consistency with the original code.
+                _logger.LogTrace(args.Outcome.Exception,
+                    "Polly OnRetry: Triggered for '{OperationKey}' on attempt {AttemptNumber}.",
+                    args.Context.OperationKey ?? "N/A", args.AttemptNumber + 1);
+                return default;
+            },
+        })
+        .Build();
 
             // LEVEL 10: Start channel pipeline if enabled
             if (_useChannelForDispatch)
@@ -893,6 +900,12 @@ namespace Infrastructure.Services
                 IsConnected = true;
             }
             // Level 6: Consistent Error Handling and Logging for broader exceptions.
+            catch (IOException ioEx)
+            {
+                _logger.LogError(ioEx, "ConnectAndLoginAsync: A low-level network I/O error occurred. Inner Exception: {InnerException}. Check network connectivity and firewall rules.", ioEx.InnerException?.Message);
+                IsConnected = false;
+                throw;
+            }
             catch (OperationCanceledException oce)
             {
                 _logger.LogInformation(oce, "ConnectAndLoginAsync: Operation cancelled during connection/login process.");

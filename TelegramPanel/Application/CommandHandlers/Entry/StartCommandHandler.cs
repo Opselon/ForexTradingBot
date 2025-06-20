@@ -293,10 +293,9 @@ namespace TelegramPanel.Application.CommandHandlers.Entry
 
             var photoUrl = TGBotTypes.InputFile.FromUri("https://i.postimg.cc/CL8sSt8h/Chat-GPT-Image-Jun-20-2025-01-07-32-AM.png");
 
-            return _botClient.SendPhoto(
+            return _botClient.SendMessage(
                  chatId: chatId,
-                 photo: photoUrl,
-                 caption: loadingCaption,
+                 text: loadingCaption,
                  parseMode: ParseMode.Markdown,
                  replyMarkup: GetMainMenuKeyboard(),
                  cancellationToken: cancellationToken);
@@ -317,10 +316,10 @@ namespace TelegramPanel.Application.CommandHandlers.Entry
             // --- THIS IS THE FIX ---
             // Use EditMessageCaptionAsync to change the caption of a message that already has media.
             // We call _botClient directly as it's guaranteed to have this method.
-            return messageSender.EditMessageCaptionAsync(
+            return messageSender.EditMessageTextAsync(
                 chatId: chatId,
                 messageId: messageId,
-                caption: finalCaption, // The new text goes into the 'caption' parameter
+                text:finalCaption,
                 parseMode: TGBotTypes.Enums.ParseMode.Markdown,
                 replyMarkup: (InlineKeyboardMarkup)GetMainMenuKeyboard(), // Cast to the correct type
                 cancellationToken: cancellationToken);

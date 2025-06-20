@@ -21,6 +21,13 @@ namespace TelegramPanel.Formatters
         private static readonly Regex _markdownV1EscapeRegex =
        new(@"([_*`\[])", RegexOptions.Compiled);
 
+
+        public static string EscapeMarkdownV1(string text)
+        {
+            return string.IsNullOrEmpty(text) ? string.Empty : _markdownV1EscapeRegex.Replace(text, @"\$1");
+        }
+
+
         /// <summary>
         /// Escapes characters in a plain text string that have special meaning in
         /// Telegram MarkdownV2 syntax symbols or are the escape character itself.

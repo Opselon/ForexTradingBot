@@ -531,6 +531,7 @@ try
             // اگر خطایی رخ دهد، آیا این لاگ را می‌بینید؟
             programLogger.LogCritical(ex, ">>> CRITICAL: FAILED to schedule Hangfire recurring job. <<<");
         }
+
     });
     programLogger.LogInformation("Hangfire recurring jobs registration initiated (will run after application starts).");
     #endregion

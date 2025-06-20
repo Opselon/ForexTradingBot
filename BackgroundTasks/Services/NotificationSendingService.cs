@@ -733,11 +733,11 @@ namespace BackgroundTasks.Services
 
                 await _telegramApiRetryPolicy.ExecuteAsync(async (ctx) =>
                 {
-                    if (!string.IsNullOrWhiteSpace(payload.ImageUrl))
+                    if (!string.IsNullOrWhiteSpace(payload.ImageUrlOrDefault))
                     {
                         await _botClient.SendPhoto(
                             chatId: payload.TargetTelegramUserId,
-                            photo: payload.MessageText,
+                            photo: payload.ImageUrlOrDefault,
                             parseMode: ParseMode.MarkdownV2,
                             replyMarkup: finalKeyboard,
                             cancellationToken: cancellationToken).ConfigureAwait(false);

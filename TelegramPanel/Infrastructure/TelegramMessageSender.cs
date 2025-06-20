@@ -19,6 +19,7 @@ namespace TelegramPanel.Infrastructure
     // =========================================================================
     public interface IActualTelegramMessageActions
     {
+        Task EditMessageCaptionInTelegramAsync(long chatId, int messageId, string caption, ParseMode? parseMode, InlineKeyboardMarkup? replyMarkup, CancellationToken cancellationToken);
         Task CopyMessageToTelegramAsync(long targetChatId, long sourceChatId, int messageId, CancellationToken cancellationToken);
         Task EditMessageTextDirectAsync(long chatId, int messageId, string text, ParseMode? parseMode, InlineKeyboardMarkup? replyMarkup, CancellationToken cancellationToken);
         Task SendTextMessageToTelegramAsync(long chatId, string text, ParseMode? parseMode, ReplyMarkup? replyMarkup, bool disableNotification, LinkPreviewOptions? linkPreviewOptions, CancellationToken cancellationToken);
@@ -132,6 +133,53 @@ namespace TelegramPanel.Infrastructure
                             operationName, chatId, apiErrorCode, timeSpan, retryAttempt, messagePreview, exception.Message);
                     });
         }
+        public async Task EditMessageCaptionInTelegramAsync(long chatId, int messageId, string caption, ParseMode? parseMode, InlineKeyboardMarkup? replyMarkup, CancellationToken cancellationToken)
+        {
+            string sanitizedLogCaption = SanitizeSensitiveData(caption);
+            _logger.LogDebug("Hangfire Job (ActualSend): Editing message caption. ChatID: {ChatId}, MessageID: {MessageId}, Caption (Sanitized): '{SanitizedLogCaption}'", chatId, messageId, sanitizedLogCaption);
+
+            var pollyContext = new Polly.Context($"EditCaption_{chatId}_{messageId}", new Dictionary<string, object>
+        {
+            { "ChatId", chatId },
+            { "MessageId", messageId },
+            { "MessagePreview", sanitizedLogCaption }
+        });
+
+            try
+            {
+                await _telegramApiRetryPolicy.ExecuteAsync(async (context, ct) =>
+                {
+                    // The critical change: call EditMessageCaptionAsync
+                    await _botClient.EditMessageCaption(
+                        chatId: new ChatId(chatId),
+                        messageId: messageId,
+                        caption: caption,
+                        parseMode: parseMode ?? ParseMode.Markdown,
+                        replyMarkup: replyMarkup,
+                        cancellationToken: ct);
+                }, pollyContext, cancellationToken);
+
+                _logger.LogInformation("Hangfire Job (ActualSend): Successfully edited message caption for ChatID {ChatId}, MessageID: {MessageId}", chatId, messageId);
+            }
+            catch (ApiRequestException apiEx) when (apiEx.Message.Contains("message is not modified", StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogDebug("Hangfire Job (ActualSend): Message caption not modified for ChatID {ChatId}, MessageID {MessageId}. Operation skipped.", chatId, messageId);
+            }
+            catch (ApiRequestException apiEx) when (
+                (apiEx.ErrorCode == 400 && (apiEx.Message.Contains("chat not found", StringComparison.OrdinalIgnoreCase) || apiEx.Message.Contains("USER_DEACTIVATED", StringComparison.OrdinalIgnoreCase))) ||
+                (apiEx.ErrorCode == 403 && apiEx.Message.Contains("bot was blocked by the user", StringComparison.OrdinalIgnoreCase))
+            )
+            {
+                _logger.LogWarning(apiEx, "Hangfire Job (ActualSend): Telegram API reported chat not found or user deactivated/blocked (Code: {ApiErrorCode}) for ChatID {ChatId} while editing caption. Attempting user removal.", apiEx.ErrorCode, chatId);
+                // Here you would add the logic to mark the user as unreachable.
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Hangfire Job (ActualSend): Error editing message caption for ChatID {ChatId}, MessageID: {MessageId} after retries. Caption (Sanitized): '{SanitizedLogCaption}'", chatId, messageId, sanitizedLogCaption);
+                throw; // Re-throw to let Hangfire handle the failure.
+            }
+        }
+
         // --- ✅ IMPLEMENT THE NEW METHOD ---
         public async Task CopyMessageToTelegramAsync(long targetChatId, long sourceChatId, int messageId, CancellationToken cancellationToken)
         {
@@ -284,6 +332,9 @@ namespace TelegramPanel.Infrastructure
             }
         }
 
+
+
+
         /// <summary>
         /// 
         /// </summary>
@@ -294,40 +345,66 @@ namespace TelegramPanel.Infrastructure
         /// <param name="replyMarkup"></param>
         /// <param name="cancellationToken"></param>
         /// <returns></returns>
+        /// <summary>
+        /// Intelligently edits a message in Telegram. It first attempts to edit the message text.
+        /// If that fails because the message is a photo/media, it automatically falls back
+        /// to editing the message caption. This provides a single, robust endpoint for all message edits.
+        /// </summary>
         public async Task EditMessageTextInTelegramAsync(long chatId, int messageId, string text, ParseMode? parseMode, InlineKeyboardMarkup? replyMarkup, CancellationToken cancellationToken)
         {
-            // Apply robust sanitization immediately.
+            // Apply robust sanitization immediately for logging.
             string sanitizedLogText = SanitizeSensitiveData(text);
 
-            _logger.LogDebug("Hangfire Job (ActualSend): Editing message. ChatID: {ChatId}, MessageID: {MessageId}, Text (Sanitized): '{SanitizedLogText}'", chatId, messageId, sanitizedLogText);
+            _logger.LogDebug("Hangfire Job (SmartEdit): Editing message. ChatID: {ChatId}, MessageID: {MessageId}, Content (Sanitized): '{SanitizedLogText}'", chatId, messageId, sanitizedLogText);
 
-            var pollyContext = new Polly.Context($"EditMessage_{chatId}_{messageId}", new Dictionary<string, object>
+            var pollyContext = new Polly.Context($"SmartEdit_{chatId}_{messageId}", new Dictionary<string, object>
     {
         { "ChatId", chatId },
         { "MessageId", messageId },
-        { "MessagePreview", sanitizedLogText } // Always use the sanitized version.
+        { "MessagePreview", sanitizedLogText }
     });
 
             try
             {
-                await _telegramApiRetryPolicy.ExecuteAsync(async (context, ct) =>
+                // We will not use the Polly retry policy directly here, because we want to catch the specific
+                // ApiRequestException to implement our fallback logic. We can wrap the whole operation in Polly later if needed.
+
+                try
                 {
+                    // --- ATTEMPT 1: Try to edit as a standard text message. ---
                     await _botClient.EditMessageText(
                         chatId: new ChatId(chatId),
                         messageId: messageId,
                         text: text,
-                        parseMode: ParseMode.Markdown,
+                        parseMode: parseMode ?? ParseMode.Markdown,
                         replyMarkup: replyMarkup,
-                        cancellationToken: ct);
-                }, pollyContext, cancellationToken);
+                        cancellationToken: cancellationToken);
 
-                _logger.LogInformation("Hangfire Job (ActualSend): Successfully edited message for ChatID {ChatId}, MessageID: {MessageId}", chatId, messageId);
+                    _logger.LogInformation("Hangfire Job (SmartEdit): Successfully edited message {MessageId} as TEXT.", messageId);
+                }
+                catch (ApiRequestException apiEx)
+                    when (apiEx.ErrorCode == 400 && apiEx.Message.Contains("there is no text in the message to edit", StringComparison.OrdinalIgnoreCase))
+                {
+                    // --- ATTEMPT 2: The message is a photo/media. Fallback to editing the caption. ---
+                    _logger.LogWarning("Hangfire Job (SmartEdit): Failed to edit message {MessageId} as text. Falling back to edit as caption.", messageId);
+
+                    // Now, try editing the caption instead.
+                    await _botClient.EditMessageCaption(
+                        chatId: new ChatId(chatId),
+                        messageId: messageId,
+                        caption: text, // The same `text` content is now used as the `caption`.
+                        parseMode: parseMode ?? ParseMode.Markdown,
+                        replyMarkup: replyMarkup,
+                        cancellationToken: cancellationToken
+                    );
+
+                    _logger.LogInformation("Hangfire Job (SmartEdit): Successfully edited message {MessageId} as CAPTION.", messageId);
+                }
             }
             catch (ApiRequestException apiEx)
                 when (apiEx.Message.Contains("message is not modified", StringComparison.OrdinalIgnoreCase))
             {
-                // This is not an error, so a simple debug log is sufficient. No sensitive data is in this specific message.
-                _logger.LogDebug("Hangfire Job (ActualSend): Message not modified for ChatID {ChatId}, MessageID {MessageId}. Operation skipped.", chatId, messageId);
+                _logger.LogDebug("Hangfire Job (SmartEdit): Message not modified for ChatID {ChatId}, MessageID {MessageId}. Operation skipped.", chatId, messageId);
             }
             catch (ApiRequestException apiEx)
                 when ((apiEx.ErrorCode == 400 &&
@@ -335,13 +412,13 @@ namespace TelegramPanel.Infrastructure
                         apiEx.Message.Contains("USER_DEACTIVATED", StringComparison.OrdinalIgnoreCase))) ||
                       (apiEx.ErrorCode == 403 && apiEx.Message.Contains("bot was blocked by the user", StringComparison.OrdinalIgnoreCase)))
             {
-                _logger.LogWarning(apiEx, "Hangfire Job (ActualSend): Telegram API reported chat not found or user deactivated/blocked (Code: {ApiErrorCode}) for ChatID {ChatId} while editing message. Attempting user removal.", apiEx.ErrorCode, chatId);
-                // Attempt to remove user (logic omitted for brevity, but would be similar to SendTextMessageAsync)
+                _logger.LogWarning(apiEx, "Hangfire Job (SmartEdit): Telegram API reported user/chat issue for ChatID {ChatId} while editing. Attempting user removal.", chatId);
+                // Add logic to mark user as unreachable here.
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Hangfire Job (ActualSend): Error editing message for ChatID {ChatId}, MessageID: {MessageId} after retries. Text (Sanitized): '{SanitizedLogText}'", chatId, messageId, sanitizedLogText);
-                throw;
+                _logger.LogError(ex, "Hangfire Job (SmartEdit): A critical error occurred while editing message {MessageId} for ChatID {ChatId}. Content (Sanitized): '{SanitizedLogText}'", messageId, chatId, sanitizedLogText);
+                throw; // Re-throw to let Hangfire handle the failure.
             }
         }
 
@@ -455,20 +532,29 @@ namespace TelegramPanel.Infrastructure
                 _logger.LogError(ex, "Hangfire Job (ActualSend): Unexpected error sending photo to ChatID {ChatId} after retries. Caption (Sanitized): '{SanitizedLogCaption}'", chatId, sanitizedLogCaption);
                 throw;
             }
+
+
         }
         // =========================================================================
         // 3. اینترفیس ITelegramMessageSender (بدون تغییر)
         // =========================================================================
+
+
+        // The full namespace and usings for your project would be here.
+        // using Telegram.Bot.Types.Enums;
+        // using Telegram.Bot.Types.ReplyMarkups;
+        // using Telegram.Bot.Types;
+
+        /// <summary>
+        /// Defines the contract for sending and managing messages via the Telegram Bot API.
+        /// Implementations of this interface (e.g., HangfireRelayTelegramMessageSender) will handle
+        /// the actual delivery of these messages, potentially through a background job queue.
+        /// </summary>
         public interface ITelegramMessageSender
         {
-            Task SendPhotoAsync(
-                long chatId,
-                string photoUrlOrFileId,
-                string? caption = null,
-                ParseMode? parseMode = null,
-                ReplyMarkup? replyMarkup = null,
-                CancellationToken cancellationToken = default);
-
+            /// <summary>
+            /// Enqueues a job to send a text message to a specified chat.
+            /// </summary>
             Task SendTextMessageAsync(
                 long chatId,
                 string text,
@@ -477,6 +563,20 @@ namespace TelegramPanel.Infrastructure
                 CancellationToken cancellationToken = default,
                 LinkPreviewOptions? linkPreviewOptions = null);
 
+            /// <summary>
+            /// Enqueues a job to send a photo with an optional caption.
+            /// </summary>
+            Task SendPhotoAsync(
+                long chatId,
+                string photoUrlOrFileId,
+                string? caption = null,
+                ParseMode? parseMode = null,
+                ReplyMarkup? replyMarkup = null,
+                CancellationToken cancellationToken = default);
+
+            /// <summary>
+            /// Enqueues a job to edit the text of an existing message.
+            /// </summary>
             Task EditMessageTextAsync(
                 long chatId,
                 int messageId,
@@ -485,6 +585,22 @@ namespace TelegramPanel.Infrastructure
                 InlineKeyboardMarkup? replyMarkup = null,
                 CancellationToken cancellationToken = default);
 
+            // --- THIS IS THE NEWLY ADDED METHOD ---
+            /// <summary>
+            /// Enqueues a job to edit the caption of an existing message that contains media (e.g., a photo).
+            /// </summary>
+            Task EditMessageCaptionAsync(
+                long chatId,
+                int messageId,
+                string caption,
+                ParseMode? parseMode = null,
+                InlineKeyboardMarkup? replyMarkup = null,
+                CancellationToken cancellationToken = default);
+            // --- END OF NEW METHOD ---
+
+            /// <summary>
+            /// Enqueues a job to answer a callback query, typically to stop the loading animation on a button.
+            /// </summary>
             Task AnswerCallbackQueryAsync(
                 string callbackQueryId,
                 string? text = null,
@@ -493,6 +609,9 @@ namespace TelegramPanel.Infrastructure
                 int cacheTime = 0,
                 CancellationToken cancellationToken = default);
 
+            /// <summary>
+            /// Enqueues a job to delete a message from a chat.
+            /// </summary>
             Task DeleteMessageAsync(
               long chatId,
               int messageId,
@@ -515,6 +634,8 @@ namespace TelegramPanel.Infrastructure
                 _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             }
 
+
+
             public Task DeleteMessageAsync(long chatId, int messageId, CancellationToken cancellationToken = default)
             {
                 _logger.LogDebug("Enqueueing DeleteMessageAsync for ChatID {ChatId}, MsgID {MessageId}", chatId, messageId);
@@ -533,6 +654,8 @@ namespace TelegramPanel.Infrastructure
                 );
                 return Task.CompletedTask;
             }
+
+
 
             public Task EditMessageTextAsync(long chatId, int messageId, string text, ParseMode? parseMode = ParseMode.Markdown, InlineKeyboardMarkup? replyMarkup = null, CancellationToken cancellationToken = default)
             {
@@ -558,6 +681,19 @@ namespace TelegramPanel.Infrastructure
                 _ = _jobScheduler.Enqueue<IActualTelegramMessageActions>(
                     sender => sender.SendPhotoToTelegramAsync(chatId, photoUrlOrFileId, caption, parseMode, replyMarkup, CancellationToken.None)
                 );
+                return Task.CompletedTask;
+            }
+
+            public Task EditMessageCaptionAsync(long chatId, int messageId, string caption, ParseMode? parseMode = null, InlineKeyboardMarkup? replyMarkup = null, CancellationToken cancellationToken = default)
+            {
+                _logger.LogDebug("Enqueueing EditMessageCaptionAsync for ChatID {ChatId}, MsgID {MessageId}", chatId, messageId);
+
+                // Create a background job that calls the *actual* implementation for editing a caption.
+                _jobScheduler.Enqueue<IActualTelegramMessageActions>(
+                    sender => sender.EditMessageCaptionInTelegramAsync(chatId, messageId, caption, parseMode, replyMarkup, CancellationToken.None)
+                );
+
+                // Return immediately, as the job is now in Hangfire's queue.
                 return Task.CompletedTask;
             }
         }

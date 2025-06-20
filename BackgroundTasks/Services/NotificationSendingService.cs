@@ -738,6 +738,7 @@ namespace BackgroundTasks.Services
                         await _botClient.SendPhoto(
                             chatId: payload.TargetTelegramUserId,
                             photo: payload.ImageUrlOrDefault,
+                            caption: payload.MessageText,
                             parseMode: ParseMode.MarkdownV2,
                             replyMarkup: finalKeyboard,
                             cancellationToken: cancellationToken).ConfigureAwait(false);

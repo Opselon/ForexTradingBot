@@ -1104,52 +1104,59 @@ namespace Infrastructure.Services
         /// specifically during connection opening, command execution, or transaction commit/rollback,
         /// and before the operation can complete its work.
         /// </exception>
-        private async Task SaveNewsItemsToDatabaseAsync(List<NewsItem> items, CancellationToken cancellationToken)
+        private async Task SaveNewsItemsToDatabaseAsync(List<NewsItem> itemsToSave, CancellationToken cancellationToken)
         {
             const string methodName = nameof(SaveNewsItemsToDatabaseAsync);
-            _logger.LogTrace("Entering {MethodName} for {ItemCount} items.", methodName, items.Count);
-
-            await _dbRetryPolicy.ExecuteAsync(async () =>
+            if (!itemsToSave.Any())
             {
-                await using var connection = CreateConnection();
-                await connection.OpenAsync(cancellationToken);
-                await using var transaction = connection.BeginTransaction();
-                _logger.LogDebug("Database connection opened and transaction started.");
+                _logger.LogTrace("{MethodName}: No items to save.", methodName);
+                return;
+            }
 
-                try
+            _logger.LogInformation("{MethodName}: Attempting to save {ItemCount} new news items to the database.", methodName, itemsToSave.Count);
+
+            try
+            {
+                // --- V3 UPGRADE: Polly retry policy now wraps the entire transaction logic. ---
+                await _dbRetryPolicy.ExecuteAsync(async (ct) =>
                 {
-                    // SQL INSERT statement modified to include a WHERE NOT EXISTS clause.
-                    // This ensures that a news item is only inserted if no existing item
-                    // has the same Title (case-insensitive) and Summary (case-insensitive, handling NULLs).
-                    // COALESCE(column, '') treats NULLs as empty strings for comparison, ensuring proper matching.
+                    await using var connection = CreateConnection();
+                    await connection.OpenAsync(ct);
+                    await using var transaction = await connection.BeginTransactionAsync(ct);
+                    _logger.LogDebug("Database connection opened and transaction started for batch insert.");
+
+                    // Using a simple, high-performance INSERT statement.
+                    // This assumes that the logic feeding this method has already filtered out duplicates.
+                    // For bulk operations, this is much more efficient than a per-row "NOT EXISTS" check.
                     var sql = @"
-                   INSERT INTO NewsItems (Id, Title, Link, Summary, FullContent, ImageUrl, PublishedDate, CreatedAt, LastProcessedAt, SourceName, SourceItemId, SentimentScore, SentimentLabel, DetectedLanguage, AffectedAssets, RssSourceId, IsVipOnly, AssociatedSignalCategoryId) 
-                   SELECT
-                       @Id, @Title, @Link, @Summary, @FullContent, @ImageUrl, @PublishedDate, @CreatedAt, @LastProcessedAt, @SourceName, @SourceItemId, @SentimentScore, @SentimentLabel, @DetectedLanguage, @AffectedAssets, @RssSourceId, @IsVipOnly, @AssociatedSignalCategoryId
-                   WHERE NOT EXISTS (
-                       SELECT 1
-                       FROM NewsItems AS existing
-                       WHERE LOWER(existing.Title) = LOWER(@Title)
-                         AND COALESCE(LOWER(existing.Summary), '') = COALESCE(LOWER(@Summary), '')
-                   );";
+              INSERT INTO NewsItems (Id, Title, Link, Summary, FullContent, ImageUrl, PublishedDate, CreatedAt, LastProcessedAt, SourceName, SourceItemId, SentimentScore, SentimentLabel, DetectedLanguage, AffectedAssets, RssSourceId, IsVipOnly, AssociatedSignalCategoryId) 
+              VALUES (@Id, @Title, @Link, @Summary, @FullContent, @ImageUrl, @PublishedDate, @CreatedAt, @LastProcessedAt, @SourceName, @SourceItemId, @SentimentScore, @SentimentLabel, @DetectedLanguage, @AffectedAssets, @RssSourceId, @IsVipOnly, @AssociatedSignalCategoryId);";
 
-                    // Dapper's ExecuteAsync when given a list of items will execute the SQL for each item.
-                    // The WHERE NOT EXISTS clause will prevent insertion of duplicates.
-                    var rowsAffected = await connection.ExecuteAsync(sql, items, transaction);
-                    await transaction.CommitAsync(cancellationToken);
-                    _logger.LogInformation("Database save successful. Transaction committed. {RowsAffected} unique items actually inserted.", rowsAffected);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "An error occurred during the database transaction. Rolling back transaction.");
-                    await transaction.RollbackAsync(cancellationToken);
-                    // Re-throw as a custom exception to be handled by the caller.
-                    throw new RepositoryException("Dapper transaction failed during news item save.", ex);
-                }
-            });
+                    // Dapper's ExecuteAsync on a list of objects will efficiently execute the command for each item.
+                    var rowsAffected = await connection.ExecuteAsync(sql, itemsToSave, transaction, commandTimeout: 30); // Added a command timeout
 
-            _logger.LogTrace("Exiting {MethodName}", methodName);
+                    await transaction.CommitAsync(ct);
+
+                    _logger.LogInformation("{MethodName}: Database save successful. Transaction committed. {RowsAffected} rows affected.", methodName, rowsAffected);
+
+                }, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                // --- V3 UPGRADE: This catch block now only executes if ALL Polly retries have failed. ---
+                // This provides the ultimate debugging context.
+                var failedItemIds = string.Join(", ", itemsToSave.Select(i => i.Id));
+                _logger.LogCritical(ex,
+                    "CRITICAL DATABASE FAILURE in {MethodName}: Could not save a batch of {ItemCount} news items after all retries. Batch IDs: [{FailedItemIds}]",
+                    methodName, itemsToSave.Count, failedItemIds);
+
+                // Wrap the specific DB exception in our custom RepositoryException to signal a clear persistence failure.
+                throw new RepositoryException($"A critical and final error occurred while saving news items to the database. See inner exception for details.", ex);
+            }
+
+            _logger.LogTrace("Exiting {MethodName} successfully.", methodName);
         }
+
 
         /// <summary>
         /// Implements the specific business logic for dispatching news notifications based on content characteristics.

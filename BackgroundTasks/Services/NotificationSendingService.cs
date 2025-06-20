@@ -425,7 +425,7 @@ namespace BackgroundTasks.Services
                     TargetTelegramUserId = targetUserId,
                     MessageText = BuildMessageText(newsItem),
                     UseMarkdown = true,
-                    ImageUrl = newsItem.ImageUrl ?? "https://i.postimg.cc/3RmJjBjY/Breaking-News.jpg",
+                    ImageUrl = newsItem.ImageUrl,
                     Buttons = BuildSimpleNotificationButtons(newsItem),
                     NewsItemId = newsItemId
                 };

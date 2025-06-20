@@ -374,6 +374,10 @@ namespace BackgroundTasks.Services
             TimeSpan rssLimitPeriod = TimeSpan.FromMinutes(15);
             long targetUserId = -1;
 
+            // --- THE FIX: Declare 'payload' here with a default value. ---
+            // This makes it accessible in both the 'try' and 'catch' blocks.
+            NotificationJobPayload? payload = null;
+
             using IDisposable? logScope = _logger.BeginScope(new Dictionary<string, object?> { ["NewsItemId"] = newsItemId, ["UserIndex"] = userIndex, ["CacheKey"] = userListCacheKey });
 
             try
@@ -414,12 +418,13 @@ namespace BackgroundTasks.Services
                     throw new InvalidOperationException($"NewsItem {newsItemId} not found.");
                 }
 
-                NotificationJobPayload payload = new()
+                // --- Now we assign the value to the already-declared variable ---
+                payload = new()
                 {
                     TargetTelegramUserId = targetUserId,
                     MessageText = EscapeTelegramMarkdownV2(BuildMessageText(newsItem)),
                     UseMarkdown = true,
-                    ImageUrl = newsItem.ImageUrl,
+                    ImageUrl = newsItem.ImageUrl ?? "https://i.postimg.cc/3RmJjBjY/Breaking-News.jpg",
                     Buttons = BuildSimpleNotificationButtons(newsItem),
                     NewsItemId = newsItemId
                 };
@@ -431,23 +436,45 @@ namespace BackgroundTasks.Services
             }
             catch (ApiRequestException apiEx)
             {
+                // Now 'payload' is accessible here.
+                var sanitizedMessageForLog = EscapeAndTruncate(payload?.MessageText ?? "[payload was not created]");
+
                 if (apiEx.ErrorCode >= 400 && apiEx.ErrorCode < 500)
                 {
-                    _logger.LogCritical(apiEx, "PERMANENT Telegram API failure for User {TargetUserId}. ErrorCode: {ErrorCode}. Job will NOT be retried.", targetUserId, apiEx.ErrorCode);
-                    // We DON'T re-throw, which tells Hangfire the job is "complete" and stops the retry loop.
+                    _logger.LogCritical(apiEx,
+                        "PERMANENT Telegram API failure for User {TargetUserId}. ErrorCode: {ErrorCode}. API Message: '{ApiErrorMessage}'. Job will NOT be retried. Offending Content (Sanitized): '{SanitizedContent}'",
+                        targetUserId,
+                        apiEx.ErrorCode,
+                        apiEx.Message,
+                        sanitizedMessageForLog);
                 }
                 else
                 {
-                    _logger.LogError(apiEx, "TRANSIENT Telegram API failure for User {TargetUserId}. ErrorCode: {ErrorCode}. Hangfire will retry.", targetUserId, apiEx.ErrorCode);
-                    throw; // Re-throw to let Hangfire handle the retry for transient errors (5xx).
+                    _logger.LogError(apiEx,
+                        "TRANSIENT Telegram API failure for User {TargetUserId}. ErrorCode: {ErrorCode}. API Message: '{ApiErrorMessage}'. Hangfire will retry. Offending Content (Sanitized): '{SanitizedContent}'",
+                        targetUserId,
+                        apiEx.ErrorCode,
+                        apiEx.Message,
+                        sanitizedMessageForLog);
+                    throw;
                 }
             }
             catch (Exception ex)
             {
                 _logger.LogCritical(ex, "FATAL non-API failure during job for User {TargetUserId}. Hangfire will retry.", targetUserId);
-                throw; // Always re-throw for Hangfire to process.
+                throw;
             }
         }
+
+        private string EscapeAndTruncate(string text, int maxLength = 200)
+        {
+            if (string.IsNullOrEmpty(text)) return "[empty]";
+            // Basic sanitization: remove newlines and truncate for clean logging.
+            var sanitized = text.Replace("\n", " ").Replace("\r", "");
+            return sanitized.Length <= maxLength ? sanitized : sanitized.Substring(0, maxLength) + "...";
+        }
+
+
         /// <summary>
         /// Escapes characters in a string that are reserved in Telegram's MarkdownV2 format.
         /// </summary>
@@ -667,48 +694,24 @@ namespace BackgroundTasks.Services
 
 
         /// <summary>
-        /// The "last mile" sender responsible for synchronously dispatching the final, AI-generated notification
-        /// payload to a specific user via the Telegram Bot API. This method is the direct interface to Telegram,
-        /// determining the message type (photo with caption or text-only) based on the payload's content.
-        /// It is designed for high reliability, utilizing a configured Polly retry policy to gracefully handle
-        /// transient API errors such as network issues or Telegram's rate limits.
+        /// The "last mile" sender responsible for dispatching the notification payload to Telegram.
+        /// This V3 "God Mode" version centralizes all API error handling, deciding whether an error
+        /// is permanent (and should be swallowed) or transient (and should be retried by Polly).
         /// </summary>
-        /// <remarks>
-        /// The success or failure of this method provides direct feedback on the deliverability of AI-generated content.
-        /// Logs from this method are vital for understanding user reach, API performance, and identifying potential
-        /// issues with the delivery channel, which can in turn inform future AI analysis strategies.
-        /// </remarks>
-        /// <param name="payload">
-        /// The fully constructed <see cref="NotificationJobPayload"/> containing all necessary details for the Telegram message:
-        /// the target user's Telegram ID, the message text (AI-generated summary), an optional image URL (for rich content),
-        /// and any interactive buttons (derived from AI-identified actions or links).
-        /// </param>
-        /// <param name="cancellationToken">
-        /// A <see cref="CancellationToken"/> to monitor for cancellation requests. If cancellation is requested,
-        /// the asynchronous send operation and any pending retries will attempt to terminate gracefully.
-        /// </param>
-        /// <returns>
-        /// A <see cref="Task"/> that represents the asynchronous send operation.
-        /// The task completes successfully (without throwing an exception) once the message has been
-        /// successfully sent to the Telegram API, including any retries handled by the Polly policy.
-        /// Any unhandled exceptions after retries (e.g., permanent API errors like user blocks, or unexpected system errors)
-        /// would typically be caught by an upstream handler (like the Hangfire job) to apply self-healing logic or mark the job as failed.
-        /// </returns>
         private async Task SendToTelegramAsync(NotificationJobPayload payload, CancellationToken cancellationToken)
         {
-            // --- V4 UPGRADE: Use the hardcoded constant for the delay ---
-            if (PerMessageSendDelayMs > 0)
-            {
-                await Task.Delay(PerMessageSendDelayMs, cancellationToken);
-            }
-            // -----------------------------------------------------------
-
-            Context pollyContext = new($"NotificationTo_{payload.TargetTelegramUserId}");
-            InlineKeyboardMarkup? finalKeyboard = BuildTelegramKeyboard(payload.Buttons);
-            var sanitizedMessageForSending = EscapeTelegramMarkdownV2(payload.MessageText);
-
+            // --- V3 UPGRADE: Delay is now inside the try-catch for better context in case of cancellation ---
             try
             {
+                if (PerMessageSendDelayMs > 0)
+                {
+                    await Task.Delay(PerMessageSendDelayMs, cancellationToken);
+                }
+
+                Context pollyContext = new($"NotificationTo_{payload.TargetTelegramUserId}");
+                InlineKeyboardMarkup? finalKeyboard = BuildTelegramKeyboard(payload.Buttons);
+                var sanitizedMessageForSending = EscapeTelegramMarkdownV2(payload.MessageText);
+
                 await _telegramApiRetryPolicy.ExecuteAsync(async (ctx) =>
                 {
                     if (!string.IsNullOrWhiteSpace(payload.ImageUrlOrDefault))
@@ -735,27 +738,44 @@ namespace BackgroundTasks.Services
 
                 _logger.LogInformation("Notification sent successfully to User {UserId}", payload.TargetTelegramUserId);
             }
-            catch (ApiRequestException apiEx) when (apiEx.ErrorCode == 400 && apiEx.Message.Contains("wrong file identifier"))
+            catch (ApiRequestException apiEx)
             {
-                _logger.LogWarning(apiEx, "Permanent Send Failure: Invalid ImageUrl for notification to User {UserId}. URL: '{ImageUrl}'",
-                    payload.TargetTelegramUserId, payload.ImageUrlOrDefault);
-            }
-            catch (ApiRequestException apiEx) when (apiEx.ErrorCode == 403 || (apiEx.ErrorCode == 400 && apiEx.Message.Contains("chat not found")))
-            {
-                _logger.LogWarning(apiEx, "Permanent Send Failure: Bot blocked or user deleted chat for User {UserId}. Marking as unreachable.", payload.TargetTelegramUserId);
+                // --- V3 UPGRADE: CENTRALIZED API EXCEPTION HANDLING ---
+                // This block now handles ALL ApiRequestExceptions after Polly gives up.
 
-                try
+                if (apiEx.ErrorCode >= 400 && apiEx.ErrorCode < 500)
                 {
-                    await _userService.MarkUserAsUnreachableAsync(payload.TargetTelegramUserId.ToString(), "BotBlockedOrChatNotFound", cancellationToken);
+                    // This is a PERMANENT client-side error (Bad Request, Forbidden, Not Found).
+                    // We log it as a critical failure and DO NOT re-throw. This stops the Hangfire loop.
+                    _logger.LogCritical(apiEx, "PERMANENT Send Failure for User {UserId}. ErrorCode: {ErrorCode}. API Message: '{ApiMessage}'. Job will terminate.",
+                        payload.TargetTelegramUserId, apiEx.ErrorCode, apiEx.Message);
+
+                    // Optional: Self-healing for user-specific permanent errors.
+                    if (apiEx.ErrorCode == 403 || (apiEx.ErrorCode == 400 && apiEx.Message.Contains("chat not found")))
+                    {
+                        _logger.LogWarning("Attempting to mark user {UserId} as unreachable due to permanent error.", payload.TargetTelegramUserId);
+                        try
+                        {
+                            await _userService.MarkUserAsUnreachableAsync(payload.TargetTelegramUserId.ToString(), "ApiErrorOnSend", cancellationToken);
+                        }
+                        catch (Exception markEx)
+                        {
+                            _logger.LogError(markEx, "Failed during self-healing attempt to mark user {UserId} as unreachable.", payload.TargetTelegramUserId);
+                        }
+                    }
                 }
-                catch (Exception markEx)
+                else // This is likely a 5xx server-side error that Polly couldn't fix.
                 {
-                    _logger.LogError(markEx, "A non-critical error occurred while marking user {UserId} as unreachable.", payload.TargetTelegramUserId);
+                    // We treat this as a transient failure and re-throw so Hangfire can try the whole job later.
+                    _logger.LogError(apiEx, "TRANSIENT Send Failure for User {UserId} after all retries. ErrorCode: {ErrorCode}. Re-throwing for Hangfire.",
+                        payload.TargetTelegramUserId, apiEx.ErrorCode);
+                    throw;
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "An unhandled exception occurred after all retries while sending notification to User {UserId}", payload.TargetTelegramUserId);
+                // This catches non-API exceptions (e.g., TaskCanceledException, network issues before Polly).
+                _logger.LogError(ex, "FATAL unhandled exception during notification send to User {UserId}. Re-throwing for Hangfire.", payload.TargetTelegramUserId);
                 throw;
             }
         }

@@ -888,23 +888,29 @@ namespace BackgroundTasks.Services
         /// </returns>
         private string BuildMessageText(NewsItem newsItem)
         {
-            StringBuilder messageTextBuilder = new();
-            string title = TelegramMessageFormatter.EscapeMarkdownV2(newsItem.Title?.Trim() ?? "Untitled News");
-            string sourceName = TelegramMessageFormatter.EscapeMarkdownV2(newsItem.SourceName?.Trim() ?? "Unknown Source");
-            string summary = TelegramMessageFormatter.EscapeMarkdownV2(newsItem.Summary?.Trim() ?? string.Empty);
+            var messageTextBuilder = new StringBuilder();
+
+            // Use a local helper or your existing formatter to escape.
+            // For clarity, I'll use the local version we've been working with.
+            string title = EscapeTelegramMarkdownV2(newsItem.Title?.Trim() ?? "Untitled News");
+            string sourceName = EscapeTelegramMarkdownV2(newsItem.SourceName?.Trim() ?? "Unknown Source");
+            string summary = EscapeTelegramMarkdownV2(newsItem.Summary?.Trim() ?? string.Empty);
             string? link = newsItem.Link?.Trim();
 
-            _ = messageTextBuilder.AppendLine($"*{title}*");
-            _ = messageTextBuilder.AppendLine($"_Source: {sourceName}_");
+            messageTextBuilder.AppendLine($"*{title}*");
+            messageTextBuilder.AppendLine($"_Source: {sourceName}_");
 
             if (!string.IsNullOrWhiteSpace(summary))
             {
-                _ = messageTextBuilder.Append($"\n{summary}");
+                messageTextBuilder.Append($"\n{summary}");
             }
 
             if (!string.IsNullOrWhiteSpace(link) && Uri.TryCreate(link, UriKind.Absolute, out _))
             {
-                _ = messageTextBuilder.Append($"\n\n[Read Full Article]({link})");
+                // --- THE DEFINITIVE FIX ---
+                // We must also escape the URL itself before placing it inside the parentheses.
+                var escapedLink = EscapeTelegramMarkdownV2(link);
+                messageTextBuilder.Append($"\n\n[Read Full Article]({escapedLink})");
             }
 
             return messageTextBuilder.ToString().Trim();

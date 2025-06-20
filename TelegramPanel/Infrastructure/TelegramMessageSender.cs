@@ -557,23 +557,30 @@ namespace TelegramPanel.Infrastructure
                 cancellationToken: cancellationToken);
         }
 
+        /// <summary>
+        /// Answers a Telegram callback query with high resilience. This V3 version uses our
+        /// specialized `_answerCallbackQueryPolicy` that does not retry on "query is too old"
+        /// errors, handling them gracefully instead.
+        /// </summary>
         public async Task AnswerCallbackQueryToTelegramAsync(string callbackQueryId, string? text, bool showAlert, string? url, int cacheTime, CancellationToken cancellationToken)
         {
-            // Apply robust sanitization immediately.
-            string sanitizedLogText = SanitizeSensitiveData(text);
+            // Sanitize for logging purposes only. The 'text' parameter is not Markdown.
+            string sanitizedLogText = _logSanitizer.Sanitize(text);
 
-            _logger.LogDebug("Hangfire Job (ActualSend): Answering CBQ. ID: {CBQId}, Text (Sanitized): '{SanitizedLogText}'", callbackQueryId, sanitizedLogText);
+            _logger.LogDebug("Job (AnswerCBQ): Preparing to answer. ID: {CBQId}", callbackQueryId);
 
             var pollyContext = new Polly.Context($"AnswerCBQ_{callbackQueryId}", new Dictionary<string, object>
-    {
-        { "CallbackQueryId", callbackQueryId },
-        { "AnswerTextPreview", sanitizedLogText } // Always use the sanitized version.
-    });
+           {
+               { "CallbackQueryId", callbackQueryId },
+               { "AnswerTextPreview", sanitizedLogText }
+           });
 
             try
             {
-                await _telegramApiRetryPolicy.ExecuteAsync(async (context, ct) =>
+                // --- THE DEFINITIVE FIX: Use the new, specialized policy ---
+                await _answerCallbackQueryPolicy.ExecuteAsync(async (context, ct) =>
                 {
+                    // Use the modern ...Async method
                     await _botClient.AnswerCallbackQuery(
                         callbackQueryId: callbackQueryId,
                         text: text,
@@ -583,12 +590,21 @@ namespace TelegramPanel.Infrastructure
                         cancellationToken: ct);
                 }, pollyContext, cancellationToken);
 
-                _logger.LogInformation("Hangfire Job (ActualSend): Successfully answered CBQ. ID: {CBQId}", callbackQueryId);
+                _logger.LogInformation("Job (AnswerCBQ): Successfully answered CBQ. ID: {CBQId}", callbackQueryId);
+            }
+            catch (ApiRequestException apiEx)
+                when (apiEx.ErrorCode == 400 && apiEx.Message.Contains("query is too old", StringComparison.OrdinalIgnoreCase))
+            {
+                // --- V3 UPGRADE: GRACEFUL HANDLING OF STALE QUERIES ---
+                // This is an expected outcome if the job was delayed.
+                // We log it as a warning and DO NOT re-throw, so the Hangfire job succeeds.
+                _logger.LogWarning("Job (AnswerCBQ): Could not answer CBQ {CBQId} because it was too old. This is an expected operational event, not a failure.", callbackQueryId);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Hangfire Job (ActualSend): Error answering CBQ. ID: {CBQId} after retries. Text (Sanitized): '{SanitizedLogText}'", callbackQueryId, sanitizedLogText);
-                throw;
+                // This catches any other errors that the retry policy failed to handle (e.g., true network failures).
+                _logger.LogError(ex, "Job (AnswerCBQ): A critical error occurred while answering CBQ {CBQId}. Text (Sanitized): '{SanitizedLogText}'", callbackQueryId, sanitizedLogText);
+                throw; // Re-throw to let Hangfire mark the job as failed.
             }
         }
 

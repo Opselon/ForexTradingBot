@@ -423,7 +423,7 @@ namespace BackgroundTasks.Services
                 payload = new()
                 {
                     TargetTelegramUserId = targetUserId,
-                    MessageText = EscapeTelegramMarkdownV2(BuildMessageText(newsItem)),
+                    MessageText = BuildMessageText(newsItem),
                     UseMarkdown = true,
                     ImageUrl = newsItem.ImageUrl ?? "https://i.postimg.cc/3RmJjBjY/Breaking-News.jpg",
                     Buttons = BuildSimpleNotificationButtons(newsItem),
@@ -889,10 +889,11 @@ namespace BackgroundTasks.Services
         {
             var messageTextBuilder = new StringBuilder();
 
-            // Use a local helper or a central formatter. The key is that the *implementation* is correct.
-            string title = EscapeTelegramMarkdownV2(newsItem.Title?.Trim() ?? "Untitled News");
-            string sourceName = EscapeTelegramMarkdownV2(newsItem.SourceName?.Trim() ?? "Unknown Source");
-            string summary = EscapeTelegramMarkdownV2(newsItem.Summary?.Trim() ?? string.Empty);
+            // --- THE DEFINITIVE FIX ---
+            // We now call our central, bulletproof formatter for every piece of dynamic data.
+            string title = TelegramMessageFormatter.EscapeMarkdownV2(newsItem.Title?.Trim() ?? "Untitled News");
+            string sourceName = TelegramMessageFormatter.EscapeMarkdownV2(newsItem.SourceName?.Trim() ?? "Unknown Source");
+            string summary = TelegramMessageFormatter.EscapeMarkdownV2(newsItem.Summary?.Trim() ?? string.Empty);
             string? link = newsItem.Link?.Trim();
 
             messageTextBuilder.AppendLine($"*{title}*");
@@ -905,16 +906,13 @@ namespace BackgroundTasks.Services
 
             if (!string.IsNullOrWhiteSpace(link) && Uri.TryCreate(link, UriKind.Absolute, out _))
             {
-                // --- THE CRITICAL FIX ---
-                // We must also escape the URL itself before placing it inside the parentheses.
-                // This prevents characters like `(` or `)` in the URL from breaking the Markdown.
-                var escapedLink = EscapeTelegramMarkdownV2(link);
+                // We must also escape the URL itself before placing it inside the link parentheses.
+                var escapedLink = TelegramMessageFormatter.EscapeMarkdownV2(link);
                 messageTextBuilder.Append($"\n\n[Read Full Article]({escapedLink})");
             }
 
             return messageTextBuilder.ToString().Trim();
         }
-
 
 
         /// <summary>

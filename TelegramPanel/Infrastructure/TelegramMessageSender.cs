@@ -427,12 +427,30 @@ namespace TelegramPanel.Infrastructure
         }
 
         // Ensure you are using the robust, regex-based version of this helper
+
         private string EscapeTelegramMarkdownV2(string text)
         {
-            if (string.IsNullOrEmpty(text)) return "";
-            const string markdownV2Pattern = @"([_\[\]()~`>#\+\-=\|{}\.!\*])";
-            return Regex.Replace(text, markdownV2Pattern, @"\$1");
+            if (string.IsNullOrEmpty(text))
+            {
+                return "";
+            }
+
+            // The complete and correct list of characters that must be escaped in MarkdownV2.
+            var specialChars = new[] {
+            "_", "*", "[", "]", "(", ")", "~", "`", ">", "#", "+", "-", "=", "|", "{", "}", ".", "!"
+        };
+
+            var sb = new StringBuilder(text);
+
+            // Loop through each special character and replace it with its escaped version.
+            foreach (var specialChar in specialChars)
+            {
+                sb.Replace(specialChar, "\\" + specialChar);
+            }
+
+            return sb.ToString();
         }
+
 
         public Task EditMessageTextDirectAsync(long chatId, int messageId, string text, ParseMode? parseMode, InlineKeyboardMarkup? replyMarkup, CancellationToken cancellationToken)
         {

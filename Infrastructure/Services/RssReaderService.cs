@@ -528,40 +528,43 @@ namespace Infrastructure.Services
               outcome = RssFetchOutcome.Failure(RssFetchErrorType.Unknown, $"An unexpected error occurred: {ex.Message}", ex);
           }
 
-          // --- 4. Final Status Update & Self-Healing ---
-          _logger.LogInformation("Fetch cycle concluded. Updating final status of RssSource in the database.");
-          var finalResult = await UpdateRssSourceStatusAfterFetchOutcomeAsync(rssSource, outcome, cancellationToken);
+            // --- 4. Final Status Update & Self-Healing ---
+            _logger.LogInformation("Fetch cycle concluded. Updating final status of RssSource in the database.");
+            var finalResult = await UpdateRssSourceStatusAfterFetchOutcomeAsync(rssSource, outcome, cancellationToken);
 
-          // Self-healing logic: If a database error occurred while trying to process this source,
-          // it might be corrupted. Attempt to remove it to prevent subsequent job failures.
-          if (!finalResult.Succeeded && outcome.ErrorType == RssFetchErrorType.Database)
-          {
-              await HandleDatabaseErrorByDeletingSourceAsync(rssSource, cancellationToken);
-          }
+            // --- V2 UPGRADE: SMARTER SELF-HEALING LOGIC & LOGGING ---
+            if (!finalResult.Succeeded && outcome.ErrorType == RssFetchErrorType.Database)
+            {
+                // Log the *intent* with full context before taking action.
+                _logger.LogWarning(outcome.Exception,
+                    "SELF-HEALING TRIGGERED for RssSource {RssSourceId} ('{SourceName}') due to a persistent database error. Attempting to delete the source to prevent future job failures.",
+                    rssSource.Id, rssSource.SourceName);
 
-          _logger.LogTrace("Exiting {MethodName}", methodName);
-          return finalResult;
-      }
+                await HandleDatabaseErrorByDeletingSourceAsync(rssSource, cancellationToken);
+            }
 
-      /// <summary>
-      /// A helper method to encapsulate the logic for deleting a source after a database error.
-      /// </summary>
-      private async Task HandleDatabaseErrorByDeletingSourceAsync(RssSource rssSource, CancellationToken cancellationToken)
-      {
-          _logger.LogError("Source encountered a database error during processing. Attempting to delete it to prevent further issues.");
-          try
-          {
-              await DeleteRssSourceAsync(rssSource.Id, cancellationToken);
-              _logger.LogInformation("Source successfully deleted due to database error during fetch cycle.");
-          }
-          catch (Exception deleteEx)
-          {
-              _logger.LogCritical(deleteEx, "CRITICAL FAILURE: Could not delete source after a database error. Its state may be problematic.");
-              // Re-throw to ensure the Hangfire job is marked as 'Failed' for manual inspection.
-              throw new RepositoryException($"Failed to delete source '{rssSource.SourceName}' after a database error.", deleteEx);
-          }
-      }
-
+            _logger.LogTrace("Exiting {MethodName}", methodName);
+            return finalResult;
+        }
+        /// <summary>
+        /// A helper method to encapsulate the logic for deleting a source after a database error.
+        /// </summary>
+        private async Task HandleDatabaseErrorByDeletingSourceAsync(RssSource rssSource, CancellationToken cancellationToken)
+        {
+            // The logging of the *reason* is now done in the calling method.
+            // This method now only logs its specific actions.
+            _logger.LogInformation("Executing deletion for RssSource {RssSourceId}...", rssSource.Id);
+            try
+            {
+                await DeleteRssSourceAsync(rssSource.Id, cancellationToken);
+                _logger.LogInformation("SELF-HEALING SUCCESS: Source {RssSourceId} successfully deleted.", rssSource.Id);
+            }
+            catch (Exception deleteEx)
+            {
+                _logger.LogCritical(deleteEx, "SELF-HEALING FAILED: Could not delete source {RssSourceId}. Manual inspection is required.", rssSource.Id);
+                throw new RepositoryException($"Failed to delete source '{rssSource.SourceName}' after a database error.", deleteEx);
+            }
+        }
 
 
 

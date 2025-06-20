@@ -370,100 +370,123 @@ namespace BackgroundTasks.Services
         [AutomaticRetry(Attempts = 3)]
         public async Task ProcessNotificationFromCacheAsync(Guid newsItemId, string userListCacheKey, int userIndex)
         {
+            #region V4 Configuration - Business Rules
             const int freeUserRssHourlyLimit = 20;
             const int vipUserRssHourlyLimit = 100;
             TimeSpan rssLimitPeriod = TimeSpan.FromMinutes(15);
             long targetUserId = -1;
+            NotificationJobPayload? payload = null; // Scoped for access in the final catch block
+            #endregion
 
-            // --- THE FIX: Declare 'payload' here with a default value. ---
-            // This makes it accessible in both the 'try' and 'catch' blocks.
-            NotificationJobPayload? payload = null;
-
-            using IDisposable? logScope = _logger.BeginScope(new Dictionary<string, object?> { ["NewsItemId"] = newsItemId, ["UserIndex"] = userIndex, ["CacheKey"] = userListCacheKey });
+            // V4: A single, top-level scope for ultimate traceability in logs like Seq or Datadog.
+            using IDisposable? logScope = _logger.BeginScope(new Dictionary<string, object?>
+            {
+                ["JobType"] = "RssNotification",
+                ["NewsItemId"] = newsItemId,
+                ["UserIndex"] = userIndex,
+                ["CacheKey"] = userListCacheKey
+            });
 
             try
             {
+                #region Step 1: Pre-Flight Checks & User Retrieval (Fail Fast)
+                _logger.LogDebug("Starting pre-flight checks.");
+
+                // 1a. Retrieve user list from Redis cache.
                 RedisValue serializedUserIds = await _redisDb.StringGetAsync(userListCacheKey);
                 if (!serializedUserIds.HasValue || serializedUserIds.IsNullOrEmpty)
                 {
-                    _logger.LogError("Job aborted: Cache key {CacheKey} not found or empty.", userListCacheKey);
-                    return;
+                    _logger.LogWarning("Job aborted: Cache key {CacheKey} is missing or empty. The user list may have expired.", userListCacheKey);
+                    return; // Graceful stop: The batch is done.
                 }
+
+                // 1b. Deserialize and validate the user index.
                 List<long>? allUserIds = JsonSerializer.Deserialize<List<long>>(serializedUserIds.ToString());
                 if (allUserIds == null || userIndex >= allUserIds.Count)
                 {
-                    _logger.LogError("Job aborted: User index {UserIndex} is out of bounds for the list (Size: {ListSize}).", userIndex, allUserIds?.Count ?? 0);
-                    return;
+                    _logger.LogError("Job aborted: User index {UserIndex} is out of bounds for the list (Size: {ListSize}). This may indicate a dispatch logic error.", userIndex, allUserIds?.Count ?? 0);
+                    return; // Graceful stop: A bug might exist, but don't fail the job.
                 }
+
                 targetUserId = allUserIds[userIndex];
                 _logger.LogInformation("Processing job for UserID: {TargetUserId}", targetUserId);
 
+                // 1c. Fetch user profile from the primary database.
                 Application.DTOs.UserDto? userDto = await _userService.GetUserByTelegramIdAsync(targetUserId.ToString(), CancellationToken.None);
                 if (userDto == null)
                 {
-                    _logger.LogWarning("Job skipped: User {TargetUserId} no longer exists.", targetUserId);
-                    return;
+                    _logger.LogWarning("Job skipped: User {TargetUserId} was in the dispatch cache but no longer exists in the database.", targetUserId);
+                    return; // Graceful stop: User has been deleted.
                 }
+                #endregion
+
+                #region Step 2: Enforce Business Rules (Rate Limiting)
+                _logger.LogDebug("Enforcing business rules for User {TargetUserId} (Level: {UserLevel}).", targetUserId, userDto.Level);
 
                 int applicableLimit = (userDto.Level is UserLevel.Platinum or UserLevel.Bronze) ? vipUserRssHourlyLimit : freeUserRssHourlyLimit;
                 if (await _rateLimiter.IsUserAtOrOverLimitAsync(targetUserId, applicableLimit, rssLimitPeriod))
                 {
-                    _logger.LogInformation("SKIP: User {TargetUserId} has met the rate limit of {Limit}.", targetUserId, applicableLimit);
-                    return;
+                    _logger.LogInformation("SKIP: User {TargetUserId} has met the rate limit of {Limit}/{Period}. No notification will be sent.", targetUserId, applicableLimit, rssLimitPeriod);
+                    return; // Graceful stop: This is correct behavior.
                 }
+                #endregion
 
+                #region Step 3: Data Preparation & Sanitization
+                _logger.LogDebug("Preparing notification payload.");
+
+                // 3a. Fetch the core content.
                 NewsItem? newsItem = await _newsItemRepository.GetByIdAsync(newsItemId, CancellationToken.None);
                 if (newsItem == null)
                 {
-                    _logger.LogError("Job failed: NewsItem {NewsItemId} not found.", newsItemId);
-                    throw new InvalidOperationException($"NewsItem {newsItemId} not found.");
+                    // This is a critical failure. The job was scheduled for a NewsItem that has since been deleted.
+                    _logger.LogError("Job failed critically: NewsItem {NewsItemId} not found in the database. This job cannot be completed.", newsItemId);
+                    throw new InvalidOperationException($"NewsItem {newsItemId} not found, but a job was scheduled for it.");
                 }
 
-                // --- Now we assign the value to the already-declared variable ---
+                // 3b. Build the payload, relying on a central formatter for sanitization.
                 payload = new()
                 {
                     TargetTelegramUserId = targetUserId,
+                    // The BuildMessageText method is now responsible for ALL escaping.
                     MessageText = BuildMessageText(newsItem),
-                    UseMarkdown = true,
-                    ImageUrl = newsItem.ImageUrl,
+                    UseMarkdown = true, // We assume MarkdownV2.
+                    ImageUrl = newsItem.ImageUrl, // The sender will handle null/empty.
                     Buttons = BuildSimpleNotificationButtons(newsItem),
                     NewsItemId = newsItemId
                 };
+                #endregion
 
+                #region Step 4: Dispatch & Post-Send Actions
+                _logger.LogDebug("Dispatching notification payload to the sender.");
+
+                // 4a. Delegate the "last mile" sending to our dedicated, robust sender method.
+                // This method contains all the API-specific error handling and retry logic.
                 await SendToTelegramAsync(payload, CancellationToken.None);
 
+                // 4b. This line is ONLY reached if SendToTelegramAsync did not throw an exception.
+                // This correctly ensures we only count *successful* sends against the user's quota.
                 await _rateLimiter.IncrementUsageAsync(targetUserId, rssLimitPeriod);
-                _logger.LogTrace("Rate limit counter incremented for user {UserId}.", targetUserId);
-            }
-            catch (ApiRequestException apiEx)
-            {
-                // Now 'payload' is accessible here.
-                var sanitizedMessageForLog = EscapeAndTruncate(payload?.MessageText ?? "[payload was not created]");
-
-                if (apiEx.ErrorCode >= 400 && apiEx.ErrorCode < 500)
-                {
-                    _logger.LogCritical(apiEx,
-                        "PERMANENT Telegram API failure for User {TargetUserId}. ErrorCode: {ErrorCode}. API Message: '{ApiErrorMessage}'. Job will NOT be retried. Offending Content (Sanitized): '{SanitizedContent}'",
-                        targetUserId,
-                        apiEx.ErrorCode,
-                        apiEx.Message,
-                        sanitizedMessageForLog);
-                }
-                else
-                {
-                    _logger.LogError(apiEx,
-                        "TRANSIENT Telegram API failure for User {TargetUserId}. ErrorCode: {ErrorCode}. API Message: '{ApiErrorMessage}'. Hangfire will retry. Offending Content (Sanitized): '{SanitizedContent}'",
-                        targetUserId,
-                        apiEx.ErrorCode,
-                        apiEx.Message,
-                        sanitizedMessageForLog);
-                    throw;
-                }
+                _logger.LogInformation("Successfully sent notification and incremented rate limit counter for User {UserId}.", targetUserId);
+                #endregion
             }
             catch (Exception ex)
             {
-                _logger.LogCritical(ex, "FATAL non-API failure during job for User {TargetUserId}. Hangfire will retry.", targetUserId);
+                #region Step 5: Ultimate Failure Catch-All
+                // This block will ONLY catch exceptions that were deliberately re-thrown by our sub-methods
+                // (i.e., true transient errors from SendToTelegramAsync) or critical failures from this method
+                // itself (e.g., the InvalidOperationException if a NewsItem is missing).
+
+                var sanitizedContent = EscapeAndTruncate(payload?.MessageText ?? "[payload was not created]");
+
+                _logger.LogCritical(ex,
+                    "A critical, retriable exception occurred in job for User {TargetUserId}. Hangfire will process the retry. Content (Sanitized): '{SanitizedContent}'",
+                    targetUserId,
+                    sanitizedContent);
+
+                // Re-throw the exception. This is crucial for telling Hangfire to mark this attempt
+                // as "failed" and to schedule a retry according to the [AutomaticRetry] SaveNewsItemsToDatabaseAsyncattribute.
                 throw;
+                #endregion
             }
         }
 
@@ -713,12 +736,12 @@ namespace BackgroundTasks.Services
 
                 await _telegramApiRetryPolicy.ExecuteAsync(async (ctx) =>
                 {
-                    if (!string.IsNullOrWhiteSpace(payload.ImageUrlOrDefault))
+                    if (!string.IsNullOrWhiteSpace(payload.ImageUrl))
                     {
                         await _botClient.SendPhoto(
                             chatId: payload.TargetTelegramUserId,
-                            photo: InputFile.FromUri(payload.ImageUrlOrDefault),
-                            caption: sanitizedMessageForSending,
+                            photo: InputFile.FromUri(payload.ImageUrl),
+                            caption:TelegramMessageFormatter.EscapeMarkdownV2(sanitizedMessageForSending),
                             parseMode: ParseMode.MarkdownV2,
                             replyMarkup: finalKeyboard,
                             cancellationToken: cancellationToken).ConfigureAwait(false);

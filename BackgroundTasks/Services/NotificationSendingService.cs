@@ -375,7 +375,7 @@ namespace BackgroundTasks.Services
             const int vipUserRssHourlyLimit = 100;
             TimeSpan rssLimitPeriod = TimeSpan.FromMinutes(15);
             long targetUserId = -1;
-            NotificationJobPayload? payload = null; // Scoped for access in the final catch block
+
             #endregion
 
             // V4: A single, top-level scope for ultimate traceability in logs like Seq or Datadog.
@@ -444,13 +444,13 @@ namespace BackgroundTasks.Services
                 }
 
                 // 3b. Build the payload, relying on a central formatter for sanitization.
-                payload = new()
+                // STEP 5: Build payload (No change here)
+                NotificationJobPayload payload = new()
                 {
                     TargetTelegramUserId = targetUserId,
-                    // The BuildMessageText method is now responsible for ALL escaping.
                     MessageText = BuildMessageText(newsItem),
-                    UseMarkdown = true, // We assume MarkdownV2.
-                    ImageUrl = newsItem.ImageUrl, // The sender will handle null/empty.
+                    UseMarkdown = true,
+                    ImageUrl = newsItem.ImageUrl,
                     Buttons = BuildSimpleNotificationButtons(newsItem),
                     NewsItemId = newsItemId
                 };
@@ -476,12 +476,9 @@ namespace BackgroundTasks.Services
                 // (i.e., true transient errors from SendToTelegramAsync) or critical failures from this method
                 // itself (e.g., the InvalidOperationException if a NewsItem is missing).
 
-                var sanitizedContent = EscapeAndTruncate(payload?.MessageText ?? "[payload was not created]");
-
                 _logger.LogCritical(ex,
-                    "A critical, retriable exception occurred in job for User {TargetUserId}. Hangfire will process the retry. Content (Sanitized): '{SanitizedContent}'",
-                    targetUserId,
-                    sanitizedContent);
+                    "A critical, retriable exception occurred in job for User {TargetUserId}. Hangfire will process the retry. Content (Sanitized)'",
+                    targetUserId );
 
                 // Re-throw the exception. This is crucial for telling Hangfire to mark this attempt
                 // as "failed" and to schedule a retry according to the [AutomaticRetry] SaveNewsItemsToDatabaseAsyncattribute.
@@ -740,8 +737,7 @@ namespace BackgroundTasks.Services
                     {
                         await _botClient.SendPhoto(
                             chatId: payload.TargetTelegramUserId,
-                            photo: InputFile.FromUri(payload.ImageUrl),
-                            caption:TelegramMessageFormatter.EscapeMarkdownV2(sanitizedMessageForSending),
+                            photo: payload.MessageText,
                             parseMode: ParseMode.MarkdownV2,
                             replyMarkup: finalKeyboard,
                             cancellationToken: cancellationToken).ConfigureAwait(false);

@@ -605,13 +605,65 @@ namespace BackgroundTasks.Services
                 return null;
             }
 
-            IEnumerable<InlineKeyboardButton> inlineButtons = buttons.Select(b =>
-                b.IsUrl
-                ? InlineKeyboardButton.WithUrl(b.Text, b.CallbackDataOrUrl)
-                : InlineKeyboardButton.WithCallbackData(b.Text, b.CallbackDataOrUrl));
-            return new InlineKeyboardMarkup(inlineButtons);
-        }
+            _logger.LogTrace("Building Telegram keyboard with {ButtonCount} initial buttons.", buttons.Count);
 
+            var validButtons = new List<InlineKeyboardButton>();
+
+            foreach (var button in buttons)
+            {
+                // V2 UPGRADE: Validate button text. Skip if empty.
+                if (string.IsNullOrWhiteSpace(button.Text))
+                {
+                    _logger.LogWarning("Skipping button with empty text.");
+                    continue;
+                }
+
+                // V2 UPGRADE: Validate URL/Callback data. Skip if empty.
+                if (string.IsNullOrWhiteSpace(button.CallbackDataOrUrl))
+                {
+                    _logger.LogWarning("Skipping button '{ButtonText}' due to empty URL or CallbackData.", button.Text);
+                    continue;
+                }
+
+                if (button.IsUrl)
+                {
+                    // V2 UPGRADE: Validate the URL.
+                    if (Uri.TryCreate(button.CallbackDataOrUrl, UriKind.Absolute, out var validUri))
+                    {
+                        validButtons.Add(InlineKeyboardButton.WithUrl(button.Text, validUri.ToString()));
+                    }
+                    else
+                    {
+                        _logger.LogWarning("Skipping URL button '{ButtonText}' due to invalid URL format: '{InvalidUrl}'",
+                            button.Text, button.CallbackDataOrUrl);
+                    }
+                }
+                else // It's a callback button
+                {
+                    // V2 UPGRADE: Validate callback data length (Telegram limit is 1-64 bytes).
+                    if (System.Text.Encoding.UTF8.GetByteCount(button.CallbackDataOrUrl) > 64)
+                    {
+                        _logger.LogWarning("Skipping Callback button '{ButtonText}' because its data is longer than the 64-byte Telegram limit.", button.Text);
+                    }
+                    else
+                    {
+                        validButtons.Add(InlineKeyboardButton.WithCallbackData(button.Text, button.CallbackDataOrUrl));
+                    }
+                }
+            }
+
+            // Only return a keyboard if we have at least one valid button after filtering.
+            if (validButtons.Any())
+            {
+                _logger.LogDebug("Successfully built keyboard with {ValidButtonCount} valid buttons.", validButtons.Count);
+                // Telegram keyboards are a list of lists (rows of buttons).
+                // For simplicity, we'll put each button on its own row.
+                return new InlineKeyboardMarkup(validButtons.Select(b => new[] { b }));
+            }
+
+            _logger.LogWarning("No valid buttons were found after filtering. Returning null keyboard.");
+            return null;
+        }
 
 
         /// <summary>

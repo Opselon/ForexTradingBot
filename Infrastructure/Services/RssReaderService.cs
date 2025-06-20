@@ -1309,54 +1309,21 @@ namespace Infrastructure.Services
 
 
         /// <summary>
-        /// Updates the <see cref="RssSource"/>'s status in the database after an RSS feed fetch cycle is complete.
-        /// This method centralizes the logic for managing the source's operational state, including:
-        /// <list type="bullet">
-        ///     <item><description>Resetting error counts and updating success timestamps and ETag/Last-Modified headers upon successful fetches.</description></item>
-        ///     <item><description>Incrementing error counts for transient failures or immediately escalating for permanent HTTP/XML parsing errors.</description></item>
-        ///     <item><description>Deactivating the <see cref="RssSource"/> if its accumulated error count reaches a configured threshold.</description></item>
-        ///     <item><description>Persisting all status changes to the database in a resilient manner using a retry policy.</description></item>
-        ///     <item><description>Constructing and returning a <see cref="Result{T}"/> object that reflects the overall outcome of the fetch operation.</description></item>
-        /// </list>
+        /// Updates the RssSource's status in the database after a fetch cycle, centralizing
+        /// all state management logic for success, transient failures, and permanent deactivation.
+        /// This version includes self-healing logic to re-classify errors if needed.
         /// </summary>
-        /// <param name="source">The <see cref="RssSource"/> object whose status is to be updated. This object's properties will be modified in-place and then persisted.</param>
-        /// <param name="outcome">The <see cref="RssFetchOutcome"/> object, which encapsulates the result of the preceding RSS feed fetch attempt (success, failure, type of error, dispatched items, etc.).</param>
-        /// <param name="ct">A <see cref="CancellationToken"/> to observe for cancellation requests during the database update operation.</param>
-        /// <returns>
-        /// A <see cref="Task{TResult}"/> that represents the asynchronous operation, yielding a <see cref="Result{IEnumerable{NewsItemDto}}"/>.
-        /// <list type="bullet">
-        ///     <item><description>
-        ///         **On Success (<see cref="RssFetchOutcome.IsSuccess"/> is <c>true</c>):**
-        ///         Returns a <see cref="Result{T}.Success"/> containing an <see cref="IEnumerable{NewsItemDto}"/> of the news items that were successfully dispatched for notification during this fetch cycle.
-        ///         The <paramref name="source"/>'s <see cref="RssSource.LastSuccessfulFetchAt"/> will be updated, <see cref="RssSource.FetchErrorCount"/> reset to 0,
-        ///         and its ETag and Last-Modified headers (if present in the <paramref name="outcome"/>) will be updated. <see cref="RssSource.IsActive"/> is set to <c>true</c>.
-        ///     </description></item>
-        ///     <item><description>
-        ///         **On Failure (<see cref="RssFetchOutcome.IsSuccess"/> is <c>false</c>):**
-        ///         Returns a <see cref="Result{T}.Failure"/> containing an array of error messages.
-        ///         The <paramref name="source"/>'s <see cref="RssSource.FetchErrorCount"/> is incremented (or immediately maxed out for permanent errors).
-        ///         If the <see cref="RssSource.FetchErrorCount"/> reaches or exceeds the configured <see cref="RssProcessorSettings.MaxFetchErrorsToDeactivate"/> threshold,
-        ///         the <see cref="RssSource.IsActive"/> property will be set to <c>false</c>.
-        ///     </description></item>
-        /// </list>
-        /// </returns>
-        /// <exception cref="RepositoryException">
-        /// Thrown if a critical error occurs during the database persistence of the <see cref="RssSource"/>'s updated status,
-        /// indicating a failure to maintain the source's state in the database.
-        /// </exception>
-        /// <exception cref="OperationCanceledException">
-        /// Thrown if the <paramref name="ct"/> is signaled during the database update operation.
-        /// </exception>
         private async Task<Result<IEnumerable<NewsItemDto>>> UpdateRssSourceStatusAfterFetchOutcomeAsync(RssSource source, RssFetchOutcome outcome, CancellationToken ct)
         {
             const string methodName = nameof(UpdateRssSourceStatusAfterFetchOutcomeAsync);
-            _logger.LogTrace("Entering {MethodName}", methodName);
+            _logger.LogTrace("Entering {MethodName} for RssSource {RssSourceId}", methodName, source.Id);
 
             source.UpdatedAt = DateTime.UtcNow;
 
             if (outcome.IsSuccess)
             {
-                _logger.LogInformation("Fetch was successful. Resetting error count and updating metadata.");
+                // --- SUCCESS PATH ---
+                _logger.LogInformation("RssSource {RssSourceId}: Fetch successful. Resetting error count.", source.Id);
                 source.LastSuccessfulFetchAt = source.LastFetchAttemptAt;
                 source.FetchErrorCount = 0;
                 if (!string.IsNullOrWhiteSpace(outcome.ETag)) source.ETag = outcome.ETag;
@@ -1365,69 +1332,71 @@ namespace Infrastructure.Services
             }
             else
             {
-                // Change logging level based on error type for better clarity.
-                var logLevel = outcome.ErrorType == RssFetchErrorType.Cancellation ? LogLevel.Warning : LogLevel.Error;
+                // --- FAILURE PATH ---
+                var finalErrorType = outcome.ErrorType;
 
-                _logger.Log(logLevel, outcome.Exception, "Fetch failed. Updating error status. ErrorType: {ErrorType}, Message: {ErrorMessage}", outcome.ErrorType, outcome.ErrorMessage);
-
-                if (outcome.ErrorType != RssFetchErrorType.Cancellation)
+                // --- V2 UPGRADE: SELF-HEALING ERROR CLASSIFICATION ---
+                // Even if the outcome was misclassified, we can re-evaluate the exception here.
+                if (finalErrorType == RssFetchErrorType.Unknown && outcome.Exception is XmlException)
                 {
-                    if (outcome.ErrorType is RssFetchErrorType.PermanentHttp or RssFetchErrorType.XmlParsing)
+                    _logger.LogWarning("RssSource {RssSourceId}: Re-classifying Unknown error to XmlParsing based on exception type.", source.Id);
+                    finalErrorType = RssFetchErrorType.XmlParsing;
+                }
+                // ----------------------------------------------------
+
+                var logLevel = finalErrorType == RssFetchErrorType.Cancellation ? LogLevel.Warning : LogLevel.Error;
+                _logger.Log(logLevel, outcome.Exception, "RssSource {RssSourceId}: Fetch failed. ErrorType: {ErrorType}, Message: {ErrorMessage}", source.Id, finalErrorType, outcome.ErrorMessage);
+
+                if (finalErrorType != RssFetchErrorType.Cancellation)
+                {
+                    // --- V2 UPGRADE: Use the final, potentially re-classified error type ---
+                    if (finalErrorType is RssFetchErrorType.PermanentHttp or RssFetchErrorType.XmlParsing)
                     {
                         source.FetchErrorCount = _settings.MaxFetchErrorsToDeactivate;
-                        _logger.LogWarning("RssSource error count maxed out immediately due to a permanent error: {ErrorType}", outcome.ErrorType);
+                        _logger.LogWarning("RssSource {RssSourceId}: Error count maxed out immediately due to a permanent error: {ErrorType}", source.Id, finalErrorType);
                     }
                     else
                     {
                         source.FetchErrorCount++;
-                        _logger.LogWarning("RssSource error count incremented to {ErrorCount} due to a transient error: {ErrorType}", source.FetchErrorCount, outcome.ErrorType);
+                        _logger.LogWarning("RssSource {RssSourceId}: Error count incremented to {ErrorCount} due to a transient error: {ErrorType}", source.Id, source.FetchErrorCount, finalErrorType);
                     }
                 }
             }
 
-            // Deactivation Logic
+            // --- DEACTIVATION LOGIC (No change, but now more reliable) ---
             if (source.FetchErrorCount >= _settings.MaxFetchErrorsToDeactivate && source.IsActive)
             {
                 source.IsActive = false;
-                _logger.LogWarning("DEACTIVATING RssSource {Id} due to reaching the error threshold of {Threshold}. Last error: {Error}",
-                    source.Id, _settings.MaxFetchErrorsToDeactivate, outcome.ErrorMessage);
+                _logger.LogWarning("DEACTIVATING RssSource {RssSourceId} ({SourceName}) due to reaching error threshold of {Threshold}. Last error: {Error}",
+                    source.Id, source.SourceName, _settings.MaxFetchErrorsToDeactivate, outcome.ErrorMessage);
             }
 
             try
             {
+                // The DB update logic remains the same, it will now persist the correct state.
                 await _dbRetryPolicy.ExecuteAsync(async () => {
                     await using var connection = CreateConnection();
-                    var sql = @"
-                 UPDATE RssSources SET 
-                     LastSuccessfulFetchAt = @LastSuccessfulFetchAt, 
-                     FetchErrorCount = @FetchErrorCount, 
-                     UpdatedAt = @UpdatedAt, 
-                     ETag = @ETag, 
-                     LastModifiedHeader = @LastModifiedHeader, 
-                     IsActive = @IsActive, 
-                     LastFetchAttemptAt = @LastFetchAttemptAt 
-                 WHERE Id = @Id;";
+                    var sql = @"UPDATE RssSources SET LastSuccessfulFetchAt = @LastSuccessfulFetchAt, FetchErrorCount = @FetchErrorCount, UpdatedAt = @UpdatedAt, ETag = @ETag, LastModifiedHeader = @LastModifiedHeader, IsActive = @IsActive, LastFetchAttemptAt = @LastFetchAttemptAt WHERE Id = @Id;";
                     _logger.LogDebug("Executing final status update to database for RssSource {RssSourceId}.", source.Id);
                     await connection.ExecuteAsync(sql, source);
                 });
             }
             catch (Exception ex)
             {
-                _logger.LogCritical(ex, "CRITICAL FAILURE: Could not persist the final status for RssSource '{SourceName}'. Its state may now be inconsistent in the database.", source.SourceName);
+                _logger.LogCritical(ex, "CRITICAL FAILURE: Could not persist final status for RssSource {RssSourceId} ('{SourceName}'). Its state is now inconsistent.", source.Id, source.SourceName);
                 throw new RepositoryException($"Failed to update RssSource status for '{source.SourceName}'.", ex);
             }
 
-            // --- Construct Final Return Value ---
+            // --- CONSTRUCT FINAL RETURN VALUE (No change) ---
             if (outcome.IsSuccess)
             {
-                var successMessage = $"Fetch successful. {outcome.DispatchedNewsItems.Count()} items were dispatched for notification.";
+                var successMessage = $"RssSource {source.Id}: Fetch successful. {outcome.DispatchedNewsItems.Count()} items dispatched.";
                 _logger.LogInformation(successMessage);
                 return Result<IEnumerable<NewsItemDto>>.Success(outcome.DispatchedNewsItems, successMessage);
             }
             else
             {
-                var failureMessage = $"Fetch failed for '{source.SourceName}'. Error: {outcome.ErrorMessage}";
-                // Use the determined LogLevel for the final failure message.           
+                var failureMessage = $"RssSource {source.Id}: Fetch failed for '{source.SourceName}'. Error: {outcome.ErrorMessage}";
                 return Result<IEnumerable<NewsItemDto>>.Failure(new[] { outcome.ErrorMessage ?? "An unknown fetch error occurred." });
             }
         }

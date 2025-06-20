@@ -342,87 +342,97 @@ namespace TelegramPanel.Infrastructure
         /// Intelligently and resiliently edits a message in Telegram. It uses a Polly retry policy
         /// and automatically falls back from editing text to editing a caption if the message contains media.
         /// </summary>
+        /// <summary>
+        /// Intelligently and resiliently edits a message in Telegram. This V3 version uses a fast-switch
+        /// fallback from text to caption and incorporates a centralized, robust error handling strategy
+        /// to manage all possible API exceptions gracefully.
+        /// </summary>
         public async Task EditMessageTextInTelegramAsync(long chatId, int messageId, string text, ParseMode? parseMode, InlineKeyboardMarkup? replyMarkup, CancellationToken cancellationToken)
         {
-            var sanitizedTextForSending = EscapeTelegramMarkdownV2(text);
+            var sanitizedTextForSending = EscapeTelegramMarkdownV2(text); // Use the robust regex version
             var sanitizedTextForLogging = SanitizeSensitiveData(text);
 
-            _logger.LogDebug("Job (FastEdit): Preparing to edit. Chat: {ChatId}, Msg: {MessageId}", chatId, messageId);
+            _logger.LogDebug("Job (UltimateEdit): Preparing to edit. Chat: {ChatId}, Msg: {MessageId}", chatId, messageId);
 
             try
             {
-                // --- ATTEMPT 1: Try to edit as a standard text message. ---
-                // We use the modern 'Async' version for better performance in an async context.
-                await _botClient.EditMessageText(
-                    chatId: new ChatId(chatId),
-                    messageId: messageId,
-                    text: sanitizedTextForSending,
-                    parseMode: parseMode ?? ParseMode.MarkdownV2,
-                    replyMarkup: replyMarkup,
-                    cancellationToken: cancellationToken);
-
-                _logger.LogInformation("Job (FastEdit): Successfully edited message {MessageId} as TEXT.", messageId);
-            }
-            catch (ApiRequestException textEditEx)
-                when (textEditEx.ErrorCode == 400 && textEditEx.Message.Contains("there is no text in the message to edit", StringComparison.OrdinalIgnoreCase))
-            {
-                // --- FAST SWITCH: The first attempt failed because it was media. Immediately try the second. ---
-                _logger.LogWarning("Job (FastEdit): Failed to edit Msg {MessageId} as text. Switching to edit as CAPTION.", messageId);
-
                 try
                 {
-                    // --- ATTEMPT 2: Try to edit the caption. ---
-                    await _botClient.EditMessageCaption(
+                    // --- ATTEMPT 1: Try to edit as a standard text message. ---
+                    await _botClient.EditMessageText(
                         chatId: new ChatId(chatId),
                         messageId: messageId,
-                        caption: sanitizedTextForSending,
+                        text: sanitizedTextForSending,
+                        parseMode: parseMode ?? ParseMode.MarkdownV2,
                         replyMarkup: replyMarkup,
                         cancellationToken: cancellationToken);
 
-                    _logger.LogInformation("Job (FastEdit): Successfully edited message {MessageId} as CAPTION.", messageId);
+                    _logger.LogInformation("Job (UltimateEdit): Successfully edited message {MessageId} as TEXT.", messageId);
+                    return; // Success! Exit the method.
                 }
-                catch (ApiRequestException captionEditEx)
-                    when (captionEditEx.ErrorCode == 400 && (captionEditEx.Message.Contains("message can't be edited", StringComparison.OrdinalIgnoreCase) || captionEditEx.Message.Contains("message with no caption", StringComparison.OrdinalIgnoreCase)))
+                catch (ApiRequestException textEditEx)
+                    when (textEditEx.ErrorCode == 400 && textEditEx.Message.Contains("there is no text in the message to edit", StringComparison.OrdinalIgnoreCase))
                 {
-                    // --- V2.1 UPGRADE: GRACEFUL FAILURE ---
-                    // This is a permanent error (e.g., trying to edit a caption on media that has none).
-                    // We log it as a warning and STOP. We do not re-throw, preventing the job from failing.
-                    _logger.LogWarning(captionEditEx, "Job (FastEdit): Could not edit message {MessageId} as caption (e.g., media has no caption). Operation aborted gracefully.", messageId);
+                    // This is not a true error, but a signal to try the next method.
+                    _logger.LogWarning("Job (UltimateEdit): Failed to edit Msg {MessageId} as text. Switching to edit as CAPTION.", messageId);
                 }
-                // Let any other exceptions from EditMessageCaptionAsync (like user blocked, etc.) fall through to the outer catches.
+
+                // --- ATTEMPT 2: If we reach here, the first attempt failed correctly. Now, try to edit the caption. ---
+                await _botClient.EditMessageCaption(
+                    chatId: new ChatId(chatId),
+                    messageId: messageId,
+                    caption: sanitizedTextForSending,
+                    replyMarkup: replyMarkup,
+                    cancellationToken: cancellationToken);
+
+                _logger.LogInformation("Job (UltimateEdit): Successfully edited message {MessageId} as CAPTION.", messageId);
             }
-            catch (ApiRequestException apiEx) when (apiEx.ErrorCode == 400 && apiEx.Message.Contains("message is not modified", StringComparison.OrdinalIgnoreCase))
+            // --- V3 UPGRADE: CENTRALIZED, ROBUST ERROR HANDLING ---
+            catch (ApiRequestException apiEx)
             {
-                _logger.LogDebug("Job (FastEdit): Message {MessageId} was not modified (content was identical).", messageId);
-            }
-            catch (ApiRequestException apiEx) when (apiEx.ErrorCode == 403 || (apiEx.ErrorCode == 400 && apiEx.Message.Contains("chat not found", StringComparison.OrdinalIgnoreCase)))
-            {
-                _logger.LogWarning(apiEx, "Job (FastEdit): PERMANENT failure for Msg {MessageId}, Chat {ChatId}. User blocked or chat deleted.", messageId, chatId);
-                // Add your user deactivation logic here if needed.
-                // await _userService.MarkUserAsUnreachableAsync(chatId);
+                // This single block now catches any ApiRequestException from EITHER of the attempts above.
+
+                if (apiEx.ErrorCode == 400 && apiEx.Message.Contains("message is not modified"))
+                {
+                    _logger.LogDebug("Job (UltimateEdit): Message {MessageId} was not modified (content was identical).", messageId);
+                    return; // This is a success, not an error.
+                }
+
+                if (apiEx.ErrorCode >= 400 && apiEx.ErrorCode < 500)
+                {
+                    // This is a PERMANENT client-side error (Bad Request, User Blocked, Message not found, etc.).
+                    // We log it critically and DO NOT re-throw to stop the Hangfire retry loop.
+                    _logger.LogCritical(apiEx, "Job (UltimateEdit): PERMANENT failure for Msg {MessageId}, Chat {ChatId}. ErrorCode: {ErrorCode}, API Message: '{ApiMessage}'. Job will terminate.",
+                        messageId, chatId, apiEx.ErrorCode, apiEx.Message);
+
+                    if (apiEx.ErrorCode == 403 || (apiEx.ErrorCode == 400 && apiEx.Message.Contains("chat not found")))
+                    {
+                        // Optional self-healing
+                        // await _userService.MarkUserAsUnreachableAsync(chatId.ToString());
+                    }
+                }
+                else // This is a transient server-side error (5xx)
+                {
+                    _logger.LogError(apiEx, "Job (UltimateEdit): TRANSIENT failure for Msg {MessageId}, Chat {ChatId}. ErrorCode: {ErrorCode}. Re-throwing for Hangfire retry.",
+                        messageId, chatId, apiEx.ErrorCode);
+                    throw;
+                }
             }
             catch (Exception ex)
             {
-                // This is the final safety net for any other unhandled, unexpected errors.
-                _logger.LogError(ex, "Job (FastEdit): CRITICAL unhandled error for Msg {MessageId}, Chat {ChatId}. All attempts failed.", messageId, chatId);
-                throw; // Re-throw to let Hangfire handle the final job failure.
+                // The final safety net for non-API exceptions.
+                _logger.LogError(ex, "Job (UltimateEdit): CRITICAL unhandled error for Msg {MessageId}, Chat {ChatId}. All attempts failed.", messageId, chatId);
+                throw; // Re-throw to let Hangfire handle the failure.
             }
         }
 
-
-        /// <summary>
-        /// Escapes characters in a string that are reserved in Telegram's MarkdownV2 format.
-        /// This should be a shared utility method in your infrastructure.
-        /// </summary>
+        // Ensure you are using the robust, regex-based version of this helper
         private string EscapeTelegramMarkdownV2(string text)
         {
             if (string.IsNullOrEmpty(text)) return "";
-            var specialChars = new[] { "_", "*", "[", "]", "(", ")", "~", "`", ">", "#", "+", "-", "=", "|", "{", "}", ".", "!" };
-            var sb = new StringBuilder(text);
-            foreach (var c in specialChars) sb.Replace(c, "\\" + c);
-            return sb.ToString();
+            const string markdownV2Pattern = @"([_\[\]()~`>#\+\-=\|{}\.!\*])";
+            return Regex.Replace(text, markdownV2Pattern, @"\$1");
         }
-
 
         public Task EditMessageTextDirectAsync(long chatId, int messageId, string text, ParseMode? parseMode, InlineKeyboardMarkup? replyMarkup, CancellationToken cancellationToken)
         {

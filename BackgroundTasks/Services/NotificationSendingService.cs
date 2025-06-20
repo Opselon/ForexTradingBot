@@ -483,16 +483,16 @@ namespace BackgroundTasks.Services
         /// <returns>A string safe to be sent with ParseMode.MarkdownV2.</returns>
         private string EscapeTelegramMarkdownV2(string text)
         {
-            // List of characters that need to be escaped in MarkdownV2
-            var specialChars = new[] { "_", "*", "[", "]", "(", ")", "~", "`", ">", "#", "+", "-", "=", "|", "{", "}", ".", "!" };
+            if (string.IsNullOrEmpty(text)) return "";
 
-            // Use StringBuilder for efficient string manipulation
-            var sb = new StringBuilder(text);
-            foreach (var specialChar in specialChars)
-            {
-                sb.Replace(specialChar, "\\" + specialChar);
-            }
-            return sb.ToString();
+            // This regex pattern matches any single character that is one of the special characters
+            // required to be escaped for MarkdownV2. The `\` escapes characters like `[` and `.`
+            // so the regex engine treats them as literals.
+            const string markdownV2Pattern = @"([_\[\]()~`>#\+\-=\|{}\.!\*])";
+
+            // The replacement string "$1" is a backreference to the captured group (the character itself).
+            // We prepend it with a literal backslash (`\\`) to perform the escape.
+            return Regex.Replace(text, markdownV2Pattern, @"\$1");
         }
 
 

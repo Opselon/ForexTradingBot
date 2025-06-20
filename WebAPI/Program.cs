@@ -20,28 +20,47 @@ using Infrastructure.Data;
 // using Hangfire.SqlServer;              // اگر از SQL Server برای Hangfire استفاده می‌کنید
 // using WebAPI.Filters; //  Namespace برای HangfireNoAuthFilter (اگر در این مسیر است و استفاده می‌کنید)
 using Infrastructure.Features.Forwarding.Extensions;
+using Infrastructure.Logging;
 using Infrastructure.Services;
 using Microsoft.OpenApi.Models;             // برای OpenApiInfo
 using Serilog;                              // برای Log, LoggerConfiguration, UseSerilog
+using Serilog.Enrichers.WithCaller;
 using Shared.Helpers;
 using Shared.Maintenance;
 using Shared.Settings;                    // برای CryptoPaySettings (از پروژه Shared)
 using TelegramPanel.Extensions;
 using TelegramPanel.Infrastructure.Services;
 using WebAPI.Extensions;
+
 #endregion
 
 // ------------------- پیکربندی اولیه لاگر Serilog (Bootstrap Logger) -------------------
 // این لاگر قبل از خواندن کامل appsettings.json و ساخت هاست استفاده می‌شود
 // تا خطاهای بسیار اولیه در راه‌اندازی برنامه نیز لاگ شوند.
 Log.Logger = new LoggerConfiguration()
-    .MinimumLevel.Debug() //  حداقل سطح لاگ برای Bootstrap (می‌توانید تغییر دهید)
+    // Read base configuration from appsettings.json
+    .ReadFrom.Configuration(new ConfigurationBuilder()
+        .AddJsonFile("appsettings.json")
+        .AddJsonFile($"appsettings.{Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Production"}.json", optional: true)
+        .Build())
     .Enrich.FromLogContext()
-    .WriteTo.Console() //  لاگ کردن در کنسول
-    .CreateBootstrapLogger();
+    .Enrich.WithProperty("Application", "WebAPI") // Set a default name
+    .Enrich.WithMachineName()
+    .Enrich.WithEnvironmentName()
+    .Enrich.WithCaller()
+    .WriteTo.Console() // Always write to console during bootstrap
+    .CreateBootstrapLogger(); // Use CreateBootstrapLogger() for this initial phase
+
+// Add a global handler for unhandled exceptions. This is our safety net.
+AppDomain.CurrentDomain.UnhandledException += (sender, eventArgs) =>
+{
+Log.Fatal((Exception)eventArgs.ExceptionObject, "FATAL UNHANDLED EXCEPTION");
+Log.CloseAndFlush(); // Ensure the fatal log is sent before the app dies
+};
 
 try
 {
+
     Log.Information("--------------------------------------------------");
     Log.Information("Application Starting Up (Program.cs)...");
     Log.Information("--------------------------------------------------");
@@ -50,7 +69,7 @@ try
     Log.Information("ThreadPool minimum threads set to {MinThreads}.", minThreads);
     WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
     _ = builder.WebHost.UseKestrel();
-
+    builder.Services.AddSingleton<Infrastructure.Logging.TelegramAdminSink>();
     // This is more reliable than GetValue<bool> for environment variables.
     string smokeTestFlag = builder.Configuration["IsSmokeTest"] ?? "false";
     bool isSmokeTest = "true".Equals(smokeTestFlag, StringComparison.OrdinalIgnoreCase);
@@ -58,22 +77,29 @@ try
     // ------------------- ۱. پیکربندی Serilog با تنظیمات از appsettings.json -------------------
     // این بخش Serilog را به عنوان سیستم لاگینگ اصلی برنامه تنظیم می‌کند.
     _ = builder.Host.UseSerilog((context, services, loggerConfiguration) => loggerConfiguration
-       .ReadFrom.Configuration(context.Configuration)
-       .ReadFrom.Services(services)
-       .Enrich.FromLogContext()
-       .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
+        .ReadFrom.Configuration(context.Configuration)
 
-       // ✅✅✅✅✅ THE FIX FOR FILE LOGGING IS HERE ✅✅✅✅✅
-       // این بخش لاگ‌ها را در فایلی در مسیر 'C:\Apps\ForexTradingBot\logs' ذخیره می‌کند
-       // هر روز یک فایل جدید ساخته می‌شود و فایل‌های قدیمی‌تر از ۷ روز به طور خودکار پاک می‌شوند.
-       .WriteTo.File(
-           path: Path.Combine(AppContext.BaseDirectory, "logs", "log-.txt"), // مسیر و الگوی نام فایل
-           rollingInterval: RollingInterval.Day, // ایجاد یک فایل جدید به صورت روزانه
-           rollOnFileSizeLimit: true, // اگر حجم فایل زیاد شد، یک فایل جدید بساز
-           fileSizeLimitBytes: 10 * 1024 * 1024, // محدودیت حجم فایل: ۱۰ مگابایت
-           retainedFileCountLimit: 1, // حداکثر ۷ فایل لاگ (۷ روز) را نگه دار
-           outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] ({SourceContext}) {Message:lj}{NewLine}{Exception}")
-   );
+        .Enrich.FromLogContext()
+        .Enrich.WithProperty("Application", context.HostingEnvironment.ApplicationName)
+        .Enrich.WithMachineName()
+        .Enrich.WithEnvironmentName()
+
+        // --- THIS IS THE FINAL, DEFINITIVE CONFIGURATION ---
+        .Enrich.With(new CustomCallerEnricher(
+            "Serilog",
+            "Microsoft",
+            "System",
+            "Infrastructure.Logging" // <-- The critical addition
+        ))
+        // ----------------------------------------------------
+
+        .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] ({SourceContext}) {Message:lj}{NewLine}{Exception}")
+
+        .WriteTo.Sink(
+            new Infrastructure.Logging.TelegramAdminSink(context.Configuration),
+            Serilog.Events.LogEventLevel.Error
+        )
+    );
 
     builder.Services.AddAutoMapper(typeof(Program));
     builder.Services.AddSingleton<Application.Common.Interfaces.ILoggingSanitizer, Infrastructure.Security.PiiLoggingSanitizer>();
@@ -525,8 +551,25 @@ try
         // Use orchestrator if needed
     }
 
+    // --- File: WebAPI/Program.cs ---
 
+    // ... after app.UseSerilogRequestLogging() and other middleware ...
 
+    app.MapGet("/testerror", () => {
+        // This will force an exception and a high-level log event
+        try
+        {
+            throw new InvalidOperationException("This is a guaranteed test exception for the Telegram sink.");
+        }
+        catch (Exception ex)
+        {
+            // Use the ILogger from the dependency injection container
+            var logger = app.Services.GetRequiredService<ILogger<Program>>();
+            logger.LogError(ex, "Caught a test exception.");
+            return Results.Problem("A test error was logged. Check your Telegram and console.");
+        }
+    });
+    app.UseSerilogRequestLogging();
     // In the middleware pipeline section (before app.Run())
     _ = app.UseStaticFiles();
     app.Run(); //  شروع به گوش دادن به درخواست‌های HTTP و اجرای برنامه

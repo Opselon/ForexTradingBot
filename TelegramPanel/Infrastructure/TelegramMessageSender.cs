@@ -335,27 +335,16 @@ namespace TelegramPanel.Infrastructure
 
 
 
+        // Inside the ActualTelegramMessageActions class
+
         /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="chatId"></param>
-        /// <param name="messageId"></param>
-        /// <param name="text"></param>
-        /// <param name="parseMode"></param>
-        /// <param name="replyMarkup"></param>
-        /// <param name="cancellationToken"></param>
-        /// <returns></returns>
-        /// <summary>
-        /// Intelligently edits a message in Telegram. It first attempts to edit the message text.
-        /// If that fails because the message is a photo/media, it automatically falls back
-        /// to editing the message caption. This provides a single, robust endpoint for all message edits.
+        /// Intelligently and resiliently edits a message in Telegram. It uses a Polly retry policy
+        /// and automatically falls back from editing text to editing a caption if the message contains media.
         /// </summary>
         public async Task EditMessageTextInTelegramAsync(long chatId, int messageId, string text, ParseMode? parseMode, InlineKeyboardMarkup? replyMarkup, CancellationToken cancellationToken)
         {
-            // Apply robust sanitization immediately for logging.
             string sanitizedLogText = SanitizeSensitiveData(text);
-
-            _logger.LogDebug("Hangfire Job (SmartEdit): Editing message. ChatID: {ChatId}, MessageID: {MessageId}, Content (Sanitized): '{SanitizedLogText}'", chatId, messageId, sanitizedLogText);
+            _logger.LogDebug("Hangfire Job (SmartEdit): Preparing to edit message. ChatID: {ChatId}, MessageID: {MessageId}, Content (Sanitized): '{SanitizedLogText}'", chatId, messageId, sanitizedLogText);
 
             var pollyContext = new Polly.Context($"SmartEdit_{chatId}_{messageId}", new Dictionary<string, object>
     {
@@ -366,41 +355,47 @@ namespace TelegramPanel.Infrastructure
 
             try
             {
-                // We will not use the Polly retry policy directly here, because we want to catch the specific
-                // ApiRequestException to implement our fallback logic. We can wrap the whole operation in Polly later if needed.
-
-                try
+                // --- UPGRADE: WRAP THE ENTIRE SMART LOGIC IN YOUR POLLY RETRY POLICY ---
+                await _telegramApiRetryPolicy.ExecuteAsync(async (context, ct) =>
                 {
-                    // --- ATTEMPT 1: Try to edit as a standard text message. ---
-                    await _botClient.EditMessageText(
-                        chatId: new ChatId(chatId),
-                        messageId: messageId,
-                        text: text,
-                        parseMode: parseMode ?? ParseMode.Markdown,
-                        replyMarkup: replyMarkup,
-                        cancellationToken: cancellationToken);
+                    try
+                    {
+                        // --- ATTEMPT 1: Try to edit as a standard text message. ---
+                        await _botClient.EditMessageText(
+                            chatId: new ChatId(chatId),
+                            messageId: messageId,
+                            text: text,
+                            parseMode: parseMode ?? ParseMode.Markdown,
+                            replyMarkup: replyMarkup,
+                            cancellationToken: ct);
 
-                    _logger.LogInformation("Hangfire Job (SmartEdit): Successfully edited message {MessageId} as TEXT.", messageId);
-                }
-                catch (ApiRequestException apiEx)
-                    when (apiEx.ErrorCode == 400 && apiEx.Message.Contains("there is no text in the message to edit", StringComparison.OrdinalIgnoreCase))
-                {
-                    // --- ATTEMPT 2: The message is a photo/media. Fallback to editing the caption. ---
-                    _logger.LogWarning("Hangfire Job (SmartEdit): Failed to edit message {MessageId} as text. Falling back to edit as caption.", messageId);
+                        // If this succeeds, we log it and we're done.
+                        _logger.LogInformation("Hangfire Job (SmartEdit): Successfully edited message {MessageId} as TEXT.", messageId);
+                    }
+                    catch (ApiRequestException apiEx)
+                        when (apiEx.ErrorCode == 400 && apiEx.Message.Contains("there is no text in the message to edit", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // --- ATTEMPT 2: The message is media. Fallback to editing the caption. ---
+                        // This catch block is now *inside* the Polly execution, so a failure here won't stop the retry.
+                        // However, our goal is to try the *other* method, not just retry the same failed one.
 
-                    // Now, try editing the caption instead.
-                    await _botClient.EditMessageCaption(
-                        chatId: new ChatId(chatId),
-                        messageId: messageId,
-                        caption: text, // The same `text` content is now used as the `caption`.
-                        parseMode: parseMode ?? ParseMode.Markdown,
-                        replyMarkup: replyMarkup,
-                        cancellationToken: cancellationToken
-                    );
+                        _logger.LogWarning("Hangfire Job (SmartEdit): Failed to edit message {MessageId} as text. Falling back to edit as caption.", messageId);
 
-                    _logger.LogInformation("Hangfire Job (SmartEdit): Successfully edited message {MessageId} as CAPTION.", messageId);
-                }
+                        // Now, try editing the caption instead.
+                        await _botClient.EditMessageCaption(
+                            chatId: new ChatId(chatId),
+                            messageId: messageId,
+                            caption: text, // The same `text` content is now used as the `caption`.
+                            parseMode: parseMode ?? ParseMode.Markdown,
+                            replyMarkup: replyMarkup,
+                            cancellationToken: ct
+                        );
+
+                        _logger.LogInformation("Hangfire Job (SmartEdit): Successfully edited message {MessageId} as CAPTION.", messageId);
+                    }
+                }, pollyContext, cancellationToken);
             }
+            // --- The outer catch blocks handle final, non-retriable failures ---
             catch (ApiRequestException apiEx)
                 when (apiEx.Message.Contains("message is not modified", StringComparison.OrdinalIgnoreCase))
             {
@@ -417,11 +412,10 @@ namespace TelegramPanel.Infrastructure
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Hangfire Job (SmartEdit): A critical error occurred while editing message {MessageId} for ChatID {ChatId}. Content (Sanitized): '{SanitizedLogText}'", messageId, chatId, sanitizedLogText);
-                throw; // Re-throw to let Hangfire handle the failure.
+                _logger.LogError(ex, "Hangfire Job (SmartEdit): A critical error occurred and all retries failed for message {MessageId}, ChatID {ChatId}. Content (Sanitized): '{SanitizedLogText}'", messageId, chatId, sanitizedLogText);
+                throw; // Re-throw to let Hangfire handle the final failure.
             }
         }
-
 
         public Task EditMessageTextDirectAsync(long chatId, int messageId, string text, ParseMode? parseMode, InlineKeyboardMarkup? replyMarkup, CancellationToken cancellationToken)
         {

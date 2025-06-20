@@ -1,6 +1,7 @@
 ﻿// File: TelegramPanel/Queue/UpdateQueueConsumerService.cs
 
 #region Usings
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -8,6 +9,8 @@ using Polly;
 using Polly.CircuitBreaker; // ✅ NEW: Required for the Circuit Breaker
 using Polly.Retry;
 using StackExchange.Redis; // ✅ NEW: Required to handle Redis exceptions
+using System.Text;
+using Telegram.Bot;
 using TelegramPanel.Application.Interfaces;
 #endregion
 
@@ -23,10 +26,11 @@ namespace TelegramPanel.Queue
         private readonly TimeSpan _redisBreakDuration = TimeSpan.FromMinutes(1); // ✅ NEW: Centralized duration field
         // ✅✅ NEW: A resilience policy to protect against a failing Redis connection ✅✅
         private readonly AsyncCircuitBreakerPolicy _redisCircuitBreaker;
+        private readonly List<long> _adminChatIds;
         #endregion
 
         #region Constructor
-        public UpdateQueueConsumerService(
+        public UpdateQueueConsumerService(IConfiguration configuration,
             ILogger<UpdateQueueConsumerService> logger,
             ITelegramUpdateChannel updateChannel,
             IServiceScopeFactory scopeFactory)
@@ -49,7 +53,16 @@ namespace TelegramPanel.Queue
                     onReset: () => _logger.LogInformation("Redis Circuit Breaker RESET. Resuming normal queue consumption."),
                     onHalfOpen: () => _logger.LogWarning("Redis Circuit Breaker is now HALF-OPEN. The next read will test the connection.")
                 );
+            _adminChatIds = configuration.GetSection("TelegramPanel:AdminUserIds").Get<List<long>>() ?? new List<long>();
 
+            if (_adminChatIds.Count == 0)
+            {
+                _logger.LogWarning("No AdminUserIds found in appsettings.json under the 'TelegramPanel' section. Admin notifications will be disabled.");
+            }
+            else
+            {
+                _logger.LogInformation("Admin notifications configured for {AdminCount} user(s).", _adminChatIds.Count);
+            }
             // This policy for processing an individual update remains the same. It's a good design.
             _processingRetryPolicy = Policy
                 .Handle<Exception>(ex => ex is not (OperationCanceledException or TaskCanceledException))
@@ -156,14 +169,64 @@ namespace TelegramPanel.Queue
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Update {UpdateId} failed processing permanently after all retries.", update.Id);
-                    // The logic to notify the user of an error can remain here.
+                    // --- UPGRADE 3: NOTIFY ADMIN ON PERMANENT UPDATE FAILURE ---
+                    var errorMessage = new StringBuilder();
+                    errorMessage.AppendLine($"❌ *PERMANENT FAILURE: Update Processing Failed*");
+                    errorMessage.AppendLine($"An update failed to process after all retries and has been discarded.");
+                    errorMessage.AppendLine();
+                    errorMessage.AppendLine($"*Update ID:* `{update.Id}`");
+                    errorMessage.AppendLine($"*Update Type:* `{update.Type}`");
+                    errorMessage.AppendLine();
+                    errorMessage.AppendLine($"*Final Error:* `{ex.GetType().Name}`");
+                    errorMessage.AppendLine($"*Message:* `{ex.Message}`");
+
+                    _logger.LogError(ex, "Update {UpdateId} failed processing permanently after all retries. NOTIFYING ADMIN.", update.Id);
+                    _ = NotifyAdminAsync(errorMessage.ToString());
+                }
+             }
+        }
+
+        #region Admin Notification Helper
+        // --- UPGRADE 3: Modify the helper to loop through all admin IDs ---
+        private async Task NotifyAdminAsync(string message)
+        {
+            if (_adminChatIds == null || _adminChatIds.Count == 0)
+            {
+                // No admins configured, so do nothing.
+                return;
+            }
+
+            _logger.LogInformation("Sending critical notification to {AdminCount} admin(s).", _adminChatIds.Count);
+
+            // Create a single scope for all notifications in this batch.
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var botClient = scope.ServiceProvider.GetRequiredService<ITelegramBotClient>();
+
+            // Loop through each configured admin ID and send the message.
+            foreach (var adminId in _adminChatIds)
+            {
+                try
+                {
+                    await botClient.SendMessage(
+                        chatId: adminId,
+                        text: message,
+                        parseMode: Telegram.Bot.Types.Enums.ParseMode.Markdown,
+                        cancellationToken: CancellationToken.None
+                    );
+                }
+                catch (Exception ex)
+                {
+                    // If sending to one admin fails, log it but continue to the next admin.
+                    _logger.LogError(ex, "Failed to send notification to admin (ChatID: {AdminChatId}).", adminId);
                 }
             }
         }
         #endregion
 
-            #region Service Lifecycle
+        #endregion
+
+
+        #region Service Lifecycle
         public override async Task StopAsync(CancellationToken cancellationToken)
         {
             _logger.LogInformation("Update Queue Consumer Service stop requested.");

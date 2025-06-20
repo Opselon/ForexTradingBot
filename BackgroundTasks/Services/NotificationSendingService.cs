@@ -663,8 +663,9 @@ namespace BackgroundTasks.Services
         {
             Context pollyContext = new($"NotificationTo_{payload.TargetTelegramUserId}");
             InlineKeyboardMarkup? finalKeyboard = BuildTelegramKeyboard(payload.Buttons);
-
-            await _telegramApiRetryPolicy.ExecuteAsync(async (ctx) =>
+            try // --- WRAP THE ENTIRE SENDING LOGIC IN A TRY BLOCK ---
+            {
+                await _telegramApiRetryPolicy.ExecuteAsync(async (ctx) =>
             {
                 // اگر مقدار ImageUrl داشت، عکس ارسال می‌شود، در غیر این صورت عکس پیش‌فرض از طریق ImageUrlOrDefault ارسال می‌شود
                 if (!string.IsNullOrWhiteSpace(payload.ImageUrlOrDefault))
@@ -689,9 +690,31 @@ namespace BackgroundTasks.Services
                 }
             }, pollyContext);
 
-            _logger.LogInformation("Notification sent successfully to User {UserId}", payload.TargetTelegramUserId);
-        }
+                _logger.LogInformation("Notification sent successfully to User {UserId}", payload.TargetTelegramUserId);
+            }
+            catch (ApiRequestException apiEx) when (apiEx.ErrorCode == 403 || apiEx.Message.Contains("chat not found"))
+            {
+                // Handle permanent errors like "bot blocked" or "chat not found"
+                _logger.LogWarning(apiEx, "Permanent Send Failure: Bot blocked or user deleted chat for User {UserId}", payload.TargetTelegramUserId);
+                try
+                {
+                    // Self-healing logic: Mark the user as unreachable in your database.
+                    await _userService.MarkUserAsUnreachableAsync(payload.TargetTelegramUserId.ToString(), "BotBlockedOrChatNotFound", cancellationToken);
+                }
+                catch (Exception markEx)
+                {
+                    _logger.LogError(markEx, "A non-critical error occurred while marking user {UserId} as unreachable.", payload.TargetTelegramUserId);
+                }
+                throw; // Re-throw to fail the job.
+            }
+            catch (Exception ex)
+            {
+                // Log and re-throw any other unhandled exceptions
+                _logger.LogError(ex, "An unhandled exception occurred while sending notification to User {UserId}", payload.TargetTelegramUserId);
+                throw;
+            }
 
+        }
         /// <summary>
         /// Processes and sends a single notification (typically an AI-generated message or signal) to a specified Telegram user.
         /// This method serves as a critical final step in the delivery pipeline. It leverages a Polly retry policy for

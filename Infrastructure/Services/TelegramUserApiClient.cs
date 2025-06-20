@@ -9,6 +9,7 @@ using Polly;
 using Polly.Retry;
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Threading.Channels;
 using TL;
 #endregion
@@ -1185,11 +1186,82 @@ namespace Infrastructure.Services
                 throw;
             }
         }
+        private class AdviceSlipResponse
+        {
+            public Slip? slip { get; set; }
+        }
+        private class Slip
+        {
+            public int id { get; set; }
+            public string? advice { get; set; }
+        }
+
+        // We assume the class has an HttpClient instance. For best practice in production apps,
+        // this should be managed via IHttpClientFactory and dependency injection.
+        // If you don't have one, you can add a static instance like this:
+        private static readonly HttpClient _httpClient = new HttpClient();
+
+        /// <summary>
+        /// Fetches a random piece of advice from the public Advice Slip API.
+        /// This is a helper method used by SendRandomAdviceAsync.
+        /// </summary>
+        /// <param name="cancellationToken">Cancellation token for the operation.</param>
+        /// <returns>A string containing a piece of advice, or null if the request fails.</returns>
+        private async Task<string?> get_random_advice(CancellationToken cancellationToken)
+        {
+            const string apiUrl = "https://api.adviceslip.com/advice";
+            try
+            {
+                _logger.LogDebug("GetRandomAdviceAsync: Requesting advice from API: {ApiUrl}", apiUrl);
+
+                // Send the GET request
+                HttpResponseMessage response = await _httpClient.GetAsync(apiUrl, cancellationToken);
+
+                // Ensure the request was successful
+                response.EnsureSuccessStatusCode();
+
+                // Read and deserialize the JSON response
+                var responseStream = await response.Content.ReadAsStreamAsync(cancellationToken);
+                var adviceData = await JsonSerializer.DeserializeAsync<AdviceSlipResponse>(responseStream, cancellationToken: cancellationToken);
+
+                string? advice = adviceData?.slip?.advice;
+
+                if (string.IsNullOrWhiteSpace(advice))
+                {
+                    _logger.LogWarning("GetRandomAdviceAsync: API returned a successful response but the advice content was empty.");
+                    return null;
+                }
+
+                _logger.LogInformation("GetRandomAdviceAsync: Successfully retrieved advice: '{Advice}'", advice);
+                return advice;
+            }
+            catch (HttpRequestException httpEx)
+            {
+                _logger.LogError(httpEx, "GetRandomAdviceAsync: An HTTP error occurred while calling the advice API.");
+                return null;
+            }
+            catch (JsonException jsonEx)
+            {
+                _logger.LogError(jsonEx, "GetRandomAdviceAsync: Failed to deserialize the JSON response from the advice API.");
+                return null;
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogInformation("GetRandomAdviceAsync: Operation was cancelled.");
+                throw; // Re-throw to respect the cancellation
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "GetRandomAdviceAsync: An unexpected error occurred while fetching advice.");
+                return null;
+            }
+        }
 
 
         /// <summary>
         /// Sends a message (text or media) to a specified peer.
         /// Handles various message parameters and uses caching and resilience policies.
+        /// It also automatically appends a random piece of advice as a footer.
         /// </summary>
         /// <param name="peer">The target peer (user, chat, or channel).</param>
         /// <param name="message">The text message content. Can be null if media is provided (for caption).</param>
@@ -1277,6 +1349,38 @@ namespace Infrastructure.Services
                 message = message.Replace("https://wa.me/message/W6HXT7VWR3U2C1", "@capxi", StringComparison.OrdinalIgnoreCase);
                 _logger.LogDebug("SendMessageAsync: Replaced WhatsApp link with @capxi for Peer {PeerId}.", peerIdForLog);
             }
+
+            // --- NEW: Add advice footer to text messages and media captions ---
+            try
+            {
+                // Call the get_random_advice function, which makes the API call.
+                string? randomAdvice = await get_random_advice(cancellationToken).ConfigureAwait(false);
+                if (!string.IsNullOrWhiteSpace(randomAdvice))
+                {
+                    // Format the footer with an emoji
+                    string footer = $"\n\n💡 {randomAdvice}";
+
+                    // If the original message is null/empty (e.g., for a media caption), the advice becomes the message.
+                    // Otherwise, it's appended to the existing message.
+                    message = string.IsNullOrEmpty(message) ? $"💡 {randomAdvice}" : $"{message}{footer}";
+
+                    _logger.LogDebug("SendMessageAsync: Appended random advice footer to the message for Peer {PeerId}.", peerIdForLog);
+
+                    // Re-truncate the message for accurate logging
+                    truncatedMessage = _logger.IsEnabled(LogLevel.Debug) ? TruncateString(message, 100) : "[...message...]";
+                }
+                else
+                {
+                    _logger.LogWarning("SendMessageAsync: Could not retrieve random advice to append as footer. Sending message without it.");
+                }
+            }
+            catch (Exception ex)
+            {
+                // Log the error but do not re-throw. This ensures that if the advice API is down,
+                // the original message can still be sent without the footer.
+                _logger.LogWarning(ex, "SendMessageAsync: Failed to get/append random advice due to an exception. Message will be sent without the footer.");
+            }
+            // --- END OF NEW LOGIC ---
 
             try
             {
@@ -1383,8 +1487,6 @@ namespace Infrastructure.Services
                 _logger.LogTrace("SendMessageAsync: Send lock (if acquired) has been released for key: {LockKey}", lockKey);
             }
         }
-
-
         /// <summary>
         /// Sends a group of media items as an album to a specified peer.
         /// Uses resilience policies.

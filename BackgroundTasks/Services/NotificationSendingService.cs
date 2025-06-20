@@ -47,6 +47,7 @@ namespace BackgroundTasks.Services
         private readonly ITelegramBotClient _botClient;
         private readonly int _maxRetries = 5;
         private readonly TimeSpan _baseDelay = TimeSpan.FromSeconds(2); // Base delay for
+        private const int PerMessageSendDelayMs = 100;
         #endregion
 
         #region Constructor
@@ -643,59 +644,68 @@ namespace BackgroundTasks.Services
         /// </returns>
         private async Task SendToTelegramAsync(NotificationJobPayload payload, CancellationToken cancellationToken)
         {
+            // --- V4 UPGRADE: Use the hardcoded constant for the delay ---
+            if (PerMessageSendDelayMs > 0)
+            {
+                await Task.Delay(PerMessageSendDelayMs, cancellationToken);
+            }
+            // -----------------------------------------------------------
+
             Context pollyContext = new($"NotificationTo_{payload.TargetTelegramUserId}");
             InlineKeyboardMarkup? finalKeyboard = BuildTelegramKeyboard(payload.Buttons);
-            try // --- WRAP THE ENTIRE SENDING LOGIC IN A TRY BLOCK ---
+            var sanitizedMessageForSending = EscapeTelegramMarkdownV2(payload.MessageText);
+
+            try
             {
                 await _telegramApiRetryPolicy.ExecuteAsync(async (ctx) =>
-            {
-                // اگر مقدار ImageUrl داشت، عکس ارسال می‌شود، در غیر این صورت عکس پیش‌فرض از طریق ImageUrlOrDefault ارسال می‌شود
-                if (!string.IsNullOrWhiteSpace(payload.ImageUrlOrDefault))
                 {
-                    await _botClient.SendPhoto(
-                        chatId: payload.TargetTelegramUserId,
-                        photo: InputFile.FromUri(payload.ImageUrlOrDefault),
-                        caption: payload.MessageText,
-                        parseMode: ParseMode.MarkdownV2,
-                        replyMarkup: finalKeyboard,
-                        cancellationToken: cancellationToken).ConfigureAwait(false);
-                }
-                else
-                {
-                    await _botClient.SendMessage(
-                        chatId: payload.TargetTelegramUserId,
-                        text: payload.MessageText,
-                        parseMode: ParseMode.MarkdownV2,
-                        replyMarkup: finalKeyboard,
-                        linkPreviewOptions: new LinkPreviewOptions { IsDisabled = true },
-                        cancellationToken: cancellationToken).ConfigureAwait(false);
-                }
-            }, pollyContext);
+                    if (!string.IsNullOrWhiteSpace(payload.ImageUrlOrDefault))
+                    {
+                        await _botClient.SendPhoto(
+                            chatId: payload.TargetTelegramUserId,
+                            photo: InputFile.FromUri(payload.ImageUrlOrDefault),
+                            caption: sanitizedMessageForSending,
+                            parseMode: ParseMode.MarkdownV2,
+                            replyMarkup: finalKeyboard,
+                            cancellationToken: cancellationToken).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        await _botClient.SendMessage(
+                            chatId: payload.TargetTelegramUserId,
+                            text: sanitizedMessageForSending,
+                            parseMode: ParseMode.MarkdownV2,
+                            replyMarkup: finalKeyboard,
+                            linkPreviewOptions: new LinkPreviewOptions { IsDisabled = true },
+                            cancellationToken: cancellationToken).ConfigureAwait(false);
+                    }
+                }, pollyContext);
 
                 _logger.LogInformation("Notification sent successfully to User {UserId}", payload.TargetTelegramUserId);
             }
-            catch (ApiRequestException apiEx) when (apiEx.ErrorCode == 403 || apiEx.Message.Contains("chat not found"))
+            catch (ApiRequestException apiEx) when (apiEx.ErrorCode == 400 && apiEx.Message.Contains("wrong file identifier"))
             {
-                // Handle permanent errors like "bot blocked" or "chat not found"
-                _logger.LogWarning(apiEx, "Permanent Send Failure: Bot blocked or user deleted chat for User {UserId}", payload.TargetTelegramUserId);
+                _logger.LogWarning(apiEx, "Permanent Send Failure: Invalid ImageUrl for notification to User {UserId}. URL: '{ImageUrl}'",
+                    payload.TargetTelegramUserId, payload.ImageUrlOrDefault);
+            }
+            catch (ApiRequestException apiEx) when (apiEx.ErrorCode == 403 || (apiEx.ErrorCode == 400 && apiEx.Message.Contains("chat not found")))
+            {
+                _logger.LogWarning(apiEx, "Permanent Send Failure: Bot blocked or user deleted chat for User {UserId}. Marking as unreachable.", payload.TargetTelegramUserId);
+
                 try
                 {
-                    // Self-healing logic: Mark the user as unreachable in your database.
                     await _userService.MarkUserAsUnreachableAsync(payload.TargetTelegramUserId.ToString(), "BotBlockedOrChatNotFound", cancellationToken);
                 }
                 catch (Exception markEx)
                 {
                     _logger.LogError(markEx, "A non-critical error occurred while marking user {UserId} as unreachable.", payload.TargetTelegramUserId);
                 }
-                throw; // Re-throw to fail the job.
             }
             catch (Exception ex)
             {
-                // Log and re-throw any other unhandled exceptions
-                _logger.LogError(ex, "An unhandled exception occurred while sending notification to User {UserId}", payload.TargetTelegramUserId);
+                _logger.LogError(ex, "An unhandled exception occurred after all retries while sending notification to User {UserId}", payload.TargetTelegramUserId);
                 throw;
             }
-
         }
         /// <summary>
         /// Processes and sends a single notification (typically an AI-generated message or signal) to a specified Telegram user.

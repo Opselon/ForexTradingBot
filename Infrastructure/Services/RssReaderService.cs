@@ -1307,11 +1307,10 @@ namespace Infrastructure.Services
 
 
 
-
         /// <summary>
-        /// Updates the RssSource's status in the database after a fetch cycle, centralizing
-        /// all state management logic for success, transient failures, and permanent deactivation.
-        /// This version includes self-healing logic to re-classify errors if needed.
+        /// Updates the RssSource's status after a fetch cycle. This V3 version intelligently
+        /// handles timeout exceptions by not incrementing the error counter, making the system
+        /// more resilient to temporary network or server slowness.
         /// </summary>
         private async Task<Result<IEnumerable<NewsItemDto>>> UpdateRssSourceStatusAfterFetchOutcomeAsync(RssSource source, RssFetchOutcome outcome, CancellationToken ct)
         {
@@ -1322,7 +1321,7 @@ namespace Infrastructure.Services
 
             if (outcome.IsSuccess)
             {
-                // --- SUCCESS PATH ---
+                // SUCCESS PATH (No change)
                 _logger.LogInformation("RssSource {RssSourceId}: Fetch successful. Resetting error count.", source.Id);
                 source.LastSuccessfulFetchAt = source.LastFetchAttemptAt;
                 source.FetchErrorCount = 0;
@@ -1332,71 +1331,72 @@ namespace Infrastructure.Services
             }
             else
             {
-                // --- FAILURE PATH ---
+                // FAILURE PATH
                 var finalErrorType = outcome.ErrorType;
 
-                // --- V2 UPGRADE: SELF-HEALING ERROR CLASSIFICATION ---
-                // Even if the outcome was misclassified, we can re-evaluate the exception here.
+                // Self-healing error classification (No change)
                 if (finalErrorType == RssFetchErrorType.Unknown && outcome.Exception is XmlException)
                 {
-                    _logger.LogWarning("RssSource {RssSourceId}: Re-classifying Unknown error to XmlParsing based on exception type.", source.Id);
+                    _logger.LogWarning("RssSource {RssSourceId}: Re-classifying Unknown error to XmlParsing.", source.Id);
                     finalErrorType = RssFetchErrorType.XmlParsing;
                 }
-                // ----------------------------------------------------
 
                 var logLevel = finalErrorType == RssFetchErrorType.Cancellation ? LogLevel.Warning : LogLevel.Error;
                 _logger.Log(logLevel, outcome.Exception, "RssSource {RssSourceId}: Fetch failed. ErrorType: {ErrorType}, Message: {ErrorMessage}", source.Id, finalErrorType, outcome.ErrorMessage);
 
-                if (finalErrorType != RssFetchErrorType.Cancellation)
+                // --- V3 UPGRADE: INTELLIGENT ERROR COUNTING ---
+                bool isTimeout = outcome.Exception is TaskCanceledException && !ct.IsCancellationRequested;
+
+                if (finalErrorType == RssFetchErrorType.Cancellation || isTimeout)
                 {
-                    // --- V2 UPGRADE: Use the final, potentially re-classified error type ---
-                    if (finalErrorType is RssFetchErrorType.PermanentHttp or RssFetchErrorType.XmlParsing)
-                    {
-                        source.FetchErrorCount = _settings.MaxFetchErrorsToDeactivate;
-                        _logger.LogWarning("RssSource {RssSourceId}: Error count maxed out immediately due to a permanent error: {ErrorType}", source.Id, finalErrorType);
-                    }
-                    else
-                    {
-                        source.FetchErrorCount++;
-                        _logger.LogWarning("RssSource {RssSourceId}: Error count incremented to {ErrorCount} due to a transient error: {ErrorType}", source.Id, source.FetchErrorCount, finalErrorType);
-                    }
+                    // Do not increment the error count for user-initiated cancellations or timeouts.
+                    _logger.LogWarning("RssSource {RssSourceId}: Failure was a cancellation or timeout. Error count will NOT be incremented.", source.Id);
                 }
+                else if (finalErrorType is RssFetchErrorType.PermanentHttp or RssFetchErrorType.XmlParsing)
+                {
+                    // Max out the error count for permanent errors.
+                    source.FetchErrorCount = _settings.MaxFetchErrorsToDeactivate;
+                    _logger.LogWarning("RssSource {RssSourceId}: Error count maxed out due to permanent error: {ErrorType}", source.Id, finalErrorType);
+                }
+                else // This is for other transient errors (like 503, DNS failure)
+                {
+                    // Increment the error count.
+                    source.FetchErrorCount++;
+                    _logger.LogWarning("RssSource {RssSourceId}: Error count incremented to {ErrorCount} due to transient error: {ErrorType}", source.Id, source.FetchErrorCount, finalErrorType);
+                }
+                // ----------------------------------------------------
             }
 
-            // --- DEACTIVATION LOGIC (No change, but now more reliable) ---
+            // DEACTIVATION LOGIC (No change, but now activated more intelligently)
             if (source.FetchErrorCount >= _settings.MaxFetchErrorsToDeactivate && source.IsActive)
             {
                 source.IsActive = false;
-                _logger.LogWarning("DEACTIVATING RssSource {RssSourceId} ({SourceName}) due to reaching error threshold of {Threshold}. Last error: {Error}",
-                    source.Id, source.SourceName, _settings.MaxFetchErrorsToDeactivate, outcome.ErrorMessage);
+                _logger.LogWarning("DEACTIVATING RssSource {RssSourceId} ({SourceName}) due to reaching error threshold of {Threshold}.",
+                    source.Id, source.SourceName, _settings.MaxFetchErrorsToDeactivate);
             }
 
             try
             {
-                // The DB update logic remains the same, it will now persist the correct state.
+                // DB UPDATE (No change)
                 await _dbRetryPolicy.ExecuteAsync(async () => {
                     await using var connection = CreateConnection();
                     var sql = @"UPDATE RssSources SET LastSuccessfulFetchAt = @LastSuccessfulFetchAt, FetchErrorCount = @FetchErrorCount, UpdatedAt = @UpdatedAt, ETag = @ETag, LastModifiedHeader = @LastModifiedHeader, IsActive = @IsActive, LastFetchAttemptAt = @LastFetchAttemptAt WHERE Id = @Id;";
-                    _logger.LogDebug("Executing final status update to database for RssSource {RssSourceId}.", source.Id);
                     await connection.ExecuteAsync(sql, source);
                 });
             }
             catch (Exception ex)
             {
-                _logger.LogCritical(ex, "CRITICAL FAILURE: Could not persist final status for RssSource {RssSourceId} ('{SourceName}'). Its state is now inconsistent.", source.Id, source.SourceName);
+                _logger.LogCritical(ex, "CRITICAL FAILURE: Could not persist final status for RssSource {RssSourceId} ('{SourceName}').", source.Id, source.SourceName);
                 throw new RepositoryException($"Failed to update RssSource status for '{source.SourceName}'.", ex);
             }
 
-            // --- CONSTRUCT FINAL RETURN VALUE (No change) ---
+            // CONSTRUCT FINAL RETURN VALUE (No change)
             if (outcome.IsSuccess)
             {
-                var successMessage = $"RssSource {source.Id}: Fetch successful. {outcome.DispatchedNewsItems.Count()} items dispatched.";
-                _logger.LogInformation(successMessage);
-                return Result<IEnumerable<NewsItemDto>>.Success(outcome.DispatchedNewsItems, successMessage);
+                return Result<IEnumerable<NewsItemDto>>.Success(outcome.DispatchedNewsItems, $"RssSource {source.Id}: Fetch successful.");
             }
             else
             {
-                var failureMessage = $"RssSource {source.Id}: Fetch failed for '{source.SourceName}'. Error: {outcome.ErrorMessage}";
                 return Result<IEnumerable<NewsItemDto>>.Failure(new[] { outcome.ErrorMessage ?? "An unknown fetch error occurred." });
             }
         }

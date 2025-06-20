@@ -16,6 +16,7 @@ using Shared.Extensions;
 using StackExchange.Redis;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Telegram.Bot;
 
 // Telegram.Bot
@@ -691,7 +692,6 @@ namespace BackgroundTasks.Services
             _logger.LogWarning("No valid buttons were found after filtering. Returning null keyboard.");
             return null;
         }
-
 
         /// <summary>
         /// The "last mile" sender responsible for dispatching the notification payload to Telegram.

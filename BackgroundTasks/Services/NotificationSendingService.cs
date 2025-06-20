@@ -486,8 +486,7 @@ namespace BackgroundTasks.Services
             if (string.IsNullOrEmpty(text)) return "";
 
             // This regex pattern matches any single character that is one of the special characters
-            // required to be escaped for MarkdownV2. The `\` escapes characters like `[` and `.`
-            // so the regex engine treats them as literals.
+            // required to be escaped for MarkdownV2.
             const string markdownV2Pattern = @"([_\[\]()~`>#\+\-=\|{}\.!\*])";
 
             // The replacement string "$1" is a backreference to the captured group (the character itself).
@@ -890,8 +889,7 @@ namespace BackgroundTasks.Services
         {
             var messageTextBuilder = new StringBuilder();
 
-            // Use a local helper or your existing formatter to escape.
-            // For clarity, I'll use the local version we've been working with.
+            // Use a local helper or a central formatter. The key is that the *implementation* is correct.
             string title = EscapeTelegramMarkdownV2(newsItem.Title?.Trim() ?? "Untitled News");
             string sourceName = EscapeTelegramMarkdownV2(newsItem.SourceName?.Trim() ?? "Unknown Source");
             string summary = EscapeTelegramMarkdownV2(newsItem.Summary?.Trim() ?? string.Empty);
@@ -907,8 +905,9 @@ namespace BackgroundTasks.Services
 
             if (!string.IsNullOrWhiteSpace(link) && Uri.TryCreate(link, UriKind.Absolute, out _))
             {
-                // --- THE DEFINITIVE FIX ---
+                // --- THE CRITICAL FIX ---
                 // We must also escape the URL itself before placing it inside the parentheses.
+                // This prevents characters like `(` or `)` in the URL from breaking the Markdown.
                 var escapedLink = EscapeTelegramMarkdownV2(link);
                 messageTextBuilder.Append($"\n\n[Read Full Article]({escapedLink})");
             }

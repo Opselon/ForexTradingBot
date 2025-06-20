@@ -53,6 +53,8 @@ namespace TelegramPanel.Infrastructure
         private static readonly Regex PhoneRegex = new(@"\(?\b\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b", RegexOptions.Compiled);
         private const string RedactedPlaceholder = "[REDACTED]";
         private const int MaxLogLength = 150;
+        private readonly AsyncRetryPolicy _sendMessagePolicy;
+        private readonly AsyncRetryPolicy _answerCallbackQueryPolicy;
         public ActualTelegramMessageActions(ILoggingSanitizer logSanitizer,
             ITelegramBotClient botClient,
             ILogger<ActualTelegramMessageActions> logger,
@@ -68,8 +70,15 @@ namespace TelegramPanel.Infrastructure
             _logSanitizer = logSanitizer;
 
 
+            _sendMessagePolicy = CreateTelegramRetryPolicy(
+                policyName: "SendMessagePolicy",
+                shouldIgnoreQueryIsOld: false // Not relevant for sending messages
+            );
 
-
+            _answerCallbackQueryPolicy = CreateTelegramRetryPolicy(
+                policyName: "AnswerCallbackQueryPolicy",
+                shouldIgnoreQueryIsOld: true // CRITICAL: We want this policy to ignore "query is too old"
+            );
             // --- THIS IS THE CRITICAL FIX ---
             _hangfireRetryPolicy = Policy // <-- Use new name
                 .Handle<ApiRequestException>(apiEx =>
@@ -134,52 +143,129 @@ namespace TelegramPanel.Infrastructure
                             operationName, chatId, apiErrorCode, timeSpan, retryAttempt, messagePreview, exception.Message);
                     });
         }
+
+        /// <summary>
+        /// A centralized factory method for creating robust Polly retry policies for the Telegram API.
+        /// This promotes consistency and simplifies policy management.
+        /// </summary>
+        /// <param name="policyName">A name for the policy, used in logging.</param>
+        /// <param name="shouldIgnoreQueryIsOld">If true, the policy will NOT retry on "query is too old" errors.</param>
+        /// <returns>A configured AsyncRetryPolicy.</returns>
+        private AsyncRetryPolicy CreateTelegramRetryPolicy(string policyName, bool shouldIgnoreQueryIsOld)
+        {
+            return Policy
+                .Handle<Exception>(ex =>
+                {
+                    // --- V3 UPGRADE: Centralized, clear exception handling logic ---
+
+                    // First, check for exceptions we NEVER want to retry.
+                    if (ex is OperationCanceledException or TaskCanceledException)
+                    {
+                        return false; // Never retry on cancellation.
+                    }
+
+                    if (ex is ApiRequestException apiEx)
+                    {
+                        // Check for the specific "query is too old" error if requested.
+                        if (shouldIgnoreQueryIsOld && apiEx.ErrorCode == 400 &&
+                            apiEx.Message.Contains("query is too old", StringComparison.OrdinalIgnoreCase))
+                        {
+                            _logger.LogWarning("Policy({PolicyName}): Ignoring permanent 'query is too old' error. No retry will occur.", policyName);
+                            return false; // False = Do Not Handle = Do Not Retry
+                        }
+
+                        // Check for other permanent, unrecoverable client errors.
+                        if ((apiEx.ErrorCode == 403 && apiEx.Message.Contains("bot was blocked", StringComparison.OrdinalIgnoreCase)) ||
+                            (apiEx.ErrorCode == 400 && (
+                                apiEx.Message.Contains("chat not found", StringComparison.OrdinalIgnoreCase) ||
+                                apiEx.Message.Contains("USER_DEACTIVATED", StringComparison.OrdinalIgnoreCase) ||
+                                apiEx.Message.Contains("message is not modified", StringComparison.OrdinalIgnoreCase)
+                            )))
+                        {
+                            _logger.LogWarning("Policy({PolicyName}): Ignoring permanent user/chat error (Code: {ErrorCode}). No retry will occur.", policyName, apiEx.ErrorCode);
+                            return false; // False = Do Not Handle = Do Not Retry
+                        }
+                    }
+
+                    // For all other exceptions (e.g., 5xx server errors, HttpRequestException, other 4xx API errors), we DO want to retry.
+                    _logger.LogTrace("Policy({PolicyName}): Handling exception of type {ExceptionType} for retry.", policyName, ex.GetType().Name);
+                    return true; // True = Handle this error = Retry
+                })
+                .WaitAndRetryAsync(
+                    retryCount: 3,
+                    sleepDurationProvider: retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
+                    onRetry: (exception, timeSpan, retryAttempt, context) =>
+                    {
+                        var operationName = context.OperationKey ?? "UnknownOperation";
+                        var apiErrorCode = (exception as ApiRequestException)?.ErrorCode.ToString() ?? "N/A";
+
+                        _logger.LogWarning(exception,
+                            "PollyRetry({PolicyName}): Operation '{Operation}' failed (Code: {ApiErrorCode}). Retrying in {TimeSpan} (Attempt {RetryAttempt}/3). Error: {Message}",
+                            policyName, operationName, apiErrorCode, timeSpan, retryAttempt, exception.Message);
+                    });
+        }
+
+        /// <summary>
+        /// Resiliently edits the caption of a media message in Telegram. This V3 version
+        /// uses proactive data sanitization and our centralized Polly retry policy.
+        /// </summary>
         public async Task EditMessageCaptionInTelegramAsync(long chatId, int messageId, string caption, ParseMode? parseMode, InlineKeyboardMarkup? replyMarkup, CancellationToken cancellationToken)
         {
-            string sanitizedLogCaption = SanitizeSensitiveData(caption);
-            _logger.LogDebug("Hangfire Job (ActualSend): Editing message caption. ChatID: {ChatId}, MessageID: {MessageId}, Caption (Sanitized): '{SanitizedLogCaption}'", chatId, messageId, sanitizedLogCaption);
+            // --- V3 UPGRADE: Proactively sanitize the caption for MarkdownV2 ---
+            var sanitizedCaptionForSending = EscapeTelegramMarkdownV2(caption);
+            var sanitizedCaptionForLogging = _logSanitizer.Sanitize(caption); // Use your central sanitizer for logs
+
+            _logger.LogDebug("Job (EditCaption): Preparing to edit caption. Chat: {ChatId}, Msg: {MessageId}", chatId, messageId);
 
             var pollyContext = new Polly.Context($"EditCaption_{chatId}_{messageId}", new Dictionary<string, object>
-        {
-            { "ChatId", chatId },
-            { "MessageId", messageId },
-            { "MessagePreview", sanitizedLogCaption }
-        });
+            {
+                { "ChatId", chatId },
+                { "MessageId", messageId },
+                { "MessagePreview", sanitizedCaptionForLogging }
+            });
 
             try
             {
-                await _telegramApiRetryPolicy.ExecuteAsync(async (context, ct) =>
+                // --- V3 UPGRADE: Use the correct, clearly named policy ---
+                await _sendMessagePolicy.ExecuteAsync(async (context, ct) =>
                 {
-                    // The critical change: call EditMessageCaptionAsync
+                    // --- V3 UPGRADE: Use the modern ...Async method ---
                     await _botClient.EditMessageCaption(
                         chatId: new ChatId(chatId),
                         messageId: messageId,
-                        caption: caption,
-                        parseMode: parseMode ?? ParseMode.Markdown,
+                        caption: sanitizedCaptionForSending,
+                        parseMode: parseMode ?? ParseMode.MarkdownV2,
                         replyMarkup: replyMarkup,
                         cancellationToken: ct);
                 }, pollyContext, cancellationToken);
 
-                _logger.LogInformation("Hangfire Job (ActualSend): Successfully edited message caption for ChatID {ChatId}, MessageID: {MessageId}", chatId, messageId);
+                _logger.LogInformation("Job (EditCaption): Successfully edited caption for Msg {MessageId}.", messageId);
             }
-            catch (ApiRequestException apiEx) when (apiEx.Message.Contains("message is not modified", StringComparison.OrdinalIgnoreCase))
+            catch (ApiRequestException apiEx)
             {
-                _logger.LogDebug("Hangfire Job (ActualSend): Message caption not modified for ChatID {ChatId}, MessageID {MessageId}. Operation skipped.", chatId, messageId);
-            }
-            catch (ApiRequestException apiEx) when (
-                (apiEx.ErrorCode == 400 && (apiEx.Message.Contains("chat not found", StringComparison.OrdinalIgnoreCase) || apiEx.Message.Contains("USER_DEACTIVATED", StringComparison.OrdinalIgnoreCase))) ||
-                (apiEx.ErrorCode == 403 && apiEx.Message.Contains("bot was blocked by the user", StringComparison.OrdinalIgnoreCase))
-            )
-            {
-                _logger.LogWarning(apiEx, "Hangfire Job (ActualSend): Telegram API reported chat not found or user deactivated/blocked (Code: {ApiErrorCode}) for ChatID {ChatId} while editing caption. Attempting user removal.", apiEx.ErrorCode, chatId);
-                // Here you would add the logic to mark the user as unreachable.
+                // --- V3 UPGRADE: Use the centralized error handling pattern ---
+                // The Polly policy already filtered out permanent user errors, so we only need to
+                // catch the "message is not modified" case specifically.
+                if (apiEx.Message.Contains("message is not modified", StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogDebug("Job (EditCaption): Caption not modified for Msg {MessageId} (content was identical).", messageId);
+                    // This is a success, so we don't re-throw.
+                }
+                else
+                {
+                    // Any other ApiRequestException that Polly didn't handle is unexpected.
+                    _logger.LogError(apiEx, "Job (EditCaption): A non-retriable API error occurred for Msg {MessageId}, Chat {ChatId}. ErrorCode: {ErrorCode}", messageId, chatId, apiEx.ErrorCode);
+                    throw; // Re-throw to fail the Hangfire job.
+                }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Hangfire Job (ActualSend): Error editing message caption for ChatID {ChatId}, MessageID: {MessageId} after retries. Caption (Sanitized): '{SanitizedLogCaption}'", chatId, messageId, sanitizedLogCaption);
-                throw; // Re-throw to let Hangfire handle the failure.
+                // Final safety net for non-API exceptions.
+                _logger.LogError(ex, "Job (EditCaption): A critical unhandled error occurred for Msg {MessageId}, Chat {ChatId}.", messageId, chatId);
+                throw; // Re-throw to let Hangfire handle the final failure.
             }
         }
+
 
         // --- ✅ IMPLEMENT THE NEW METHOD ---
         public async Task CopyMessageToTelegramAsync(long targetChatId, long sourceChatId, int messageId, CancellationToken cancellationToken)

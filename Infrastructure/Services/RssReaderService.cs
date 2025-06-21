@@ -1379,7 +1379,10 @@ namespace Infrastructure.Services
                 {
                     // Increment the error count only for non-cancellation/non-timeout errors.
                     source.FetchErrorCount++;
-                    _logger.LogWarning("RssSource {RssSourceId}: Error count incremented to {ErrorCount} due to transient error: {ErrorType}", source.Id, source.FetchErrorCount, finalErrorType);
+                    // --- TARGETED CHANGE: Correcting the log message to accurately reflect the error type ---
+                    // Removed "transient" as PermanentHttp is not transient.
+                    _logger.LogWarning("RssSource {RssSourceId}: Error count incremented to {ErrorCount} due to error: {ErrorType}", source.Id, source.FetchErrorCount, finalErrorType);
+                    // --------------------------------------------------------------------------------------
 
                     // DEACTIVATION LOGIC: Now correctly placed *after* the potential increment.
                     // This ensures deactivation only happens if an error count was genuinely added.

@@ -1343,11 +1343,28 @@ namespace Infrastructure.Services
                     noWebpage, background, clearDraft, schedule_date.HasValue ? schedule_date.Value.ToString("s") : "N/A");
             }
 
-            // Level 4: Custom pre-processing example (if required)
-            if (!string.IsNullOrEmpty(message) && message!.Contains("https://wa.me/message/W6HXT7VWR3U2C1", StringComparison.OrdinalIgnoreCase))
+            if (!string.IsNullOrEmpty(message))
             {
-                message = message.Replace("https://wa.me/message/W6HXT7VWR3U2C1", "@capxi", StringComparison.OrdinalIgnoreCase);
-                _logger.LogDebug("SendMessageAsync: Replaced WhatsApp link with @capxi for Peer {PeerId}.", peerIdForLog);
+                // Original rule
+                if (message.Contains("https://wa.me/message/W6HXT7VWR3U2C1", StringComparison.OrdinalIgnoreCase))
+                {
+                    message = message.Replace("https://wa.me/message/W6HXT7VWR3U2C1", "@capxi", StringComparison.OrdinalIgnoreCase);
+                }
+                // New rule 1
+                if (message.Contains("t.me/ConfigsHub", StringComparison.OrdinalIgnoreCase))
+                {
+                    message = message.Replace("t.me/ConfigsHub", "https://t.me/v2raymeliConfig", StringComparison.OrdinalIgnoreCase);
+                }
+                // New rule 2 (redundant check)
+                if (message.Contains("https://t.me/ConfigsHub", StringComparison.OrdinalIgnoreCase))
+                {
+                    message = message.Replace("https://t.me/ConfigsHub", "https://t.me/v2raymeliConfig", StringComparison.OrdinalIgnoreCase);
+                }
+                // New rule 3
+                if (message.Contains("https://t.me/kingariya", StringComparison.OrdinalIgnoreCase))
+                {
+                    message = message.Replace("https://t.me/kingariya", "https://t.me/capxi", StringComparison.OrdinalIgnoreCase);
+                }
             }
 
             // --- NEW: Add advice footer to text messages and media captions ---

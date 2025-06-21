@@ -88,7 +88,7 @@ namespace TelegramPanel.Application.CommandHandlers.Entry
                     break;
             }
         }
-
+        
 
         private async Task HandleStartCommand(TGBotTypes.User telegramUser, long chatId, CancellationToken cancellationToken)
         {
@@ -284,6 +284,7 @@ namespace TelegramPanel.Application.CommandHandlers.Entry
                     ShowMainMenuCallback, user.Id);
             }
         }
+
         private Task<TGBotTypes.Message> SendInitialWelcomeMessageAsync(long chatId, string firstName, CancellationToken cancellationToken)
         {
             var sanitizedFirstName = _logSanitizer.Sanitize(firstName);

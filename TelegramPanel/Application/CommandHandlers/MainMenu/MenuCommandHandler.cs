@@ -36,7 +36,7 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
         public const string CoingeckoCallbackData = "menu_coingecko_trending"; // Using the constant from the handler itself
         public const string BackToMainMenuGeneral = "back_to_main_menu";
         private readonly IMemoryCacheService<UiCacheEntry> _uiCache; // <-- NEW
-
+        public const string CloudflareRadarCallbackData = "menu_cf_radar";
         private const string MainMenuCacheKey = "MainMenu_v1";
         #endregion
 
@@ -75,6 +75,7 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
                 .AppendLine("🗓️ " + TelegramMessageFormatter.Bold("Economic Calendar") + ": " + TelegramMessageFormatter.Italic("Stay informed about important upcoming economic events.").Replace("\\.", ""))
                 .AppendLine("📈 " + TelegramMessageFormatter.Bold("Crypto Prices") + ": " + TelegramMessageFormatter.Italic("View real-time market data for popular cryptocurrencies.").Replace("\\.", ""))
                 .AppendLine("✨ " + TelegramMessageFormatter.Bold("View Plans") + ": " + TelegramMessageFormatter.Italic("Learn about subscription tiers and unlock premium features.").Replace("\\.", ""))
+                .AppendLine("☁️ " + TelegramMessageFormatter.Bold("Cloudflare Radar") + ": " + TelegramMessageFormatter.Italic("Check global internet health and trends.").Replace("\\.", ""))
                 .AppendLine("⚙️ " + TelegramMessageFormatter.Bold("Settings") + ": " + TelegramMessageFormatter.Italic("Manage your notification preferences and other bot settings.").Replace("\\.", ""))
                 .AppendLine("👤 " + TelegramMessageFormatter.Bold("My Profile") + ": " + TelegramMessageFormatter.Italic("View your account status, subscription details, and history.").Replace("\\.", ""))
                 .AppendLine();
@@ -89,7 +90,8 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
                 new[] // Row 2: NEW Analysis Button
                 {
                    InlineKeyboardButton.WithCallbackData("🔍 News Analysis", AnalysisCallbackData),
-                   InlineKeyboardButton.WithCallbackData("🗓️ Economic Calendar", EconomicCalendarCallbackData)
+                   InlineKeyboardButton.WithCallbackData("🗓️ Economic Calendar", EconomicCalendarCallbackData),
+                   InlineKeyboardButton.WithCallbackData("☁️ Cloudflare Radar", CloudflareRadarCallbackData)    
                 },
                 new[] // Row 3: Crypto Details (NEW)
                 {

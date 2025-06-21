@@ -8,6 +8,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="Application\CommandHandlers\Features\Crypto\**" />
+    <EmbeddedResource Remove="Application\CommandHandlers\Features\Crypto\**" />
+    <None Remove="Application\CommandHandlers\Features\Crypto\**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Core" Version="2.3.0" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.5" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.5" />
@@ -27,7 +33,6 @@
 
   <ItemGroup>
     <Folder Include="Application\CommandHandlers\Account\" />
-    <Folder Include="Application\CommandHandlers\Features\Crypto\" />
     <Folder Include="Application\Commands\" />
     <Folder Include="Auth\" />
     <Folder Include="Polling\" />

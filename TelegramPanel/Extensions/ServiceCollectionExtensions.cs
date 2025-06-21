@@ -3,8 +3,10 @@ using Application.Common.Interfaces; // For INotificationService
 using Application.Common.Interfaces.Fred;
 using Application.Features.Forwarding.Interfaces;
 using Application.Features.Forwarding.Services;
+using Application.Interfaces;
 using Application.Services.FredApi;
 using Domain.Features.Forwarding.Entities;
+using Infrastructure.Services;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -170,6 +172,11 @@ namespace TelegramPanel.Extensions
             // - MarketAnalysisCallbackHandler (if it implements ITelegramCallbackQueryHandler)
             // - FundamentalAnalysisCallbackHandler (if it implements ITelegramCallbackQueryHandler)
             // - Any other callback handlers in that assembly.
+            services.AddScoped<TelegramPanel.Application.CommandHandlers.Features.Cloudflare.CloudflareRadarInitiationHandler>();
+            services.AddScoped<TelegramPanel.Application.CommandHandlers.Features.Cloudflare.CloudflareRadarCallbackHandler>();
+
+            // Register Services
+            services.AddScoped<ICloudflareRadarService,CloudflareRadarService>();
 
             // REMOVE explicit registration if covered by scan:
             // services.AddScoped<ITelegramCallbackQueryHandler, FundamentalAnalysisCallbackHandler>(); // This is now redundant if scan works

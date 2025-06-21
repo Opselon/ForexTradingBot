@@ -98,7 +98,6 @@ namespace Infrastructure.Repositories
             return await _dbRetryPolicy.ExecuteAsync(async () => // ✅ Polly applied
             {
                 return await _context.RssSources
-                    .Where(rs => rs.IsActive)
                     .AsNoTracking()
                     .OrderBy(rs => rs.SourceName)
                     .ToListAsync(cancellationToken);

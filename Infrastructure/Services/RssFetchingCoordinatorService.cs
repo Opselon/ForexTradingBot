@@ -209,7 +209,7 @@ namespace Infrastructure.Services
         {
             _logger.LogInformation("[HANGFIRE JOB] Starting: FetchAllActiveFeedsAsync at {UtcNow}", DateTime.UtcNow);
 
-            var activeSources = (await _rssSourceRepository.GetAllAsync(cancellationToken).ConfigureAwait(false)).ToList(); // Level 1: ConfigureAwait(false)
+            var activeSources = (await _rssSourceRepository.GetActiveSourcesAsync(cancellationToken).ConfigureAwait(false)).ToList(); // Level 1: ConfigureAwait(false)
 
             if (!activeSources.Any())
             {

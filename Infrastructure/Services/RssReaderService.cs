@@ -1362,11 +1362,11 @@ namespace Infrastructure.Services
                     // Do not increment the error count for user-initiated cancellations or timeouts.
                     _logger.LogWarning("RssSource {RssSourceId}: Failure was a cancellation or timeout. Error count will NOT be incremented.", source.Id);
                 }
-                else if (finalErrorType is RssFetchErrorType.PermanentHttp or RssFetchErrorType.XmlParsing)
+                if (source.FetchErrorCount >= _settings.MaxFetchErrorsToDeactivate && source.IsActive)
                 {
-                    // Max out the error count for permanent errors.
-                    source.FetchErrorCount = _settings.MaxFetchErrorsToDeactivate;
-                    _logger.LogWarning("RssSource {RssSourceId}: Error count maxed out due to permanent error: {ErrorType}", source.Id, finalErrorType);
+                    source.IsActive = false;
+                    _logger.LogWarning("DEACTIVATING RssSource {RssSourceId} ({SourceName}) due to reaching error threshold of {Threshold}.",
+                        source.Id, source.SourceName, _settings.MaxFetchErrorsToDeactivate);
                 }
                 else // This is for other transient errors (like 503, DNS failure)
                 {
@@ -1501,7 +1501,14 @@ namespace Infrastructure.Services
         /// </list>
         /// <c>false</c> otherwise (e.g., success codes, server errors, or transient client errors).
         /// </returns>
-        private bool IsPermanentHttpError(HttpStatusCode? code) => code is HttpStatusCode.BadRequest or HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden or HttpStatusCode.NotFound or HttpStatusCode.Gone;
+        // Line 1583
+        private bool IsPermanentHttpError(HttpStatusCode? code) =>
+            code is HttpStatusCode.BadRequest or
+                    HttpStatusCode.Unauthorized or
+                    HttpStatusCode.Forbidden or // <-- Match!
+                    HttpStatusCode.NotFound or
+                    HttpStatusCode.Gone;
+
 
 
         private void AddConditionalGetHeaders(HttpRequestMessage request, RssSource source)

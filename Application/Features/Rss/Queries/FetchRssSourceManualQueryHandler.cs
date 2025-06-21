@@ -48,7 +48,7 @@ namespace Application.Features.Rss.Queries
             }
             else
             {
-                sourcesToFetch = await _rssSourceRepository.GetActiveSourcesAsync(cancellationToken);
+                sourcesToFetch = await _rssSourceRepository.GetAllAsync(cancellationToken);
                 if (!sourcesToFetch.Any())
                 {
                     _logger.LogInformation("No active RSS sources found to fetch.");

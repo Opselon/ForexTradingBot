@@ -97,6 +97,7 @@ namespace TelegramPanel.Queue
         #endregion
 
         #region Main Execution Logic
+
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             _logger.LogInformation("Update Queue Consumer Service is starting...");

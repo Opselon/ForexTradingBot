@@ -140,13 +140,14 @@ namespace Infrastructure.Services
     public class RssReaderService : IRssReaderService
     {
 
+        #region Service Dependencies and Configuration Fields
+
+
         /// <summary>
         /// The named client identifier used to retrieve pre-configured <see cref="HttpClient"/> instances
         /// from the <see cref="IHttpClientFactory"/> for RSS feed requests.
         /// </summary>
         public const string HttpClientNamedClient = "RssFeedClient";
-
-        #region Service Dependencies and Configuration Fields
 
         /// <summary>
         /// Factory for creating configured <see cref="HttpClient"/> instances, ensuring proper pooling and lifetime management.
@@ -457,79 +458,88 @@ namespace Infrastructure.Services
 
         #region Main Service Logic: FetchAndProcessFeedAsync
 
-  public async Task<Result<IEnumerable<NewsItemDto>>> FetchAndProcessFeedAsync(RssSource rssSource, CancellationToken cancellationToken = default)
-      {
-          const string methodName = nameof(FetchAndProcessFeedAsync);
+        public async Task<Result<IEnumerable<NewsItemDto>>> FetchAndProcessFeedAsync(RssSource rssSource, CancellationToken cancellationToken = default)
+        {
+            const string methodName = nameof(FetchAndProcessFeedAsync);
 
-          // --- 1. Initial Validation (Fail Fast) ---
-          if (rssSource == null)
-          {
-              _logger.LogError("{MethodName} received a null RssSource, a programming error.", methodName);
-              throw new ArgumentNullException(nameof(rssSource));
-          }
+            // --- 1. Initial Validation (Fail Fast) ---
+            if (rssSource == null)
+            {
+                _logger.LogError("{MethodName} received a null RssSource, a programming error.", methodName);
+                throw new ArgumentNullException(nameof(rssSource));
+            }
 
-          // Setup logging scope for excellent traceability throughout the entire operation.
-          string correlationId = $"RSSFetch_{rssSource.Id}_{Guid.NewGuid():N}";
-          using var scope = _logger.BeginScope(new Dictionary<string, object?>
-          {
-              ["CorrelationId"] = correlationId,
-              ["RssSourceId"] = rssSource.Id,
-              ["RssSourceName"] = rssSource.SourceName
-          });
+            // Setup logging scope for excellent traceability throughout the entire operation.
+            string correlationId = $"RSSFetch_{rssSource.Id}_{Guid.NewGuid():N}";
+            using var scope = _logger.BeginScope(new Dictionary<string, object?>
+            {
+                ["CorrelationId"] = correlationId,
+                ["RssSourceId"] = rssSource.Id,
+                ["RssSourceName"] = rssSource.SourceName
+            });
 
-          if (string.IsNullOrWhiteSpace(rssSource.Url))
-          {
-              _logger.LogWarning("Validation failed: URL is null or empty. Skipping fetch.");
-              // We don't update the source status here, as this is a configuration issue.
-              return Result<IEnumerable<NewsItemDto>>.Failure($"RSS source '{rssSource.SourceName}' has an invalid URL.");
-          }
+            if (string.IsNullOrWhiteSpace(rssSource.Url))
+            {
+                _logger.LogWarning("Validation failed: URL is null or empty. Skipping fetch.");
+                // We don't update the source status here, as this is a configuration issue.
+                return Result<IEnumerable<NewsItemDto>>.Failure($"RSS source '{rssSource.SourceName}' has an invalid URL.");
+            }
 
-          // --- 2. Main Execution Pipeline ---
-          _logger.LogInformation("--- Starting RSS fetch cycle ---");
-          rssSource.LastFetchAttemptAt = DateTime.UtcNow; // Record the attempt time immediately.
+            // --- 2. Main Execution Pipeline ---
+            _logger.LogInformation("--- Starting RSS fetch cycle ---");
+            rssSource.LastFetchAttemptAt = DateTime.UtcNow; // Record the attempt time immediately.
 
-          RssFetchOutcome outcome;
-          try
-          {
-              // The `using` statement ensures the HttpResponseMessage is always disposed, even if errors occur.
-              // This simplifies the code by removing the need for a finally block for disposal.
-              using HttpResponseMessage httpResponse = await ExecuteHttpRequestAsync(rssSource, correlationId, cancellationToken);
-              
-              // Delegate all response processing (success, http error, parsing, etc.) to a dedicated method.
-              outcome = await ProcessHttpResponseAsync(httpResponse, rssSource, cancellationToken);
-          }
-          // --- 3. Granular and Specific Exception Handling ---
-          catch (OperationCanceledException oce) when (cancellationToken.IsCancellationRequested)
-          {
-              // Case A: The CancellationToken provided to THIS method was triggered.
-              // This is a deliberate, clean shutdown (e.g., application stopping). It is NOT a source failure.
-              _logger.LogInformation(oce, "Operation was deliberately cancelled by the application. This is not a source error.");
-              outcome = RssFetchOutcome.Failure(RssFetchErrorType.Cancellation, "The fetch operation was cancelled by the calling process.", oce);
-          }
-          catch (OperationCanceledException oce)
-          {
-              // Case B: An OperationCanceledException was thrown, but our token was NOT cancelled.
-              // This is the classic signature of an HttpClient timeout. This IS a source failure.
-              _logger.LogWarning(oce, "The HTTP request timed out. This is a transient network error for the source.");
-              outcome = RssFetchOutcome.Failure(RssFetchErrorType.TransientHttp, "The HTTP request timed out.", oce);
-          }
-          catch (HttpRequestException hre)
-          {
-              // Case C: Catches fundamental network issues like DNS resolution failure, connection refused, etc.
-              // These are transient errors related to the source's availability.
-              _logger.LogWarning(hre, "A network error occurred while trying to connect to the source.");
-              outcome = RssFetchOutcome.Failure(RssFetchErrorType.TransientHttp, $"A network error occurred: {hre.Message}", hre);
-          }
-          catch (Exception ex)
-          {
-              // Case D: A final safety net for any other unexpected errors during the pipeline.
-              // These are treated as serious, unknown failures.
-              _logger.LogCritical(ex, "An unexpected critical error occurred during the fetch pipeline.");
-              outcome = RssFetchOutcome.Failure(RssFetchErrorType.Unknown, $"An unexpected error occurred: {ex.Message}", ex);
-          }
+            RssFetchOutcome outcome;
+            try
+            {
+                // The `using` statement ensures the HttpResponseMessage is always disposed, even if errors occur.
+                // This simplifies the code by removing the need for a finally block for disposal.
+                using HttpResponseMessage httpResponse = await ExecuteHttpRequestAsync(rssSource, correlationId, cancellationToken);
+
+                // Delegate all response processing (success, http error, parsing, etc.) to a dedicated method.
+                outcome = await ProcessHttpResponseAsync(httpResponse, rssSource, cancellationToken);
+            }
+            // --- 3. Granular and Specific Exception Handling ---
+            catch (OperationCanceledException oce) when (cancellationToken.IsCancellationRequested)
+            {
+                // Case A: The CancellationToken provided to THIS method was triggered.
+                // This is a deliberate, clean shutdown (e.g., application stopping). It is NOT a source failure.
+                _logger.LogInformation(oce, "Operation was deliberately cancelled by the application. This is not a source error.");
+                outcome = RssFetchOutcome.Failure(RssFetchErrorType.Cancellation, "The fetch operation was cancelled by the calling process.", oce);
+            }
+            catch (OperationCanceledException oce)
+            {
+                // Case B: An OperationCanceledException was thrown, but our token was NOT cancelled.
+                // This is the classic signature of an HttpClient timeout. This IS a source failure.
+                _logger.LogWarning(oce, "The HTTP request timed out. This is a transient network error for the source.");
+                outcome = RssFetchOutcome.Failure(RssFetchErrorType.TransientHttp, "The HTTP request timed out.", oce);
+            }
+            catch (HttpRequestException hre)
+            {
+                // Case C: Catches fundamental network issues like DNS resolution failure, connection refused, etc.
+                // These are transient errors related to the source's availability.
+                _logger.LogWarning(hre, "A network error occurred while trying to connect to the source.");
+                outcome = RssFetchOutcome.Failure(RssFetchErrorType.TransientHttp, $"A network error occurred: {hre.Message}", hre);
+            }
+            // --- NEWLY ADDED CATCH BLOCK ---
+            catch (XmlException xmlEx) // Specifically catch XML parsing errors.
+            {
+                // Case E: XML parsing failed. This is a content-specific error.
+                _logger.LogWarning(xmlEx, "XML parsing error encountered for RssSource '{SourceName}' (ID: {RssSourceId}). The feed content is malformed.", rssSource.SourceName, rssSource.Id);
+                // Classify it as XmlParsing error.
+                outcome = RssFetchOutcome.Failure(RssFetchErrorType.XmlParsing, $"The RSS feed content is malformed: {xmlEx.Message}", xmlEx);
+            }
+            // --- END OF NEWLY ADDED CATCH BLOCK ---
+            catch (Exception ex) // Case D: A final safety net for any other unexpected errors during the pipeline.
+            {
+                // These are treated as serious, unknown failures.
+                _logger.LogCritical(ex, "An unexpected critical error occurred during the fetch pipeline for RssSource '{SourceName}' (ID: {RssSourceId}).", rssSource.SourceName, rssSource.Id);
+                outcome = RssFetchOutcome.Failure(RssFetchErrorType.Unknown, $"An unexpected error occurred: {ex.Message}", ex);
+            }
 
             // --- 4. Final Status Update & Self-Healing ---
             _logger.LogInformation("Fetch cycle concluded. Updating final status of RssSource in the database.");
+            // The outcome object now correctly holds the error type and exception for the XML error if it occurred.
             var finalResult = await UpdateRssSourceStatusAfterFetchOutcomeAsync(rssSource, outcome, cancellationToken);
 
             // --- V2 UPGRADE: SMARTER SELF-HEALING LOGIC & LOGGING ---
@@ -546,6 +556,7 @@ namespace Infrastructure.Services
             _logger.LogTrace("Exiting {MethodName}", methodName);
             return finalResult;
         }
+
         /// <summary>
         /// A helper method to encapsulate the logic for deleting a source after a database error.
         /// </summary>
@@ -1317,79 +1328,90 @@ namespace Infrastructure.Services
 
 
 
-        /// <summary>
-        /// Updates the RssSource's status after a fetch cycle. This V3 version intelligently
-        /// handles timeout exceptions by not incrementing the error counter, making the system
-        /// more resilient to temporary network or server slowness.
-        /// </summary>
         private async Task<Result<IEnumerable<NewsItemDto>>> UpdateRssSourceStatusAfterFetchOutcomeAsync(RssSource source, RssFetchOutcome outcome, CancellationToken ct)
         {
             const string methodName = nameof(UpdateRssSourceStatusAfterFetchOutcomeAsync);
             _logger.LogTrace("Entering {MethodName} for RssSource {RssSourceId}", methodName, source.Id);
 
             source.UpdatedAt = DateTime.UtcNow;
+            source.LastFetchAttemptAt = DateTime.UtcNow; // Ensure this is set on every attempt
+
+            bool shouldIncrementErrorCount = true; // Assume we should increment by default
 
             if (outcome.IsSuccess)
             {
-                // SUCCESS PATH (No change)
+                // SUCCESS PATH
                 _logger.LogInformation("RssSource {RssSourceId}: Fetch successful. Resetting error count.", source.Id);
                 source.LastSuccessfulFetchAt = source.LastFetchAttemptAt;
                 source.FetchErrorCount = 0;
                 if (!string.IsNullOrWhiteSpace(outcome.ETag)) source.ETag = outcome.ETag;
                 if (!string.IsNullOrWhiteSpace(outcome.LastModifiedHeader)) source.LastModifiedHeader = outcome.LastModifiedHeader;
                 source.IsActive = true;
+                shouldIncrementErrorCount = false; // Don't increment error count on success
             }
             else
             {
                 // FAILURE PATH
                 var finalErrorType = outcome.ErrorType;
 
-                // Self-healing error classification (No change)
-                if (finalErrorType == RssFetchErrorType.Unknown && outcome.Exception is XmlException)
+                // Self-healing error classification
+                if (finalErrorType == RssFetchErrorType.Unknown && outcome.Exception is System.Xml.XmlException)
                 {
                     _logger.LogWarning("RssSource {RssSourceId}: Re-classifying Unknown error to XmlParsing.", source.Id);
                     finalErrorType = RssFetchErrorType.XmlParsing;
                 }
 
-                var logLevel = finalErrorType == RssFetchErrorType.Cancellation ? LogLevel.Warning : LogLevel.Error;
-                _logger.Log(logLevel, outcome.Exception, "RssSource {RssSourceId}: Fetch failed. ErrorType: {ErrorType}, Message: {ErrorMessage}", source.Id, finalErrorType, outcome.ErrorMessage);
-
-                // --- V3 UPGRADE: INTELLIGENT ERROR COUNTING ---
+                // Determine if it's a cancellation or timeout (which should not increment error count)
+                // Note: TaskCanceledException can also be due to ct.Cancel(), so we check !ct.IsCancellationRequested
                 bool isTimeout = outcome.Exception is TaskCanceledException && !ct.IsCancellationRequested;
 
                 if (finalErrorType == RssFetchErrorType.Cancellation || isTimeout)
                 {
-                    // Do not increment the error count for user-initiated cancellations or timeouts.
                     _logger.LogWarning("RssSource {RssSourceId}: Failure was a cancellation or timeout. Error count will NOT be incremented.", source.Id);
+                    shouldIncrementErrorCount = false; // Explicitly do not increment for these
                 }
-                if (source.FetchErrorCount >= _settings.MaxFetchErrorsToDeactivate && source.IsActive)
+
+                var logLevel = finalErrorType == RssFetchErrorType.Cancellation ? LogLevel.Warning : LogLevel.Error;
+                _logger.Log(logLevel, outcome.Exception, "RssSource {RssSourceId}: Fetch failed. ErrorType: {ErrorType}, Message: {ErrorMessage}", source.Id, finalErrorType, outcome.ErrorMessage);
+
+                // --- V3 UPGRADE: INTELLIGENT ERROR COUNTING AND DEACTIVATION ---
+                if (shouldIncrementErrorCount)
                 {
-                    source.IsActive = false;
-                    _logger.LogWarning("DEACTIVATING RssSource {RssSourceId} ({SourceName}) due to reaching error threshold of {Threshold}.",
-                        source.Id, source.SourceName, _settings.MaxFetchErrorsToDeactivate);
-                }
-                else // This is for other transient errors (like 503, DNS failure)
-                {
-                    // Increment the error count.
+                    // Increment the error count only for non-cancellation/non-timeout errors.
                     source.FetchErrorCount++;
                     _logger.LogWarning("RssSource {RssSourceId}: Error count incremented to {ErrorCount} due to transient error: {ErrorType}", source.Id, source.FetchErrorCount, finalErrorType);
+
+                    // DEACTIVATION LOGIC: Now correctly placed *after* the potential increment.
+                    // This ensures deactivation only happens if an error count was genuinely added.
+                    if (source.FetchErrorCount >= _settings.MaxFetchErrorsToDeactivate && source.IsActive)
+                    {
+                        source.IsActive = false;
+                        _logger.LogWarning("DEACTIVATING RssSource {RssSourceId} ({SourceName}) due to reaching error threshold of {Threshold}.",
+                            source.Id, source.SourceName, _settings.MaxFetchErrorsToDeactivate);
+                    }
+                }
+                else
+                {
+                    // For timeouts/cancellations, ensure it's still marked as inactive if it was previously active
+                    // and its error count is still above the threshold (but not incremented this time).
+                    // This handles cases where it might have been deactivated previously, then a timeout occurs.
+                    // If it's already inactive, no action is needed here.
+                    if (source.IsActive && source.FetchErrorCount >= _settings.MaxFetchErrorsToDeactivate)
+                    {
+                        source.IsActive = false;
+                        _logger.LogWarning("DEACTIVATING RssSource {RssSourceId} ({SourceName}) due to reaching error threshold of {Threshold} (after timeout/cancellation).",
+                           source.Id, source.SourceName, _settings.MaxFetchErrorsToDeactivate);
+                    }
                 }
                 // ----------------------------------------------------
             }
 
-            // DEACTIVATION LOGIC (No change, but now activated more intelligently)
-            if (source.FetchErrorCount >= _settings.MaxFetchErrorsToDeactivate && source.IsActive)
-            {
-                source.IsActive = false;
-                _logger.LogWarning("DEACTIVATING RssSource {RssSourceId} ({SourceName}) due to reaching error threshold of {Threshold}.",
-                    source.Id, source.SourceName, _settings.MaxFetchErrorsToDeactivate);
-            }
-
+            // Persist the changes to the database
             try
             {
-                // DB UPDATE (No change)
                 await _dbRetryPolicy.ExecuteAsync(async () => {
                     await using var connection = CreateConnection();
+                    // Added LastFetchAttemptAt to the update statement, as it's updated at the start of the method
                     var sql = @"UPDATE RssSources SET LastSuccessfulFetchAt = @LastSuccessfulFetchAt, FetchErrorCount = @FetchErrorCount, UpdatedAt = @UpdatedAt, ETag = @ETag, LastModifiedHeader = @LastModifiedHeader, IsActive = @IsActive, LastFetchAttemptAt = @LastFetchAttemptAt WHERE Id = @Id;";
                     await connection.ExecuteAsync(sql, source);
                 });
@@ -1400,13 +1422,14 @@ namespace Infrastructure.Services
                 throw new RepositoryException($"Failed to update RssSource status for '{source.SourceName}'.", ex);
             }
 
-            // CONSTRUCT FINAL RETURN VALUE (No change)
+            // CONSTRUCT FINAL RETURN VALUE
             if (outcome.IsSuccess)
             {
                 return Result<IEnumerable<NewsItemDto>>.Success(outcome.DispatchedNewsItems, $"RssSource {source.Id}: Fetch successful.");
             }
             else
             {
+                // Return the specific error message from the outcome, or a generic one if null.
                 return Result<IEnumerable<NewsItemDto>>.Failure(new[] { outcome.ErrorMessage ?? "An unknown fetch error occurred." });
             }
         }

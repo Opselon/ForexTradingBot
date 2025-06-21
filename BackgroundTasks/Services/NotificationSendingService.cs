@@ -764,18 +764,40 @@ namespace BackgroundTasks.Services
 
                 if (apiEx.ErrorCode >= 400 && apiEx.ErrorCode < 500)
                 {
-                    // This is a PERMANENT client-side error (Bad Request, Forbidden, Not Found).
-                    // We log it as a critical failure and DO NOT re-throw. This stops the Hangfire loop.
+                    // This is a PERMANENT client-side error.
+                    // Log it as a critical failure and DO NOT re-throw. This stops the Hangfire loop.
                     _logger.LogCritical(apiEx, "PERMANENT Send Failure for User {UserId}. ErrorCode: {ErrorCode}. API Message: '{ApiMessage}'. Job will terminate.",
                         payload.TargetTelegramUserId, apiEx.ErrorCode, apiEx.Message);
 
-                    // Optional: Self-healing for user-specific permanent errors.
-                    if (apiEx.ErrorCode == 403 || (apiEx.ErrorCode == 400 && apiEx.Message.Contains("chat not found")))
+                    // --- UPGRADE SELF-HEALING: More broadly mark users as unreachable on permanent errors ---
+                    bool shouldMarkAsUnreachable = false;
+                    string reason = string.Empty;
+
+                    if (apiEx.ErrorCode == 403) // Forbidden (e.g., user blocked the bot)
                     {
-                        _logger.LogWarning("Attempting to mark user {UserId} as unreachable due to permanent error.", payload.TargetTelegramUserId);
+                        shouldMarkAsUnreachable = true;
+                        reason = "ForbiddenOnSend";
+                    }
+                    else if (apiEx.ErrorCode == 400) // Bad Request - potentially due to message format or invalid content
+                    {
+                        // More specific checks for common 400 errors related to message content
+                        if (apiEx.Message.Contains("chat not found") ||
+                            apiEx.Message.Contains("wrong type of the web page content") || // This is the current error
+                            apiEx.Message.Contains("invalid markdown") ||
+                            apiEx.Message.Contains("message text is empty"))
+                        {
+                            shouldMarkAsUnreachable = true;
+                            reason = "MessageFormatErrorOnSend";
+                        }
+                    }
+                    // Add other permanent 400 errors if necessary
+
+                    if (shouldMarkAsUnreachable)
+                    {
+                        _logger.LogWarning("Attempting to mark user {UserId} as unreachable due to permanent error. Reason: {Reason}", payload.TargetTelegramUserId, reason);
                         try
                         {
-                            await _userService.MarkUserAsUnreachableAsync(payload.TargetTelegramUserId.ToString(), "ApiErrorOnSend", cancellationToken);
+                            await _userService.MarkUserAsUnreachableAsync(payload.TargetTelegramUserId.ToString(), reason, cancellationToken);
                         }
                         catch (Exception markEx)
                         {
@@ -791,13 +813,9 @@ namespace BackgroundTasks.Services
                     throw;
                 }
             }
-            catch (Exception ex)
-            {
-                // This catches non-API exceptions (e.g., TaskCanceledException, network issues before Polly).
-                _logger.LogError(ex, "FATAL unhandled exception during notification send to User {UserId}. Re-throwing for Hangfire.", payload.TargetTelegramUserId);
-                throw;
-            }
         }
+
+
         /// <summary>
         /// Processes and sends a single notification (typically an AI-generated message or signal) to a specified Telegram user.
         /// This method serves as a critical final step in the delivery pipeline. It leverages a Polly retry policy for

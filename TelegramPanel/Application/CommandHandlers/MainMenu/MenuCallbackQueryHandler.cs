@@ -523,10 +523,18 @@ namespace TelegramPanel.Application.CommandHandlers.MainMenu
         /// </summary>
         private async Task ShowMainMenuAsync(long chatId, int messageIdToEdit, CancellationToken cancellationToken)
         {
-            _logger.LogInformation("Showing main menu again for ChatID {ChatId}", chatId);
-            // Use the static GetMainMenuMarkup method from MenuCommandHandler
-            var (text, inlineKeyboard) = MenuCommandHandler.GetMainMenuMarkup();
-            await EditMessageOrSendNewAsync(chatId, messageIdToEdit, text, inlineKeyboard, cancellationToken: cancellationToken);
+            try
+            {
+                _logger.LogInformation("Showing main menu again for ChatID {ChatId}", chatId);
+                // Use the static GetMainMenuMarkup method from MenuCommandHandler
+                var (text, inlineKeyboard) = MenuCommandHandler.GetMainMenuMarkup();
+                await EditMessageOrSendNewAsync(chatId, messageIdToEdit, text, inlineKeyboard, cancellationToken: cancellationToken);
+            }
+            catch (Exception sendEx)
+            {
+                // If even the fallback fails, log it critically.
+                _logger.LogCritical(sendEx, "FALLBACK FAILED: Could not send new message to ChatID {ChatId} after an edit error.", chatId);
+            }
         }
 
 

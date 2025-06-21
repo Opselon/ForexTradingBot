@@ -140,13 +140,14 @@ namespace Infrastructure.Services
     public class RssReaderService : IRssReaderService
     {
 
+
+        #region Service Dependencies and Configuration Fields
+
         /// <summary>
         /// The named client identifier used to retrieve pre-configured <see cref="HttpClient"/> instances
         /// from the <see cref="IHttpClientFactory"/> for RSS feed requests.
         /// </summary>
         public const string HttpClientNamedClient = "RssFeedClient";
-
-        #region Service Dependencies and Configuration Fields
 
         /// <summary>
         /// Factory for creating configured <see cref="HttpClient"/> instances, ensuring proper pooling and lifetime management.

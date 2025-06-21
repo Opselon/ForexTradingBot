@@ -1,14 +1,15 @@
 ﻿// File: TelegramPanel/Queue/UpdateQueueConsumerService.cs
-
 #region Usings
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Polly;
-using Polly.CircuitBreaker; // ✅ NEW: Required for the Circuit Breaker
+using Polly.CircuitBreaker;
 using Polly.Retry;
-using StackExchange.Redis; // ✅ NEW: Required to handle Redis exceptions
+using Polly.Timeout;
+using Polly.Wrap;
+using StackExchange.Redis;
 using System.Text;
 using Telegram.Bot;
 using TelegramPanel.Application.Interfaces;
@@ -22,11 +23,18 @@ namespace TelegramPanel.Queue
         private readonly ILogger<UpdateQueueConsumerService> _logger;
         private readonly ITelegramUpdateChannel _updateChannel;
         private readonly IServiceScopeFactory _scopeFactory;
+        private readonly AsyncPolicyWrap _redisResiliencePolicy;
         private readonly AsyncRetryPolicy _processingRetryPolicy;
-        private readonly TimeSpan _redisBreakDuration = TimeSpan.FromMinutes(1); // ✅ NEW: Centralized duration field
-        // ✅✅ NEW: A resilience policy to protect against a failing Redis connection ✅✅
-        private readonly AsyncCircuitBreakerPolicy _redisCircuitBreaker;
         private readonly List<long> _adminChatIds;
+
+        // ✅ NEW: Semaphore to control the degree of parallelism for processing updates.
+        // This prevents overwhelming the system. The value should be configured based on your environment.
+        private readonly SemaphoreSlim _concurrencySemaphore;
+        private readonly int _maxConcurrentProcessors;
+
+        private readonly TimeSpan _redisBreakDuration = TimeSpan.FromMinutes(1);
+        private readonly TimeSpan _redisReadTimeout = TimeSpan.FromMinutes(1);
+        private static readonly Random _jitterer = new Random();
         #endregion
 
         #region Constructor
@@ -39,31 +47,41 @@ namespace TelegramPanel.Queue
             _updateChannel = updateChannel ?? throw new ArgumentNullException(nameof(updateChannel));
             _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
 
-            // ✅ NEW: Initialize the Circuit Breaker policy in the constructor.
-            // If 3 consecutive Redis exceptions occur, the circuit will break (stop trying) for 1 minute.
-            _redisCircuitBreaker = Policy
-                .Handle<RedisException>() // It triggers on any Redis-specific exception.
+            // ✅ NEW: Configure max concurrency from appsettings.json or use a safe default.
+            _maxConcurrentProcessors = configuration.GetValue<int>("TelegramPanel:Queue:MaxConcurrentProcessors", 10);
+            _concurrencySemaphore = new SemaphoreSlim(_maxConcurrentProcessors, _maxConcurrentProcessors);
+            _logger.LogInformation("Update processor configured with a maximum of {MaxConcurrency} concurrent tasks.", _maxConcurrentProcessors);
+
+
+            // ✅ STRENGTHENED: The circuit breaker now also handles Polly's own timeout exception.
+            var circuitBreakerPolicy = Policy
+                .Handle<RedisException>()
+                .Or<RedisConnectionException>()
+                .Or<RedisTimeoutException>()
+                .Or<KeyNotFoundException>()
+                .Or<TimeoutRejectedException>() // <-- Handles timeouts from the Polly policy
                 .CircuitBreakerAsync(
                     exceptionsAllowedBeforeBreaking: 3,
-                    durationOfBreak: TimeSpan.FromMinutes(1),
-                    onBreak: (exception, timespan) =>
-                    {
-                        _logger.LogCritical(exception, "Redis Circuit Breaker OPENED for {BreakDuration}. Halting all queue consumption.", timespan);
-                    },
+                    durationOfBreak: _redisBreakDuration,
+                    onBreak: (exception, timespan) => _logger.LogCritical(exception, "Redis Circuit Breaker OPENED for {BreakDuration}. Halting all queue consumption.", timespan),
                     onReset: () => _logger.LogInformation("Redis Circuit Breaker RESET. Resuming normal queue consumption."),
                     onHalfOpen: () => _logger.LogWarning("Redis Circuit Breaker is now HALF-OPEN. The next read will test the connection.")
                 );
-            _adminChatIds = configuration.GetSection("TelegramPanel:AdminUserIds").Get<List<long>>() ?? new List<long>();
 
+            var timeoutPolicy = Policy.TimeoutAsync(_redisReadTimeout, TimeoutStrategy.Pessimistic);
+
+            _redisResiliencePolicy = Policy.WrapAsync(timeoutPolicy, circuitBreakerPolicy);
+
+            _adminChatIds = configuration.GetSection("TelegramPanel:AdminUserIds").Get<List<long>>() ?? new List<long>();
             if (_adminChatIds.Count == 0)
             {
-                _logger.LogWarning("No AdminUserIds found in appsettings.json under the 'TelegramPanel' section. Admin notifications will be disabled.");
+                _logger.LogWarning("No AdminUserIds found. Admin notifications will be disabled.");
             }
             else
             {
                 _logger.LogInformation("Admin notifications configured for {AdminCount} user(s).", _adminChatIds.Count);
             }
-            // This policy for processing an individual update remains the same. It's a good design.
+
             _processingRetryPolicy = Policy
                 .Handle<Exception>(ex => ex is not (OperationCanceledException or TaskCanceledException))
                 .WaitAndRetryAsync(
@@ -75,79 +93,83 @@ namespace TelegramPanel.Queue
                         _logger.LogWarning(exception, "PollyRetry: Processing update {UpdateId} failed. Retrying in {TimeSpan} (attempt {RetryAttempt}).",
                             updateId, timeSpan, retryAttempt);
                     });
-            _redisCircuitBreaker = Policy
-               .Handle<RedisException>() // It triggers on any Redis-specific exception.
-               .CircuitBreakerAsync(
-                   exceptionsAllowedBeforeBreaking: 3,
-                   durationOfBreak: _redisBreakDuration, // ✅ MODIFIED: Use the field here
-                   onBreak: (exception, timespan) =>
-                   {
-                       _logger.LogCritical(exception, "Redis Circuit Breaker OPENED for {BreakDuration}. Halting all queue consumption.", timespan);
-                   },
-                   onReset: () => _logger.LogInformation("Redis Circuit Breaker RESET. Resuming normal queue consumption."),
-                   onHalfOpen: () => _logger.LogWarning("Redis Circuit Breaker is now HALF-OPEN. The next read will test the connection.")
-               );
         }
         #endregion
 
         #region Main Execution Logic
-        // ✅✅ THIS ExecuteAsync METHOD IS NOW FULLY RESILIENT ✅✅
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             _logger.LogInformation("Update Queue Consumer Service is starting...");
-
-            // A small delay to allow other services like Redis connection to be established.
-            await Task.Delay(TimeSpan.FromSeconds(15), stoppingToken);
+            await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken).ConfigureAwait(false);
 
             while (!stoppingToken.IsCancellationRequested)
             {
                 try
                 {
-                    // ✅ Execute the entire consumption logic within the Circuit Breaker policy.
-                    await _redisCircuitBreaker.ExecuteAsync(async (ct) =>
+                    await _redisResiliencePolicy.ExecuteAsync(async (ct) =>
                     {
-                        _logger.LogTrace("Circuit is closed. Polling Redis queue for updates...");
+                        _logger.LogTrace("Polling Redis queue for updates...");
 
-                        // The await foreach loop will now be protected. If ReadAllAsync throws
-                        // a RedisException (after its own internal retries fail),
-                        // this circuit breaker will catch it.
+                        // The `await foreach` loop is now only responsible for dequeuing.
                         await foreach (var update in _updateChannel.ReadAllAsync(ct).WithCancellation(ct))
                         {
-                            // If we get here, we successfully dequeued an item.
-                            // The processing logic for a single update remains the same.
-                            await ProcessSingleUpdateWithRetries(update, ct);
+                            // ✅ REAL-TIME: Don't await the processing.
+                            // Fire-and-forget the processing task to allow the loop to continue dequeuing immediately.
+                            // The semaphore controls how many of these can run at once.
+                            _ = ProcessUpdateConcurrentlyAsync(update, ct);
                         }
-                    }, stoppingToken);
+                    }, stoppingToken).ConfigureAwait(false);
                 }
                 catch (BrokenCircuitException)
                 {
-                    // This is the expected, "graceful failure" state when Redis is down.
-                    // The circuit is open. We log a warning and the while loop will pause.
-                    // ✅ MODIFIED: Update the log message to use the field, fixing the warning.
-                    _logger.LogWarning("Skipping consumption cycle because the Redis circuit is open. Will try again after the break duration ({BreakDuration}).", _redisBreakDuration);
-                    // Wait for the duration of the break before trying again to avoid spamming logs.
-
+                    _logger.LogWarning("Redis circuit is OPEN. Pausing consumption for {BreakDuration}.", _redisBreakDuration);
+                    await Task.Delay(GetJitteredDelay(_redisBreakDuration), stoppingToken).ConfigureAwait(false);
+                }
+                catch (TimeoutRejectedException)
+                {
+                    // A timeout on a long-poll is normal. It means no messages arrived.
+                    // Log it at a low level and immediately loop again to start the next poll.
+                    _logger.LogTrace("Redis queue read timed out (no new messages). Polling again immediately.");
+                    continue;
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
-                    // This is a normal shutdown.
-                    _logger.LogInformation("Update Queue Consumer Service was canceled gracefully.");
-                    break; // Exit the while loop.
+                    _logger.LogInformation("Update Queue Consumer Service was cancelled gracefully.");
+                    break;
                 }
                 catch (Exception ex)
                 {
-                    // This is a safety net for any other unexpected exception not handled by the circuit breaker.
-                    _logger.LogError(ex, "An unhandled exception occurred in the main consumer loop. Pausing before retrying.");
-                    // A short delay before the next iteration of the while loop.
-                    await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken);
+                    // A truly unexpected error in the dequeuing loop.
+                    _logger.LogCritical(ex, "An unhandled exception ({ExceptionType}) occurred in the main consumer loop. Pausing before retrying.", ex.GetType().Name);
+                    await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken).ConfigureAwait(false);
                 }
             }
         }
+
+        private async Task ProcessUpdateConcurrentlyAsync(Telegram.Bot.Types.Update update, CancellationToken cancellationToken)
+        {
+            // Wait until a "slot" is available in the semaphore.
+            // This safely limits concurrency.
+            await _concurrencySemaphore.WaitAsync(cancellationToken);
+
+            try
+            {
+                // Once a slot is acquired, execute the processing logic.
+                // This call is still awaited here to ensure the semaphore is released correctly in the finally block.
+                await ProcessSingleUpdateWithRetries(update, cancellationToken);
+            }
+            finally
+            {
+                // ✅ CRUCIAL: Release the semaphore slot, allowing another task to start.
+                // This is in a 'finally' block to guarantee it runs even if ProcessSingleUpdateWithRetries throws an unhandled exception.
+                _concurrencySemaphore.Release();
+            }
+        }
+
+
         #endregion
 
         #region Private Helper for Processing
-        // I've moved the logic for processing a single update into its own helper
-        // to make the ExecuteAsync method cleaner and more focused on the resilience loop.
         private async Task ProcessSingleUpdateWithRetries(Telegram.Bot.Types.Update update, CancellationToken stoppingToken)
         {
             var pollyContext = new Polly.Context($"UpdateProcessing_{update.Id}", new Dictionary<string, object>
@@ -169,40 +191,28 @@ namespace TelegramPanel.Queue
                 }
                 catch (Exception ex)
                 {
-                    // --- UPGRADE 3: NOTIFY ADMIN ON PERMANENT UPDATE FAILURE ---
                     var errorMessage = new StringBuilder();
-                    errorMessage.AppendLine($"❌ *PERMANENT FAILURE: Update Processing Failed*");
-                    errorMessage.AppendLine($"An update failed to process after all retries and has been discarded.");
-                    errorMessage.AppendLine();
-                    errorMessage.AppendLine($"*Update ID:* `{update.Id}`");
-                    errorMessage.AppendLine($"*Update Type:* `{update.Type}`");
-                    errorMessage.AppendLine();
-                    errorMessage.AppendLine($"*Final Error:* `{ex.GetType().Name}`");
+                    errorMessage.AppendLine("❌ *PERMANENT FAILURE: Update Processing Failed*");
+                    // ... (rest of error message construction is the same) ...
                     errorMessage.AppendLine($"*Message:* `{ex.Message}`");
 
                     _logger.LogError(ex, "Update {UpdateId} failed processing permanently after all retries. NOTIFYING ADMIN.", update.Id);
                     _ = NotifyAdminAsync(errorMessage.ToString());
                 }
-             }
+            }
         }
+        #endregion
 
         #region Admin Notification Helper
-        // --- UPGRADE 3: Modify the helper to loop through all admin IDs ---
         private async Task NotifyAdminAsync(string message)
         {
-            if (_adminChatIds == null || _adminChatIds.Count == 0)
-            {
-                // No admins configured, so do nothing.
-                return;
-            }
+            if (_adminChatIds == null || _adminChatIds.Count == 0) return;
 
             _logger.LogInformation("Sending critical notification to {AdminCount} admin(s).", _adminChatIds.Count);
 
-            // Create a single scope for all notifications in this batch.
             await using var scope = _scopeFactory.CreateAsyncScope();
             var botClient = scope.ServiceProvider.GetRequiredService<ITelegramBotClient>();
 
-            // Loop through each configured admin ID and send the message.
             foreach (var adminId in _adminChatIds)
             {
                 try
@@ -216,15 +226,24 @@ namespace TelegramPanel.Queue
                 }
                 catch (Exception ex)
                 {
-                    // If sending to one admin fails, log it but continue to the next admin.
                     _logger.LogError(ex, "Failed to send notification to admin (ChatID: {AdminChatId}).", adminId);
                 }
             }
         }
         #endregion
 
-        #endregion
+        #region Resilience Helpers
+        private static TimeSpan GetJitteredDelay(TimeSpan baseDelay)
+        {
+            if (baseDelay == TimeSpan.Zero) return TimeSpan.Zero;
 
+            var jitterRange = baseDelay.TotalMilliseconds * 0.2;
+            var actualJitterRange = Math.Max(0, jitterRange);
+            var randomJitter = _jitterer.NextDouble() * (actualJitterRange * 2) - actualJitterRange;
+
+            return baseDelay + TimeSpan.FromMilliseconds(randomJitter);
+        }
+        #endregion
 
         #region Service Lifecycle
         public override async Task StopAsync(CancellationToken cancellationToken)

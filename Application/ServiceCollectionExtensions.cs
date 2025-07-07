@@ -1,15 +1,19 @@
 ﻿#region Usings
 // using های استاندارد .NET و NuGet Packages
 // using های مربوط به پروژه Application شما
-using Application.Common.Interfaces;       // برای اینترفیس‌های عمومی مانند IAppDbContext, INotificationService, و تمام اینترفیس‌های Repository
+using Application.Common.Interfaces;
 using Application.Features.Crypto.Interfaces;
 using Application.Features.Crypto.Services;
+using Application.Features.Dashboard.Interfaces; // Added for IDashboardService
+using Application.Features.Dashboard.Services;   // Added for DashboardService
 using Application.Features.Fmp.Interfaces;
 using Application.Features.Fmp.Services;
-using Application.Interfaces;              // ✅ Namespace اصلی برای اینترفیس‌های سرویس (IUserService, ISignalService, و غیره)
+using Application.Features.WebPanelConfiguration.Interfaces;
+using Application.Features.WebPanelConfiguration.Services;
+using Application.Interfaces;
 using Application.Services;
 using Application.Services.CoinGecko;
-using FluentValidation;                     // برای services.AddValidatorsFromAssembly()
+using FluentValidation;
 using Microsoft.Extensions.DependencyInjection; // برای IServiceCollection و متدهای توسعه‌دهنده DI
 using Microsoft.Extensions.Logging;         // برای ILogger (مثلاً در DummyNotificationService)
 using System.Reflection;                    // برای Assembly.GetExecutingAssembly()
@@ -110,6 +114,15 @@ namespace Application // ✅ Namespace ریشه پروژه Application
             // Comment: Registers PaymentConfirmationService for processing successful payment confirmations.
 
             _ = services.AddScoped<ICryptoDataOrchestrator, CryptoDataOrchestrator>();
+
+            // سرویس مدیریت پیکربندی وب پنل
+            _ = services.AddScoped<IWebPanelConfigService, WebPanelConfigService>();
+            // Comment: Registers WebPanelConfigService for managing web panel configurations.
+
+            // سرویس داشبورد
+            _ = services.AddScoped<Application.Features.Dashboard.Interfaces.IDashboardService, DashboardService>();
+            // Comment: Registers DashboardService for providing aggregated dashboard data.
+
             // سرویس مدیریت دسته‌بندی سیگنال‌ها (اگر منطق خاصی فراتر از CRUD Repository دارد)
             // services.AddScoped<ISignalCategoryService, SignalCategoryService>();
             // Comment: Example: Registers SignalCategoryService if there's business logic beyond repository.

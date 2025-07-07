@@ -700,40 +700,69 @@
 
                 // --- 2. State Management ---
                 state: {
-                    initialSettings: {},
-                    currentSettings: {},
+                    initialSettings: {}, // Will store the initially loaded WebPanelConfigDto
+                    currentSettings: {}, // Will store a copy for modifications, maps to WebPanelConfigDto
                     isDirty: false,
+                    activeConfigId: null, // To store the ID of the loaded configuration for updates
+                    // Defines the structure and metadata for settings to be displayed.
+                    // Key maps to a property in WebPanelConfigDto.
+                    settingsSchema: [
+                        {
+                            category: "General",
+                            icon: "fa-sliders",
+                            settings: [
+                                { key: "appName", label: "Application Name", description: "The public name of the application.", type: "text" },
+                                { key: "siteTitle", label: "Website Title", description: "The title displayed on the browser tab for admin pages.", type: "text" },
+                                { key: "maintenanceMode", label: "Maintenance Mode", description: "Temporarily disable bot functionality for users.", type: "boolean" },
+                                { key: "contactEmail", label: "Contact Email", description: "Public contact email for support.", type: "email" },
+                            ]
+                        },
+                        {
+                            category: "Display & UI",
+                            icon: "fa-palette",
+                            settings: [
+                                { key: "defaultTheme", label: "Default Theme", description: "Default theme for new users or anonymous access.", type: "select", options: [{value: "light", text: "Light"}, {value: "dark", text: "Dark"}] },
+                                { key: "defaultPageSize", label: "Default Page Size", description: "Default number of items per page in tables.", type: "number", min: 5, max: 100 },
+                                { key: "maxLogEntriesToDisplay", label: "Max Log Entries (UI)", description: "Maximum log entries to show in UI log viewers.", type: "number", min:10, max:1000 },
+                            ]
+                        },
+                        {
+                            category: "Telegram Bot",
+                            icon: "fa-telegram",
+                            settings: [
+                                // BotToken is managed on config.html for now due to its sensitivity and test button
+                                // { key: "telegramBotToken", label: "Bot Token", description: "The API token for your Telegram bot.", type: "password" },
+                                { key: "adminChatId", label: "Admin Chat ID", description: "The Telegram Chat ID for receiving admin notifications.", type: "text" }
+                            ]
+                        },
+                        {
+                            category: "Security",
+                            icon: "fa-shield-halved",
+                            settings: [
+                                { key: "sessionTimeoutMinutes", label: "Session Timeout (Minutes)", description: "Duration of an inactive admin session before automatic logout.", type: "number", min: 5, max: 1440 }
+                            ]
+                        },
+                        {
+                            category: "Feature Flags",
+                            icon: "fa-toggle-on",
+                            settings: [
+                                { key: "isFeatureXEnabled", label: "Enable Feature X", description: "Toggle for experimental Feature X.", type: "boolean" },
+                                { key: "isFeatureYEnabled", label: "Enable Feature Y", description: "Toggle for experimental Feature Y.", type: "boolean" },
+                            ]
+                        }
+                        // Add more categories and settings here as needed
+                        // {
+                        //     category: "Connection Strings",
+                        //     icon: "fa-plug",
+                        //     settings: [
+                        //         { key: "databaseConnectionString", label: "Database Connection", description: "Primary DB connection string.", type: "password" },
+                        //         { key: "redisConnectionString", label: "Redis Connection", description: "Redis cache connection string.", type: "text" },
+                        //     ]
+                        // }
+                    ]
                 },
 
-                // --- 3. Mock Data (replace with API call) ---
-                mockSettingsData: [
-                    {
-                        category: "General",
-                        icon: "fa-sliders",
-                        settings: [
-                            { key: "AppName", label: "Application Name", description: "The public name of the application.", type: "text", value: "ForexTradingBot" },
-                            { key: "MaintenanceMode", label: "Maintenance Mode", description: "Temporarily disable bot functionality for users.", type: "boolean", value: false },
-                        ]
-                    },
-                    {
-                        category: "Telegram Bot",
-                        icon: "fa-telegram",
-                        settings: [
-                            { key: "BotToken", label: "Bot Token", description: "The API token for your Telegram bot.", type: "password", value: "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11" },
-                            { key: "AdminChatId", label: "Admin Chat ID", description: "The Telegram Chat ID for receiving admin notifications.", type: "text", value: "987654321" }
-                        ]
-                    },
-                    {
-                        category: "Security",
-                        icon: "fa-shield-halved",
-                        settings: [
-                            { key: "AdminUsername", label: "Admin Panel Username", description: "Username for logging into this panel.", type: "text", value: "admin", isOverridden: true },
-                            { key: "SessionTimeout", label: "Session Timeout (Minutes)", description: "Duration of an inactive admin session before automatic logout.", type: "text", value: "60" }
-                        ]
-                    }
-                ],
-
-                // --- 4. Initialization ---
+                // --- 3. Initialization ---
                 init() {
                     console.log("Controller: Initializing Settings Page...");
                     this.initUI();
@@ -777,21 +806,45 @@
                     this.applyTheme(newTheme);
                 },
 
-                loadSettings() {
-                    console.log("Controller: Loading settings...");
-                    // Simulate API fetch
-                    setTimeout(() => {
-                        this.state.initialSettings = this.flattenSettings(this.mockSettingsData);
-                        this.state.currentSettings = { ...this.state.initialSettings };
-                        this.renderSettings(this.mockSettingsData);
-                        document.body.classList.remove('is-loading');
-                        console.log("Controller: Settings loaded and rendered.");
-                    }, 1000);
+                async loadSettings() {
+                    console.log("Controller: Loading settings from /api/webpanelconfig...");
+                    document.body.classList.add('is-loading');
+                    try {
+                        const response = await fetch('/api/webpanelconfig'); // Get active config
+                        if (response.ok) {
+                            const configDto = await response.json();
+                            this.state.initialSettings = { ...configDto }; // Store a copy
+                            this.state.currentSettings = { ...configDto }; // Working copy
+                            this.state.activeConfigId = configDto.id;
+
+                            this.renderSettingsFromSchema();
+                            toastr.info('Settings loaded.', 'System Ready');
+                            console.log("Controller: Settings loaded:", configDto);
+                        } else if (response.status === 404) {
+                            toastr.error('No active configuration found. Please configure and save on the Connection Setup page first.', 'Configuration Missing');
+                            console.error("Controller: No active configuration found. Cannot load settings.");
+                            // Disable save, or handle creation here if this page could create the first config.
+                            // For now, assume config.html creates the initial record.
+                            this.elements.saveButton.disabled = true;
+                        } else {
+                            toastr.error(`Error loading settings: ${response.statusText}`, 'Load Error');
+                            console.error("Controller: Error loading settings:", response);
+                        }
+                    } catch (error) {
+                        toastr.error('Could not connect to backend to load settings.', 'Network Error');
+                        console.error("Controller: Network error loading settings:", error);
+                    } finally {
+                        setTimeout(() => document.body.classList.remove('is-loading'), 200);
+                    }
                 },
 
-                renderSettings(data) {
+                renderSettingsFromSchema() {
                     let html = '';
-                    data.forEach((category, index) => {
+                    this.state.settingsSchema.forEach((category, index) => {
+                        // Filter settings in this category that actually exist as properties in currentSettings (WebPanelConfigDto)
+                        const relevantSettings = category.settings.filter(s => this.state.currentSettings.hasOwnProperty(s.key));
+                        if (relevantSettings.length === 0) return; // Skip category if no relevant settings
+
                         html += `
                                 <div class="accordion-item" id="category-${index}">
                                     <div class="accordion-header">
@@ -799,7 +852,7 @@
                                         <i class="fa-solid fa-chevron-down"></i>
                                     </div>
                                     <div class="accordion-body">
-                                        ${category.settings.map(s => this.renderSettingItem(s)).join('')}
+                                        ${relevantSettings.map(s => this.renderSettingItemFromSchema(s)).join('')}
                                     </div>
                                 </div>
                             `;
@@ -807,51 +860,60 @@
                     this.elements.settingsContainer.innerHTML = html;
                 },
 
-                renderSettingItem(setting) {
-                    const { key, label, description, type, value, isOverridden } = setting;
-                    let inputHtml = '';
-
+                renderSettingItemFromSchema(settingSchemaItem) {
+                    const { key, label, description, type, options, min, max } = settingSchemaItem;
+                    const value = this.state.currentSettings[key]; // Get value from the loaded DTO
+                    // isOverridden logic would need to come from backend if we support it for these fields
+                    const isOverridden = false; // Assuming not overridden for these general settings for now
                     const disabledAttr = isOverridden ? 'disabled' : '';
+                    let inputHtml = '';
 
                     switch (type) {
                         case 'boolean':
                             inputHtml = `
-                                    <label class="toggle-switch">
-                                        <input type="checkbox" data-key="${key}" ${value ? 'checked' : ''} ${disabledAttr}>
-                                        <span class="toggle-slider"></span>
-                                    </label>
-                                `;
+                                <label class="toggle-switch">
+                                    <input type="checkbox" data-key="${key}" ${value ? 'checked' : ''} ${disabledAttr}>
+                                    <span class="toggle-slider"></span>
+                                </label>`;
                             break;
-                        case 'password':
+                        case 'password': // Example, though not used in current settingsSchema for WebPanelConfig
                             inputHtml = `
-                                    <div style="position: relative; width: 100%;">
-                                        <input type="password" class="form-control" data-key="${key}" value="${value}" ${disabledAttr}>
-                                        ${!isOverridden ? '<i class="fa-solid fa-eye password-toggle"></i>' : ''}
-                                    </div>
-                                `;
+                                <div style="position: relative; width: 100%;">
+                                    <input type="password" class="form-control" data-key="${key}" value="${value || ''}" ${disabledAttr} placeholder="Enter new value to change">
+                                    ${!isOverridden ? '<i class="fa-solid fa-eye password-toggle"></i>' : ''}
+                                </div>`;
+                            break;
+                        case 'select':
+                            const selectOptions = options.map(opt => `<option value="${opt.value}" ${opt.value == value ? 'selected' : ''}>${opt.text}</option>`).join('');
+                            inputHtml = `<select class="form-control" data-key="${key}" ${disabledAttr}>${selectOptions}</select>`;
+                            break;
+                        case 'number':
+                             inputHtml = `<input type="number" class="form-control" data-key="${key}" value="${value || ''}" ${min ? `min="${min}"` : ''} ${max ? `max="${max}"` : ''} ${disabledAttr}>`;
+                            break;
+                        case 'email':
+                             inputHtml = `<input type="email" class="form-control" data-key="${key}" value="${value || ''}" ${disabledAttr}>`;
                             break;
                         default: // text
-                            inputHtml = `<input type="text" class="form-control" data-key="${key}" value="${value}" ${disabledAttr}>`;
+                            inputHtml = `<input type="text" class="form-control" data-key="${key}" value="${value || ''}" ${disabledAttr}>`;
                     }
 
                     const overriddenHtml = isOverridden ? `
-                            <div class="overridden-tag">
-                                <i class="fa-solid fa-info-circle" title="This value is set by an environment variable and cannot be changed here."></i>
-                                <span>Overridden</span>
-                            </div>` : '';
+                        <div class="overridden-tag">
+                            <i class="fa-solid fa-info-circle" title="This value may be set by an environment variable and might not be changeable here."></i>
+                            <span>Potentially Overridden</span>
+                        </div>` : '';
 
                     return `
-                            <div class="setting-item">
-                                <div class="label-group">
-                                    <label for="${key}">${label}</label>
-                                    <p class="description">${description}</p>
-                                </div>
-                                <div class="input-wrapper">
-                                    ${inputHtml}
-                                    ${overriddenHtml}
-                                </div>
+                        <div class="setting-item">
+                            <div class="label-group">
+                                <label for="${key}">${label}</label>
+                                <p class="description">${description}</p>
                             </div>
-                        `;
+                            <div class="input-wrapper">
+                                ${inputHtml}
+                                ${overriddenHtml}
+                            </div>
+                        </div>`;
                 },
 
                 toggleAccordion(item) { item.classList.toggle('open'); },
@@ -866,49 +928,93 @@
                 handleSettingChange(event) {
                     const input = event.target;
                     const key = input.dataset.key;
-                    if (!key) return;
+                    if (!key || !this.state.currentSettings.hasOwnProperty(key)) return;
 
-                    const value = input.type === 'checkbox' ? input.checked : input.value;
+                    let value = input.type === 'checkbox' ? input.checked : input.value;
+                    if (input.type === 'number') {
+                        value = parseFloat(value);
+                        if (isNaN(value)) { // Handle invalid number input if necessary
+                           // toastr.warning(`Invalid number for ${key}`);
+                           return; // Or revert to initialSettings[key]
+                        }
+                    }
+
                     this.state.currentSettings[key] = value;
-
                     this.checkDirtyState();
                 },
 
                 checkDirtyState() {
-                    this.state.isDirty = JSON.stringify(this.state.initialSettings) !== JSON.stringify(this.state.currentSettings);
+                    // Compare currentSettings with initialSettings, only for keys defined in schema
+                    let changed = false;
+                    for (const category of this.state.settingsSchema) {
+                        for (const setting of category.settings) {
+                            if (this.state.currentSettings.hasOwnProperty(setting.key) &&
+                                this.state.initialSettings.hasOwnProperty(setting.key) &&
+                                this.state.currentSettings[setting.key] !== this.state.initialSettings[setting.key]) {
+                                changed = true;
+                                break;
+                            }
+                        }
+                        if (changed) break;
+                    }
+                    this.state.isDirty = changed;
                     this.elements.actionsFooter.classList.toggle('visible', this.state.isDirty);
                     this.elements.saveButton.disabled = !this.state.isDirty;
                 },
 
-                handleSave() {
+                async handleSave() {
+                    if (!this.state.activeConfigId) {
+                        toastr.error("Cannot save settings: No active configuration loaded. Please use Connection Setup page first.", "Error");
+                        return;
+                    }
+
                     console.log("Controller: Saving changes...", this.state.currentSettings);
                     this.elements.saveButton.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Saving...`;
                     this.elements.saveButton.disabled = true;
 
-                    // Simulate API POST request
-                    setTimeout(() => {
-                        toastr.success('Settings saved successfully!');
-                        this.state.initialSettings = { ...this.state.currentSettings }; // Update base state
-                        this.state.isDirty = false;
-                        this.elements.actionsFooter.classList.remove('visible');
-                        this.elements.saveButton.innerHTML = `Save Changes`;
-                    }, 1500);
+                    // Construct the UpdateWebPanelConfigDto. It should match the full WebPanelConfigDto structure.
+                    const payload = { ...this.state.initialSettings, ...this.state.currentSettings, id: this.state.activeConfigId };
+
+                    // Mask sensitive data for logging
+                    const payload_to_log = {...payload};
+                    if (payload_to_log.telegramBotToken) payload_to_log.telegramBotToken = "****";
+                    if (payload_to_log.databaseConnectionString) payload_to_log.databaseConnectionString = "****";
+                    console.log("Controller: Sending PUT to /api/webpanelconfig/" + this.state.activeConfigId, payload_to_log);
+
+
+                    try {
+                        const response = await fetch(`/api/webpanelconfig/${this.state.activeConfigId}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+
+                        if (response.ok) {
+                            toastr.success('Settings saved successfully!');
+                            this.state.initialSettings = { ...this.state.currentSettings }; // Update base state
+                            this.checkDirtyState(); // Will hide footer and disable save
+                        } else {
+                            const errorData = await response.text();
+                            toastr.error(`Failed to save settings: ${response.status} ${errorData}`, 'Save Error');
+                            console.error("Controller: Save error - ", errorData);
+                            this.elements.saveButton.disabled = false; // Re-enable on error
+                        }
+                    } catch (error) {
+                        toastr.error('An unexpected error occurred while saving settings.', 'Network Error');
+                        console.error("Controller: Network error saving settings - ", error);
+                        this.elements.saveButton.disabled = false; // Re-enable on error
+                    } finally {
+                         this.elements.saveButton.innerHTML = `Save Changes`;
+                    }
                 },
 
                 handleDiscard() {
                     console.log("Controller: Discarding changes.");
                     this.state.currentSettings = { ...this.state.initialSettings };
-                    this.renderSettings(this.mockSettingsData); // Re-render to reset view
+                    this.renderSettingsFromSchema(); // Re-render to reset view
                     this.checkDirtyState(); // This will hide the footer
-                },
-
-                // --- 7. Helper Utilities ---
-                flattenSettings(data) {
-                    return data.flatMap(cat => cat.settings).reduce((acc, setting) => {
-                        acc[setting.key] = setting.value;
-                        return acc;
-                    }, {});
                 }
+                // Removed flattenSettings as it's not needed with the new schema-driven approach
             };
 
             // --- Run the Controller ---

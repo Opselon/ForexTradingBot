@@ -3,6 +3,7 @@ using System;
 using Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20250707082315_UpdateWebPanelConfigWithConnectionStrings")]
+    partial class UpdateWebPanelConfigWithConnectionStrings
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -638,12 +641,6 @@ namespace Infrastructure.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
-                    b.Property<string>("AdminChatId")
-                        .HasColumnType("text");
-
-                    b.Property<string>("AppName")
-                        .HasColumnType("text");
-
                     b.Property<string>("ContactEmail")
                         .HasColumnType("text");
 
@@ -668,17 +665,11 @@ namespace Infrastructure.Migrations
                     b.Property<DateTime>("LastModifiedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<bool>("MaintenanceMode")
-                        .HasColumnType("boolean");
-
                     b.Property<int>("MaxLogEntriesToDisplay")
                         .HasColumnType("integer");
 
                     b.Property<string>("RedisConnectionString")
                         .HasColumnType("text");
-
-                    b.Property<int>("SessionTimeoutMinutes")
-                        .HasColumnType("integer");
 
                     b.Property<string>("SiteTitle")
                         .HasColumnType("text");

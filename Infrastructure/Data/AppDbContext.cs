@@ -82,6 +82,11 @@ namespace Infrastructure.Data
         public DbSet<ApplicationSetting> ApplicationSettings => Set<ApplicationSetting>();
 
         /// <summary>
+        /// DbSet for the new WebPanelConfig entities.
+        /// </summary>
+        public DbSet<WebPanelConfig> WebPanelConfigs { get; set; } // Added this line
+
+        /// <summary>
         /// DbSet برای موجودیت‌های ForwardingRule (از فضای نام خاص).
         /// </summary>
         public DbSet<Domain.Features.Forwarding.Entities.ForwardingRule> ForwardingRules => Set<Domain.Features.Forwarding.Entities.ForwardingRule>();

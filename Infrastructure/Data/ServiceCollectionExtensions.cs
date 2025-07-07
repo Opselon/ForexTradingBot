@@ -314,6 +314,7 @@ namespace Infrastructure.Data
             _ = services.AddScoped<IUserSignalPreferenceRepository, UserSignalPreferenceRepository>();
             _ = services.AddScoped<ISignalAnalysisRepository, SignalAnalysisRepository>();
             _ = services.AddScoped<ITransactionRepository, TransactionRepository>();
+            _ = services.AddScoped<IWebPanelConfigRepository, WebPanelConfigRepository>(); // Added this line
 
 
             #endregion

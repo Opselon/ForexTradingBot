@@ -704,13 +704,23 @@
             const configController = {
                 // --- 1. Element Cache ---
                 elements: {
+                    // UI elements
                     sidebarToggle: document.getElementById('sidebar-toggle'),
                     mobileMenuToggle: document.getElementById('mobile-menu-toggle'),
                     themeToggleBtn: document.getElementById('theme-toggle-btn'),
+                    passwordToggles: document.querySelectorAll('.password-toggle'),
+
+                    // Form inputs
+                    botTokenInput: document.getElementById('botToken'),
+                    dbConnInput: document.getElementById('dbConn'),
+                    redisConnInput: document.getElementById('redisConn'),
+
+                    // Buttons
                     testButtons: document.querySelectorAll('.btn-test'),
                     testAllButton: document.getElementById('testAllButton'),
                     saveButton: document.getElementById('saveButton'),
-                    passwordToggles: document.querySelectorAll('.password-toggle'),
+
+                    // Status indicators
                     statusIndicators: {
                         telegram: document.getElementById('telegramStatus'),
                         database: document.getElementById('databaseStatus'),
@@ -722,6 +732,7 @@
                 state: {
                     testsPassed: { telegram: false, database: false }, // Redis is optional
                     isTesting: false,
+                    currentConfig: null, // To store the loaded configuration including its ID
                 },
 
                 // --- 3. Initialization ---
@@ -749,6 +760,7 @@
                     });
 
                     this.elements.testAllButton.addEventListener('click', () => this.handleTestAll());
+                    this.elements.saveButton.addEventListener('click', () => this.handleSaveConfiguration()); // Bind save button
 
                     this.elements.passwordToggles.forEach(toggle => {
                         toggle.addEventListener('click', (e) => this.togglePasswordVisibility(e.target));
@@ -845,10 +857,135 @@
                 },
 
                 // --- 7. Load Initial State from Backend ---
-                loadInitialState() {
-                    // In a real app, you would fetch saved values here and populate the inputs.
-                    // For now, we leave them as placeholders.
-                    console.log("Controller: In a real app, would load saved config values now.");
+                async loadInitialState() {
+                    console.log("Controller: Loading initial configuration from backend...");
+                    document.body.classList.add('is-loading');
+                    try {
+                        const response = await fetch('/api/webpanelconfig'); // Get active config
+                        if (response.ok) {
+                            const config = await response.json();
+                            this.state.currentConfig = config; // Store the loaded config, including its ID
+
+                            if (config.telegramBotToken) this.elements.botTokenInput.value = config.telegramBotToken;
+                            if (config.databaseConnectionString) this.elements.dbConnInput.value = config.databaseConnectionString;
+                            if (config.redisConnectionString) this.elements.redisConnInput.value = config.redisConnectionString;
+
+                            // You might want to pre-fill other general config settings on this page or others
+                            // For example, if SiteTitle was an input:
+                            // if (config.siteTitle && document.getElementById('siteTitleInput')) {
+                            //     document.getElementById('siteTitleInput').value = config.siteTitle;
+                            // }
+
+                            toastr.info('Configuration loaded.', 'System Ready');
+                            console.log("Controller: Configuration loaded:", config);
+                        } else if (response.status === 404) {
+                            toastr.warning('No active configuration found. Please set up and save.', 'Setup Required');
+                            console.log("Controller: No active configuration found. A new one will be created on save.");
+                            // Backend will handle creating one if it doesn't exist on first save, or we might need a POST endpoint.
+                            // For now, the save function will attempt an update. If it fails due to 404, it should then try a POST.
+                            // Or, the backend PUT should handle create if not found (upsert).
+                            // The current API has POST for create and PUT for update.
+                            // So, if currentConfig.id is null, save should use POST.
+                        } else {
+                            toastr.error(`Error loading configuration: ${response.statusText}`, 'Load Error');
+                            console.error("Controller: Error loading configuration:", response);
+                        }
+                    } catch (error) {
+                        toastr.error('Could not connect to backend to load configuration.', 'Network Error');
+                        console.error("Controller: Network error loading configuration:", error);
+                    } finally {
+                        // Remove skeleton loader after a slight delay to ensure content is rendered
+                        setTimeout(() => document.body.classList.remove('is-loading'), 200);
+                    }
+                },
+
+                // --- 8. Save Configuration ---
+                async handleSaveConfiguration() {
+                    if (!this.state.currentConfig && !Object.values(this.state.testsPassed).every(status => status === true)) {
+                         toastr.warning('Please test all required connections successfully before saving a new configuration.', 'Test Required');
+                         this.elements.saveButton.disabled = true; // Ensure it's disabled
+                         return;
+                    }
+                    // If updating an existing config, we might be more lenient on re-testing,
+                    // but for now, let's assume tests should pass or fields are unchanged.
+                    // A more sophisticated check could see if tested fields have changed since last successful test.
+
+
+                    this.elements.saveButton.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Saving...`;
+                    this.elements.saveButton.disabled = true;
+
+                    const payload = {
+                        // Include all fields from WebPanelConfigDto that might be managed by this page or others.
+                        // Fields not on this page will be taken from the loaded this.state.currentConfig.
+                        // If this.state.currentConfig is null, these will be the defaults from the DTO.
+                        id: this.state.currentConfig ? this.state.currentConfig.id : 0, // Required for UpdateDTO
+                        siteTitle: this.state.currentConfig ? this.state.currentConfig.siteTitle : "Forex Trading Bot Admin", // Example default
+                        defaultTheme: this.state.currentConfig ? this.state.currentConfig.defaultTheme : "dark",
+                        maxLogEntriesToDisplay: this.state.currentConfig ? this.state.currentConfig.maxLogEntriesToDisplay : 100,
+                        isFeatureXEnabled: this.state.currentConfig ? this.state.currentConfig.isFeatureXEnabled : true,
+                        isFeatureYEnabled: this.state.currentConfig ? this.state.currentConfig.isFeatureYEnabled : false,
+                        contactEmail: this.state.currentConfig ? this.state.currentConfig.contactEmail : "admin@example.com",
+                        defaultPageSize: this.state.currentConfig ? this.state.currentConfig.defaultPageSize : 20,
+                        isActive: this.state.currentConfig ? this.state.currentConfig.isActive : true,
+
+                        // Values from the form
+                        telegramBotToken: this.elements.botTokenInput.value.trim(),
+                        databaseConnectionString: this.elements.dbConnInput.value.trim(),
+                        redisConnectionString: this.elements.redisConnInput.value.trim()
+                    };
+
+                    let response;
+                    let method;
+                    let url;
+
+                    if (this.state.currentConfig && this.state.currentConfig.id) { // If we have an ID, we update
+                        method = 'PUT';
+                        url = `/api/webpanelconfig/${this.state.currentConfig.id}`;
+                        // Update payload for UpdateWebPanelConfigDto (already matches)
+                    } else { // No ID, so we create
+                        method = 'POST';
+                        url = '/api/webpanelconfig';
+                        // Adjust payload for CreateWebPanelConfigDto (remove Id)
+                        const createPayload = { ...payload };
+                        delete createPayload.id;
+                    }
+
+                    console.log(`Controller: Saving configuration. Method: ${method}, URL: ${url}, Payload:`, payload_to_log);
+                    // Mask sensitive data for logging
+                    const payload_to_log = {...payload};
+                    if (payload_to_log.telegramBotToken) payload_to_log.telegramBotToken = "****";
+                    if (payload_to_log.databaseConnectionString) payload_to_log.databaseConnectionString = "****";
+
+
+                    try {
+                        response = await fetch(url, {
+                            method: method,
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(method === 'POST' ? (delete payload.id && payload) : payload) // Remove id for POST
+                        });
+
+                        if (response.ok) {
+                            toastr.success('Configuration saved successfully!', 'Save Successful');
+                            if (method === 'POST') {
+                                const savedData = await response.json();
+                                this.state.currentConfig = savedData; // Update state with newly created config (contains ID)
+                            } else {
+                                // For PUT, just update the LastModifiedAt or re-fetch if needed
+                                this.state.currentConfig = { ...this.state.currentConfig, ...payload, lastModifiedAt: new Date().toISOString() };
+                            }
+                        } else {
+                            const errorData = await response.text();
+                            toastr.error(`Failed to save configuration: ${response.status} ${errorData}`, 'Save Error');
+                            console.error("Controller: Save error - ", errorData);
+                        }
+                    } catch (error) {
+                        toastr.error('An unexpected error occurred while saving configuration.', 'Network Error');
+                        console.error("Controller: Network error saving config - ", error);
+                    } finally {
+                        this.elements.saveButton.innerHTML = `<i class="fas fa-save"></i> Save Configuration`;
+                        // Re-evaluate if save button should be enabled based on current state or test results
+                        this.updateSaveButtonState();
+                    }
                 }
             };
 

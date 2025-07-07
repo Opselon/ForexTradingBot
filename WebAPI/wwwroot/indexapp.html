@@ -709,9 +709,7 @@
                     <div class="card activity-feed">
                         <div class="card-header"><h3 class="card-title"><i class="far fa-clock"></i> Live Activity</h3></div>
                         <ul class="content-loaded">
-                            <li><div class="activity-icon" style="background-color: #198754;"><i class="fas fa-user-plus"></i></div><div class="activity-text">New user registered: <strong>john_doe_123</strong><div class="activity-time">5 minutes ago</div></div></li>
-                            <li><div class="activity-icon" style="background-color: #0d6efd;"><i class="fas fa-rss"></i></div><div class="activity-text">Signal sent: <strong>EUR/USD Buy</strong><div class="activity-time">15 minutes ago</div></div></li>
-                            <li><div class="activity-icon" style="background-color: #ffc107;"><i class="fas fa-cog"></i></div><div class="activity-text">Setting updated: <strong>Admin changed StopLoss</strong><div class="activity-time">1 hour ago</div></div></li>
+                            <!-- Dynamic content will be injected here by JS -->
                         </ul>
                         <div class="skeleton-wrapper"><div class="skeleton skeleton-text my-3" style="height: 40px"></div><div class="skeleton skeleton-text my-3" style="height: 40px"></div><div class="skeleton skeleton-text my-3" style="height: 40px"></div></div>
                     </div>
@@ -722,16 +720,15 @@
                     <div class="card">
                         <div class="card-header"><h3 class="card-title"><i class="far fa-heart"></i> System Health</h3></div>
                         <div class="system-health-list content-loaded">
-                            <div class="system-health-item"><span class="item-name"><i class="fas fa-server"></i> API Service</span><span class="status-badge ok">Operational</span></div>
-                            <div class="system-health-item"><span class="item-name"><i class="fas fa-database"></i> Database</span><span class="status-badge ok">Connected</span></div>
-                            <div class="system-health-item"><span class="item-name"><i class="fas fa-tasks"></i> Job Scheduler</span><span class="status-badge ok">Running</span></div>
-                            <div class="system-health-item"><span class="item-name"><i class="fab fa-telegram"></i> Telegram API</span><span class="status-badge degraded">Degraded</span></div>
+                            <!-- Dynamic content will be injected here by JS -->
                         </div>
                         <div class="skeleton-wrapper"><div class="skeleton skeleton-text my-3" style="height: 25px"></div><div class="skeleton skeleton-text my-3" style="height: 25px"></div></div>
                     </div>
                     <div class="card">
                         <div class="card-header"><h3 class="card-title"><i class="far fa-file-alt"></i> Recent Logs</h3></div>
-                        <div class="recent-logs-container content-loaded" id="recentLogsContent">[INFO] 2024-05-21 10:30:15 - Application starting up...</div>
+                        <div class="recent-logs-container content-loaded" id="recentLogsContent">
+                            <!-- Dynamic content will be injected here by JS -->
+                        </div>
                         <div class="skeleton-wrapper"><div class="skeleton h-100 w-100" style="min-height: 165px; border-radius: 10px;"></div></div>
                     </div>
                 </div>
@@ -849,59 +846,114 @@
 
 
             // --- MAIN PAGE CONTROLLER ---
-            const loadDashboardData = () => {
-                // This function simulates fetching data from a backend API.
-                console.log("Controller: Fetching dashboard data...");
+            const populateStatCard = (idPrefix, statItem) => {
+                const valueElem = document.getElementById(`${idPrefix}Value`);
+                const trendElem = document.getElementById(`${idPrefix}Trend`);
+                if (valueElem) valueElem.textContent = statItem.value || '--';
+                if (trendElem) {
+                    trendElem.innerHTML = `<i class="fas ${statItem.isPositiveTrend ? 'fa-arrow-up' : 'fa-arrow-down'}"></i> ${statItem.trendValue || '--'}`;
+                    trendElem.className = `trend ${statItem.isPositiveTrend ? 'positive' : 'negative'}`;
+                }
+            };
 
-                setTimeout(() => {
-                    console.log("Controller: Data received.");
+            const populateActivityFeed = (feedItems) => {
+                const feedList = document.querySelector('.activity-feed ul.content-loaded');
+                if (!feedList) return;
+                feedList.innerHTML = ''; // Clear static content
+                if (!feedItems || feedItems.length === 0) {
+                    feedList.innerHTML = '<li>No recent activity.</li>';
+                    return;
+                }
+                feedItems.forEach(item => {
+                    const li = document.createElement('li');
+                    li.innerHTML = `
+                        <div class="activity-icon" style="background-color: ${item.iconBackgroundColor || '#6c757d'};"><i class="${item.iconCssClass || 'fas fa-info-circle'}"></i></div>
+                        <div class="activity-text">${item.text || 'Activity'}
+                            <div class="activity-time">${item.timeAgo || new Date(item.timestamp).toLocaleTimeString()}</div>
+                        </div>`;
+                    feedList.appendChild(li);
+                });
+            };
 
-                    // Mock data received from an API
-                    const apiData = {
-                        stats: {
-                            totalUsers: { value: 3, trend: '--' },
-                            signalsToday: { value: 0, trend: '--' },
-                            revenueToday: { value: '$0', trend: 'N/A' },
-                            errorsToday: { value: 0, trend: 'N/A' }
-                        },
-                        userGrowth: {
-                            labels: ['Jun 30', 'Jul 1', 'Jul 2', 'Jul 3', 'Jul 4', 'Jul 5', 'Jul 6'],
-                            values: [0, 0, 0.2, 1, 0.4, 0.1, 0] // Data to create the arch from the image
-                        },
-                        logs: [
-                            "[INFO] 2024-05-21 10:30:15 - Application starting up...",
-                            "[INFO] 2024-05-21 10:30:18 - Database connection successful.",
-                            "[WARN] 2024-05-21 10:31:05 - Telegram API response slow: 1500ms.",
-                            "[INFO] 2024-05-21 10:32:00 - Signal Check job completed. Found 1 new signal."
-                        ]
-                    };
+            const populateSystemHealth = (healthItems) => {
+                const healthList = document.querySelector('.system-health-list.content-loaded');
+                if (!healthList) return;
+                healthList.innerHTML = ''; // Clear static content
+                 if (!healthItems || healthItems.length === 0) {
+                    healthList.innerHTML = '<div class="system-health-item"><span>No health data available.</span></div>';
+                    return;
+                }
+                healthItems.forEach(item => {
+                    const div = document.createElement('div');
+                    div.className = 'system-health-item';
+                    div.innerHTML = `
+                        <span class="item-name"><i class="${item.iconCssClass || 'fas fa-question-circle'}"></i> ${item.name || 'Unknown Service'}</span>
+                        <span class="status-badge ${item.statusCssClass || 'unknown'}">${item.status || 'Unknown'}</span>`;
+                    healthList.appendChild(div);
+                });
+            };
 
-                    // Store data globally for theme changes
+            const populateRecentLogs = (logs) => {
+                const logsContainer = document.getElementById('recentLogsContent');
+                if (!logsContainer) return;
+                if (!logs || logs.length === 0) {
+                    logsContainer.innerHTML = 'No recent logs.';
+                    return;
+                }
+                logsContainer.innerHTML = logs.join('<br>');
+            };
+
+            const loadDashboardData = async () => {
+                console.log("Controller: Fetching dashboard data from API...");
+                document.body.classList.add('is-loading'); // Ensure skeleton loaders are shown
+
+                try {
+                    const response = await fetch('/api/dashboard/data');
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    const apiData = await response.json();
+                    console.log("Controller: Data received from API:", apiData);
+
+                    // Store data globally for theme changes (if chart needs it for re-render)
                     window.dashboardData = apiData;
 
-                    // Populate UI Elements (The "View" part of a simple MVC)
-                    document.getElementById('totalUsersValue').textContent = apiData.stats.totalUsers.value;
-                    document.getElementById('totalUsersTrend').innerHTML = `<i class="fas fa-arrow-up"></i> ${apiData.stats.totalUsers.trend}`;
+                    // Populate Stats
+                    if(apiData.totalUsers) populateStatCard('totalUsers', apiData.totalUsers);
+                    if(apiData.signalsToday) populateStatCard('signalsToday', apiData.signalsToday);
+                    if(apiData.revenueToday) populateStatCard('revenueToday', apiData.revenueToday);
+                    if(apiData.errorsToday) populateStatCard('errorsToday', apiData.errorsToday);
 
-                    document.getElementById('signalsTodayValue').textContent = apiData.stats.signalsToday.value;
-                    document.getElementById('signalsTodayTrend').innerHTML = `<i class="fas fa-arrow-down"></i> ${apiData.stats.signalsToday.trend}`;
+                    // Populate User Growth Chart
+                    if (apiData.userGrowthChart && apiData.userGrowthChart.length > 0) {
+                        const chartFormattedData = {
+                            labels: apiData.userGrowthChart.map(dp => dp.label),
+                            values: apiData.userGrowthChart.map(dp => dp.value)
+                        };
+                        renderUserGrowthChart(chartFormattedData);
+                    } else {
+                         renderUserGrowthChart({ labels: [], values: [] }); // Render empty chart
+                    }
 
-                    document.getElementById('revenueTodayValue').textContent = apiData.stats.revenueToday.value;
-                    document.getElementById('revenueTodayTrend').innerHTML = `<i class="fas fa-arrow-up"></i> ${apiData.stats.revenueToday.trend}`;
+                    // Populate Activity Feed
+                    if(apiData.activityFeed) populateActivityFeed(apiData.activityFeed);
 
-                    document.getElementById('errorsTodayValue').textContent = apiData.stats.errorsToday.value;
-                    document.getElementById('errorsTodayTrend').innerHTML = `<i class="fas fa-arrow-up"></i> ${apiData.stats.errorsToday.trend}`;
+                    // Populate System Health
+                    if(apiData.systemHealth) populateSystemHealth(apiData.systemHealth);
 
-                    document.getElementById('recentLogsContent').innerHTML = apiData.logs.join('<br>');
+                    // Populate Recent Logs
+                    if(apiData.recentLogs) populateRecentLogs(apiData.recentLogs);
 
-                    // Render chart with the new data
-                    renderUserGrowthChart(apiData.userGrowth);
-
-                    // Reveal the content now that it's populated
-                    document.body.classList.remove('is-loading');
-                    console.log("Controller: UI updated and revealed.");
-
-                }, 1500); // Simulate a 1.5-second network request
+                } catch (error) {
+                    console.error("Controller: Error fetching or processing dashboard data:", error);
+                    // Display some error to the user, e.g., using toastr if available or a simple alert
+                    // toastr.error('Could not load dashboard data. Please try again later.', 'Error');
+                    alert('Failed to load dashboard data. Please check console for errors.');
+                } finally {
+                    // Remove skeleton loader after a slight delay to ensure content is rendered
+                    setTimeout(() => document.body.classList.remove('is-loading'), 200);
+                    console.log("Controller: UI update attempt finished.");
+                }
             };
 
             // --- INITIALIZATION ---

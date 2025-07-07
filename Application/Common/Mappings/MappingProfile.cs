@@ -1,5 +1,6 @@
 ﻿using Application.DTOs; // Namespace اصلی DTO ها
 using Application.DTOs.News;
+using Application.Features.WebPanelConfiguration.DTOs; // Added for WebPanelConfig DTOs
 using AutoMapper;
 using Domain.Entities;
 
@@ -9,6 +10,12 @@ namespace Application.Common.Mappings
     {
         public MappingProfile()
         {
+            // WebPanelConfig Mappings
+            CreateMap<WebPanelConfig, WebPanelConfigDto>();
+            CreateMap<CreateWebPanelConfigDto, WebPanelConfig>()
+                .ForMember(dest => dest.LastModifiedAt, opt => opt.MapFrom(src => DateTime.UtcNow)); // Set LastModifiedAt on creation
+            CreateMap<UpdateWebPanelConfigDto, WebPanelConfig>()
+                .ForMember(dest => dest.LastModifiedAt, opt => opt.MapFrom(src => DateTime.UtcNow)); // Update LastModifiedAt on update
 
             #region News Mappings
             _ = CreateMap<NewsItem, NewsItemDto>()

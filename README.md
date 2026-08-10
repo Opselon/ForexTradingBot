@@ -22,6 +22,32 @@
 
 ![ForexSignalBot Demo](https://raw.githubusercontent.com/Opselon/ForexTradingBot/master/assets/lcak2Rr.gif)
 ---
+## 🤖 Run a Local AI Trading Model on Your PC
+
+Want to run a **local AI trading model** on your own PC and help build a stronger, smarter, and more reliable trading system?
+
+Check out **Nexus Trading Forex Bot**, an open-source AI-powered trading project:
+
+🔗 **https://github.com/Opselon/NexusTradingForexBot**
+
+You can clone the project, run it locally, experiment with different AI/ML models, and contribute improvements back to the project.
+
+### 🧠 Help Us Make the Model Better
+
+We are looking for developers, AI/ML engineers, quantitative traders, and researchers who want to help improve:
+
+- 🤖 Local AI/ML trading models
+- 📊 Market data & feature engineering
+- 📈 Trading signal quality
+- 🧪 Backtesting & walk-forward validation
+- 🛡️ Risk management & position sizing
+- ⚡ Trade execution
+- 🔬 Model training & evaluation
+- 📉 False-signal reduction
+- 🔄 Online learning & model adaptation
+- 💰 Risk-adjusted trading performance
+
+
 
 ## 🚀 Getting Started
 

@@ -1,0 +1,124 @@
+version: "3.8"
+
+services:
+  forex-api:
+    image: opseldon/forex-trading-bot:latest
+    container_name: forex-bot-api
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://+:8080
+      # Database Configuration
+      - DatabaseProvider=Postgres
+      - ConnectionStrings__DefaultConnection=Host=db;Port=5432;Database=forextradingbot;Username=postgres;Password=${POSTGRES_PASSWORD}
+      # Telegram Panel
+      - TelegramPanel__BotToken=${TELEGRAM_BOT_TOKEN}
+      - TelegramPanel__UseWebhook=false
+      - TelegramPanel__AdminUserIds="[537833]"
+      # Telegram User API
+      - TelegramUserApi__ApiId=${TELEGRAM_API_ID:-111111}
+      - TelegramUserApi__ApiHash=${TELEGRAM_API_HASH}
+      - TelegramUserApi__PhoneNumber=${TELEGRAM_PHONE_NUMBER}
+      - TelegramUserApi__VerificationCodeSource=Console
+      - TelegramUserApi__TwoFactorPasswordSource=Console
+      # Crypto Pay
+      - CryptoPay__ApiToken=${CRYPTO_PAY_API_TOKEN}
+      - CryptoPay__BaseUrl=https://pay.crypt.bot/api/
+      - CryptoPay__IsTestnet=true
+      - CryptoPay__WebhookSecretForCryptoPay=${CRYPTO_PAY_WEBHOOK_SECRET}
+      # Forwarding Rules
+      - ForwardingRules__0__BotToken=${FORWARDING_BOT_TOKEN}
+      - ForwardingRules__0__SourceChannelId=${SOURCE_CHANNEL_ID}
+      - ForwardingRules__0__TargetChannelId=${TARGET_CHANNEL_ID}
+      - ForwardingRules__0__IsEnabled=${FORWARDING_ENABLED}
+    depends_on:
+      db:
+        condition: service_healthy
+      hangfire-db:
+        condition: service_healthy
+    networks:
+      - forex-network
+    volumes:
+      - telegram_sessions:/app/telegram_user.session
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
+  db:
+    image: postgres:17-alpine
+    container_name: forex-bot-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: forextradingbot
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - forex-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d forextradingbot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  hangfire-db:
+    image: postgres:17-alpine
+    container_name: forex-hangfire-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: forextradingbot_hangfire
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - hangfire_data:/var/lib/postgresql/data
+    networks:
+      - forex-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d forextradingbot_hangfire"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: forex-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - forex-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+  forex-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  hangfire_data:
+  redis_data:
+  telegram_sessions:

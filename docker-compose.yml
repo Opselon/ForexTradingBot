@@ -1,0 +1,105 @@
+services:
+  # Main API Service - .NET 9 WebAPI
+  forex-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: forex-bot-api
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - ASPNETCORE_URLS=http://+:8080
+      - ASPNETCORE_ENVIRONMENT=Production
+      - TelegramPanel__BotToken=${TELEGRAM_BOT_TOKEN}
+      - TelegramPanel__WebhookAddress=${TELEGRAM_WEBHOOK_ADDRESS}
+      - TelegramPanel__WebhookSecretToken=${TELEGRAM_WEBHOOK_SECRET}
+      - DatabaseProvider=Postgres
+      - ConnectionStrings__DefaultConnection=Host=postgres;Database=forexbotdb;Username=postgres;Password=${POSTGRES_PASSWORD}
+      - CryptoPay__ApiToken=${CRYPTO_PAY_API_TOKEN}
+      - CryptoPay__BaseUrl=${CRYPTO_PAY_BASE_URL}
+      - CryptoPay__IsTestnet=${CRYPTO_PAY_IS_TESTNET}
+      - CryptoPay__WebhookSecretForCryptoPay=${CRYPTO_PAY_WEBHOOK_SECRET}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      - telegram_sessions:/app/telegram_user.session
+      - forexbot_data:/app/data
+    networks:
+      - forexbot-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    mem_limit: 1g
+    mem_reservation: 256m
+    cpus: 2.0
+    cpu_shares: 512
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:17-alpine
+    container_name: forex-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: forexbotdb
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - forexbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d forexbotdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    mem_limit: 2g
+    mem_reservation: 512m
+    cpus: 2.0
+
+  # Redis Cache for session management and performance
+  redis:
+    image: redis:7-alpine
+    container_name: forex-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - forexbot-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    mem_limit: 512m
+    mem_reservation: 128m
+    cpus: 1.0
+
+networks:
+  forexbot-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes:
+  telegram_sessions:
+    driver: local
+  forexbot_data:
+    driver: local
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local

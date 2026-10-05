@@ -1,0 +1,102 @@
+version: "3.8"
+
+services:
+  forex-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: forex-bot-local
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:8080
+      # Database Configuration
+      - DatabaseProvider=Postgres
+      - ConnectionStrings__DefaultConnection=Host=db;Port=5432;Database=forexbotdb;Username=postgres;Password=devpassword
+      # Telegram Panel - Development Mode
+      - TelegramPanel__BotToken=${TELEGRAM_BOT_TOKEN:-}
+      - TelegramPanel__UseWebhook=false
+      - TelegramPanel__AdminUserIds="[537833]"
+      - TelegramPanel__EnableDebugMode=true
+      # Telegram User API
+      - TelegramUserApi__ApiId=${TELEGRAM_API_ID:-111111}
+      - TelegramUserApi__ApiHash=${TELEGRAM_API_HASH:-}
+      - TelegramUserApi__PhoneNumber=${TELEGRAM_PHONE_NUMBER:-+989XXXXXXXXX}
+      - TelegramUserApi__VerificationCodeSource=Console
+      - TelegramUserApi__TwoFactorPasswordSource=Console
+      # Crypto Pay - Test Mode
+      - CryptoPay__ApiToken=${CRYPTO_PAY_API_TOKEN:-}
+      - CryptoPay__BaseUrl=https://testnet-pay.crypt.bot/api/
+      - CryptoPay__IsTestnet=true
+    depends_on:
+      db:
+        condition: service_started
+      redis:
+        condition: service_started
+    volumes:
+      - telegram_sessions:/app/telegram_user.session
+      # Enable volume mount for code changes during development
+      - ./src:/app/src:ro
+    networks:
+      - forex-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  db:
+    image: postgres:16-alpine
+    container_name: forex-postgres-local
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: forexbotdb
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: devpassword
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - forex-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d forexbotdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: forex-redis-local
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - forex-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+  forex-network:
+    driver: bridge
+
+volumes:
+  telegram_sessions:
+    driver: local
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local

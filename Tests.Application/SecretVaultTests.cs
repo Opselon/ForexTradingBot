@@ -11,13 +11,13 @@ namespace Tests.Application;
 public sealed class SecretVaultTests : IDisposable
 {
     private readonly string _vaultDir;
-    private readonly byte[] _identity;
+    private readonly byte[] _masterKey;
 
     public SecretVaultTests()
     {
         _vaultDir = Path.Combine(Path.GetTempPath(), $"vault-test-{Guid.NewGuid():N}");
-        _identity = new byte[32];
-        Random.Shared.NextBytes(_identity);
+        _masterKey = new byte[32];
+        Random.Shared.NextBytes(_masterKey);
     }
 
     public void Dispose()
@@ -28,7 +28,7 @@ public sealed class SecretVaultTests : IDisposable
         }
     }
 
-    private SqliteSecretVault CreateVault() => new(new SecretCipher(_identity), _vaultDir);
+    private SqliteSecretVault CreateVault() => new(new SecretCipher(_masterKey), _vaultDir);
 
     private static string VaultFilePath(string dir) => Path.Combine(dir, "secrets.db");
 
@@ -111,21 +111,18 @@ public sealed class SecretVaultTests : IDisposable
             cmd.ExecuteNonQuery();
         }
 
-        var reopened = new SqliteSecretVault(new SecretCipher(_identity), _vaultDir);
+        var reopened = new SqliteSecretVault(new SecretCipher(_masterKey), _vaultDir);
         Assert.ThrowsAny<Exception>(() => reopened.Get("K"));
     }
 
     [Fact]
-    public void Different_machine_identity_cannot_decrypt()
+    public void Different_master_key_cannot_decrypt()
     {
-        var vault = CreateVault();
+        using var vault = CreateVault();
         vault.Set("K", "value", SecretCategory.Api);
-        vault.Dispose();
 
-        // A second "machine" derives a different key: decryption must fail, not silently succeed.
-        var otherIdentity = new byte[32];
-        Random.Shared.NextBytes(otherIdentity);
-        var attacker = new SqliteSecretVault(new SecretCipher(otherIdentity), _vaultDir);
+        var otherKey = System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
+        using var attacker = new SqliteSecretVault(new SecretCipher(otherKey), _vaultDir);
         Assert.ThrowsAny<Exception>(() => attacker.Get("K"));
     }
 
@@ -163,7 +160,7 @@ public sealed class SecretVaultTests : IDisposable
     [Fact]
     public void Cipher_round_trip_with_salt()
     {
-        var cipher = new SecretCipher(_identity);
+        var cipher = new SecretCipher(_masterKey);
         var salt = new byte[16];
         Random.Shared.NextBytes(salt);
 

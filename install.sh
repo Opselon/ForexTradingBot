@@ -149,6 +149,18 @@ docker_install() {
   echo
   if [ "$up" = "1" ]; then
     ok "API is UP and healthy → $url"
+
+    # Headless Docker bootstrap creates the admin password inside the
+    # encrypted vault and exposes it through a one-time local file.
+    local bootstrap
+    bootstrap="$($COMPOSE exec -T forex-trading-bot-app sh -lc 'if [ -f /app/data/vault/bootstrap/admin-password.txt ]; then cat /app/data/vault/bootstrap/admin-password.txt; rm -f /app/data/vault/bootstrap/admin-password.txt; fi' 2>/dev/null || true)"
+    if [ -n "$bootstrap" ]; then
+      printf '\n%sInitial admin account%s\n' "$C_BOLD" "$C_RESET"
+      info "Username: admin"
+      printf '    Password: %s\n' "$C_YELLOW$bootstrap$C_RESET"
+      info "The bootstrap password was removed from the container after display."
+    fi
+
     $COMPOSE ps
     cat <<EOF
 

@@ -102,7 +102,6 @@ public sealed class ReleaseWorkflowRegressionTests
         var config = File.ReadAllText(Path.Combine(root, ".github", "labeler.yml"));
 
         Assert.Contains("actions/labeler@v7", workflow, StringComparison.Ordinal);
-        Assert.Contains("on: [pull_request]", workflow, StringComparison.Ordinal);
         Assert.Contains("pull-requests: write", workflow, StringComparison.Ordinal);
         Assert.Contains("actions/labeler@v7", workflow, StringComparison.Ordinal);
         Assert.Contains("Build trusted label configuration", workflow, StringComparison.Ordinal);

@@ -1532,10 +1532,14 @@ internal static class EasySetupWizard
         // STEP 1: Ensure a database connection exists.
         EnsureDefaultConnection(config, store, isInteractive, builder);
 
-        // STEP 2: Ensure the main Telegram bot token exists (REQUIRED).
+        // STEP 2: Ensure the local admin account exists without shipping a
+        // default password in source control.
+        EnsureAdminCredentials(config, store, isInteractive);
+
+        // STEP 3: Ensure the main Telegram bot token exists (REQUIRED).
         EnsureTelegramPanelBotToken(config, store, isInteractive);
 
-        // STEP 3: Optional extras (only when interactive).
+        // STEP 4: Optional extras (only when interactive).
         if (isInteractive)
         {
             EnsureOptionalTelegramUserApi(config, store);
@@ -1561,22 +1565,10 @@ internal static class EasySetupWizard
 
         if (!isInteractive)
         {
-            // Non-interactive environment (Windows service, Docker without console):
-            // We cannot ask the user, so we fall back to a local SQLite db.
-            const string fallbackProvider = "sqlite";
-            const string fallbackConn = "Data Source=local_forex_bot.db";
-
-            config["DatabaseSettings:DatabaseProvider"] = fallbackProvider;
-            config["ConnectionStrings:DefaultConnection"] = fallbackConn;
-
-            store?.Save("DatabaseSettings:DatabaseProvider", fallbackProvider, isSensitive: false);
-            store?.Save("ConnectionStrings:DefaultConnection", fallbackConn, isSensitive: true);
-
-            Log.Warning(
-                "DefaultConnection was missing in non-interactive mode. Falling back to SQLite at '{ConnectionString}'.",
-                fallbackConn);
-
-            return;
+            throw new InvalidOperationException(
+                "Database configuration is missing in non-interactive mode. " +
+                "Configure DatabaseSettings:DatabaseProvider and the local secret DATABASE_CONNECTION " +
+                "(or ConnectionStrings:DefaultConnection) before starting the application.");
         }
 
         // Interactive: show menu once and persist the result.
@@ -1602,6 +1594,10 @@ internal static class EasySetupWizard
                 break;
 
             case "3":
+                SetupDatabaseWithSqlServer(config, store);
+                break;
+
+            case "4":
                 SetupDatabaseManually(config, store);
                 break;
 
@@ -1625,6 +1621,30 @@ internal static class EasySetupWizard
 
         store?.Save("DatabaseSettings:DatabaseProvider", provider, isSensitive: false);
         store?.Save("ConnectionStrings:DefaultConnection", conn, isSensitive: true);
+    }
+
+    private static void SetupDatabaseWithSqlServer(
+        IConfiguration config,
+        Infrastructure.Configuration.EasySetupConfigStore? store)
+    {
+        Console.WriteLine("\n--- SQL Server Setup ---");
+        Console.WriteLine("Enter a SQL Server connection string.");
+        Console.WriteLine("Example: Server=localhost;Database=ForexTradingBot;User Id=...;Password=...;TrustServerCertificate=True");
+
+        Console.Write("\nConnection string: ");
+        string? connectionString = Console.ReadLine()?.Trim();
+
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            throw new InvalidOperationException("SQL Server was selected, but no connection string was provided.");
+        }
+
+        config["DatabaseSettings:DatabaseProvider"] = "sqlserver";
+        config["ConnectionStrings:DefaultConnection"] = connectionString;
+        store?.Save("DatabaseSettings:DatabaseProvider", "sqlserver", isSensitive: false);
+        SecretVaultBootstrap.Set("DATABASE_CONNECTION", connectionString);
+
+        Console.WriteLine("SQL Server configured. The application will validate the connection during startup.");
     }
 
     private static void SetupDatabaseManually(
@@ -1725,7 +1745,7 @@ internal static class EasySetupWizard
         }
 
         store?.Save("DatabaseSettings:DatabaseProvider", provider, isSensitive: false);
-        store?.Save("ConnectionStrings:DefaultConnection", defaultConn, isSensitive: true);
+        SecretVaultBootstrap.Set("DATABASE_CONNECTION", defaultConn);
 
         if (!string.IsNullOrWhiteSpace(redisConn))
         {
@@ -1734,6 +1754,68 @@ internal static class EasySetupWizard
     }
 
     #endregion
+
+    private static void EnsureAdminCredentials(
+        IConfiguration config,
+        Infrastructure.Configuration.EasySetupConfigStore? store,
+        bool isInteractive)
+    {
+        string username = config["Admin:Username"]?.Trim() ?? "admin";
+        config["Admin:Username"] = username;
+
+        string? password = config["Admin:Password"];
+        if (!string.IsNullOrWhiteSpace(password) && !IsPlaceholder(password))
+        {
+            return;
+        }
+
+        if (!isInteractive)
+        {
+            throw new InvalidOperationException(
+                "Admin password is not configured. Store ADMIN_PASSWORD in the local secret vault " +
+                "or provide Admin:Password through a protected runtime configuration source.");
+        }
+
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine("\n--- Easy Setup Wizard :: Admin Account ---");
+        Console.ResetColor();
+        Console.WriteLine("The shipped application has no default admin password.");
+        Console.WriteLine("Choose a strong password for the local admin dashboard.");
+
+        while (true)
+        {
+            Console.Write("Admin password: ");
+            string? input = Console.ReadLine();
+
+            if (string.IsNullOrWhiteSpace(input) || input.Length < 12)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine("Password must be at least 12 characters.");
+                Console.ResetColor();
+                continue;
+            }
+
+            Console.Write("Confirm admin password: ");
+            string? confirmation = Console.ReadLine();
+
+            if (!string.Equals(input, confirmation, StringComparison.Ordinal))
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine("Passwords do not match.");
+                Console.ResetColor();
+                continue;
+            }
+
+            config["Admin:Password"] = input;
+            SecretVaultBootstrap.Set("ADMIN_PASSWORD", input);
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine("Admin credentials stored in the local encrypted secret vault.");
+            Console.ResetColor();
+            break;
+        }
+
+        store?.Save("Admin:Username", username, isSensitive: false);
+    }
 
     #region TelegramPanel Bot Token (REQUIRED)
 
@@ -1783,9 +1865,9 @@ internal static class EasySetupWizard
             }
 
             config["TelegramPanel:BotToken"] = input;
-            store?.Save("TelegramPanel:BotToken", input, isSensitive: true);
+            SecretVaultBootstrap.Set("TELEGRAM_BOT_TOKEN", input);
 
-            Log.Information("TelegramPanel:BotToken was configured via Easy Setup Wizard.");
+            Log.Information("TelegramPanel bot token configured via Easy Setup Wizard.");
             break;
         }
     }

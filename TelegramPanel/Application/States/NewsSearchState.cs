@@ -51,7 +51,7 @@ namespace TelegramPanel.Application.States
                 {
                     _logger.LogWarning("Received a non-text message update in NewsSearchState for ChatID {ChatId}.", chatId.Value);
                     // Inform the user what is expected.
-                    await _messageSender.SendTextMessageAsync(chatId.Value, "Invalid input. Please send your search keywords as a text message.", cancellationToken: cancellationToken);
+                    await _messageSender.SendTextMessageAsync(chatId!.Value, "Invalid input. Please send your search keywords as a text message.", cancellationToken: cancellationToken);
                 }
                 else
                 {
@@ -71,14 +71,14 @@ namespace TelegramPanel.Application.States
 
             if (string.IsNullOrWhiteSpace(keywords))
             {
-                await _messageSender.SendTextMessageAsync(chatId.Value, "Search cannot be empty. Please enter some keywords or use the menu to cancel.", cancellationToken: cancellationToken);
+                await _messageSender.SendTextMessageAsync(chatId!.Value, "Search cannot be empty. Please enter some keywords or use the menu to cancel.", cancellationToken: cancellationToken);
                 return Name; // Stay in the same state
             }
 
             _logger.LogInformation("User {UserId} is searching for news with keywords: '{Keywords}'", userId, keywords);
 
             string searchingMessage = $"⏳ Searching for news related to `{TelegramMessageFormatter.EscapeMarkdownV2(keywords)}`...";
-            await _messageSender.SendTextMessageAsync(chatId.Value, searchingMessage, ParseMode.MarkdownV2, cancellationToken: cancellationToken);
+            await _messageSender.SendTextMessageAsync(chatId!.Value, searchingMessage, ParseMode.MarkdownV2, cancellationToken: cancellationToken);
 
             List<string> keywordList = keywords.Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries).ToList();
 
@@ -87,7 +87,7 @@ namespace TelegramPanel.Application.States
             if (!results.Any())
             {
                 string notFoundMessage = $"No news articles found for your keywords: `{TelegramMessageFormatter.EscapeMarkdownV2(keywords)}`\\. Try a different search\\.";
-                await _messageSender.SendTextMessageAsync(chatId.Value, notFoundMessage, ParseMode.MarkdownV2, cancellationToken: cancellationToken);
+                await _messageSender.SendTextMessageAsync(chatId!.Value, notFoundMessage, ParseMode.MarkdownV2, cancellationToken: cancellationToken);
             }
             else
             {
@@ -98,7 +98,7 @@ namespace TelegramPanel.Application.States
                 foreach (Domain.Entities.NewsItem item in results)
                 {
                     _ = sb.AppendLine($"🔸 *{TelegramMessageFormatter.EscapeMarkdownV2(item.Title)}*");
-                    _ = sb.AppendLine($"_{TelegramMessageFormatter.EscapeMarkdownV2(item.SourceName)}_ at _{item.PublishedDate:yyyy-MM-dd HH:mm} UTC_");
+                    _ = sb.AppendLine($"_{TelegramMessageFormatter.EscapeMarkdownV2(item.SourceName ?? string.Empty)}_ at _{item.PublishedDate:yyyy-MM-dd HH:mm} UTC_");
                     if (!string.IsNullOrWhiteSpace(item.Summary))
                     {
                         string summary = item.Summary.Length > 200 ? item.Summary[..200] + "..." : item.Summary;
@@ -111,7 +111,7 @@ namespace TelegramPanel.Application.States
                     _ = sb.AppendLine("--------------------");
                 }
 
-                await _messageSender.SendTextMessageAsync(chatId.Value, sb.ToString(), ParseMode.MarkdownV2, cancellationToken: cancellationToken);
+                await _messageSender.SendTextMessageAsync(chatId!.Value, sb.ToString(), ParseMode.MarkdownV2, cancellationToken: cancellationToken);
             }
 
             // Return null to signify that the conversation for this state is complete.

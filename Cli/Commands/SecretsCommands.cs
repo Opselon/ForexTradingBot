@@ -35,6 +35,7 @@ internal sealed class SecretsSetCommand : AsyncCommand<SecretsSetCommand.Setting
 
     public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
+        await Task.CompletedTask;
         if (string.IsNullOrWhiteSpace(settings.Key))
         {
             CliOut.Error("Secret key must not be empty.");
@@ -89,6 +90,7 @@ internal sealed class SecretsGetCommand : AsyncCommand<SecretsGetCommand.Setting
 
     public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
+        await Task.CompletedTask;
         if (string.IsNullOrWhiteSpace(settings.Key))
         {
             CliOut.Error("Secret key must not be empty.");
@@ -154,6 +156,7 @@ internal sealed class SecretsDeleteCommand : AsyncCommand<SecretsDeleteCommand.S
 
     public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
+        await Task.CompletedTask;
         if (string.IsNullOrWhiteSpace(settings.Key))
         {
             CliOut.Error("Secret key must not be empty.");
@@ -186,6 +189,7 @@ internal sealed class SecretsRotateCommand : AsyncCommand<EmptySettings>
 
     public override async Task<int> ExecuteAsync(CommandContext context, EmptySettings settings, CancellationToken cancellationToken)
     {
+        await Task.CompletedTask;
         if (!_vault.Exists())
         {
             CliOut.Warn("No vault to rotate.");

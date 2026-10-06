@@ -1117,7 +1117,7 @@ namespace BackgroundTasks.Services
             _ = messageTextBuilder.AppendLine($"*{title}*");
 
             // 2. Process and escape Source Name, using cleaned content
-            string sourceName = escapeMarkdownV2(CleanRawContent(newsItem.SourceName)?.Trim() ?? "Unknown Source");
+            string sourceName = escapeMarkdownV2(CleanRawContent(newsItem.SourceName ?? string.Empty)?.Trim() ?? "Unknown Source");
             _ = messageTextBuilder.AppendLine(); // Blank line for separation
             _ = messageTextBuilder.AppendLine($"_{sourceName}_");
 

@@ -174,7 +174,7 @@ namespace Application.Services
                         firstNewsItem.AssociatedSignalCategoryId, firstNewsItem.IsVipOnly, cancellationToken);
 
                     List<long> validTelegramIds = targetUsers.Select(u => long.TryParse(u.TelegramId, out long id) ? (long?)id : null)
-                        .Where(id => id.HasValue).Select(id => id.Value).ToList();
+                        .Where(id => id.HasValue).Select(id => id!.Value).ToList();
 
                     if (!validTelegramIds.Any())
                     {
@@ -362,7 +362,7 @@ namespace Application.Services
                 List<long> uniqueTelegramIds = targetUsers
                     .Select(u => long.TryParse(u.TelegramId, out long id) ? (long?)id : null)
                     .Where(id => id.HasValue)
-                    .Select(id => id.Value)
+                    .Select(id => id!.Value)
                     .Distinct()
                     .ToList();
 

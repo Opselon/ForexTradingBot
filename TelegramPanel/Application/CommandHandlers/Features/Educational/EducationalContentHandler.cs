@@ -441,7 +441,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Educational
                 _logger.LogInformation("CACHE HIT: Serving menu for path '{Path}', page {Page}.", relativePath, page);
             }
 
-            await _messageSender.EditMessageTextAsync(chatId, messageId, cachedMenu.Text, ParseMode.Markdown, cachedMenu.Keyboard, ct);
+            await _messageSender.EditMessageTextAsync(chatId, messageId, cachedMenu!.Text, ParseMode.Markdown, cachedMenu.Keyboard, ct);
         }
 
 

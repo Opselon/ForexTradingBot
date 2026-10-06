@@ -768,7 +768,7 @@ namespace TelegramPanel.Infrastructure
 
                 await _telegramApiRetryPolicy.ExecuteAsync(async (context, ct) =>
                 {
-                    string processedCaption = caption;
+                    string processedCaption = caption ?? string.Empty;
                     if (!string.IsNullOrWhiteSpace(caption) && caption.Length > TelegramApiMaxCaptionLength)
                     {
                         processedCaption = caption[..TelegramApiMaxCaptionLength];

@@ -124,7 +124,7 @@ namespace TelegramPanel.Infrastructure.Services
             }
 
             _logger.LogInformation("Handling callback query. UpdateID: {UpdateId}, CallbackQueryID: {CallbackQueryId}, Data: {CallbackData}, ChatID: {ChatId}, MessageID: {MessageId}",
-                update.Id, callbackQuery.Id, callbackData, callbackQuery.Message.Chat.Id, callbackQuery.Message.MessageId);
+                update.Id, callbackQuery.Id, callbackData, callbackQuery.Message!.Chat.Id, callbackQuery.Message.MessageId);
 
             try
             {
@@ -137,7 +137,7 @@ namespace TelegramPanel.Infrastructure.Services
                     _logger.LogInformation("Handling 'change_currency' callback. CallbackQueryID: {CallbackQueryId}", callbackQuery.Id);
                     // Send a message to the user indicating the feature status.
                     _ = await _botClient.SendMessage(
-                        chatId: callbackQuery.Message.Chat.Id,
+                        chatId: callbackQuery.Message!.Chat.Id,
                         text: "Please select a new currency (feature coming soon!)",
                         parseMode: ParseMode.Markdown,
                         cancellationToken: cancellationToken);
@@ -241,7 +241,7 @@ namespace TelegramPanel.Infrastructure.Services
                     await _botClient.AnswerCallbackQuery(callbackQuery.Id, $"Market data not available for {symbol}.", cancellationToken: cancellationToken);
                     // Optionally, edit the original message to indicate data is not found.
                     _ = await _botClient.EditMessageText(
-                       chatId: callbackQuery.Message.Chat.Id,
+                       chatId: callbackQuery.Message!.Chat.Id,
                        messageId: callbackQuery.Message.MessageId,
                        text: $"Sorry, market data is currently unavailable for *{EscapeMarkdown(symbol)}*.",
                        parseMode: ParseMode.Markdown,
@@ -255,7 +255,7 @@ namespace TelegramPanel.Infrastructure.Services
 
                 // Edit the original message with the new market analysis data and keyboard.
                 _ = await _botClient.EditMessageText(
-                    chatId: callbackQuery.Message.Chat.Id,
+                    chatId: callbackQuery.Message!.Chat.Id,
                     messageId: callbackQuery.Message.MessageId,
                     text: message,
                     replyMarkup: keyboard,
@@ -273,7 +273,7 @@ namespace TelegramPanel.Infrastructure.Services
                 await _botClient.AnswerCallbackQuery(callbackQuery.Id, $"Could not fetch market data for {symbol}: {mde.Message}", cancellationToken: cancellationToken);
                 // Update the message to reflect the error.
                 _ = await _botClient.EditMessageText(
-                   chatId: callbackQuery.Message.Chat.Id,
+                   chatId: callbackQuery.Message!.Chat.Id,
                    messageId: callbackQuery.Message.MessageId,
                    text: $"Failed to retrieve data for *{EscapeMarkdown(symbol)}*. Reason: {EscapeMarkdown(mde.Message)}\nPlease try again later.",
                    parseMode: ParseMode.Markdown,

@@ -19,6 +19,7 @@ internal sealed class DoctorCommand : AsyncCommand<EmptySettings>
 
     public override async Task<int> ExecuteAsync(CommandContext context, EmptySettings settings, CancellationToken cancellationToken)
     {
+        await Task.CompletedTask;
         CliOut.Banner();
         AnsiConsole.MarkupLine("[bold]Environment check[/] — the first failing check is usually your problem.\n");
 
@@ -126,6 +127,7 @@ internal sealed class LogsCommand : AsyncCommand<LogsCommand.Settings>
 
     public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
+        await Task.CompletedTask;
         var root = LifecycleCommands.FindSolutionRoot();
         var compose = LifecycleCommands.ResolveComposeCommand();
 

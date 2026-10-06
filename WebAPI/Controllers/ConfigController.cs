@@ -8,6 +8,7 @@ using Npgsql;
 using Shared.Security; // For SecureExceptionSanitizer
 using StackExchange.Redis;
 using System.ComponentModel.DataAnnotations;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 
 namespace WebAPI.Controllers
@@ -91,7 +92,9 @@ namespace WebAPI.Controllers
             }
         }
 
-        // Utility method to encrypt data using ProtectedData
+        // Utility method to encrypt data using ProtectedData (Windows-only; on other
+        // platforms ProtectedData.Protect throws, which the catch below handles).
+        [SuppressMessage("Interoperability", "CA1416:Validate platform compatibility", Justification = "Guarded by OperatingSystem.IsWindows(); the catch-all handles non-Windows platforms where the API throws.")]
         private static string EncryptData(string data)
         {
             if (string.IsNullOrEmpty(data))
@@ -101,6 +104,11 @@ namespace WebAPI.Controllers
 
             try
             {
+                if (!OperatingSystem.IsWindows())
+                {
+                    return "[ENCRYPTION_UNSUPPORTED_PLATFORM]";
+                }
+
                 byte[] bytes = System.Text.Encoding.UTF8.GetBytes(data);
                 byte[] encrypted = System.Security.Cryptography.ProtectedData.Protect(bytes, null, System.Security.Cryptography.DataProtectionScope.CurrentUser);
                 return System.Convert.ToBase64String(encrypted);

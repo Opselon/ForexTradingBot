@@ -26,6 +26,7 @@ internal sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 
     public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
+        await Task.CompletedTask;
         if (!_vault.Exists())
         {
             CliOut.Warn("The vault is empty — nothing to back up.");
@@ -70,6 +71,7 @@ internal sealed class RestoreCommand : AsyncCommand<RestoreCommand.Settings>
 
     public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
+        await Task.CompletedTask;
         if (!File.Exists(settings.Path))
         {
             CliOut.Error($"Backup file not found: {settings.Path}");

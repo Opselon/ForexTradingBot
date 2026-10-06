@@ -302,7 +302,7 @@ namespace Infrastructure.Services.Admin
             if (!string.IsNullOrEmpty(rawDto.SubscriptionsJson) && rawDto.SubscriptionsJson != "[]")
             {
                 List<SubscriptionSummaryDto>? subscriptions = JsonSerializer.Deserialize<List<SubscriptionSummaryDto>>(rawDto.SubscriptionsJson);
-                userDetail.Subscriptions = subscriptions;
+                userDetail.Subscriptions = subscriptions ?? new List<SubscriptionSummaryDto>();
                 SubscriptionSummaryDto? activeSub = subscriptions?.FirstOrDefault(s => s.Status == "Active" && DateTime.UtcNow >= s.StartDate && DateTime.UtcNow <= s.EndDate);
                 if (activeSub != null)
                 {
@@ -312,7 +312,7 @@ namespace Infrastructure.Services.Admin
 
             if (!string.IsNullOrEmpty(rawDto.TransactionsJson) && rawDto.TransactionsJson != "[]")
             {
-                userDetail.RecentTransactions = JsonSerializer.Deserialize<List<TransactionSummaryDto>>(rawDto.TransactionsJson);
+                userDetail.RecentTransactions = JsonSerializer.Deserialize<List<TransactionSummaryDto>>(rawDto.TransactionsJson) ?? new List<TransactionSummaryDto>();
             }
 
             return userDetail;

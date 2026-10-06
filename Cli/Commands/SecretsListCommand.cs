@@ -21,6 +21,7 @@ internal sealed class SecretsListCommand : AsyncCommand<SecretsListCommand.Setti
 
     public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
+        await Task.CompletedTask;
         if (!_vault.Exists())
         {
             CliOut.Warn($"No vault yet at {_vault.VaultPath}");

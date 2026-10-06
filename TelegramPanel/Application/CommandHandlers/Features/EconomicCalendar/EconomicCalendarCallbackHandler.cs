@@ -85,7 +85,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
 
             Shared.Results.Result<FredReleaseTablesResponseDto> result = await _calendarService.GetReleaseTableTreeAsync(releaseId, elementId == 0 ? null : elementId, cancellationToken);
 
-            if (!result.Succeeded || !result.Data.Elements.Any())
+            if (!result.Succeeded || result.Data?.Elements.Any() != true)
             {
                 await _messageSender.EditMessageTextAsync(chatId, messageId, "❌ No data tables found for this release.", cancellationToken: cancellationToken);
                 return;
@@ -171,12 +171,12 @@ namespace TelegramPanel.Application.CommandHandlers.Features.EconomicCalendar
                 }
                 else if (data == MenuCommandHandler.AnalysisCallbackData) // Assuming you have Main Menu
                 {
-                    _logger.LogInformation("Back to Menu button pressed from FredSearch. UserID: {UserId}", update.CallbackQuery.From.Id);
+                    _logger.LogInformation("Back to Menu button pressed from FredSearch. UserID: {UserId}", update.CallbackQuery?.From?.Id);
                     // Clear any user state if necessary.
-                    await _stateMachine.ClearStateAsync(update.CallbackQuery.From.Id, cancellationToken);
+                    await _stateMachine.ClearStateAsync(update.CallbackQuery?.From?.Id ?? 0L, cancellationToken);
 
                     // Set the state to the main menu:
-                    await _stateMachine.SetStateAsync(update.CallbackQuery.From.Id, "MainMenuState", update, cancellationToken);  // Replace "MainMenuState" with the actual state name.
+                    await _stateMachine.SetStateAsync(update.CallbackQuery?.From?.Id ?? 0L, "MainMenuState", update, cancellationToken);  // Replace "MainMenuState" with the actual state name.
 
                     // Send Main Menu
                     // (Assuming you have a method like this)

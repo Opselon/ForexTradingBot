@@ -322,7 +322,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.Analysis
 
                 await _messageSender.EditMessageTextAsync(chatId, messageId, $"⏳ Analyzing sentiment for the *{currencyInfo.Name}*...", ParseMode.Markdown, cancellationToken: cancellationToken);
 
-                (string sentimentText, List<NewsItem> topPositive, List<NewsItem> topNegative, int positiveScore, int negativeScore) = await PerformSentimentAnalysisAsync(currencyInfo.Keywords, cancellationToken);
+                (string? sentimentText, List<NewsItem>? topPositive, List<NewsItem>? topNegative, int positiveScore, int negativeScore) = await PerformSentimentAnalysisAsync(currencyInfo.Keywords ?? Array.Empty<string>(), cancellationToken);
 
                 // Handle null results from PerformSentimentAnalysisAsync (defensive programming)
                 if (sentimentText == null && topPositive == null && topNegative == null && positiveScore == 0 && negativeScore == 0) // or however the failure is represented.

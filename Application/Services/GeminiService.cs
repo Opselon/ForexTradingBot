@@ -146,17 +146,17 @@ Enhanced message:";
 
             // Enqueue the job and return immediately
             string jobIdResult = BackgroundJob.Enqueue(() =>
-                ProcessEnhanceMessageJobAsync(text, jobId, apiKeyName, ct));
+                ProcessEnhanceMessageJobAsync(text!, jobId, apiKeyName!, ct));
 
             _logger.LogInformation("EnhanceMessage job enqueued. JobId: {JobId}, HangfireJobId: {HangfireJobId}",
                 jobId, jobIdResult);
 
             // Return a placeholder response - in real implementation, you might want to return the job ID
             // and have the client poll for results or use SignalR for real-time updates
-            return $"Job enqueued successfully. JobId: {jobId}";
+            return await Task.FromResult<string?>($"Job enqueued successfully. JobId: {jobId}");
         }
 
-        public async Task<string?> EnhanceMessageAsync(
+        public Task<string?> EnhanceMessageAsync(
             string? text,
             ICollection<byte[]>? images, // This parameter will now be effectively ignored by the core logic.
             CancellationToken ct,
@@ -166,12 +166,12 @@ Enhanced message:";
             string jobId = Guid.NewGuid().ToString("N");
 
             string jobIdResult = BackgroundJob.Enqueue(() =>
-                ProcessEnhanceMessageJobAsync(text, jobId, apiKeyName, ct));
+                ProcessEnhanceMessageJobAsync(text!, jobId, apiKeyName!, ct));
 
             _logger.LogInformation("EnhanceMessage job enqueued (with images). JobId: {JobId}, HangfireJobId: {HangfireJobId}",
                 jobId, jobIdResult);
 
-            return $"Job enqueued successfully. JobId: {jobId}";
+            return Task.FromResult<string?>($"Job enqueued successfully. JobId: {jobId}");
         }
 
         /// <summary>
@@ -276,9 +276,9 @@ Enhanced message:";
         /// Hangfire background job method for processing message enhancement
         /// </summary>
         [AutomaticRetry(Attempts = 2, OnAttemptsExceeded = AttemptsExceededAction.Delete)] // Let Hangfire retry on exceptions
-        public async Task ProcessEnhanceMessageJobAsync(string text, string idempotencyKey, string jobId, CancellationToken ct)
+        public async Task ProcessEnhanceMessageJobAsync(string? text, string idempotencyKey, string? jobId, CancellationToken ct)
         {
-            AdminLogger adminLogger = new("EnhanceMessageJob", jobId);
+            AdminLogger adminLogger = new("EnhanceMessageJob", jobId ?? string.Empty);
             adminLogger.Info($"🚀 Hangfire job started. IdempotencyKey: {idempotencyKey}", null, "HANGFIRE_JOB");
 
             // ✅ Behavior Rule 1: Lock with Timeout
@@ -309,12 +309,12 @@ Enhanced message:";
                 }
 
                 // Execute the core logic for enhancement.
-                ResilientResponse<string> response = await ExecuteResilientEnhancementAsync(text, adminLogger, ct);
+                ResilientResponse<string> response = await ExecuteResilientEnhancementAsync(text!, adminLogger, ct);
 
                 // ✅ Behavior Rule 2: Telemetry + Metrics
                 // The response object itself contains all necessary telemetry data.
                 // Sanitize jobId to prevent log forging
-                string sanitizedJobId = jobId.Replace("\n", "").Replace("\r", "");
+                string sanitizedJobId = (jobId ?? string.Empty).Replace("\n", "").Replace("\r", "");
                 _logger.LogInformation(
                     "Job {JobId} completed with Type: {ResponseType}. Success: {IsSuccess}. Reason: {Reason}",
                     sanitizedJobId, response.Type, response.Success, response.Error?.Reason ?? "N/A"
@@ -572,22 +572,22 @@ Enhanced message:";
             public RetryableJobException(string message) : base(message) { }
         }
 
-        public async Task<string?> GetJobResultAsync(string jobId, CancellationToken ct)
+        public Task<string?> GetJobResultAsync(string jobId, CancellationToken ct)
         {
             if (_cache.TryGetValue($"JobResult_{jobId}", out string? result))
             {
-                return result;
+                return Task.FromResult<string?>(result);
             }
 
             // If not in cache, check if job is still running
             JobDetailsDto jobState = JobStorage.Current.GetMonitoringApi().JobDetails(jobId);
-            return jobState != null ? "JOB_RUNNING" : "JOB_NOT_FOUND";
+            return Task.FromResult<string?>(jobState != null ? "JOB_RUNNING" : "JOB_NOT_FOUND");
         }
 
         /// <summary>
         /// Enqueue a batch of message enhancements
         /// </summary>
-        public async Task<List<string>> EnhanceMessagesBatchAsync(List<string> texts, CancellationToken ct, string? apiKeyName = null)
+        public Task<List<string>> EnhanceMessagesBatchAsync(List<string> texts, CancellationToken ct, string? apiKeyName = null)
         {
             List<string> jobIds = [];
 
@@ -595,14 +595,14 @@ Enhanced message:";
             {
                 string jobId = Guid.NewGuid().ToString("N");
                 string hangfireJobId = BackgroundJob.Enqueue(() =>
-                    ProcessEnhanceMessageJobAsync(text, jobId, apiKeyName, ct));
+                    ProcessEnhanceMessageJobAsync(text, jobId, apiKeyName!, ct));
 
                 jobIds.Add(jobId);
                 _logger.LogInformation("Batch job enqueued. Text: {TextLength} chars, JobId: {JobId}",
                     text?.Length ?? 0, jobId);
             }
 
-            return jobIds;
+            return Task.FromResult(jobIds);
         }
 
         #region Core Logic Helpers

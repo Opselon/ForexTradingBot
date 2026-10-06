@@ -37,7 +37,7 @@ internal sealed class TypeResolver : ITypeResolver, IDisposable
 
     public TypeResolver(ServiceProvider provider) => _provider = provider;
 
-    public object? Resolve(Type type) => _provider.GetService(type);
+    public object? Resolve(Type? type) => type is null ? null : _provider.GetService(type);
 
     public void Dispose() => _provider.Dispose();
 }

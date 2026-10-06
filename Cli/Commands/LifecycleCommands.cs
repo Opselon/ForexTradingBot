@@ -119,6 +119,7 @@ internal sealed class StartCommand : AsyncCommand<StartCommand.Settings>
 
     public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
+        await Task.CompletedTask;
         var root = LifecycleCommands.FindSolutionRoot()
             ?? throw new InvalidOperationException("Could not find ForexTradingBot.sln. Run this from the repository directory.");
         var compose = LifecycleCommands.ResolveComposeCommand();
@@ -159,6 +160,7 @@ internal sealed class StopCommand : AsyncCommand<StopCommand.Settings>
 
     public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
+        await Task.CompletedTask;
         var root = LifecycleCommands.FindSolutionRoot();
         if (root is null)
         {

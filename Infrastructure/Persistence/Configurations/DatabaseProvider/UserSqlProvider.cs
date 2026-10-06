@@ -30,67 +30,67 @@ namespace Infrastructure.Persistence.Configurations
         /// <summary>
         /// Gets the full SQL query to retrieve a complete user entity graph by their primary key (Id).
         /// </summary>
-        public string GetByIdSql { get; }
+        public string GetByIdSql { get; } = string.Empty;
 
         /// <summary>
         /// Gets the full SQL query to retrieve a complete user entity graph by their unique TelegramId.
         /// An index on the TelegramId column is highly recommended for performance.
         /// </summary>
-        public string GetByTelegramIdSql { get; }
+        public string GetByTelegramIdSql { get; } = string.Empty;
 
         /// <summary>
         /// Gets the full SQL query to retrieve a complete user entity graph by their unique, case-insensitive Email.
         /// An index on a computed, persisted, lowercased Email column is highly recommended for performance.
         /// </summary>
-        public string GetByEmailSql { get; }
+        public string GetByEmailSql { get; } = string.Empty;
 
         /// <summary>
         /// Gets a lightweight SQL query to retrieve only a user's Id by their case-insensitive Email.
         /// This is optimized to avoid fetching the full user object when only the ID is needed.
         /// </summary>
-        public string GetUserIdByEmailSql { get; }
+        public string GetUserIdByEmailSql { get; } = string.Empty;
         #endregion
 
         #region User Creation, Modification, and Deletion
         /// <summary>
         /// Gets the SQL query to insert a new user record into the Users table.
         /// </summary>
-        public string AddUserSql { get; }
+        public string AddUserSql { get; } = string.Empty;
 
         /// <summary>
         /// Gets the SQL query to update an existing user record in the Users table.
         /// </summary>
-        public string UpdateUserSql { get; }
+        public string UpdateUserSql { get; } = string.Empty;
 
         /// <summary>
         /// Gets the SQL query to delete a user record from the Users table.
         /// Assumes `ON DELETE CASCADE` is configured for foreign keys to handle related data.
         /// </summary>
-        public string DeleteUserSql { get; }
+        public string DeleteUserSql { get; } = string.Empty;
         #endregion
 
         #region Existence Checks
         /// <summary>
         /// Gets a highly optimized SQL query to check for the existence of a user by their Id.
         /// </summary>
-        public string CheckUserExistsSql { get; }
+        public string CheckUserExistsSql { get; } = string.Empty;
 
         /// <summary>
         /// Gets a highly optimized SQL query to check for the existence of a user by their Email.
         /// </summary>
-        public string CheckExistsByEmailSql { get; }
+        public string CheckExistsByEmailSql { get; } = string.Empty;
 
         /// <summary>
         /// Gets a highly optimized SQL query to check for the existence of a user by their TelegramId.
         /// </summary>
-        public string CheckExistsByTelegramIdSql { get; }
+        public string CheckExistsByTelegramIdSql { get; } = string.Empty;
         #endregion
 
         #region Wallet Management
         /// <summary>
         /// Gets the SQL query to insert a new token wallet record.
         /// </summary>
-        public string AddWalletSql { get; }
+        public string AddWalletSql { get; } = string.Empty;
 
         /// <summary>
         /// Gets a highly performant SQL query to insert a new token wallet or update it if it already exists for a given UserId.
@@ -100,38 +100,38 @@ namespace Infrastructure.Persistence.Configurations
         /// SQLite: Implemented using `ON CONFLICT DO UPDATE`.
         /// </remarks>
         /// </summary>
-        public string UpsertWalletSql { get; }
+        public string UpsertWalletSql { get; } = string.Empty;
 
         /// <summary>
         /// Gets the SQL query to safely adjust a user's wallet balance by a given amount.
         /// This performs a relative update (`Balance = Balance + @Adjustment`) to prevent race conditions.
         /// </summary>
-        public string AdjustUserWalletBalanceSql { get; }
+        public string AdjustUserWalletBalanceSql { get; } = string.Empty;
 
         /// <summary>
         /// Gets the SQL query to retrieve all token wallets with a balance below a specified threshold.
         /// Useful for administrative alerts or reports.
         /// </summary>
-        public string GetWalletsWithLowBalanceSql { get; }
+        public string GetWalletsWithLowBalanceSql { get; } = string.Empty;
         #endregion
 
         #region Subscription Management
         /// <summary>
         /// Gets the SQL query to retrieve all active subscriptions for a specific user.
         /// </summary>
-        public string GetActiveSubscriptionsForUserSql { get; }
+        public string GetActiveSubscriptionsForUserSql { get; } = string.Empty;
 
         /// <summary>
         /// Gets the SQL query to find all users whose subscriptions will expire within a given number of days.
         /// Useful for sending renewal reminders.
         /// </summary>
-        public string GetUsersWithExpiringSubscriptionsSql { get; }
+        public string GetUsersWithExpiringSubscriptionsSql { get; } = string.Empty;
 
         /// <summary>
         /// Gets the SQL to update the status of expired subscriptions from 'Active' to 'Expired'.
         /// This is an efficient batch operation.
         /// </summary>
-        public string BulkUpdateExpiredSubscriptionsSql { get; }
+        public string BulkUpdateExpiredSubscriptionsSql { get; } = string.Empty;
         #endregion
 
         #region Preference Management
@@ -140,7 +140,7 @@ namespace Infrastructure.Persistence.Configurations
         /// This is done atomically by first deleting all existing preferences for the user, then inserting the new ones.
         /// <remarks>Requires a Table-Valued Parameter (TVP) in SQL Server for performance.</remarks>
         /// </summary>
-        public string SetUserPreferencesSql { get; }
+        public string SetUserPreferencesSql { get; } = string.Empty;
         #endregion
 
         #region News Notification Queries
@@ -169,38 +169,38 @@ namespace Infrastructure.Persistence.Configurations
         /// Gets a base SQL query for fetching users for notifications.
         /// This property might be a duplicate or an evolution of `GetUsersForNewsNotificationBase`.
         /// </summary>
-        public string GetUsersForNewsNotificationBaseSql { get; }
+        public string GetUsersForNewsNotificationBaseSql { get; } = string.Empty;
         #endregion
 
         #region Batch Operations
         /// <summary>
         /// Gets the SQL query to fetch all base user records for list views, ordered by username.
         /// </summary>
-        public string GetAllUsersSql { get; }
+        public string GetAllUsersSql { get; } = string.Empty;
 
         /// <summary>
         /// Gets the SQL query to fetch all token wallets for a given list of user IDs.
         /// Optimized for batch-loading scenarios to prevent N+1 query problems.
         /// </summary>
-        public string GetWalletsForUsersSql { get; }
+        public string GetWalletsForUsersSql { get; } = string.Empty;
 
         /// <summary>
         /// Gets the SQL query to fetch all subscriptions for a given list of user IDs.
         /// Optimized for batch-loading scenarios.
         /// </summary>
-        public string GetSubscriptionsForUsersSql { get; }
+        public string GetSubscriptionsForUsersSql { get; } = string.Empty;
 
         /// <summary>
         /// Gets the SQL query to fetch all user signal preferences for a given list of user IDs.
         /// Optimized for batch-loading scenarios.
         /// </summary>
-        public string GetPreferencesForUsersSql { get; }
+        public string GetPreferencesForUsersSql { get; } = string.Empty;
 
         /// <summary>
         /// Gets the SQL for performing a bulk update of user levels based on a list of User IDs.
         /// <remarks>Requires a Table-Valued Parameter (TVP) in SQL Server for performance.</remarks>
         /// </summary>
-        public string BulkUpdateUserLevelsSql { get; }
+        public string BulkUpdateUserLevelsSql { get; } = string.Empty;
         #endregion
 
         #region Auditing & Logging
@@ -208,26 +208,26 @@ namespace Infrastructure.Persistence.Configurations
         /// Gets the SQL to insert a record into a `UserAuditLogs` table after a user's properties have been changed.
         /// Assumes a table `UserAuditLogs` exists.
         /// </summary>
-        public string LogUserUpdateAuditSql { get; }
+        public string LogUserUpdateAuditSql { get; } = string.Empty;
         #endregion
 
         #region Reporting & Analytics
         /// <summary>
         /// Gets the SQL to count users grouped by their `Level`. Useful for dashboard analytics.
         /// </summary>
-        public string GetUserCountByLevelSql { get; }
+        public string GetUserCountByLevelSql { get; } = string.Empty;
 
         /// <summary>
         /// Gets the SQL to count new user signups grouped by a specified time period (e.g., 'day', 'month', 'year').
         /// Expects @Period (varchar) and @StartDate (datetime2) parameters.
         /// </summary>
-        public string GetNewUserSignupsByPeriodSql { get; }
+        public string GetNewUserSignupsByPeriodSql { get; } = string.Empty;
 
         /// <summary>
         /// Gets a detailed summary of user engagement, including last login, subscription status, and total transactions.
         /// Uses Common Table Expressions (CTEs) for clarity and performance.
         /// </summary>
-        public string GetUserEngagementSummarySql { get; }
+        public string GetUserEngagementSummarySql { get; } = string.Empty;
         #endregion
 
         #endregion

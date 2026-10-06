@@ -163,10 +163,10 @@ try
 
 
     // --- Custom Configuration Source Registration ---
-    // This needs to happen early. We use ConfigureAppConfiguration.
-    _ = builder.Host.ConfigureAppConfiguration((hostingContext, configAppBuilder) =>
+    // This needs to happen early. We use builder.Configuration directly (the modern
+    // equivalent of ConfigureAppConfiguration, which is what ASP0013 recommends).
     {
-        IConfigurationRoot tempInitialConfig = configAppBuilder.Build();
+        IConfigurationRoot tempInitialConfig = ((IConfigurationBuilder)builder.Configuration).Build();
 
         // AI-FRIENDLY FIX: Re-check for smoke test mode. If true, skip adding the
         // database configuration source entirely. This prevents a crash when the
@@ -196,7 +196,7 @@ try
                 ? tempServices.AddDbContext<AppDbContext>(options => options.UseSqlServer(defaultConnectionString), ServiceLifetime.Singleton)
                 : tempServices.AddDbContext<AppDbContext>(options => options.UseNpgsql(defaultConnectionString), ServiceLifetime.Singleton);
 
-        string keysFolderTemp = Path.Combine(hostingContext.HostingEnvironment.ContentRootPath, "keys");
+        string keysFolderTemp = Path.Combine(builder.Environment.ContentRootPath, "keys");
         _ = Directory.CreateDirectory(keysFolderTemp);
 
         _ = tempServices.AddDataProtection()
@@ -260,9 +260,9 @@ try
             Log.Information("All defined settings registered with DynamicConfigurationService (within ConfigureAppConfiguration).");
         }
 
-        _ = configAppBuilder.Add(new DatabaseConfigurationSource(tempServices, registerSettingsAction));
-        Log.Information("DatabaseConfigurationSource added via ConfigureAppConfiguration.");
-    });
+        _ = ((IConfigurationBuilder)builder.Configuration).Add(new DatabaseConfigurationSource(tempServices, registerSettingsAction));
+        Log.Information("DatabaseConfigurationSource added via builder.Configuration.");
+    }
     // --- End of Custom Configuration Source Registration ---
 
     _ = builder.WebHost.UseKestrel();
@@ -816,31 +816,6 @@ try
                     );
 
                     Log.Information("✅ Hangfire (PostgreSQL) storage configured.");
-                    break;
-
-                    // 2. Tune the BackgroundJobServer to the machine's CPU count:
-                    int cpuCount = Environment.ProcessorCount;
-                    BackgroundJobServerOptions serverOptions = new()
-                    {
-                        // Leave one core free for OS and other processes
-                        WorkerCount = Math.Max(cpuCount - 1, 1),
-
-                        // Check server health & heartbeat every 15 seconds
-                        ServerCheckInterval = TimeSpan.FromSeconds(15),
-
-                        // Define your queues in priority order
-                        Queues = new[] { "critical", "default", "low" },
-
-                        // Name each server instance for easier monitoring
-                        ServerName = $"hangfire-{Environment.MachineName}-{Guid.NewGuid():N}"
-                    };
-                    Log.Information(
-                        "✅ Hangfire (PostgreSQL) configured: " +
-                        $"Poll={TimeSpan.FromSeconds(5)}, " +
-                        $"LockLifetime={TimeSpan.FromMinutes(10)}, " +
-                        $"LockTimeout={TimeSpan.FromSeconds(30)}, " +
-                        $"Workers={serverOptions.WorkerCount}"
-                    );
                     break;
 
                 case "sqlserver":
@@ -1562,6 +1537,7 @@ internal static class EasySetupWizard
         // Smoke tests: DB is handled separately; we don't do interactive prompts here.
         if (isSmokeTest)
         {
+            await Task.CompletedTask;
             return;
         }
 

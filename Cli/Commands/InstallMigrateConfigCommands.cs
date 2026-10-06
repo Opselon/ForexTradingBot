@@ -124,6 +124,7 @@ internal sealed class MigrateCommand : AsyncCommand<MigrateCommand.Settings>
 
     public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
+        await Task.CompletedTask;
         var root = LifecycleCommands.FindSolutionRoot();
         if (root is null)
         {
@@ -181,6 +182,7 @@ internal sealed class MigrationsListCommand : AsyncCommand<EmptySettings>
 {
     public override async Task<int> ExecuteAsync(CommandContext context, EmptySettings settings, CancellationToken cancellationToken)
     {
+        await Task.CompletedTask;
         var root = LifecycleCommands.FindSolutionRoot();
         if (root is null)
         {
@@ -205,6 +207,7 @@ internal sealed class ConfigShowCommand : AsyncCommand<EmptySettings>
 
     public override async Task<int> ExecuteAsync(CommandContext context, EmptySettings settings, CancellationToken cancellationToken)
     {
+        await Task.CompletedTask;
         var table = new Table().Border(TableBorder.Rounded);
         table.AddColumn("Setting");
         table.AddColumn("Value");

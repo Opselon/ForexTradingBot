@@ -472,7 +472,7 @@ namespace Application.Features.Forwarding.Services
                 if (mediaCaptions.Any())
                 {
                     // Use the first non-empty caption from media items
-                    extractedCaption = mediaCaptions.First();
+                    extractedCaption = mediaCaptions.First() ?? string.Empty;
                     _logger.LogInformation("Job:{JobId}: ProcessCustomSendAsync: Extracted caption from media items: '{ExtractedCaptionPreview}'",
                         jobId, TruncateString(extractedCaption, 100));
 
@@ -511,7 +511,7 @@ namespace Application.Features.Forwarding.Services
                     // If not dropping caption, apply all other text/entity edits.
                     // Use the extracted caption instead of the original
                     (finalCaption, finalEntities) = ApplyEditOptions(
-                        extractedCaption, // Use extracted caption instead of initialMessageContentFromOrchestrator
+                        extractedCaption!, // Use extracted caption instead of initialMessageContentFromOrchestrator
                         extractedEntities, // Use extracted entities instead of initialEntitiesFromOrchestrator
                         rule.EditOptions,
                         null, // This parameter seems unused or for internal context in ApplyEditOptions
@@ -523,7 +523,7 @@ namespace Application.Features.Forwarding.Services
             else
             {
                 // No edit options, use extracted content as is.
-                finalCaption = extractedCaption; // Use extracted caption instead of initialMessageContentFromOrchestrator
+                finalCaption = extractedCaption ?? string.Empty; // Use extracted caption instead of initialMessageContentFromOrchestrator
                 finalEntities = extractedEntities; // Use extracted entities instead of initialEntitiesFromOrchestrator
                 _logger.LogDebug("Job:{JobId}: ProcessCustomSendAsync: No EditOptions configured. Using extracted content as final.", jobId);
             }
@@ -533,7 +533,7 @@ namespace Application.Features.Forwarding.Services
             if (_logger.IsEnabled(LogLevel.Information))
             {
                 _logger.LogInformation("Job:{JobId}: ProcessCustomSendAsync: After ALL caption processing for Rule '{RuleName}': Final Caption (Length {Length}, IsEmpty: {IsEmpty}): '{CaptionPreview}'. Final Entities Count: {EntitiesCount}.",
-                    jobId, rule.RuleName, finalCaption.Length, string.IsNullOrEmpty(finalCaption), TruncateString(finalCaption, 100), finalEntities?.Length ?? 0);
+                    jobId, rule.RuleName, finalCaption?.Length ?? 0, string.IsNullOrEmpty(finalCaption), TruncateString(finalCaption ?? string.Empty, 100), finalEntities?.Length ?? 0);
             }
 
 
@@ -570,7 +570,7 @@ namespace Application.Features.Forwarding.Services
                         async (pollyContext, pollyCancellationToken) =>
                             await _userApiClient.SendMessageAsync(
                                 toPeer,
-                                finalCaption,
+                                finalCaption ?? string.Empty,
                                 cancellationToken: pollyCancellationToken, // Pass cancellation token to API call
                                 entities: finalEntities,
                                 media: mediaToSendForApi.First(),
@@ -616,14 +616,14 @@ namespace Application.Features.Forwarding.Services
             {
                 // Level 2: Log decision.
                 _logger.LogInformation("Job:{JobId}: ProcessCustomSendAsync: Sending as single text message. Final Caption Length: {CaptionLength}. NoWebpagePreview: {NoWebpagePreview}. Rule: '{RuleName}'. Target: {TargetPeerId}",
-                    jobId, finalCaption.Length, rule.EditOptions?.RemoveLinks ?? false, rule.RuleName, GetInputPeerIdValueForLogging(toPeer));
+                    jobId, finalCaption?.Length ?? 0, rule.EditOptions?.RemoveLinks ?? false, rule.RuleName, GetInputPeerIdValueForLogging(toPeer));
 
                 // Level 5: Execute SendMessageAsync (text-only) with resilience.
                 _ = await _sendMessageRetryPolicy.ExecuteAsync(
                     async (pollyContext, pollyCancellationToken) =>
                         await _userApiClient.SendMessageAsync(
                             toPeer,
-                            finalCaption,
+                            finalCaption ?? string.Empty,
                             cancellationToken: pollyCancellationToken, // Pass cancellation token to API call
                             entities: finalEntities,
                             media: null, // No media for a text-only message

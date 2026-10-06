@@ -113,7 +113,7 @@ namespace TelegramPanel.Application.States.Admin
             await _adminService.UpdateForceJoinSettingsAsync(settings, cancellationToken);
 
             string successMessage = $"✅ Force Join channel updated successfully!\n\n" +
-                                 $"**Title:** {TelegramMessageFormatter.EscapeMarkdownV2(channel.Title)}\n" +
+                                 $"**Title:** {TelegramMessageFormatter.EscapeMarkdownV2(channel.Title ?? string.Empty)}\n" +
                                  $"**ID:** `{channel.Id}`\n" +
                                  $"**Link:** `{settings.ChannelLink}`";
 

@@ -70,7 +70,7 @@ internal static class Program
                     .WithDescription("Delete a secret (asks first).");
 
                 secrets.AddCommand<SecretsRotateCommand>("rotate")
-                    .WithDescription("Re-encrypt every secret with a brand-new machine+user key.");
+                    .WithDescription("Re-encrypt every secret with a fresh salt; migrate legacy vault entries.");
             });
 
             config.AddCommand<BackupCommand>("backup")

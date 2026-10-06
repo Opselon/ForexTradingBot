@@ -37,7 +37,9 @@ namespace Application // ✅ Namespace ریشه پروژه Application
             // Assembly.GetExecutingAssembly() باعث می‌شود AutoMapper تمام کلاس‌هایی را که از Profile ارث‌بری می‌کنند
             // در اسمبلی فعلی (Application) پیدا و پروفایل‌های مپینگ آن‌ها را رجیستر کند.
             // پیش‌نیاز: باید یک یا چند کلاس MappingProfile در Application/Common/Mappings/ داشته باشید.
-            _ = services.AddAutoMapper(Assembly.GetExecutingAssembly());
+            // AutoMapper 15 separated "scan for maps" from "scan for dependencies":
+            // pass the marker assemblies explicitly instead of the old single-Assembly overload.
+            _ = services.AddAutoMapper(cfg => { }, Assembly.GetExecutingAssembly());
             // Comment: Registers AutoMapper profiles from the current assembly (Application layer).
 
             // ------------------- ۲. رجیستر کردن FluentValidation -------------------

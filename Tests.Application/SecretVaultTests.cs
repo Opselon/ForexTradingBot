@@ -172,7 +172,7 @@ public sealed class SecretVaultTests : IDisposable
     [Fact]
     public void Cipher_output_depends_on_salt()
     {
-        var cipher = new SecretCipher(_identity);
+        var cipher = new SecretCipher(_masterKey);
         var salt1 = new byte[16];
         var salt2 = new byte[16];
         Random.Shared.NextBytes(salt1);

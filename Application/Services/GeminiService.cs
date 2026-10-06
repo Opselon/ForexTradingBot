@@ -153,10 +153,10 @@ Enhanced message:";
 
             // Return a placeholder response - in real implementation, you might want to return the job ID
             // and have the client poll for results or use SignalR for real-time updates
-            return $"Job enqueued successfully. JobId: {jobId}";
+            return await Task.FromResult<string?>($"Job enqueued successfully. JobId: {jobId}");
         }
 
-        public async Task<string?> EnhanceMessageAsync(
+        public Task<string?> EnhanceMessageAsync(
             string? text,
             ICollection<byte[]>? images, // This parameter will now be effectively ignored by the core logic.
             CancellationToken ct,
@@ -171,7 +171,7 @@ Enhanced message:";
             _logger.LogInformation("EnhanceMessage job enqueued (with images). JobId: {JobId}, HangfireJobId: {HangfireJobId}",
                 jobId, jobIdResult);
 
-            return $"Job enqueued successfully. JobId: {jobId}";
+            return Task.FromResult<string?>($"Job enqueued successfully. JobId: {jobId}");
         }
 
         /// <summary>
@@ -572,22 +572,22 @@ Enhanced message:";
             public RetryableJobException(string message) : base(message) { }
         }
 
-        public async Task<string?> GetJobResultAsync(string jobId, CancellationToken ct)
+        public Task<string?> GetJobResultAsync(string jobId, CancellationToken ct)
         {
             if (_cache.TryGetValue($"JobResult_{jobId}", out string? result))
             {
-                return result;
+                return Task.FromResult<string?>(result);
             }
 
             // If not in cache, check if job is still running
             JobDetailsDto jobState = JobStorage.Current.GetMonitoringApi().JobDetails(jobId);
-            return jobState != null ? "JOB_RUNNING" : "JOB_NOT_FOUND";
+            return Task.FromResult<string?>(jobState != null ? "JOB_RUNNING" : "JOB_NOT_FOUND");
         }
 
         /// <summary>
         /// Enqueue a batch of message enhancements
         /// </summary>
-        public async Task<List<string>> EnhanceMessagesBatchAsync(List<string> texts, CancellationToken ct, string? apiKeyName = null)
+        public Task<List<string>> EnhanceMessagesBatchAsync(List<string> texts, CancellationToken ct, string? apiKeyName = null)
         {
             List<string> jobIds = [];
 
@@ -602,7 +602,7 @@ Enhanced message:";
                     text?.Length ?? 0, jobId);
             }
 
-            return jobIds;
+            return Task.FromResult(jobIds);
         }
 
         #region Core Logic Helpers

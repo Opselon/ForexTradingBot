@@ -79,7 +79,6 @@ namespace Infrastructure.Repositories
     /// </summary>
     public class UserRepository : IUserRepository
     {
-        private readonly string _connectionString;
         private readonly ILogger<UserRepository> _logger;
         private readonly AsyncRetryPolicy _retryPolicy; // Polly policy for DB operations
         private readonly UserSqlProvider _sql;
@@ -672,7 +671,7 @@ namespace Infrastructure.Repositories
             }
             catch (TimeoutRejectedException ex)
             {
-                _logger.LogError(ex, "UserRepository: Operation timed out while fetching user by ID {UserId}.", 30, id);
+                _logger.LogError(ex, "UserRepository: Operation timed out while fetching user by ID {UserId}.", id);
                 // Background error log
                 _ = Task.Run(async () =>
                 {

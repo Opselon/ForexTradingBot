@@ -115,13 +115,13 @@ internal sealed class MigrateCommand : AsyncCommand<MigrateCommand.Settings>
         public string? Connection { get; init; }
     }
 
-    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
+    public override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
         var root = LifecycleCommands.FindSolutionRoot();
         if (root is null)
         {
             CliOut.Error("Not inside the repository.");
-            return 1;
+            return Task.FromResult(1);
         }
 
         CliOut.Info("Checking the EF tool…");
@@ -135,27 +135,27 @@ internal sealed class MigrateCommand : AsyncCommand<MigrateCommand.Settings>
             LifecycleCommands.RunAndCapture($"dotnet ef {args} --project Infrastructure --startup-project WebAPI", root));
 
         CliOut.Ok("Migrations applied.");
-        return 0;
+        return Task.FromResult(0);
     }
 }
 
 /// <summary>Lists applied migrations so a user can see the schema state.</summary>
 internal sealed class MigrationsListCommand : AsyncCommand<EmptySettings>
 {
-    public override async Task<int> ExecuteAsync(CommandContext context, EmptySettings settings, CancellationToken cancellationToken)
+    public override Task<int> ExecuteAsync(CommandContext context, EmptySettings settings, CancellationToken cancellationToken)
     {
         var root = LifecycleCommands.FindSolutionRoot();
         if (root is null)
         {
             CliOut.Error("Not inside the repository.");
-            return 1;
+            return Task.FromResult(1);
         }
         var exit = LifecycleCommands.RunAndCapture("dotnet ef migrations list --project Infrastructure --startup-project WebAPI", root);
         if (exit != 0)
         {
             CliOut.Warn("Could not list migrations. The 'dotnet-ef' tool may be missing: dotnet tool install --global dotnet-ef");
         }
-        return exit;
+        return Task.FromResult(exit);
     }
 }
 
@@ -166,7 +166,7 @@ internal sealed class ConfigShowCommand : AsyncCommand<EmptySettings>
 
     public ConfigShowCommand(ISecretVault vault) => _vault = vault;
 
-    public override async Task<int> ExecuteAsync(CommandContext context, EmptySettings settings, CancellationToken cancellationToken)
+    public override Task<int> ExecuteAsync(CommandContext context, EmptySettings settings, CancellationToken cancellationToken)
     {
         var table = new Table().Border(TableBorder.Rounded);
         table.AddColumn("Setting");
@@ -197,6 +197,6 @@ internal sealed class ConfigShowCommand : AsyncCommand<EmptySettings>
 
         AnsiConsole.Write(table);
         CliOut.Info("Connection strings are never printed here. Use 'forexbot secrets list --show-values' to see them.");
-        return 0;
+        return Task.FromResult(0);
     }
 }

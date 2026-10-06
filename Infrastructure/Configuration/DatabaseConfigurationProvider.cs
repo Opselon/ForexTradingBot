@@ -12,7 +12,7 @@ namespace Infrastructure.Configuration
     {
         private readonly IDynamicConfigurationService _dynamicConfigService;
         private readonly IConfiguration _initialFileConfiguration; // To access appsettings.json for defaults
-        private readonly IDisposable? _reloadTokenChange; // For future reload functionality
+        private readonly IDisposable? _reloadTokenChange = null; // For future reload functionality
 
         // A simple way to trigger reload for now, could be more sophisticated
         public static event Action? RequestReload;
@@ -86,7 +86,7 @@ namespace Infrastructure.Configuration
                     }
                 }
             }
-            catch (Exception ex)
+            catch (Exception)
             {
                 // Log the exception. Depending on the app's needs, you might:
                 // - Throw to prevent startup if config is critical.

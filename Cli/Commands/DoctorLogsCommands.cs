@@ -17,7 +17,7 @@ internal sealed class DoctorCommand : AsyncCommand<EmptySettings>
 
     public DoctorCommand(ISecretVault vault) => _vault = vault;
 
-    public override async Task<int> ExecuteAsync(CommandContext context, EmptySettings settings, CancellationToken cancellationToken)
+    public override Task<int> ExecuteAsync(CommandContext context, EmptySettings settings, CancellationToken cancellationToken)
     {
         CliOut.Banner();
         AnsiConsole.MarkupLine("[bold]Environment check[/] — the first failing check is usually your problem.\n");
@@ -72,11 +72,11 @@ internal sealed class DoctorCommand : AsyncCommand<EmptySettings>
         if (problems == 0)
         {
             CliOut.Ok("Everything checks out. The app should be usable.");
-            return 0;
+            return Task.FromResult(0);
         }
 
         CliOut.Error($"{problems} check(s) failed. Fix the ones above, then re-run: forexbot doctor");
-        return 1;
+        return Task.FromResult(1);
     }
 
     private static int Check(string name, Func<(bool Ok, string Message)> check)
@@ -124,7 +124,7 @@ internal sealed class LogsCommand : AsyncCommand<LogsCommand.Settings>
         public int Count { get; init; }
     }
 
-    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
+    public override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
         var root = LifecycleCommands.FindSolutionRoot();
         var compose = LifecycleCommands.ResolveComposeCommand();
@@ -132,7 +132,7 @@ internal sealed class LogsCommand : AsyncCommand<LogsCommand.Settings>
         if (!string.IsNullOrEmpty(compose) && root is not null)
         {
             LifecycleCommands.RunAndCapture($"{compose} logs --tail {settings.Count} forex-trading-bot-app", root);
-            return 0;
+            return Task.FromResult(0);
         }
 
         var logDir = Path.Combine(root ?? Environment.CurrentDirectory, "logs");
@@ -146,11 +146,11 @@ internal sealed class LogsCommand : AsyncCommand<LogsCommand.Settings>
                 {
                     Console.WriteLine(line);
                 }
-                return 0;
+                return Task.FromResult(0);
             }
         }
 
         CliOut.Warn("No logs found. Is the app running?");
-        return 1;
+        return Task.FromResult(1);
     }
 }

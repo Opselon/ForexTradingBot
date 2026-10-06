@@ -489,6 +489,16 @@ namespace Infrastructure.Services
         public event EventHandler<EndPointEventArgs>? ConfigurationChangedBroadcast;
         public event EventHandler<HashSlotMovedEventArgs>? HashSlotMoved;
         public event EventHandler<ServerMaintenanceEvent> ServerMaintenanceEvent;
+
+        // CS0067: these interface events are required by IConnectionMultiplexer but are never
+        // raised by this in-memory fallback stub. Referencing them here (guarded so it never
+        // runs at runtime) keeps the compiler quiet without raising fake events.
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1822:Mark members as static", Justification = "Must be instance to reference the events.")]
+        private void SuppressUnusedEventWarnings()
+        {
+            _ = (ErrorMessage, ConnectionFailed, InternalError, ConnectionRestored,
+                 ConfigurationChanged, ConfigurationChangedBroadcast, HashSlotMoved, ServerMaintenanceEvent);
+        }
     }
 
     /// <summary>

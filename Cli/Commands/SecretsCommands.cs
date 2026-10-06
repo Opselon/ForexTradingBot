@@ -31,7 +31,7 @@ internal sealed class SecretsSetCommand : AsyncCommand<SecretsSetCommand.Setting
         public string? Description { get; init; }
     }
 
-    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
+    public override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
         var value = settings.Value;
         if (string.IsNullOrEmpty(value))
@@ -43,7 +43,7 @@ internal sealed class SecretsSetCommand : AsyncCommand<SecretsSetCommand.Setting
 
         _vault.Set(settings.Key, value, settings.Category, settings.Description);
         CliOut.Ok($"Secret [cyan]{Markup.Escape(settings.Key)}[/] stored in the local vault ({_vault.VaultPath})");
-        return 0;
+        return Task.FromResult(0);
     }
 }
 
@@ -64,13 +64,13 @@ internal sealed class SecretsGetCommand : AsyncCommand<SecretsGetCommand.Setting
         public bool Copy { get; init; }
     }
 
-    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
+    public override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
         var value = _vault.Get(settings.Key);
         if (value is null)
         {
             CliOut.Error($"No secret named '{settings.Key}' in the vault.");
-            return 1;
+            return Task.FromResult(1);
         }
 
         if (settings.Copy)
@@ -81,7 +81,7 @@ internal sealed class SecretsGetCommand : AsyncCommand<SecretsGetCommand.Setting
 
         // Print raw so it can be piped. Never marked up.
         Console.WriteLine(value);
-        return 0;
+        return Task.FromResult(0);
     }
 }
 
@@ -102,23 +102,23 @@ internal sealed class SecretsDeleteCommand : AsyncCommand<SecretsDeleteCommand.S
         public bool Yes { get; init; }
     }
 
-    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
+    public override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
         if (_vault.Get(settings.Key) is null)
         {
             CliOut.Error($"No secret named '{settings.Key}' in the vault.");
-            return 1;
+            return Task.FromResult(1);
         }
 
         if (!settings.Yes && !AnsiConsole.Confirm($"Delete secret [cyan]{Markup.Escape(settings.Key)}[/]? This cannot be undone."))
         {
             CliOut.Info("Aborted.");
-            return 0;
+            return Task.FromResult(0);
         }
 
         _vault.Delete(settings.Key);
         CliOut.Ok($"Secret [cyan]{Markup.Escape(settings.Key)}[/] deleted.");
-        return 0;
+        return Task.FromResult(0);
     }
 }
 
@@ -128,17 +128,17 @@ internal sealed class SecretsRotateCommand : AsyncCommand<EmptySettings>
 
     public SecretsRotateCommand(ISecretVault vault) => _vault = vault;
 
-    public override async Task<int> ExecuteAsync(CommandContext context, EmptySettings settings, CancellationToken cancellationToken)
+    public override Task<int> ExecuteAsync(CommandContext context, EmptySettings settings, CancellationToken cancellationToken)
     {
         if (!_vault.Exists())
         {
             CliOut.Warn("No vault to rotate.");
-            return 0;
+            return Task.FromResult(0);
         }
 
         var count = _vault.List().Count;
         AnsiConsole.Status().Start("Re-encrypting vault with a fresh key…", _ => _vault.Rotate());
         CliOut.Ok($"Re-encrypted {count} secret(s) with a new key derived from this machine + user.");
-        return 0;
+        return Task.FromResult(0);
     }
 }

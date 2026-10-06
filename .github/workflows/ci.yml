@@ -77,6 +77,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Smoke test — real Postgres + Redis, API against them, /healthz = 200
+        timeout-minutes: 8
         run: |
           set -euo pipefail
           docker network create smokenet
@@ -131,6 +132,7 @@ jobs:
 
       - name: Smoke test — SQLite variant
         if: always()
+        timeout-minutes: 6
         run: |
           set -euo pipefail
           docker rm -f smoke-sqlite 2>/dev/null || true

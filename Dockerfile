@@ -36,7 +36,9 @@ COPY --from=build /app/publish .
 RUN adduser --system --group --disabled-password --gecos "" --home /app appuser
 
 # --- FIX: Ensure /app/keys exists and is writable by appuser ---
-RUN mkdir -p /app/keys /app/data && chown -R appuser:appuser /app/keys /app/data && chmod 700 /app/keys /app/data
+# LocalApplicationData resolves to $HOME/ForexTradingBot when HOME=/app, so that
+# directory must exist and be owned by appuser too (vault + local data).
+RUN mkdir -p /app/keys /app/data /app/ForexTradingBot && chown -R appuser:appuser /app/keys /app/data /app/ForexTradingBot && chmod 700 /app/keys /app/data /app/ForexTradingBot
 
 USER appuser
 

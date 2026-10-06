@@ -163,10 +163,15 @@ try
 
 
     // --- Custom Configuration Source Registration ---
-    // This needs to happen early. We use ConfigureAppConfiguration.
+    // This needs to happen early. We use builder.Configuration directly (the
+    // modern equivalent of ConfigureAppConfiguration on the legacy host).
     _ = builder.Host.ConfigureAppConfiguration((hostingContext, configAppBuilder) =>
     {
+        // Suppress ASP0013: this delegate needs the composition of already-registered
+        // providers, so we intentionally build an intermediate snapshot here.
+#pragma warning disable ASP0013
         IConfigurationRoot tempInitialConfig = configAppBuilder.Build();
+#pragma warning restore ASP0013
 
         // AI-FRIENDLY FIX: Re-check for smoke test mode. If true, skip adding the
         // database configuration source entirely. This prevents a crash when the
@@ -413,7 +418,9 @@ try
     #endregion
 
     #region AutoMapper and LoggingSanitizer (region master)
-    _ = builder.Services.AddAutoMapper(typeof(Program));
+    // AutoMapper 15 dropped the single-Type/Assembly overloads; the config delegate
+    // is now required, followed by the marker assemblies to scan for profiles.
+    _ = builder.Services.AddAutoMapper(cfg => { }, typeof(Program).Assembly);
     _ = builder.Services.AddSingleton<Application.Common.Interfaces.ILoggingSanitizer, Infrastructure.Security.PiiLoggingSanitizer>();
     _ = builder.Services.AddSingleton<Shared.Security.IExceptionSanitizer, Shared.Security.ExceptionSanitizer>();
     #endregion
@@ -799,31 +806,6 @@ try
                     );
 
                     Log.Information("✅ Hangfire (PostgreSQL) storage configured.");
-                    break;
-
-                    // 2. Tune the BackgroundJobServer to the machine's CPU count:
-                    int cpuCount = Environment.ProcessorCount;
-                    BackgroundJobServerOptions serverOptions = new()
-                    {
-                        // Leave one core free for OS and other processes
-                        WorkerCount = Math.Max(cpuCount - 1, 1),
-
-                        // Check server health & heartbeat every 15 seconds
-                        ServerCheckInterval = TimeSpan.FromSeconds(15),
-
-                        // Define your queues in priority order
-                        Queues = new[] { "critical", "default", "low" },
-
-                        // Name each server instance for easier monitoring
-                        ServerName = $"hangfire-{Environment.MachineName}-{Guid.NewGuid():N}"
-                    };
-                    Log.Information(
-                        "✅ Hangfire (PostgreSQL) configured: " +
-                        $"Poll={TimeSpan.FromSeconds(5)}, " +
-                        $"LockLifetime={TimeSpan.FromMinutes(10)}, " +
-                        $"LockTimeout={TimeSpan.FromSeconds(30)}, " +
-                        $"Workers={serverOptions.WorkerCount}"
-                    );
                     break;
 
                 case "sqlserver":
@@ -1524,6 +1506,7 @@ internal static class EasySetupWizard
         // Smoke tests: DB is handled separately; we don't do interactive prompts here.
         if (isSmokeTest)
         {
+            await Task.CompletedTask;
             return;
         }
 

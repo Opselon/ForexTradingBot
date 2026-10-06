@@ -85,7 +85,7 @@ internal sealed class StartCommand : AsyncCommand<StartCommand.Settings>
         public bool Native { get; init; }
     }
 
-    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
+    public override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
         var root = LifecycleCommands.FindSolutionRoot()
             ?? throw new InvalidOperationException("Could not find ForexTradingBot.sln. Run this from the repository directory.");
@@ -94,7 +94,7 @@ internal sealed class StartCommand : AsyncCommand<StartCommand.Settings>
         if (settings.Native || string.IsNullOrEmpty(compose))
         {
             CliOut.Info("Starting with 'dotnet run' (native mode)…");
-            return LifecycleCommands.RunAndCapture("dotnet run --project WebAPI -c Release", root);
+            return Task.FromResult(LifecycleCommands.RunAndCapture("dotnet run --project WebAPI -c Release", root));
         }
 
         AnsiConsole.Status().Start("Starting the stack (Postgres, Redis, API)…", _ =>
@@ -103,7 +103,7 @@ internal sealed class StartCommand : AsyncCommand<StartCommand.Settings>
             LifecycleCommands.RunAndCapture($"{compose} {args}", root);
         });
         CliOut.Ok("Stack started. Check status with: forexbot status");
-        return 0;
+        return Task.FromResult(0);
     }
 }
 
@@ -117,31 +117,31 @@ internal sealed class StopCommand : AsyncCommand<StopCommand.Settings>
         public bool Volumes { get; init; }
     }
 
-    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
+    public override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
         var root = LifecycleCommands.FindSolutionRoot();
         if (root is null)
         {
             CliOut.Error("Could not find ForexTradingBot.sln.");
-            return 1;
+            return Task.FromResult(1);
         }
 
         var compose = LifecycleCommands.ResolveComposeCommand();
         if (string.IsNullOrEmpty(compose))
         {
             CliOut.Warn("Docker Compose not found; stopping the dotnet process instead.");
-            return LifecycleCommands.RunAndCapture("pkill -f 'dotnet.*WebAPI' || true", root);
+            return Task.FromResult(LifecycleCommands.RunAndCapture("pkill -f 'dotnet.*WebAPI' || true", root));
         }
 
         if (settings.Volumes && !AnsiConsole.Confirm("Remove volumes too? This [red]deletes the database data[/]."))
         {
-            return 0;
+            return Task.FromResult(0);
         }
 
         var args = settings.Volumes ? "down -v" : "down";
         AnsiConsole.Status().Start("Stopping the stack…", _ => LifecycleCommands.RunAndCapture($"{compose} {args}", root));
         CliOut.Ok("Stack stopped.");
-        return 0;
+        return Task.FromResult(0);
     }
 }
 

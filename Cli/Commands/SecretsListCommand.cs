@@ -19,20 +19,20 @@ internal sealed class SecretsListCommand : AsyncCommand<SecretsListCommand.Setti
         public bool ShowValues { get; init; }
     }
 
-    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
+    public override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
         if (!_vault.Exists())
         {
             CliOut.Warn($"No vault yet at {_vault.VaultPath}");
             CliOut.Info("Add a secret with: forexbot secrets set <key>");
-            return 0;
+            return Task.FromResult(0);
         }
 
         var secrets = _vault.List();
         if (secrets.Count == 0)
         {
             CliOut.Info("Vault is empty.");
-            return 0;
+            return Task.FromResult(0);
         }
 
         var table = new Table().Border(TableBorder.Rounded);
@@ -60,6 +60,6 @@ internal sealed class SecretsListCommand : AsyncCommand<SecretsListCommand.Setti
             AnsiConsole.WriteLine();
             CliOut.Info("Values are hidden. Re-run with --show-values to reveal them.");
         }
-        return 0;
+        return Task.FromResult(0);
     }
 }

@@ -24,12 +24,12 @@ internal sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
         public string? Path { get; init; }
     }
 
-    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
+    public override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
         if (!_vault.Exists())
         {
             CliOut.Warn("The vault is empty — nothing to back up.");
-            return 0;
+            return Task.FromResult(0);
         }
 
         var target = settings.Path ?? $"secrets-backup-{DateTime.UtcNow:yyyyMMdd}.db";
@@ -45,7 +45,7 @@ internal sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
         CliOut.Ok($"Vault backed up to {target}");
         CliOut.Info($"Salt copied to {saltTarget} — keep both files together.");
         CliOut.Warn("The backup stays encrypted with this machine's key; it cannot be read elsewhere.");
-        return 0;
+        return Task.FromResult(0);
     }
 }
 
@@ -62,24 +62,24 @@ internal sealed class RestoreCommand : AsyncCommand<RestoreCommand.Settings>
         public required string Path { get; init; }
     }
 
-    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
+    public override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
         if (!File.Exists(settings.Path))
         {
             CliOut.Error($"Backup file not found: {settings.Path}");
-            return 1;
+            return Task.FromResult(1);
         }
 
         var saltTarget = Path.ChangeExtension(settings.Path, ".salt");
         if (!File.Exists(saltTarget))
         {
             CliOut.Error($"Missing salt file: {saltTarget}. Both files are required to restore.");
-            return 1;
+            return Task.FromResult(1);
         }
 
         if (!AnsiConsole.Confirm("Restoring [red]overwrites[/] the current vault. Continue?"))
         {
-            return 0;
+            return Task.FromResult(0);
         }
 
         File.Copy(settings.Path, _vault.VaultPath, overwrite: true);
@@ -87,6 +87,6 @@ internal sealed class RestoreCommand : AsyncCommand<RestoreCommand.Settings>
         File.Copy(saltTarget, saltDest, overwrite: true);
 
         CliOut.Ok($"Vault restored from {settings.Path}");
-        return 0;
+        return Task.FromResult(0);
     }
 }

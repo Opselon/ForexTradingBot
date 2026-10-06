@@ -1,3 +1,4 @@
+using ForexTradingBot.Cli.Secrets;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Infrastructure.Data;
@@ -161,6 +162,9 @@ namespace WebAPI.Controllers
         {
             [Required]
             public string DbConn { get; set; } = string.Empty;
+
+            /// <summary>Database provider for the connection string above (postgres/sqlite/sqlserver).</summary>
+            public string DatabaseProvider { get; set; } = "postgres";
 
             [Required]
             public string BotToken { get; set; } = string.Empty;
@@ -466,6 +470,7 @@ namespace WebAPI.Controllers
                 TelegramConfigured = !string.IsNullOrWhiteSpace(model.BotToken),
                 Timestamp = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
             });
+        }
         #endregion
     }
 }

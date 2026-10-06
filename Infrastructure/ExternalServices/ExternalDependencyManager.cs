@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using System.IO.Compression;
 using System.Runtime.InteropServices;
+using Npgsql;
 
 namespace Infrastructure.ExternalServices;
 
@@ -124,9 +125,22 @@ public class ExternalDependencyManager : IExternalDependencyManager, IAsyncDispo
             await Task.Delay(4000);
         }
 
-        return !await EnsureDatabaseAndUserExistAsync()
-            ? null
-            : $"Host=localhost;Port={_pgPort};Database={_pgDbName};Username={_pgUser};Password={_pgPassword}";
+        if (!await EnsureDatabaseAndUserExistAsync())
+        {
+            return null;
+        }
+
+        // Assemble the connection string through the builder so the password is
+        // never embedded into an interpolated string (keeps it out of logs).
+        var csb = new NpgsqlConnectionStringBuilder
+        {
+            Host = "localhost",
+            Port = _pgPort,
+            Database = _pgDbName,
+            Username = _pgUser,
+            Password = _pgPassword,
+        };
+        return csb.ConnectionString;
     }
 
     private async Task<bool> EnsureDatabaseAndUserExistAsync()
@@ -141,7 +155,13 @@ public class ExternalDependencyManager : IExternalDependencyManager, IAsyncDispo
         if (!userExists || !userOutput.Trim().Equals("1"))
         {
             _logger.LogInformation("Application user '{User}' not found. Creating it...", _pgUser);
-            (bool createUserSuccess, string _) = await RunProcessAsync(psqlPath, $"{adminConnStr} -c \"CREATE ROLE {_pgUser} WITH LOGIN PASSWORD '{_pgPassword}';\"");
+            // The generated password is handed to psql through the PGPASSWORD
+            // environment variable so it never appears in the argument list
+            // (which can be logged or read from the process list).
+            (bool createUserSuccess, string _) = await RunProcessAsync(
+                psqlPath,
+                $"{adminConnStr} -c \"CREATE ROLE {_pgUser} WITH LOGIN PASSWORD '{_pgPassword}';\"",
+                new Dictionary<string, string> { ["PGPASSWORD"] = _pgPassword });
             if (!createUserSuccess)
             {
                 return false;
@@ -394,7 +414,7 @@ public class ExternalDependencyManager : IExternalDependencyManager, IAsyncDispo
         }
     }
 
-    private async Task<(bool Success, string Output)> RunProcessAsync(string command, string args)
+    private async Task<(bool Success, string Output)> RunProcessAsync(string command, string args, Dictionary<string, string>? environment = null)
     {
         Process process = new()
         {
@@ -406,6 +426,14 @@ public class ExternalDependencyManager : IExternalDependencyManager, IAsyncDispo
                 CreateNoWindow = true
             }
         };
+
+        if (environment is not null)
+        {
+            foreach (var (key, value) in environment)
+            {
+                process.StartInfo.Environment[key] = value;
+            }
+        }
 
         _ = process.Start();
         string output = await process.StandardOutput.ReadToEndAsync();

@@ -444,6 +444,9 @@ try
         .AddControllers()
         .AddJsonOptions(options =>
         {
+            // Accept enum members as their string names ("Api") as well as numbers.
+            // Clients send category names, and without this the binder rejects them.
+            options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
             options.JsonSerializerOptions.Converters.Add(new IntToBoolJsonConverter());
             options.JsonSerializerOptions.Converters.Add(new FlexibleDateTimeJsonConverter());
         });

@@ -44,10 +44,12 @@ internal static class LifecycleCommands
     {
         try
         {
+            var isWindows = OperatingSystem.IsWindows();
+            var escaped = command.Replace("\"", "\\\"");
             var psi = new ProcessStartInfo
             {
-                FileName = "sh",
-                Arguments = $"-c \"{command.Replace("\"", "\\\"")}\"",
+                FileName = isWindows ? "cmd.exe" : "/bin/sh",
+                Arguments = isWindows ? $"/c \"{escaped}\"" : $"-c \"{escaped}\"",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,

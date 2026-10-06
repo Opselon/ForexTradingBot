@@ -36,7 +36,7 @@ COPY --from=build /app/publish .
 RUN adduser --system --group --disabled-password --gecos "" --home /app appuser
 
 # --- FIX: Ensure /app/keys exists and is writable by appuser ---
-RUN mkdir -p /app/keys && chown appuser:appuser /app/keys && chmod 700 /app/keys
+RUN mkdir -p /app/keys /app/data && chown -R appuser:appuser /app/keys /app/data && chmod 700 /app/keys /app/data
 
 USER appuser
 

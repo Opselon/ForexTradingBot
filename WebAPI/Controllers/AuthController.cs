@@ -55,6 +55,9 @@ namespace WebAPI.Controllers
                 [
                     new(ClaimTypes.Name, model.Username!),
                     new(ClaimTypes.Role, "Admin"),
+                    // Server-side stamp: lets a logout invalidate cookies issued
+                    // before it (see AuthSecurityStamp).
+                    new(WebAPI.Security.AuthSecurityStamp.Claim, WebAPI.Security.AuthSecurityStamp.Current()),
                     // Add other claims as needed
                 ];
 
@@ -100,6 +103,9 @@ namespace WebAPI.Controllers
         public async Task<IActionResult> Logout()
         {
             await HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+            // Rotate the server-side stamp so cookies issued before this logout stop
+            // authenticating, not just the one this caller presented.
+            WebAPI.Security.AuthSecurityStamp.Rotate();
             return Ok(new { Message = "Logout successful" });
         }
     }

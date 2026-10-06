@@ -467,6 +467,22 @@ try
             options.LogoutPath = "/api/auth/logout";
             options.ExpireTimeSpan = TimeSpan.FromMinutes(60); // Adjust as needed
             options.SlidingExpiration = true;
+
+            // Reject any cookie whose embedded security stamp no longer matches the
+            // server's, which is how a logout invalidates cookies minted before it.
+            options.Events = new CookieAuthenticationEvents
+            {
+                OnValidatePrincipal = context =>
+                {
+                    var stampClaim = context.Principal?.FindFirst(WebAPI.Security.AuthSecurityStamp.Claim);
+                    if (!WebAPI.Security.AuthSecurityStamp.IsValid(stampClaim?.Value))
+                    {
+                        context.RejectPrincipal();
+                    }
+
+                    return Task.CompletedTask;
+                }
+            };
         });
 
     // Add CORS

@@ -141,7 +141,19 @@ function Invoke-DockerInstall {
         if ($healthy) {
             Write-Ok "API is UP and healthy → $HealthDocker"
             Write-Host "    $body" -ForegroundColor Green
-            Write-Host ''
+
+            # Headless Docker bootstrap creates the admin password inside the
+            # encrypted vault and exposes it through a one-time local file.
+            $bootstrap = Invoke-Expression "$compose exec -T forex-trading-bot-app sh -lc 'if [ -f /app/data/vault/bootstrap/admin-password.txt ]; then cat /app/data/vault/bootstrap/admin-password.txt; rm -f /app/data/vault/bootstrap/admin-password.txt; fi'"
+            if ($bootstrap) {
+                Write-Host ''
+                Write-Host 'Initial admin account' -ForegroundColor White
+                Write-Info 'Username: admin'
+                Write-Host "    Password: $bootstrap" -ForegroundColor Yellow
+                Write-Info 'The bootstrap password was removed from the container after display.'
+                Write-Host ''
+            }
+
             Write-Host 'Next steps' -ForegroundColor White
             Write-Info "Logs    : $compose logs -f forex-trading-bot-app"
             Write-Info "Stop    : $compose down"

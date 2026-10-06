@@ -15,7 +15,7 @@ internal static class Program
     private static int Main(string[] args)
     {
         var services = new ServiceCollection();
-        services.AddSingleton<ISecretCipher>(_ => new SecretCipher(SecretCipher.CurrentUserIdentity()));
+        services.AddSingleton<ISecretCipher>(_ => new SecretCipher(SecretKeyStore.LoadOrCreateKey(SqliteSecretVault.DefaultVaultDirectory())));
         services.AddSingleton<ISecretVault, SqliteSecretVault>();
 
         var registrar = new TypeRegistrar(services);

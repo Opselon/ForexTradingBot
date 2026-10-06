@@ -25,7 +25,7 @@ public static class SecretKeyStore
             {
                 var key = OperatingSystem.IsWindows()
                     ? ProtectedData.Unprotect(stored, null, DataProtectionScope.CurrentUser)
-                    : stored;
+                    : stored.ToArray();
 
                 if (key.Length != KeySize)
                     throw new CryptographicException("The local secret-vault key has an invalid length.");

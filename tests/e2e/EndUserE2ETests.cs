@@ -25,7 +25,12 @@ public sealed class CrossPlatformRuntimeE2ETests
             Directory.CreateDirectory(nested);
             File.WriteAllText(Path.Combine(nested, "marker.txt"), "ok");
             Assert.Equal("ok", File.ReadAllText(Path.Combine(nested, "marker.txt")));
-            Assert.NotEqual(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            // On Unix the separator and its alternate are the same character, so this
+            // can only be asserted where the two genuinely differ (Windows).
+            if (OperatingSystem.IsWindows())
+            {
+                Assert.NotEqual(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            }
             Assert.False(string.IsNullOrWhiteSpace(Environment.OSVersion.Platform.ToString()));
             Assert.False(string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("PATH")));
         }
@@ -73,7 +78,8 @@ public sealed class EndUserE2ETests
         upArgs.AddRange(["up", "-d", "--build"]);
         try
         {
-            await ComposeAsync(upArgs.ToArray());
+            var up = await ComposeAsync(upArgs.ToArray());
+            Assert.True(up.ExitCode == 0, $"docker compose up failed (exit {up.ExitCode}):{Environment.NewLine}{up.StdOut}{Environment.NewLine}{up.StdErr}");
 
             await WaitHealthyAsync("postgres", TimeSpan.FromMinutes(4));
             await WaitHealthyAsync("redis", TimeSpan.FromMinutes(4));

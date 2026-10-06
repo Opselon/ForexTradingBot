@@ -1,0 +1,15 @@
+# Configuration for actions/labeler@v4 — labels PRs by changed paths
+code:
+  - any: ['**/*.cs', '**/*.csproj', '**/*.sln']
+
+ci:
+  - any: ['.github/workflows/**', 'Dockerfile', '.dockerignore']
+
+docker:
+  - any: ['Dockerfile', 'docker-compose*.yml', 'scripts/database/**']
+
+documentation:
+  - any: ['**/*.md', 'docs/**']
+
+dependencies:
+  - any: ['**/packages.lock.json', 'global.json']

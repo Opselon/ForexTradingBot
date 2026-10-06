@@ -363,3 +363,26 @@ MigrationBackup/
 FodyWeavers.xsd
 /.tmp.driveupload
 /_site
+# ===== Repository hygiene (2026-10) =====
+# Local databases (never commit — contain user data)
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+!*.db.schema
+# ASP.NET DataProtection keys (SECRET material)
+keys/
+**/keys/*.xml
+# Env files
+.env
+.env.*
+!.env.example
+# Build/output
+bin/
+obj/
+TestResults/
+*.user
+*.suo
+.vs/
+artifacts/
+publish/

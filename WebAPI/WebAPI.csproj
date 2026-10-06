@@ -64,6 +64,7 @@
     <ProjectReference Include="..\BackgroundTasks\BackgroundTasks.csproj" />
     <ProjectReference Include="..\Infrastructure\Infrastructure.csproj" />
     <ProjectReference Include="..\TelegramPanel\TelegramPanel.csproj" />
+    <ProjectReference Include="..\Cli\ForexTradingBot.Cli.csproj" />
   </ItemGroup>
 
   <!-- این بخش برای کپی کردن فایل XML داکیومنت‌هاست و درست است -->

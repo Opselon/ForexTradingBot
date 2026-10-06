@@ -18,6 +18,7 @@ using Infrastructure.Configuration; // For DatabaseConfigurationSource/Provider
 using Infrastructure.Data;
 using Infrastructure.ExternalServices;
 using Infrastructure.Features.Forwarding.Extensions;
+using ForexTradingBot.Cli.Secrets;
 using Infrastructure.Security; // For SettingsProtectionService
 using Infrastructure.Services;
 using Microsoft.AspNetCore.Authentication.Cookies; // Added for Cookie Authentication
@@ -564,6 +565,11 @@ try
     // Register custom dynamic configuration services
     _ = builder.Services.AddSingleton<ISettingsProtectionService, SettingsProtectionService>();
     _ = builder.Services.AddSingleton<IDynamicConfigurationService, DynamicConfigurationService>();
+
+    // Local secret vault (SQLite + machine-derived AES-GCM key). Singleton so the
+    // single connection is shared; the vault file lives under LocalApplicationData.
+    _ = builder.Services.AddSingleton<ISecretCipher>(_ => new SecretCipher(SecretCipher.CurrentUserIdentity()));
+    _ = builder.Services.AddSingleton<ISecretVault, SqliteSecretVault>();
 
     // Register other core infrastructure services that might be missing
     // Assuming Scoped lifetime is appropriate as they often use DbContext or HttpClientFactory.

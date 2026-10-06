@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using System.Security.Cryptography;
 using Spectre.Console.Cli;
 using ForexTradingBot.Cli.Commands;
 using ForexTradingBot.Cli.Secrets;
@@ -15,7 +16,7 @@ internal static class Program
     private static int Main(string[] args)
     {
         var services = new ServiceCollection();
-        services.AddSingleton<ISecretCipher>(_ => new SecretCipher(SecretKeyStore.LoadOrCreateKey(SqliteSecretVault.DefaultVaultDirectory())));
+        services.AddSingleton<ISecretCipher>(_ => new SecretCipher(LoadVaultKey()));
         services.AddSingleton<ISecretVault, SqliteSecretVault>();
 
         var registrar = new TypeRegistrar(services);
@@ -95,5 +96,34 @@ internal static class Program
         }
 
         return app.Run(args);
+    }
+
+    /// <summary>
+    /// Loads the local vault master key, turning a corrupted or tampered key file
+    /// into a controlled CLI error instead of an unhandled process crash.
+    /// </summary>
+    private static byte[] LoadVaultKey()
+    {
+        try
+        {
+            return SecretKeyStore.LoadOrCreateKey(SqliteSecretVault.DefaultVaultDirectory());
+        }
+        catch (CryptographicException ex)
+        {
+            CliOut.Error(
+                "The local secret-vault key could not decrypt the vault. The key file " +
+                "may be corrupted, truncated, or was created on a different user account " +
+                "(the Windows key is protected per-user). Restore the original key file " +
+                "or re-create the vault.");
+            CliOut.Error($"Details: {ex.Message}");
+            Environment.Exit(1);
+            return Array.Empty<byte>();
+        }
+        catch (IOException ex)
+        {
+            CliOut.Error($"The local secret-vault key could not be loaded: {ex.Message}");
+            Environment.Exit(1);
+            return Array.Empty<byte>();
+        }
     }
 }

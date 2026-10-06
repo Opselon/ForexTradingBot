@@ -1,5 +1,6 @@
 using ForexTradingBot.Cli.Secrets;
 using System.Security.Cryptography;
+using Microsoft.Data.Sqlite;
 using Spectre.Console;
 using Spectre.Console.Cli;
 using System.ComponentModel;
@@ -43,7 +44,15 @@ internal sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
             return 1;
         }
 
-        _vault.BackupTo(targetFullPath);
+        try
+        {
+            _vault.BackupTo(targetFullPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SqliteException)
+        {
+            CliOut.Error($"Backup failed: {ex.Message}");
+            return 1;
+        }
 
         CliOut.Ok($"Vault backed up to {targetFullPath}");
         CliOut.Info("The backup is self-contained and encrypted at rest. Keep it as carefully as the live vault.");

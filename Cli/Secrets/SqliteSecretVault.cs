@@ -183,6 +183,24 @@ public sealed class SqliteSecretVault : ISecretVault
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(targetPath);
 
+        try
+        {
+            BackupToCore(targetPath);
+        }
+        catch (IOException ex)
+        {
+            // Windows Defender and indexing services briefly lock files in temp
+            // directories; surfacing that as a crash hides an otherwise transient
+            // failure, so report it as a normal CLI error instead.
+            throw new IOException(
+                $"The backup could not be written to '{targetPath}': {ex.Message}. " +
+                "Retry, or choose a destination outside a scanned temp directory.",
+                ex);
+        }
+    }
+
+    private void BackupToCore(string targetPath)
+    {
         var destination = Path.GetFullPath(targetPath);
         var source = Path.GetFullPath(VaultPath);
         if (string.Equals(destination, source, StringComparison.OrdinalIgnoreCase))

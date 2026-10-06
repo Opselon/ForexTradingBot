@@ -60,9 +60,10 @@ services:
     container_name: telegram-panel-service
     environment:
       # --- Database Connection (Using PostgreSQL) ---
-      - ConnectionStrings__DefaultConnection=Host=postgres-db;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};Include Error Detail=true
+      - ConnectionStrings__DefaultConnection=Host=postgres-db;Port=5432;Database=${POSTGRES_DB:-forexbotdb};Username=${POSTGRES_USER:-forexbot};Password=${POSTGRES_PASSWORD};Include Error Detail=true
       # --- Redis Connection ---
       - ConnectionStrings__Redis=redis:6379,abortConnect=false
+      - FOREXBOT_VAULT_DIRECTORY=/app/data/vault
 
       # --- Telegram Panel Specific Settings ---
       - TelegramPanel__BotToken=${TELEGRAM_BOT_TOKEN} # Crucial for the bot to operate
@@ -87,7 +88,7 @@ services:
       postgres-db:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
       forex-trading-bot-app: # May depend on WebAPI for certain functionalities
         condition: service_healthy
     restart: unless-stopped
@@ -106,9 +107,10 @@ services:
     container_name: background-tasks-service
     environment:
       # --- Database Connection (Using PostgreSQL) ---
-      - ConnectionStrings__DefaultConnection=Host=postgres-db;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};Include Error Detail=true
+      - ConnectionStrings__DefaultConnection=Host=postgres-db;Port=5432;Database=${POSTGRES_DB:-forexbotdb};Username=${POSTGRES_USER:-forexbot};Password=${POSTGRES_PASSWORD};Include Error Detail=true
       # --- Redis Connection (e.g., for Hangfire if it uses Redis) ---
       - ConnectionStrings__Redis=redis:6379,abortConnect=false
+      - FOREXBOT_VAULT_DIRECTORY=/app/data/vault
 
       # --- Telegram Settings (if it needs to send notifications or use ApiUserClient) ---
       - TelegramPanel__BotToken=${TELEGRAM_BOT_TOKEN}
@@ -128,7 +130,7 @@ services:
       postgres-db:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
       forex-trading-bot-app: # May depend on WebAPI for data or coordination
         condition: service_healthy
     restart: unless-stopped

@@ -1,5 +1,8 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Infrastructure.Data;
+using Microsoft.Data.SqlClient;
+using Microsoft.Data.Sqlite;
 using Npgsql;
 using Shared.Security; // For SecureExceptionSanitizer
 using StackExchange.Redis;
@@ -136,8 +139,9 @@ namespace WebAPI.Controllers
             [Required]
             public string DbConn { get; set; } = string.Empty;
 
-            [Required]
-            public string BotToken { get; set; } = string.Empty;
+            public string DatabaseProvider { get; set; } = "postgres";
+
+            public string? BotToken { get; set; }
 
             public string? RedisConn { get; set; } // Optional
         }

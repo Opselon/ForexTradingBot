@@ -5,7 +5,7 @@
 .DESCRIPTION
   Run this in PowerShell (no clone needed):
 
-      irm https://raw.githubusercontent.com/Opselon/ForexTradingBot/main/install.ps1 | iex
+      irm https://raw.githubusercontent.com/Opselon/ForexTradingBot/master/install.ps1 | iex
 
   What it does:
     1) Clones (or updates) the repository to %USERPROFILE%\ForexTradingBot
@@ -143,13 +143,13 @@ function Invoke-DockerInstall {
             Write-Host "    $body" -ForegroundColor Green
             Write-Host ''
             Write-Host 'Next steps' -ForegroundColor White
-            Write-Info "Logs    : $compose logs -f forex-api"
+            Write-Info "Logs    : $compose logs -f forex-trading-bot-app"
             Write-Info "Stop    : $compose down"
             Write-Info "Restart : $compose up -d"
             Write-Info "Config  : $Dir\.env"
         } else {
             Write-Err 'API did not become healthy within the timeout.'
-            Write-Info "Inspect with: $compose logs forex-api"
+            Write-Info "Inspect with: $compose logs forex-trading-bot-app"
             exit 1
         }
     } finally { Pop-Location }

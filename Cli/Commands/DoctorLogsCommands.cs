@@ -20,6 +20,7 @@ internal sealed class DoctorCommand : AsyncCommand<EmptySettings>
     public override async Task<int> ExecuteAsync(CommandContext context, EmptySettings settings, CancellationToken cancellationToken)
     {
         await Task.CompletedTask;
+
         CliOut.Banner();
         AnsiConsole.MarkupLine("[bold]Environment check[/] — the first failing check is usually your problem.\n");
 

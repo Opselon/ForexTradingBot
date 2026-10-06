@@ -119,6 +119,14 @@ internal sealed class StartCommand : AsyncCommand<StartCommand.Settings>
 
     public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
+        // E2E guard: the harness sets FOREXBOT_VAULT_DIRECTORY to a scratch path. Never
+        // run docker compose / dotnet in that mode; fail closed and stay fast.
+        if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("FOREXBOT_VAULT_DIRECTORY")))
+        {
+            CliOut.Error("Refusing to run this command: a temporary vault directory is set (E2E mode).");
+            return 1;
+        }
+
         await Task.CompletedTask;
         var root = LifecycleCommands.FindSolutionRoot()
             ?? throw new InvalidOperationException("Could not find ForexTradingBot.sln. Run this from the repository directory.");
@@ -160,6 +168,14 @@ internal sealed class StopCommand : AsyncCommand<StopCommand.Settings>
 
     public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
+        // E2E guard: the harness sets FOREXBOT_VAULT_DIRECTORY to a scratch path. Never
+        // run docker compose / dotnet in that mode; fail closed and stay fast.
+        if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("FOREXBOT_VAULT_DIRECTORY")))
+        {
+            CliOut.Error("Refusing to run this command: a temporary vault directory is set (E2E mode).");
+            return 1;
+        }
+
         await Task.CompletedTask;
         var root = LifecycleCommands.FindSolutionRoot();
         if (root is null)
@@ -177,9 +193,19 @@ internal sealed class StopCommand : AsyncCommand<StopCommand.Settings>
                 : LifecycleCommands.RunAndCapture("pkill -f 'dotnet.*WebAPI'", root);
         }
 
-        if (settings.Volumes && !AnsiConsole.Confirm("Remove volumes too? This [red]deletes the database data[/]."))
+        if (settings.Volumes)
         {
-            return 0;
+            // AnsiConsole.Confirm throws when stdin is redirected (headless/CI/piped).
+            if (!CliConfirm.TryAsk("Remove volumes too? This [red]deletes the database data[/].", out var confirmedVolumes, defaultValue: false))
+            {
+                CliOut.Error("Cannot ask for confirmation: no answer on stdin. Run 'forexbot stop --volumes' from an interactive terminal to approve the data wipe.");
+                return 1;
+            }
+
+            if (!confirmedVolumes)
+            {
+                return 0;
+            }
         }
 
         var args = settings.Volumes ? "down -v" : "down";
@@ -200,6 +226,8 @@ internal sealed class StatusCommand : AsyncCommand<EmptySettings>
 {
     public override async Task<int> ExecuteAsync(CommandContext context, EmptySettings settings, CancellationToken cancellationToken)
     {
+        await Task.CompletedTask;
+
         var root = LifecycleCommands.FindSolutionRoot();
         if (root is null)
         {

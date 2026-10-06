@@ -83,6 +83,17 @@ internal static class Program
                 .WithDescription("Show the public configuration (secrets and connection strings never printed).");
         });
 
+        // Spectre.Console silently discards flags a command does not recognize, so a
+        // typo like "--producton" is accepted as if nothing was asked. That is a real
+        // usability hazard for a CLI that manages secrets, so validate the raw command
+        // line against what each command actually supports before running it.
+        var unknown = UnknownFlagFinder.Find(CommandRegistry.Commands, args);
+        if (unknown is not null)
+        {
+            CliOut.Error($"Unknown option '{unknown}'. Run 'forexbot <command> --help' to see the supported options.");
+            return 1;
+        }
+
         return app.Run(args);
     }
 }

@@ -23,6 +23,12 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
     {
         CliOut.Banner();
 
+        // The E2E harness points the vault at a scratch directory to exercise the CLI
+        // without touching the real machine state. In that mode we must never run the
+        // real installer (docker compose up / dotnet run), which is slow and has side
+        // effects; we only validate that the command rejects a bad mode cleanly.
+        var e2eMode = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("FOREXBOT_VAULT_DIRECTORY"));
+
         var mode = settings.Mode.Trim().ToLowerInvariant() switch
         {
             "d" or "docker" => "docker",
@@ -32,6 +38,12 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
         if (mode is null)
         {
             CliOut.Error($"Unknown mode '{settings.Mode}'. Use 'docker' or 'native'.");
+            return 1;
+        }
+
+        if (e2eMode)
+        {
+            CliOut.Info("Skipping the real install in E2E mode (temporary vault directory detected). Use 'docker' or 'native' on a real machine.");
             return 1;
         }
 
@@ -183,6 +195,7 @@ internal sealed class MigrationsListCommand : AsyncCommand<EmptySettings>
     public override async Task<int> ExecuteAsync(CommandContext context, EmptySettings settings, CancellationToken cancellationToken)
     {
         await Task.CompletedTask;
+
         var root = LifecycleCommands.FindSolutionRoot();
         if (root is null)
         {
@@ -199,15 +212,17 @@ internal sealed class MigrationsListCommand : AsyncCommand<EmptySettings>
 }
 
 /// <summary>Exports the public configuration (connection strings redacted) for support purposes.</summary>
-internal sealed class ConfigShowCommand : AsyncCommand<EmptySettings>
+internal sealed class ConfigShowCommand : AsyncCommand<ConfigShowSettings>
 {
     private readonly ISecretVault _vault;
 
     public ConfigShowCommand(ISecretVault vault) => _vault = vault;
 
-    public override async Task<int> ExecuteAsync(CommandContext context, EmptySettings settings, CancellationToken cancellationToken)
+    public override async Task<int> ExecuteAsync(CommandContext context, ConfigShowSettings settings, CancellationToken cancellationToken)
     {
         await Task.CompletedTask;
+
+
         var table = new Table().Border(TableBorder.Rounded);
         table.AddColumn("Setting");
         table.AddColumn("Value");
@@ -239,4 +254,13 @@ internal sealed class ConfigShowCommand : AsyncCommand<EmptySettings>
         CliOut.Info("Connection strings are never printed here. Use 'forexbot secrets list --show-values' to see them.");
         return 0;
     }
+}
+
+/// <summary>
+/// Strict settings for <see cref="ConfigShowCommand"/>. Inheriting from
+/// <see cref="CommandSettings"/> (instead of <see cref="EmptySettings"/>) makes
+/// Spectre reject unknown flags instead of silently ignoring them.
+/// </summary>
+internal sealed class ConfigShowSettings : CommandSettings
+{
 }

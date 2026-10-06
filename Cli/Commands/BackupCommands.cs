@@ -81,7 +81,16 @@ internal sealed class RestoreCommand : AsyncCommand<RestoreCommand.Settings>
         var backupPath = Path.GetFullPath(settings.Path);
         var legacySaltPath = Path.ChangeExtension(backupPath, ".salt");
 
-        if (!AnsiConsole.Confirm("Restoring [red]overwrites[/] the current vault. Continue?"))
+        // AnsiConsole.Confirm throws when stdin is redirected (headless/CI/piped),
+        // so fall back to reading a plain line from stdin. Only refuse when there is
+        // genuinely no answer to read.
+        if (!CliConfirm.TryAsk("Restoring [red]overwrites[/] the current vault. Continue?", out var confirmed, defaultValue: false))
+        {
+            CliOut.Error("Cannot ask for confirmation: no answer on stdin. Run 'forexbot restore <PATH>' from an interactive terminal, or pipe an answer (e.g. 'y').");
+            return 1;
+        }
+
+        if (!confirmed)
         {
             CliOut.Info("Aborted.");
             return 0;
@@ -99,6 +108,15 @@ internal sealed class RestoreCommand : AsyncCommand<RestoreCommand.Settings>
 
             if (File.Exists(legacySaltPath))
                 File.Copy(legacySaltPath, Path.Combine(tempDirectory, "secrets.salt"), overwrite: false);
+
+            // Fail closed on a truncated or tampered file before touching the live
+            // vault: a corrupted SQLite image can otherwise open "successfully" and
+            // silently replace good data with an empty or partial table.
+            if (!BackupIntegrity.IsReadableSecretsDatabase(stagedDb))
+            {
+                CliOut.Error($"The backup at {backupPath} is not a valid secrets vault (integrity check failed). Nothing was changed.");
+                return 1;
+            }
 
             using var backupVault = new SqliteSecretVault(_cipher, tempDirectory);
 

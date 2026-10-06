@@ -169,10 +169,20 @@ internal sealed class SecretsDeleteCommand : AsyncCommand<SecretsDeleteCommand.S
             return 1;
         }
 
-        if (!settings.Yes && !AnsiConsole.Confirm($"Delete secret [cyan]{Markup.Escape(settings.Key)}[/]? This cannot be undone."))
+        if (!settings.Yes)
         {
-            CliOut.Info("Aborted.");
-            return 0;
+            // AnsiConsole.Confirm throws when stdin is redirected (headless/CI/piped).
+            if (!CliConfirm.TryAsk($"Delete secret [cyan]{Markup.Escape(settings.Key)}[/]? This cannot be undone.", out var confirmedDelete, defaultValue: false))
+            {
+                CliOut.Error("Cannot ask for confirmation: no answer on stdin. Pass --yes to skip the prompt, or run from an interactive terminal.");
+                return 1;
+            }
+
+            if (!confirmedDelete)
+            {
+                CliOut.Info("Aborted.");
+                return 0;
+            }
         }
 
         _vault.Delete(settings.Key);
@@ -189,6 +199,8 @@ internal sealed class SecretsRotateCommand : AsyncCommand<EmptySettings>
 
     public override async Task<int> ExecuteAsync(CommandContext context, EmptySettings settings, CancellationToken cancellationToken)
     {
+        await Task.CompletedTask;
+
         await Task.CompletedTask;
         if (!_vault.Exists())
         {

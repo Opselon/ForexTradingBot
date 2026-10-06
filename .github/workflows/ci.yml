@@ -138,6 +138,31 @@ jobs:
         shell: pwsh
         run: dotnet test tests/e2e/ForexTradingBot.EndToEnd.csproj -c Release --no-build --no-restore --filter "Surface=CLI" --logger "console;verbosity=normal"
 
+  e2e-cli-platform-matrix:
+    name: CLI E2E (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    needs: build-and-test
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: "9.0.x"
+      - name: Restore
+        run: dotnet restore ForexTradingBot.sln
+      - name: Restore E2E project
+        run: dotnet restore tests/e2e/ForexTradingBot.EndToEnd.csproj
+      - name: Build
+        run: dotnet build tests/e2e/ForexTradingBot.EndToEnd.csproj -c Release --no-restore
+      - name: CLI E2E
+        run: dotnet test tests/e2e/ForexTradingBot.EndToEnd.csproj -c Release --no-build --no-restore --filter "Surface=CLI" --logger "console;verbosity=normal"
+
   docker:
     name: Docker build & smoke
     runs-on: ubuntu-latest

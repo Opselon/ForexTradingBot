@@ -22,8 +22,8 @@ public sealed class CrossDatabaseEndUserE2ETests
             Assert.Equal(0,up.ExitCode);
             await WaitHealthy("http://127.0.0.1:18180/healthz");
             await WaitHealthy("http://127.0.0.1:18181/healthz");
-            await AssertProvider("http://127.0.0.1:18180","postgres","Host=postgres;Port=5432;Database=forexbotdb;Username=forexbot;Password=crossdb-password");
-            await AssertProvider("http://127.0.0.1:18181","sqlite","Data Source=/app/data/crossdb.sqlite");
+            await AssertProvider("http://127.0.0.1:18180",project,compose,"postgres","Host=postgres;Port=5432;Database=forexbotdb;Username=forexbot;Password=crossdb-password");
+            await AssertProvider("http://127.0.0.1:18181",project,compose,"sqlite","Data Source=/app/data/crossdb.sqlite");
             var pg=await Run("docker",["compose","-p",project,"-f",compose,"restart","app-postgres"]);
             Assert.Equal(0,pg.ExitCode);
             await WaitHealthy("http://127.0.0.1:18180/healthz");
@@ -38,9 +38,20 @@ public sealed class CrossDatabaseEndUserE2ETests
         }
     }
 
-    private static async Task AssertProvider(string baseUrl,string provider,string connection)
+    private static async Task AssertProvider(string baseUrl,string project,string compose,string provider,string connection)
     {
-        using var client=new HttpClient{BaseAddress=new Uri(baseUrl),Timeout=TimeSpan.FromSeconds(15)};
+        // /api/config/test is Admin-authorized, so log in with the bootstrap password
+        // the app writes on first run before probing the provider.
+        var password=await Run("docker",["compose","-p",project,"-f",compose,"exec","-T","app-"+provider,"sh","-lc","cat /app/data/vault/bootstrap/admin-password.txt"]);
+        Assert.True(password.ExitCode==0,$"could not read bootstrap password from app-{provider}: {password.StdErr}");
+        var passwordValue=password.StdOut.Trim();
+        Assert.False(string.IsNullOrWhiteSpace(passwordValue));
+
+        using var handler=new HttpClientHandler{AllowAutoRedirect=false};
+        using var client=new HttpClient(handler){BaseAddress=new Uri(baseUrl),Timeout=TimeSpan.FromSeconds(15)};
+        var login=await client.PostAsJsonAsync("/api/auth/login",new{username="admin",password=passwordValue});
+        Assert.Equal(HttpStatusCode.OK,login.StatusCode);
+
         var response=await client.PostAsJsonAsync("/api/config/test",new {databaseProvider=provider,dbConn=connection,botToken=(string?)null,redisConn=provider=="postgres"?"redis:6379":null});
         Assert.Equal(HttpStatusCode.OK,response.StatusCode);
         using var json=JsonDocument.Parse(await response.Content.ReadAsStringAsync());

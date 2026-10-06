@@ -92,11 +92,11 @@ public sealed class EndUserE2ETests
 
             var protectedDashboard = await anonymousClient.GetAsync("/indexapp.html");
             Assert.Equal(HttpStatusCode.Redirect, protectedDashboard.StatusCode);
-            Assert.Equal("/login.html", protectedDashboard.Headers.Location?.OriginalString);
+            AssertIsLoginRedirect(protectedDashboard.Headers.Location);
 
             var protectedSecrets = await anonymousClient.GetAsync("/secrets.html");
             Assert.Equal(HttpStatusCode.Redirect, protectedSecrets.StatusCode);
-            Assert.Equal("/login.html", protectedSecrets.Headers.Location?.OriginalString);
+            AssertIsLoginRedirect(protectedSecrets.Headers.Location);
 
             foreach (var endpoint in new[] { "/api/secrets", "/api/config/test", "/api/config/save" })
             {
@@ -105,7 +105,7 @@ public sealed class EndUserE2ETests
                     : await anonymousClient.PostAsync(endpoint, JsonContent.Create(new { }));
 
                 Assert.Equal(HttpStatusCode.Redirect, protectedApi.StatusCode);
-                Assert.Equal("/login.html", protectedApi.Headers.Location?.OriginalString);
+                AssertIsLoginRedirect(protectedApi.Headers.Location);
             }
 
             var bootstrapPassword = await ExecAsync(
@@ -419,6 +419,16 @@ public sealed class EndUserE2ETests
             BaseAddress = new Uri(_baseUrl),
             Timeout = TimeSpan.FromSeconds(30)
         };
+    }
+
+    // The login redirect may be emitted as a relative path ("/login.html") or as an
+    // absolute URI carrying a ReturnUrl query ("http://host/login.html?ReturnUrl=..."),
+    // depending on how the request URL was formed. Both are correct login redirects.
+    private static void AssertIsLoginRedirect(Uri? location)
+    {
+        Assert.NotNull(location);
+        var value = location.IsAbsoluteUri ? location.AbsoluteUri : location.OriginalString;
+        Assert.Contains("/login.html", value, StringComparison.Ordinal);
     }
 
     private static async Task<HttpResponseMessage> PostJsonAsync(

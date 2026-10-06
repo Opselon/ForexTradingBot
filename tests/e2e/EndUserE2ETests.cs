@@ -172,8 +172,11 @@ public sealed class EndUserE2ETests
                     category = "Api",
                     description = "End-user E2E secret"
                 });
-            Assert.Equal(HttpStatusCode.NoContent, setSecret.StatusCode);
-
+            if (setSecret.StatusCode != HttpStatusCode.NoContent)
+            {
+                var errorBody = await setSecret.Content.ReadAsStringAsync();
+                Assert.Fail($"PUT /api/secrets/{testSecret} returned {setSecret.StatusCode}: {errorBody}");
+            }
             var listResponse = await client.GetAsync("/api/secrets");
             Assert.Equal(HttpStatusCode.OK, listResponse.StatusCode);
             var listJson = await listResponse.Content.ReadAsStringAsync();

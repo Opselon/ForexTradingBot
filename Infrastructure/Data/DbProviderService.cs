@@ -11,7 +11,7 @@ namespace Infrastructure.Data
 
         public DbProviderService(IConfiguration configuration, ILogger<DbProviderService> logger)
         {
-            string? providerName = configuration.GetValue<string>("DatabaseSettings:DatabaseProvider")?.ToLowerInvariant();
+            string? providerName = configuration.GetValue<string>("DatabaseSettings:DatabaseProvider")?.Trim().ToLowerInvariant();
 
             // This service now ONLY reads the configuration. It does not try to auto-detect or throw.
             // The logic for that is now centralized in AddInfrastructureServices.
@@ -28,12 +28,16 @@ namespace Infrastructure.Data
                 {
                     case "postgres":
                     case "postgresql":
+                    case "npgsql":
                         Provider = DatabaseProvider.Postgres;
                         break;
                     case "sqlite":
+                    case "sqlite3":
                         Provider = DatabaseProvider.SQLite;
                         break;
                     case "sqlserver":
+                    case "mssql":
+                    case "sql":
                         Provider = DatabaseProvider.SqlServer;
                         break;
                     default:

@@ -62,35 +62,24 @@ namespace TelegramPanel.Extensions
             _ = services.Configure<List<ForwardingRule>>(configuration.GetSection("ForwardingRules"));
             _ = services.Configure<UpdateQueueOptions>(configuration.GetSection("TelegramPanel:Queue"));
 
-            // 2. Register ITelegramBotClient (Robust)
+            // 2. Register ITelegramBotClient. Missing credentials disable the
+            // Telegram runtime instead of preventing the local setup UI from booting.
+            const string dummyToken = "123456789:ABC-DEF1234567890-abcdef1234567";
+            bool telegramBotEnabled = configuration.GetValue<string>("TelegramPanel:BotToken") is { } configuredToken
+                && !string.IsNullOrWhiteSpace(configuredToken)
+                && !configuredToken.Contains("REPLACE", StringComparison.OrdinalIgnoreCase)
+                && configuredToken.Contains(":");
+
             _ = services.AddSingleton<ITelegramBotClient>(serviceProvider =>
             {
                 TelegramPanelSettings settings = serviceProvider.GetRequiredService<IOptions<TelegramPanelSettings>>().Value;
-
-                // --- FIX: Robust Token Handling for CI/CD ---
-                string token = settings.BotToken;
-                bool isSmokeTest = configuration.GetValue<bool>("IsSmokeTest");
-
-                // Check if token is clearly invalid (empty, placeholder, or missing colon separator)
-                bool isInvalidToken = string.IsNullOrWhiteSpace(token)
-                                      || token.Contains("REPLACE")
-                                      || !token.Contains(":");
-
-                if (isInvalidToken)
+                if (!telegramBotEnabled)
                 {
-                    if (isSmokeTest)
-                    {
-                        Log.Warning("⚠️ [SmokeTest] Invalid Bot Token detected ('{Token}'). Using a syntactically valid dummy token to allow startup.", token);
-                        // Use a token that passes TelegramBotClient's regex validation but won't work online
-                        // Format: 123456:ABC-DEF1234567890-abcdef1234567
-                        return new TelegramBotClient("123456789:ABC-DEF1234567890-abcdef1234567");
-                    }
-
-                    // In production, we MUST crash if the token is invalid
-                    throw new ArgumentException($"TelegramPanel: Bot Token is invalid or missing. Value: '{token}'", nameof(settings.BotToken));
+                    Log.Warning("Telegram integration is disabled because no valid Bot Token is configured.");
+                    return new TelegramBotClient(dummyToken);
                 }
 
-                return new TelegramBotClient(token);
+                return new TelegramBotClient(settings.BotToken);
             });
 
 
@@ -228,13 +217,23 @@ namespace TelegramPanel.Extensions
                 .WithScopedLifetime());
             _ = services.AddScoped<ITelegramCallbackQueryHandler, BotSettingsCallbackHandler>();
             // ------------------- 7. Register INotificationService Implementation -------------------
-            _ = services.AddScoped<INotificationService, TelegramNotificationService>();
+            if (telegramBotEnabled)
+            {
+                _ = services.AddScoped<INotificationService, TelegramNotificationService>();
+            }
             _ = services.AddScoped<ITelegramCallbackQueryHandler, CryptoCallbackHandler>();
             // ------------------- 8. Register Hosted Services -------------------
-            _ = services.AddHostedService<TelegramBotService>();
+            if (telegramBotEnabled)
+            {
+                _ = services.AddHostedService<TelegramBotService>();
+                _ = services.AddHostedService<UpdateQueueConsumerService>();
+            }
+            else
+            {
+                Log.Information("Telegram hosted services are disabled until a Bot Token is configured.");
+            }
 
-            _ = services.AddSingleton<IQueueMetricsService, ConsoleQueueMetricsService>(); // Register the metrics service
-            _ = services.AddHostedService<UpdateQueueConsumerService>();
+            _ = services.AddSingleton<IQueueMetricsService, ConsoleQueueMetricsService>();
 
             // Register the new CryptoCallbackHandler
 

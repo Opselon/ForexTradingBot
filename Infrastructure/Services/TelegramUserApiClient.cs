@@ -2158,7 +2158,7 @@ namespace Infrastructure.Services
             }
             if (peerId == 0)
             {
-                _logger.LogWarning("ResolvePeerAsync: PeerId is 0. Cannot resolve a peer with ID 0. Returning null.", peerId);
+                _logger.LogWarning("ResolvePeerAsync: PeerId is 0. Cannot resolve a peer with ID 0. Returning null.");
                 return null;
             }
 

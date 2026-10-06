@@ -6,7 +6,7 @@
 # https://github.com/actions/labeler
 
 name: Labeler
-on: [pull_request_target]
+on: [pull_request]
 
 jobs:
   label:
@@ -17,6 +17,23 @@ jobs:
       pull-requests: write
 
     steps:
-    - uses: actions/labeler@v4
+    - name: Build trusted label configuration
+      shell: bash
+      run: |
+        mkdir -p "$GITHUB_WORKSPACE/.github"
+        cat > "$GITHUB_WORKSPACE/.github/labeler.yml" <<'EOF'
+        code:
+          - any: ['**/*.cs', '**/*.csproj', '**/*.sln']
+        ci:
+          - any: ['.github/workflows/**', 'Dockerfile', '.dockerignore']
+        docker:
+          - any: ['Dockerfile', 'docker-compose*.yml', 'scripts/database/**']
+        documentation:
+          - any: ['**/*.md', 'docs/**']
+        dependencies:
+          - any: ['**/packages.lock.json', 'global.json']
+        EOF
+    - uses: actions/labeler@v7
       with:
         repo-token: "${{ secrets.GITHUB_TOKEN }}"
+        configuration-path: .github/labeler.yml

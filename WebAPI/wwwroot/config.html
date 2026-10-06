@@ -625,6 +625,15 @@
                                     </div>
                                 </div>
                                 <div class="form-section">
+                                    <label for="databaseProvider" class="form-label"><i class="fa-solid fa-server"></i> Database Provider</label>
+                                    <select id="databaseProvider" class="form-control">
+                                        <option value="sqlite">SQLite — local file</option>
+                                        <option value="postgres" selected>PostgreSQL — recommended</option>
+                                        <option value="sqlserver">SQL Server</option>
+                                    </select>
+                                    <div class="form-text">Choose the same provider used by your connection string. The test performs a real connection attempt.</div>
+                                </div>
+                                <div class="form-section">
                                     <label for="dbConn" class="form-label"><i class="fa-solid fa-database"></i> Database Connection String</label>
                                     <div class="input-group-testable">
                                         <input type="password" id="dbConn" class="form-control" placeholder="e.g., Host=localhost;Database=yourdb;...">
@@ -697,163 +706,139 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.js"></script>
 
-    <!-- Dynamic Controller & UI Script -->
+    <!-- Real backend-driven controller -->
     <script>
         document.addEventListener('DOMContentLoaded', () => {
-            // --- CONFIG PAGE CONTROLLER ---
-            const configController = {
-                // --- 1. Element Cache ---
-                elements: {
-                    sidebarToggle: document.getElementById('sidebar-toggle'),
-                    mobileMenuToggle: document.getElementById('mobile-menu-toggle'),
-                    themeToggleBtn: document.getElementById('theme-toggle-btn'),
-                    testButtons: document.querySelectorAll('.btn-test'),
-                    testAllButton: document.getElementById('testAllButton'),
-                    saveButton: document.getElementById('saveButton'),
-                    passwordToggles: document.querySelectorAll('.password-toggle'),
-                    statusIndicators: {
-                        telegram: document.getElementById('telegramStatus'),
-                        database: document.getElementById('databaseStatus'),
-                        redis: document.getElementById('redisStatus'),
-                    }
-                },
+            const provider = document.getElementById('databaseProvider');
+            const botToken = document.getElementById('botToken');
+            const dbConn = document.getElementById('dbConn');
+            const redisConn = document.getElementById('redisConn');
+            const testButtons = document.querySelectorAll('.btn-test');
+            const testAll = document.getElementById('testAllButton');
+            const save = document.getElementById('saveButton');
+            const statuses = {
+                telegram: document.getElementById('telegramStatus'),
+                database: document.getElementById('databaseStatus'),
+                redis: document.getElementById('redisStatus')
+            };
+            let testResult = null;
 
-                // --- 2. State Management ---
-                state: {
-                    testsPassed: { telegram: false, database: false }, // Redis is optional
-                    isTesting: false,
-                },
+            const setTheme = (theme) => {
+                document.documentElement.setAttribute('data-theme', theme);
+                localStorage.setItem('theme', theme);
+                const icon = document.querySelector('#theme-toggle-btn i');
+                if (icon) icon.className = theme === 'dark' ? 'far fa-moon' : 'far fa-sun';
+            };
 
-                // --- 3. Initialization ---
-                init() {
-                    console.log("Controller: Initializing Config Page...");
-                    this.initUI();
-                    this.bindEvents();
-                    this.loadInitialState();
-                },
+            const setStatus = (name, state, detail='') => {
+                const el = statuses[name];
+                if (!el) return;
+                const map = {
+                    testing: '<i class="fas fa-spinner fa-spin"></i> Testing...',
+                    OK: '<i class="fas fa-check-circle"></i> Connected',
+                    Error: '<i class="fas fa-times-circle"></i> Failed',
+                    'Not Provided': '<i class="fas fa-minus-circle"></i> Not Provided'
+                };
+                el.innerHTML = map[state] || state || '--';
+                el.className = 'status-indicator status-' + String(state).toLowerCase().replace(/\s+/g, '-');
+                if (detail) el.title = detail;
+            };
 
-                initUI() {
-                    const savedTheme = localStorage.getItem('theme') || 'light';
-                    this.applyTheme(savedTheme);
-                    setTimeout(() => document.body.classList.remove('is-loading'), 200); // Reveal content
-                },
+            const getPayload = () => ({
+                databaseProvider: provider?.value || 'postgres',
+                dbConn: dbConn?.value.trim() || '',
+                botToken: botToken?.value.trim() || null,
+                redisConn: redisConn?.value.trim() || null
+            });
 
-                // --- 4. Event Binding ---
-                bindEvents() {
-                    this.elements.sidebarToggle?.addEventListener('click', () => document.body.classList.toggle('sidebar-collapsed'));
-                    this.elements.mobileMenuToggle?.addEventListener('click', () => document.body.classList.toggle('sidebar-mobile-open'));
-                    this.elements.themeToggleBtn?.addEventListener('click', () => this.toggleTheme());
+            const testConfig = async () => {
+                const payload = getPayload();
+                if (!payload.dbConn) {
+                    toastr.warning('Enter a database connection string first.');
+                    return false;
+                }
 
-                    this.elements.testButtons.forEach(btn => {
-                        btn.addEventListener('click', (e) => this.handleSingleTest(e.target.dataset.service));
+                Object.keys(statuses).forEach(name => setStatus(name, 'testing'));
+                save.disabled = true;
+
+                try {
+                    const response = await fetch('/api/config/test', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
                     });
+                    const result = await response.json();
+                    testResult = result;
 
-                    this.elements.testAllButton.addEventListener('click', () => this.handleTestAll());
+                    setStatus('database', result.databaseStatus, result.databaseError);
+                    setStatus('telegram', result.telegramStatus, result.telegramError || result.botUsername);
+                    setStatus('redis', result.redisStatus, result.redisError);
 
-                    this.elements.passwordToggles.forEach(toggle => {
-                        toggle.addEventListener('click', (e) => this.togglePasswordVisibility(e.target));
-                    });
-                },
+                    const telegramOk = !payload.botToken || result.telegramStatus === 'OK';
+                    const redisOk = !payload.redisConn || result.redisStatus === 'OK';
+                    const databaseOk = result.databaseStatus === 'OK';
+                    save.disabled = !(databaseOk && telegramOk && redisOk);
 
-                // --- 5. Core Logic / "Controller" Actions ---
-                toggleTheme() {
-                    const newTheme = document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
-                    this.applyTheme(newTheme);
-                },
+                    if (save.disabled) toastr.warning('Fix the failed connection(s) before saving.');
+                    else toastr.success('Real connection tests passed. Configuration can be saved.');
 
-                applyTheme(theme) {
-                    document.documentElement.setAttribute('data-theme', theme);
-                    localStorage.setItem('theme', theme);
-                    const icon = this.elements.themeToggleBtn.querySelector('i');
-                    icon.className = theme === 'dark' ? 'far fa-moon' : 'far fa-sun';
-                },
-
-                async handleSingleTest(service) {
-                    if (this.state.isTesting) return;
-                    this.state.isTesting = true;
-
-                    const indicator = this.elements.statusIndicators[service];
-                    this.setIndicatorState(indicator, 'testing');
-
-                    // Simulate API call to test the connection
-                    const success = await this.simulateApiTest(service);
-
-                    this.setIndicatorState(indicator, success ? 'success' : 'error');
-                    if (this.state.testsPassed.hasOwnProperty(service)) {
-                        this.state.testsPassed[service] = success;
-                    }
-
-                    this.state.isTesting = false;
-                    this.updateSaveButtonState();
-                },
-
-                async handleTestAll() {
-                    if (this.state.isTesting) return;
-                    this.state.isTesting = true;
-                    this.elements.testAllButton.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Testing...`;
-
-                    // Run tests in parallel
-                    await Promise.all([
-                        this.handleSingleTest('telegram'),
-                        this.handleSingleTest('database'),
-                        this.handleSingleTest('redis')
-                    ]);
-
-                    this.elements.testAllButton.innerHTML = `<i class="fas fa-network-wired"></i> Test All`;
-                    this.state.isTesting = false;
-                },
-
-                togglePasswordVisibility(toggleIcon) {
-                    const input = toggleIcon.previousElementSibling;
-                    const isPassword = input.type === 'password';
-                    input.type = isPassword ? 'text' : 'password';
-                    toggleIcon.className = isPassword ? 'fa-solid fa-eye-slash' : 'fa-solid fa-eye';
-                },
-
-                setIndicatorState(element, state) {
-                    const states = {
-                        testing: `<i class="fas fa-spinner fa-spin"></i> Testing...`,
-                        success: `<i class="fas fa-check-circle"></i> Connected`,
-                        error: `<i class="fas fa-times-circle"></i> Failed`,
-                        default: `--`
-                    };
-                    element.innerHTML = states[state] || states.default;
-                    element.className = `status-indicator status-${state}`;
-                },
-
-                updateSaveButtonState() {
-                    // Save is enabled only if required tests (telegram, database) pass.
-                    const allRequiredPassed = Object.values(this.state.testsPassed).every(status => status === true);
-                    this.elements.saveButton.disabled = !allRequiredPassed;
-
-                    if (!this.elements.saveButton.disabled) {
-                        toastr.success('All required connections tested successfully. You can now save.', 'Ready to Save');
-                    }
-                },
-
-                // --- 6. API Simulation ---
-                simulateApiTest(service) {
-                    console.log(`Controller: Simulating test for ${service}...`);
-                    return new Promise(resolve => {
-                        setTimeout(() => {
-                            // Randomly succeed or fail for demonstration
-                            const isSuccess = Math.random() > 0.3;
-                            console.log(`Controller: Test for ${service} result: ${isSuccess ? 'Success' : 'Failure'}`);
-                            resolve(isSuccess);
-                        }, 1000 + Math.random() * 1000); // Simulate network delay
-                    });
-                },
-
-                // --- 7. Load Initial State from Backend ---
-                loadInitialState() {
-                    // In a real app, you would fetch saved values here and populate the inputs.
-                    // For now, we leave them as placeholders.
-                    console.log("Controller: In a real app, would load saved config values now.");
+                    return !save.disabled;
+                } catch (error) {
+                    Object.keys(statuses).forEach(name => setStatus(name, 'Error', 'Unexpected test failure'));
+                    toastr.error('Connection test failed unexpectedly.');
+                    return false;
                 }
             };
 
-            // --- Run the Controller ---
-            configController.init();
+            testButtons.forEach(btn => btn.addEventListener('click', testConfig));
+            testAll?.addEventListener('click', testConfig);
+
+            save?.addEventListener('click', async () => {
+                if (!testResult) {
+                    const ok = await testConfig();
+                    if (!ok) return;
+                }
+                const payload = getPayload();
+                save.disabled = true;
+                try {
+                    const response = await fetch('/api/config/save', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    const result = await response.json();
+                    if (!response.ok) {
+                        toastr.error(result.message || 'Configuration could not be saved.');
+                        return;
+                    }
+                    toastr.success(result.message || 'Configuration saved securely.');
+                    setTimeout(() => window.location.href = '/indexapp.html', 1200);
+                } catch {
+                    toastr.error('Configuration save failed unexpectedly.');
+                } finally {
+                    save.disabled = false;
+                }
+            });
+
+            document.querySelectorAll('.password-toggle').forEach(toggle => {
+                toggle.addEventListener('click', () => {
+                    const input = toggle.previousElementSibling;
+                    if (!input) return;
+                    const visible = input.type === 'password';
+                    input.type = visible ? 'text' : 'password';
+                    toggle.className = visible ? 'fa-solid fa-eye-slash password-toggle' : 'fa-solid fa-eye password-toggle';
+                });
+            });
+
+            document.getElementById('theme-toggle-btn')?.addEventListener('click', () => {
+                const current = document.documentElement.getAttribute('data-theme') || 'light';
+                setTheme(current === 'light' ? 'dark' : 'light');
+            });
+
+            document.getElementById('sidebar-toggle')?.addEventListener('click', () => document.body.classList.toggle('sidebar-collapsed'));
+            document.getElementById('mobile-menu-toggle')?.addEventListener('click', () => document.body.classList.toggle('sidebar-mobile-open'));
+            setTheme(localStorage.getItem('theme') || 'light');
+            document.body.classList.remove('is-loading');
         });
     </script>
 </body>

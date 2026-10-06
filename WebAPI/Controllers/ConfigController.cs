@@ -432,42 +432,40 @@ namespace WebAPI.Controllers
                     "Invalid database connection string format.");
             }
 
-            // CRITICAL SECURITY NOTE:
-            // In a real-world application, NEVER write sensitive configuration like Bot Tokens
-            // or Connection Strings directly to appsettings.json, especially in production.
-            // This endpoint is a PLACEHOLDER to simulate a save operation.
-            //
-            // Proper implementations should:
-            // 1. Store these configurations in secure, managed stores such as:
-            //    - Azure Key Vault
-            //    - HashiCorp Vault
-            //    - Kubernetes Secrets
-            //    - Environment Variables (configured securely on the host/platform)
-            // 2. The application should then read these configurations at startup from these secure sources.
-            // 3. If dynamic updates are needed (rare for such core settings), the application
-            //    should be designed to reload configuration from these secure stores,
-            //    potentially via a secure management API or a signaling mechanism (e.g., Azure App Configuration).
-            //
-            // This current logging is for demonstration purposes only for this project.
+            // Save secrets only to the local encrypted vault. The process
+            // configuration is updated immediately; database/provider changes
+            // require a restart because EF/Dapper services are initialized at boot.
+            _configuration["DatabaseSettings:DatabaseProvider"] = provider;
+            SecretVaultBootstrap.Set("DATABASE_PROVIDER", provider);
+            SecretVaultBootstrap.Set("DATABASE_CONNECTION", validatedDbConn);
 
-            // SECURITY: Encrypt all sensitive configuration data before logging.
-            string encryptedBotToken = EncryptData(model.BotToken);
-            string encryptedDbConn = EncryptData(validatedDbConn);
-            string encryptedRedisConn = EncryptData(validatedRedisConn);
+            if (!string.IsNullOrWhiteSpace(validatedRedisConn))
+            {
+                _configuration["ConnectionStrings:Redis"] = validatedRedisConn;
+                SecretVaultBootstrap.Set("REDIS_CONNECTION", validatedRedisConn);
+            }
 
-            _logger.LogWarning("Received configuration to save (PLACEHOLDER - NOT SAVING TO APPSETTINGS.JSON):");
-            _logger.LogWarning("BotToken: {EncryptedBotToken}", encryptedBotToken);
-            _logger.LogWarning("DbConn: {EncryptedDbConn}", encryptedDbConn);
-            _logger.LogWarning("RedisConn: {EncryptedRedisConn}", encryptedRedisConn);
+            if (!string.IsNullOrWhiteSpace(model.BotToken))
+            {
+                _configuration["TelegramPanel:BotToken"] = model.BotToken;
+                SecretVaultBootstrap.Set("TELEGRAM_BOT_TOKEN", model.BotToken);
+            }
 
-            // SECURITY: Return a secure response without exposing sensitive information
+            _logger.LogInformation(
+                "Local runtime configuration saved. Provider={Provider}, RedisConfigured={RedisConfigured}, TelegramConfigured={TelegramConfigured}.",
+                provider,
+                !string.IsNullOrWhiteSpace(validatedRedisConn),
+                !string.IsNullOrWhiteSpace(model.BotToken));
+
             return Ok(new
             {
-                Message = "Configuration received successfully. This is a placeholder implementation. In production, use secure configuration stores.",
-                Status = "Success",
+                Message = "Configuration saved to the local encrypted vault. Restart the application to apply database/provider changes.",
+                Status = "Saved",
+                DatabaseProvider = provider,
+                RedisConfigured = !string.IsNullOrWhiteSpace(validatedRedisConn),
+                TelegramConfigured = !string.IsNullOrWhiteSpace(model.BotToken),
                 Timestamp = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
             });
-        }
         #endregion
     }
 }

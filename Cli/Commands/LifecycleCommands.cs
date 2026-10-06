@@ -63,7 +63,11 @@ internal static class LifecycleCommands
             if (proc is null)
                 return -1;
 
-            proc.WaitForExit();
+            if (!proc.WaitForExit(TimeSpan.FromSeconds(10)))
+            {
+                try { proc.Kill(true); } catch { /* already gone */ }
+                return -1;
+            }
             return proc.ExitCode;
         }
         catch
@@ -92,7 +96,13 @@ internal static class LifecycleCommands
             {
                 return -1;
             }
-            proc.WaitForExit();
+            // External diagnostics (docker info, compose ps) can block indefinitely on
+            // CI runners where the daemon is unreachable; a hung probe must not hang the CLI.
+            if (!proc.WaitForExit(TimeSpan.FromSeconds(10)))
+            {
+                try { proc.Kill(true); } catch { /* already gone */ }
+                return -1;
+            }
             return proc.ExitCode;
         }
         catch

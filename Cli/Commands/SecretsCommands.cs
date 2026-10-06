@@ -223,6 +223,17 @@ internal static class SecretClipboard
         {
             if (OperatingSystem.IsWindows())
             {
+                // CI runners ship PowerShell Core as `pwsh` and may not put the legacy
+                // `powershell.exe` on PATH, so try both before giving up.
+                if (RunWithStdin(
+                        "pwsh.exe",
+                        ["-NoProfile", "-NonInteractive", "-Command",
+                            "$value = [Console]::In.ReadToEnd(); Set-Clipboard -Value $value"],
+                        value))
+                {
+                    return true;
+                }
+
                 return RunWithStdin(
                     "powershell.exe",
                     ["-NoProfile", "-NonInteractive", "-Command",

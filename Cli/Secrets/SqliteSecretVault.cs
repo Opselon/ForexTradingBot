@@ -4,45 +4,28 @@ using Microsoft.Data.Sqlite;
 namespace ForexTradingBot.Cli.Secrets;
 
 /// <summary>
-/// A local, encrypted-at-rest store for the user's secrets.
+/// Local encrypted-at-rest secret store.
 ///
-/// Design goals, in priority order:
-///   1. Never leave the machine — no network, no telemetry, no sync.
-///   2. No secret is ever written to disk in plaintext, not even transiently.
-///   3. Survives application upgrades and machine reboots.
-///   4. Cheap to back up as a single file (the user owns the vault).
-///
-/// Storage is a single SQLite file in the user's profile directory. Each value
-/// is AES-256-GCM encrypted with a key derived from a per-installation salt
-/// plus the OS user identity, so the file is worthless if copied elsewhere.
+/// The SQLite database is self-contained: the active vault salt is stored in
+/// VaultMetadata so backups do not depend on a sidecar salt file. New vaults
+/// use a random per-user master key. A legacy decryptor is retained only to
+/// migrate vaults created by pre-v2 releases.
 /// </summary>
 public interface ISecretVault : IDisposable
 {
-    /// <summary>Path of the vault file on disk (for the <c>backup</c> command).</summary>
     string VaultPath { get; }
-
-    /// <summary>True when the vault file exists and can be opened.</summary>
     bool Exists();
-
-    /// <summary>Lists every stored secret, with values redacted.</summary>
     IReadOnlyList<SecretRecord> List();
-
-    /// <summary>Returns the plaintext value, or null if the key is not set.</summary>
     string? Get(string key);
-
-    /// <summary>Stores (or overwrites) a secret.</summary>
     void Set(string key, string value, SecretCategory category = SecretCategory.Other, string? description = null);
-
-    /// <summary>Deletes a secret. Returns false if it was not present.</summary>
     bool Delete(string key);
-
-    /// <summary>Rotates the encryption key: re-encrypts every value with a fresh salt.</summary>
     void Rotate();
 }
 
 public sealed class SqliteSecretVault : ISecretVault
 {
     private readonly ISecretCipher _cipher;
+    private readonly ISecretCipher _legacyCipher;
     private readonly byte[] _salt;
     private readonly SqliteConnection _connection;
 
@@ -54,8 +37,11 @@ public sealed class SqliteSecretVault : ISecretVault
         Directory.CreateDirectory(vaultDirectory);
         VaultPath = Path.Combine(vaultDirectory, "secrets.db");
 
-        _salt = LoadOrCreateSalt(vaultDirectory);
         _connection = OpenVault(VaultPath);
+        _salt = LoadOrCreateSalt(_connection, vaultDirectory);
+
+        // Compatibility only. New writes never use this cipher.
+        _legacyCipher = new LegacySecretCipher(LegacySecretCipher.CurrentUserIdentity());
     }
 
     public string VaultPath { get; }
@@ -74,13 +60,14 @@ public sealed class SqliteSecretVault : ISecretVault
             records.Add(new SecretRecord
             {
                 Key = reader.GetString(0),
-                Value = RedactedPlaceholder, // never materialise values on a list
+                Value = RedactedPlaceholder,
                 Category = Enum.TryParse<SecretCategory>(reader.GetString(1), out var c) ? c : SecretCategory.Other,
                 Description = reader.IsDBNull(2) ? null : reader.GetString(2),
                 CreatedUtc = DateTime.Parse(reader.GetString(3), null, System.Globalization.DateTimeStyles.RoundtripKind),
                 UpdatedUtc = DateTime.Parse(reader.GetString(4), null, System.Globalization.DateTimeStyles.RoundtripKind),
             });
         }
+
         return records;
     }
 
@@ -91,22 +78,18 @@ public sealed class SqliteSecretVault : ISecretVault
         cmd.Parameters.AddWithValue("@key", key);
         var ciphertext = cmd.ExecuteScalar() as string;
         if (string.IsNullOrEmpty(ciphertext))
-        {
             return null;
-        }
-        return _cipher.Decrypt(ciphertext, _salt);
+
+        return DecryptWithMigrationSupport(ciphertext);
     }
 
     public void Set(string key, string value, SecretCategory category = SecretCategory.Other, string? description = null)
     {
         if (string.IsNullOrWhiteSpace(key))
-        {
             throw new ArgumentException("Secret key must not be empty.", nameof(key));
-        }
+
         if (string.IsNullOrEmpty(value))
-        {
             throw new ArgumentException("Secret value must not be empty. Delete the key instead.", nameof(value));
-        }
 
         var ciphertext = _cipher.Encrypt(value, _salt);
         var now = DateTime.UtcNow.ToString("O");
@@ -140,66 +123,109 @@ public sealed class SqliteSecretVault : ISecretVault
 
     public void Rotate()
     {
-        // Re-encrypt every value under a brand-new salt. The old salt is
-        // overwritten only after every value has been rewritten, so a crash
-        // mid-rotation leaves the vault readable (recovered by re-running).
-        var all = List();
-        var plaintexts = new List<(string Key, string Value, SecretCategory Category, string? Description, DateTime Created)>();
-        foreach (var record in all)
+        var records = new List<(string Key, string Value)>();
+        const string selectSql = "SELECT Key, Value FROM Secrets ORDER BY Key";
+        using (var select = new SqliteCommand(selectSql, _connection))
+        using (var reader = select.ExecuteReader())
         {
-            plaintexts.Add((record.Key, Get(record.Key) ?? string.Empty, record.Category, record.Description, record.CreatedUtc));
+            while (reader.Read())
+            {
+                var key = reader.GetString(0);
+                var ciphertext = reader.GetString(1);
+                records.Add((key, DecryptWithMigrationSupport(ciphertext)));
+            }
         }
 
-        var newSalt = new byte[32];
-        RandomNumberGenerator.Fill(newSalt);
+        var newSalt = RandomNumberGenerator.GetBytes(32);
 
-        foreach (var (key, value, category, description, _) in plaintexts)
+        using var transaction = _connection.BeginTransaction();
+        try
         {
-            var ciphertext = _cipher.Encrypt(value, newSalt);
-            const string sql = "UPDATE Secrets SET Value = @value WHERE Key = @key";
-            using var cmd = new SqliteCommand(sql, _connection);
-            cmd.Parameters.AddWithValue("@value", ciphertext);
-            cmd.Parameters.AddWithValue("@key", key);
-            cmd.ExecuteNonQuery();
-        }
+            foreach (var record in records)
+            {
+                using var update = new SqliteCommand(
+                    "UPDATE Secrets SET Value = @value, UpdatedUtc = UpdatedUtc WHERE Key = @key",
+                    _connection,
+                    transaction);
+                update.Parameters.AddWithValue("@value", _cipher.Encrypt(record.Value, newSalt));
+                update.Parameters.AddWithValue("@key", record.Key);
+                update.ExecuteNonQuery();
+            }
 
-        // Persist the NEW salt (the old _salt is replaced). The next open derives
-        // its key from this salt, matching the re-encrypted values above.
-        PersistSalt(Path.GetDirectoryName(VaultPath)!, newSalt);
-        newSalt.AsSpan().CopyTo(_salt);
-        Array.Clear(newSalt, 0, newSalt.Length);
+            using var metadata = new SqliteCommand(
+                """
+                INSERT INTO VaultMetadata (Key, Value)
+                VALUES ('Salt', @value)
+                ON CONFLICT(Key) DO UPDATE SET Value = excluded.Value;
+                """,
+                _connection,
+                transaction);
+            metadata.Parameters.AddWithValue("@value", Convert.ToBase64String(newSalt));
+            metadata.ExecuteNonQuery();
+
+            transaction.Commit();
+            Buffer.BlockCopy(newSalt, 0, _salt, 0, _salt.Length);
+        }
+        catch
+        {
+            try { transaction.Rollback(); } catch { }
+            throw;
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(newSalt);
+        }
     }
 
-    public void Dispose() => _connection.Dispose();
+    public void Dispose()
+    {
+        _connection.Dispose();
+    }
 
-    // ----------------------------------------------------------------------
-
-    /// <summary>What a stored secret looks like when listed: value replaced, never the real one.</summary>
     public const string RedactedPlaceholder = "••••••••";
 
     public static string DefaultVaultDirectory()
     {
         var configured = Environment.GetEnvironmentVariable("FOREXBOT_VAULT_DIRECTORY");
         if (!string.IsNullOrWhiteSpace(configured))
-        {
             return Path.GetFullPath(configured);
-        }
 
         var profile = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         if (string.IsNullOrWhiteSpace(profile))
-        {
             profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        }
 
         return Path.Combine(profile, "ForexTradingBot");
     }
 
+    private string DecryptWithMigrationSupport(string ciphertext)
+    {
+        try
+        {
+            return _cipher.Decrypt(ciphertext, _salt);
+        }
+        catch (CryptographicException)
+        {
+            try
+            {
+                return _legacyCipher.Decrypt(ciphertext, _salt);
+            }
+            catch (Exception legacyFailure) when (
+                legacyFailure is CryptographicException or FormatException)
+            {
+                throw new CryptographicException(
+                    "The secret vault could not decrypt the stored value. The vault key, user identity, or vault data may have changed.",
+                    legacyFailure);
+            }
+        }
+    }
+
     private static SqliteConnection OpenVault(string path)
     {
-        var connection = new SqliteConnection($"Data Source={path}");
+        var connection = new SqliteConnection("Data Source=" + path);
         connection.Open();
 
-        using var cmd = new SqliteCommand("""
+        using var cmd = new SqliteCommand(
+            """
             CREATE TABLE IF NOT EXISTS Secrets (
                 Key         TEXT PRIMARY KEY NOT NULL,
                 Value       TEXT NOT NULL,
@@ -208,34 +234,155 @@ public sealed class SqliteSecretVault : ISecretVault
                 CreatedUtc  TEXT NOT NULL,
                 UpdatedUtc  TEXT NOT NULL
             );
+
             CREATE INDEX IF NOT EXISTS IX_Secrets_Category ON Secrets(Category);
-            """, connection);
+
+            CREATE TABLE IF NOT EXISTS VaultMetadata (
+                Key   TEXT PRIMARY KEY NOT NULL,
+                Value TEXT NOT NULL
+            );
+            """,
+            connection);
         cmd.ExecuteNonQuery();
 
         return connection;
     }
 
-    private static byte[] LoadOrCreateSalt(string directory)
+    private static byte[] LoadOrCreateSalt(SqliteConnection connection, string directory)
     {
-        var saltPath = Path.Combine(directory, "secrets.salt");
-        if (File.Exists(saltPath))
+        using (var metadata = new SqliteCommand(
+            "SELECT Value FROM VaultMetadata WHERE Key = 'Salt'",
+            connection))
         {
-            var salt = File.ReadAllBytes(saltPath);
-            if (salt.Length == 32)
+            var stored = metadata.ExecuteScalar() as string;
+            if (!string.IsNullOrWhiteSpace(stored))
             {
-                return salt;
+                try
+                {
+                    var salt = Convert.FromBase64String(stored);
+                    if (salt.Length == 32)
+                        return salt;
+                }
+                catch (FormatException)
+                {
+                    throw new CryptographicException("The vault metadata contains an invalid salt.");
+                }
+
+                throw new CryptographicException("The vault metadata salt has an invalid length.");
             }
         }
 
-        var fresh = new byte[32];
-        RandomNumberGenerator.Fill(fresh);
-        PersistSalt(directory, fresh);
-        return fresh;
+        var legacySaltPath = Path.Combine(directory, "secrets.salt");
+        byte[] fresh;
+        if (File.Exists(legacySaltPath))
+        {
+            fresh = File.ReadAllBytes(legacySaltPath);
+            if (fresh.Length != 32)
+            {
+                CryptographicOperations.ZeroMemory(fresh);
+                throw new CryptographicException("The legacy vault salt has an invalid length.");
+            }
+        }
+        else
+        {
+            fresh = RandomNumberGenerator.GetBytes(32);
+        }
+
+        try
+        {
+            using var metadata = new SqliteCommand(
+                """
+                INSERT INTO VaultMetadata (Key, Value)
+                VALUES ('Salt', @value)
+                ON CONFLICT(Key) DO NOTHING;
+                """,
+                connection);
+            metadata.Parameters.AddWithValue("@value", Convert.ToBase64String(fresh));
+            metadata.ExecuteNonQuery();
+            return fresh.ToArray();
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(fresh);
+        }
+    }
+}
+
+/// <summary>
+/// Exact v1-compatible decryptor retained solely for one-way migration.
+/// Never use this class for new encryption.
+/// </summary>
+internal sealed class LegacySecretCipher : ISecretCipher
+{
+    private const int KeySize = 32;
+    private const int NonceSize = 12;
+    private const int TagSize = 16;
+    private readonly byte[] _identity;
+
+    public LegacySecretCipher(byte[] identity)
+    {
+        _identity = identity ?? throw new ArgumentNullException(nameof(identity));
     }
 
-    private static void PersistSalt(string directory, byte[] salt)
+    public static byte[] CurrentUserIdentity()
     {
-        var saltPath = Path.Combine(directory, "secrets.salt");
-        File.WriteAllBytes(saltPath, salt);
+        if (OperatingSystem.IsWindows())
+        {
+            var sid = System.Security.Principal.WindowsIdentity.GetCurrent().User?.Value ?? "win-user";
+            return SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(sid));
+        }
+
+        var identity = Environment.UserName + "@" + Environment.MachineName;
+        return SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(identity));
+    }
+
+    public string Encrypt(string plaintext, byte[] salt) =>
+        throw new NotSupportedException("Legacy vault encryption is migration-only.");
+
+    public string Decrypt(string ciphertext, byte[] salt)
+    {
+        var key = DeriveKey(salt);
+        try
+        {
+            var data = Convert.FromBase64String(ciphertext);
+            if (data.Length < NonceSize + TagSize)
+                throw new FormatException("Ciphertext is too short to contain nonce and tag.");
+
+            var nonce = new byte[NonceSize];
+            var tag = new byte[TagSize];
+            var ciphertextBytes = new byte[data.Length - NonceSize - TagSize];
+            Buffer.BlockCopy(data, 0, nonce, 0, NonceSize);
+            Buffer.BlockCopy(data, NonceSize, tag, 0, TagSize);
+            Buffer.BlockCopy(data, NonceSize + TagSize, ciphertextBytes, 0, ciphertextBytes.Length);
+
+            var plaintext = new byte[ciphertextBytes.Length];
+            using var gcm = new AesGcm(key, TagSize);
+            gcm.Decrypt(nonce, ciphertextBytes, tag, plaintext);
+            return System.Text.Encoding.UTF8.GetString(plaintext);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(key);
+        }
+    }
+
+    private byte[] DeriveKey(byte[] salt)
+    {
+        var combined = new byte[_identity.Length + salt.Length];
+        Buffer.BlockCopy(_identity, 0, combined, 0, _identity.Length);
+        Buffer.BlockCopy(salt, 0, combined, _identity.Length, salt.Length);
+        try
+        {
+            return HKDF.DeriveKey(
+                HashAlgorithmName.SHA256,
+                combined,
+                KeySize,
+                salt: null,
+                info: System.Text.Encoding.UTF8.GetBytes("ForexTradingBot.SecretVault.v1"));
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(combined);
+        }
     }
 }

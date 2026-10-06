@@ -92,5 +92,4 @@ public sealed class ReleaseWorkflowRegressionTests
         Assert.DoesNotContain("actions/setup-dotnet@v4", source, StringComparison.Ordinal);
         Assert.DoesNotContain("actions/upload-artifact@v4", source, StringComparison.Ordinal);
     }
-
-
+}

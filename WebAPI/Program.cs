@@ -118,6 +118,11 @@ try
         Log.Warning(ex, "Failed to initialize EasySetupConfigStore. Wizard settings will not be persisted and defaults/env vars will be used.");
     }
 
+    // Persisted secrets are loaded from the encrypted local vault into memory.
+    // Vault failures are fatal so a broken/locked vault cannot silently downgrade
+    // to plaintext or unexpected environment defaults.
+    SecretVaultBootstrap.Apply(builder.Configuration);
+
     // 2) Detect smoke-test mode once and reuse this flag everywhere.
     string smokeTestFlag = builder.Configuration["IsSmokeTest"] ?? "false";
     bool isSmokeTest = "true".Equals(smokeTestFlag, StringComparison.OrdinalIgnoreCase);
@@ -568,7 +573,9 @@ try
 
     // Local secret vault (SQLite + machine-derived AES-GCM key). Singleton so the
     // single connection is shared; the vault file lives under LocalApplicationData.
-    _ = builder.Services.AddSingleton<ISecretCipher>(_ => new SecretCipher(SecretCipher.CurrentUserIdentity()));
+    _ = builder.Services.AddSingleton<ISecretCipher>(_ =>
+        new SecretCipher(
+            SecretKeyStore.LoadOrCreateKey(SqliteSecretVault.DefaultVaultDirectory())));
     _ = builder.Services.AddSingleton<ISecretVault, SqliteSecretVault>();
 
     // Register other core infrastructure services that might be missing
@@ -1171,7 +1178,9 @@ try
         _ = app.UseHttpsRedirection();
     }
 
-    _ = app.UseStaticFiles(); // Serve static files early, especially for login page
+    // Protect admin static pages before static-file middleware can serve them.
+    _ = app.UseMiddleware<AuthRedirectMiddleware>();
+    _ = app.UseStaticFiles();
 
     _ = app.UseSerilogRequestLogging(); //  لاگ کردن تمام درخواست‌های HTTP ورودی با جزئیات (توسط Serilog)
 
@@ -1180,9 +1189,6 @@ try
     // IMPORTANT: Authentication must come before Authorization
     _ = app.UseAuthentication(); // Added for Admin Dashboard authentication
     _ = app.UseAuthorization();
-
-    // Custom middleware to redirect unauthenticated users trying to access protected admin pages
-    _ = app.UseMiddleware<AuthRedirectMiddleware>();
 
     // Explicitly map the root path to handle login/dashboard redirection
     _ = app.MapGet("/", (HttpContext context) =>

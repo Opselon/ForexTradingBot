@@ -1860,46 +1860,36 @@ internal static class EasySetupWizard
 
         if (!string.IsNullOrWhiteSpace(botToken) && !IsPlaceholder(botToken))
         {
-            // Already configured (from appsettings, env, or previous wizard run).
             return;
         }
 
-        if (!isInteractive)
-        {
-            // We cannot prompt the user. This is a hard failure.
-            const string errorMessage =
-                "TelegramPanel:BotToken is missing. " +
-                "In non-interactive environments (Windows service / Docker), " +
-                "you MUST provide it via configuration (appsettings or environment variables).";
-
-            Log.Fatal(errorMessage);
-            throw new InvalidOperationException(errorMessage);
-        }
-
-        // Interactive prompt (loop until a non-empty token is provided).
         Console.ForegroundColor = ConsoleColor.Cyan;
         Console.WriteLine("\n--- Easy Setup Wizard :: Telegram Panel Bot ---");
-        Console.WriteLine("The main Bot Token is REQUIRED. Without it, the application cannot start.");
-        Console.WriteLine("You can get this token from @BotFather on Telegram.");
+        Console.WriteLine("Telegram integration is optional during initial setup.");
+        Console.WriteLine("Press ENTER to skip it, or enter a token from @BotFather to enable it.");
         Console.ResetColor();
+
+        if (!isInteractive)
+        {
+            Log.Information("Telegram integration is disabled until a Bot Token is configured in the local secret vault.");
+            return;
+        }
 
         while (true)
         {
-            Console.Write("Enter your Telegram Bot Token: ");
+            Console.Write("Telegram Bot Token (or ENTER to skip): ");
             string? input = Console.ReadLine()?.Trim();
 
-            if (string.IsNullOrWhiteSpace(input))
+            if (string.IsNullOrWhiteSpace(input) || string.Equals(input, "skip", StringComparison.OrdinalIgnoreCase))
             {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine("Bot Token cannot be empty. Please try again.");
-                Console.ResetColor();
-                continue;
+                config["TelegramPanel:BotToken"] = null;
+                Log.Information("User skipped Telegram Bot Token setup. Telegram integration remains disabled.");
+                break;
             }
 
             config["TelegramPanel:BotToken"] = input;
             SecretVaultBootstrap.Set("TELEGRAM_BOT_TOKEN", input);
-
-            Log.Information("TelegramPanel bot token configured via Easy Setup Wizard.");
+            Log.Information("Telegram Bot Token configured via Easy Setup Wizard.");
             break;
         }
     }

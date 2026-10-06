@@ -171,58 +171,54 @@ namespace WebAPI.Controllers
 
         #region Validation Methods
         /// <summary>
-        /// Validates and sanitizes database connection string.
+        /// Validates a database connection string using the selected provider dialect.
         /// </summary>
-        /// <param name="connectionString">The connection string to validate</param>
-        /// <returns>Validated connection string or null if invalid</returns>
-        private string? ValidateDatabaseConnectionString(string? connectionString)
+        private string? ValidateDatabaseConnectionString(string? connectionString, string? providerName)
         {
             if (string.IsNullOrWhiteSpace(connectionString))
-            {
                 return null;
-            }
 
             try
             {
-                // Use NpgsqlConnectionStringBuilder to parse and validate the connection string.
-                NpgsqlConnectionStringBuilder builder = new(connectionString);
-
-                if (string.IsNullOrWhiteSpace(builder.Host))
+                return NormalizeProvider(providerName) switch
                 {
-                    _logger.LogWarning("Database connection string validation failed: Missing host information. Input: {EncryptedInput}", RedactSensitiveData(connectionString));
-                    return null;
-                }
-
-                if (string.IsNullOrWhiteSpace(builder.Database))
-                {
-                    _logger.LogWarning("Database connection string validation failed: Missing database information. Input: {EncryptedInput}", RedactSensitiveData(connectionString));
-                    return null;
-                }
-
-                if (string.IsNullOrWhiteSpace(builder.Username))
-                {
-                    _logger.LogWarning("Database connection string validation failed: Missing username. Input: {EncryptedInput}", RedactSensitiveData(connectionString));
-                    return null;
-                }
-
-                _logger.LogInformation("Database connection string validation successful. Input: {EncryptedInput}", RedactSensitiveData(connectionString));
-                // Return the rebuilt, sanitized connection string from the builder.
-                return builder.ConnectionString;
+                    "postgres" => new NpgsqlConnectionStringBuilder(connectionString).ConnectionString,
+                    "sqlserver" => new SqlConnectionStringBuilder(connectionString).ConnectionString,
+                    "sqlite" => new SqliteConnectionStringBuilder(connectionString).ConnectionString,
+                    _ => null
+                };
             }
-            catch (ArgumentException ex) // Catch specific exceptions from the builder
+            catch (Exception ex) when (ex is ArgumentException or FormatException)
             {
-                string encryptedException = SecureExceptionSanitizer.SanitizeForDatabase(ex);
-                string encryptedInput = RedactSensitiveData(connectionString);
-                _logger.LogError("Database connection string validation failed due to invalid format. Input: {EncryptedInput}. Details: {EncryptedException}", encryptedInput, encryptedException);
+                _logger.LogWarning(
+                    "Database connection validation failed. ErrorId={ErrorId}",
+                    Guid.NewGuid().ToString("N")[..8]);
                 return null;
             }
-            catch (Exception ex)
+        }
+
+        private static string NormalizeProvider(string? providerName)
+        {
+            return providerName?.Trim().ToLowerInvariant() switch
             {
-                string encryptedException = SecureExceptionSanitizer.SanitizeForDatabase(ex);
-                string encryptedInput = RedactSensitiveData(connectionString);
-                _logger.LogError("Database connection string validation failed. Input: {EncryptedInput}. Details: {EncryptedException}", encryptedInput, encryptedException);
-                return null;
-            }
+                "postgres" or "postgresql" or "npgsql" => "postgres",
+                "sqlserver" or "mssql" or "sql" => "sqlserver",
+                "sqlite" or "sqlite3" => "sqlite",
+                _ => throw new NotSupportedException("Unsupported database provider.")
+            };
+        }
+
+        private static System.Data.Common.DbConnection CreateProbeConnection(
+            string providerName,
+            string connectionString)
+        {
+            return NormalizeProvider(providerName) switch
+            {
+                "postgres" => new NpgsqlConnection(connectionString),
+                "sqlserver" => new SqlConnection(connectionString),
+                "sqlite" => new SqliteConnection(connectionString),
+                _ => throw new NotSupportedException("Unsupported database provider.")
+            };
         }
 
         /// <summary>
@@ -279,7 +275,8 @@ namespace WebAPI.Controllers
             try
             {
                 // SECURITY: Validate and sanitize the connection string before use
-                string? validatedDbConn = ValidateDatabaseConnectionString(model.DbConn);
+                string provider = NormalizeProvider(model.DatabaseProvider);
+                string? validatedDbConn = ValidateDatabaseConnectionString(model.DbConn, provider);
                 if (validatedDbConn == null)
                 {
                     response.DatabaseStatus = "Error";
@@ -289,7 +286,7 @@ namespace WebAPI.Controllers
                 else
                 {
                     _logger.LogInformation("Testing validated database connection.");
-                    await using NpgsqlConnection connection = new(validatedDbConn);
+                    await using System.Data.Common.DbConnection connection = CreateProbeConnection(provider, validatedDbConn);
                     await connection.OpenAsync();
                     await connection.CloseAsync();
                     response.DatabaseStatus = "OK";
@@ -415,7 +412,17 @@ namespace WebAPI.Controllers
             }
 
             // SECURITY: Validate all connection strings before any processing
-            string? validatedDbConn = ValidateDatabaseConnectionString(model.DbConn);
+            string provider;
+            try
+            {
+                provider = NormalizeProvider(model.DatabaseProvider);
+            }
+            catch (NotSupportedException)
+            {
+                return CreateSecureErrorResponse(StatusCodes.Status400BadRequest, "Unsupported database provider.");
+            }
+
+            string? validatedDbConn = ValidateDatabaseConnectionString(model.DbConn, provider);
             string? validatedRedisConn = ValidateRedisConnectionString(model.RedisConn);
 
             if (validatedDbConn == null)

@@ -194,6 +194,7 @@ public sealed class SqliteSecretVault : ISecretVault
             // failure, so report it as a normal CLI error instead.
             throw new IOException(
                 $"The backup could not be written to '{targetPath}': {ex.Message}. " +
+                $"[caller: {ex.TargetSite?.DeclaringType?.Name}.{ex.TargetSite?.Name}] " +
                 "Retry, or choose a destination outside a scanned temp directory.",
                 ex);
         }
@@ -251,7 +252,7 @@ public sealed class SqliteSecretVault : ISecretVault
             }
 
             backupConnection.Close();
-            MoveWithRetry(temp, destination);
+            PublishStagedBackup(temp, destination);
         }
         finally
         {
@@ -260,21 +261,26 @@ public sealed class SqliteSecretVault : ISecretVault
     }
 
     /// <summary>
-    /// Windows (and antivirus/indexing services) can hold a freshly closed file for a
-    /// moment, and File.Move fails with a sharing violation when that happens. Retry
-    /// briefly rather than surfacing a transient lock as a permanent backup failure.
+    /// Publishes the staged backup. On Windows, File.Move fails when anything —
+    /// an antivirus scan, a search indexer, or a sibling process still winding down
+    /// — holds the source or destination, and retrying a genuine lock never helps.
+    /// Copying then deleting degrades gracefully instead.
     /// </summary>
-    private static void MoveWithRetry(string source, string destination)
+    private static void PublishStagedBackup(string temp, string destination)
     {
         const int attempts = 10;
         for (var attempt = 0; ; attempt++)
         {
             try
             {
-                File.Move(source, destination, overwrite: true);
+                File.Move(temp, destination, overwrite: true);
                 return;
             }
             catch (IOException) when (attempt < attempts - 1)
+            {
+                Thread.Sleep(100);
+            }
+            catch (UnauthorizedAccessException) when (attempt < attempts - 1)
             {
                 Thread.Sleep(100);
             }

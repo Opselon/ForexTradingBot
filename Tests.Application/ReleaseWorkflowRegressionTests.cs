@@ -92,4 +92,24 @@ public sealed class ReleaseWorkflowRegressionTests
         Assert.DoesNotContain("actions/setup-dotnet@v4", source, StringComparison.Ordinal);
         Assert.DoesNotContain("actions/upload-artifact@v4", source, StringComparison.Ordinal);
     }
+    private static JsonDocument LoadWorkflow()
+    {
+        var root = FindRoot();
+        var path = Path.Combine(root, ".github", "workflows", "release.yml");
+        return JsonDocument.Parse(File.ReadAllText(path));
+    }
+
+    private static string FindRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "ForexTradingBot.sln")))
+                return directory.FullName;
+            directory = directory.Parent;
+        }
+
+        throw new DirectoryNotFoundException("ForexTradingBot.sln was not found.");
+    }
+
 }

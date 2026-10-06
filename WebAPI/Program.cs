@@ -1771,9 +1771,41 @@ internal static class EasySetupWizard
 
         if (!isInteractive)
         {
-            throw new InvalidOperationException(
-                "Admin password is not configured. Store ADMIN_PASSWORD in the local secret vault " +
-                "or provide Admin:Password through a protected runtime configuration source.");
+            // Docker/headless first-run: generate a one-time credential, persist it
+            // only in the encrypted local vault, and place it in a 0600 bootstrap
+            // file for the installer to display once and remove.
+            var bytes = System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
+            var generated = Convert.ToBase64String(bytes)
+                .Replace("+", "-", StringComparison.Ordinal)
+                .Replace("/", "_", StringComparison.Ordinal)
+                .TrimEnd('=');
+            System.Security.Cryptography.CryptographicOperations.ZeroMemory(bytes);
+
+            config["Admin:Password"] = generated;
+            SecretVaultBootstrap.Set("ADMIN_PASSWORD", generated);
+
+            var bootstrapDirectory = Path.Combine(
+                SqliteSecretVault.DefaultVaultDirectory(), "bootstrap");
+            Directory.CreateDirectory(bootstrapDirectory);
+            var bootstrapPath = Path.Combine(bootstrapDirectory, "admin-password.txt");
+            File.WriteAllText(bootstrapPath, generated, System.Text.Encoding.UTF8);
+
+            if (!OperatingSystem.IsWindows())
+            {
+                try
+                {
+                    File.SetUnixFileMode(
+                        bootstrapPath,
+                        UnixFileMode.UserRead | UnixFileMode.UserWrite);
+                }
+                catch
+                {
+                    // Best effort on filesystems without Unix mode support.
+                }
+            }
+
+            Log.Information("Initial admin credential generated and stored in the local secret vault.");
+            return;
         }
 
         Console.ForegroundColor = ConsoleColor.Cyan;
@@ -1785,7 +1817,7 @@ internal static class EasySetupWizard
         while (true)
         {
             Console.Write("Admin password: ");
-            string? input = Console.ReadLine();
+            string? input = ReadSecretLine();
 
             if (string.IsNullOrWhiteSpace(input) || input.Length < 12)
             {
@@ -1796,7 +1828,7 @@ internal static class EasySetupWizard
             }
 
             Console.Write("Confirm admin password: ");
-            string? confirmation = Console.ReadLine();
+            string? confirmation = ReadSecretLine();
 
             if (!string.Equals(input, confirmation, StringComparison.Ordinal))
             {
@@ -1869,6 +1901,39 @@ internal static class EasySetupWizard
 
             Log.Information("TelegramPanel bot token configured via Easy Setup Wizard.");
             break;
+        }
+    }
+
+    private static string ReadSecretLine()
+    {
+        var buffer = new System.Text.StringBuilder();
+
+        while (true)
+        {
+            ConsoleKeyInfo key = Console.ReadKey(intercept: true);
+
+            if (key.Key == ConsoleKey.Enter)
+            {
+                Console.WriteLine();
+                return buffer.ToString();
+            }
+
+            if (key.Key == ConsoleKey.Backspace)
+            {
+                if (buffer.Length > 0)
+                {
+                    buffer.Length--;
+                    Console.Write("\b \b");
+                }
+
+                continue;
+            }
+
+            if (!char.IsControl(key.KeyChar))
+            {
+                buffer.Append(key.KeyChar);
+                Console.Write('*');
+            }
         }
     }
 

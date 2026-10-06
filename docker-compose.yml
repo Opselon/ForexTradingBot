@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   ########################################
   # Your .NET Web API Application Service
@@ -13,7 +11,8 @@ services:
       - "8080:80"
     environment:
       # --- Database Connection (Using PostgreSQL) ---
-      - ConnectionStrings__DefaultConnection=Host=postgres-db;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};Include Error Detail=true
+      - FOREXBOT_VAULT_DIRECTORY=/app/data/vault
+      - ConnectionStrings__DefaultConnection=Host=postgres-db;Port=5432;Database=${POSTGRES_DB:-forexbotdb};Username=${POSTGRES_USER:-forexbot};Password=${POSTGRES_PASSWORD};Include Error Detail=true
       # - ConnectionStrings__DefaultConnection_SQLSERVER=Server=db,1433;Database=${DB_DATABASE_NAME};User Id=sa;Password=${DB_SA_PASSWORD};TrustServerCertificate=True
 
       # --- Redis Connection ---
@@ -41,11 +40,12 @@ services:
     volumes:
       - telegram_session_data:/app/sessions # For ApiUserClient session files
       - log_data_webapi:/app/logs # Specific logs for WebAPI
+      - app_data:/app/data # Persistent local application state and encrypted secret vault
     depends_on:
       postgres-db:
         condition: service_healthy # Wait for postgres to be healthy
       redis:
-        condition: service_started # Redis doesn't have a healthcheck in this config, so wait for start
+        condition: service_healthy
     restart: unless-stopped
     networks:
       - forex-bot-network
@@ -160,10 +160,13 @@ services:
       - redis_data:/data
     networks:
       - forex-bot-network
-    # ✅✅ THIS IS THE FIX ✅✅
-    # Map port 6379 on your Windows machine (the host) to port 6379 inside the container.
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
   #######################################
   # ✅✅ NEW: PostgreSQL Database Service ✅✅
   #######################################
@@ -173,9 +176,9 @@ services:
     restart: always
     environment:
       # These variables are read from your .env file
-      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_USER=${POSTGRES_USER:-forexbot}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_DB=${POSTGRES_DB:-forexbotdb}
     volumes:
       # This persists the PostgreSQL data, so you don't lose it on restart
       - postgres_data:/var/lib/postgresql/data
@@ -205,3 +208,4 @@ volumes:
   log_data_telegrampanel: # Logs for TelegramPanel service
   log_data_backgroundtasks: # Logs for BackgroundTasks service
   redis_data: # For Redis data persistence
+  app_data: # Persistent local application state and encrypted secret vault

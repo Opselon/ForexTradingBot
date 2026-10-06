@@ -1,4 +1,5 @@
 ﻿using Application.Common.Interfaces; // فرض بر این است که ITelegramUserApiClient اینجا تعریف شده
+using Infrastructure.Settings;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -29,16 +30,28 @@ namespace Infrastructure.Services
         /// </summary>
         private const double RetryBackoffFactor = 2.0;
 
+        private readonly TelegramUserApiSettings _settings;
+
         public TelegramUserApiInitializationService(
             ILogger<TelegramUserApiInitializationService> logger,
-            ITelegramUserApiClient userApiClient)
+            ITelegramUserApiClient userApiClient,
+            Microsoft.Extensions.Options.IOptions<TelegramUserApiSettings> settingsOptions)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _userApiClient = userApiClient ?? throw new ArgumentNullException(nameof(userApiClient));
+            _settings = settingsOptions?.Value ?? new TelegramUserApiSettings();
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
+            // نصب تازه‌ی end-user هنوز api_id/api_hash ندارد: نباید کل هاست را متوقف کند.
+            if (_settings.ApiId <= 0 || string.IsNullOrWhiteSpace(_settings.ApiHash))
+            {
+                _logger.LogWarning(
+                    "TelegramUserApi: ApiId/ApiHash not configured. Skipping Telegram User API initialization; the rest of the application runs normally.");
+                return;
+            }
+
             #region Variables for Retry Logic
             // شمارنده برای تعداد تلاش‌های انجام شده
             int attemptCount = 0;
@@ -88,10 +101,9 @@ namespace Infrastructure.Services
                     // بررسی اینکه آیا تعداد تلاش‌های مجاز به پایان رسیده است.
                     if (attemptCount > MaxConnectionRetries)
                     {
-                        _logger.LogCritical(ex, "Exhausted all {MaxAttemptsPlusOne} connection attempts. Telegram User API client could not be initialized. The application startup might fail as designed for critical dependencies.", MaxConnectionRetries + 1);
-                        // پس از اتمام تمام تلاش‌ها، استثنای آخر را مجدداً پرتاب می‌کنیم.
-                        // این باعث می‌شود که اگر این سرویس برای شروع برنامه حیاتی باشد، برنامه با خطا مواجه شده و متوقف شود (Fail-Fast).
-                        throw;
+                        _logger.LogCritical(ex, "Exhausted all {MaxAttemptsPlusOne} connection attempts. Telegram User API client could not be initialized. Telegram features stay disabled; the application itself keeps running (Fail-Soft).", MaxConnectionRetries + 1);
+                        // نباید هاست را متوقف کند: بقیه‌ی سرویس‌ها (API، صف، دیتابیس) بدون تلگرام کار می‌کنند.
+                        return;
                     }
 
                     // اگر توکن توقف درخواست شده باشد، از ادامه تلاش‌ها صرف‌نظر می‌کنیم.

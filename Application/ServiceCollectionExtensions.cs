@@ -9,6 +9,7 @@ using FluentValidation;                     // برای services.AddValidatorsFr
 using Microsoft.Extensions.DependencyInjection; // برای IServiceCollection و متدهای توسعه‌دهنده DI
 using Microsoft.Extensions.Logging;         // برای ILogger (مثلاً در DummyNotificationService)
 using System.Reflection;                    // برای Assembly.GetExecutingAssembly()
+using AutoMapper;                           // برای MapperConfiguration (AutoMapper 13+ بدون DI extensions)
 #endregion
 
 namespace Application // ✅ Namespace ریشه پروژه Application
@@ -33,7 +34,17 @@ namespace Application // ✅ Namespace ریشه پروژه Application
             // Assembly.GetExecutingAssembly() باعث می‌شود AutoMapper تمام کلاس‌هایی را که از Profile ارث‌بری می‌کنند
             // در اسمبلی فعلی (Application) پیدا و پروفایل‌های مپینگ آن‌ها را رجیستر کند.
             // پیش‌نیاز: باید یک یا چند کلاس MappingProfile در Application/Common/Mappings/ داشته باشید.
-            services.AddAutoMapper(Assembly.GetExecutingAssembly());
+            // AutoMapper 13+ (Lucky Penny fork) removed the DI extensions package.
+            // We register IMapper manually: a MapperConfiguration that scans every
+            // Profile in the Application assembly, exposed as Singleton IMapper.
+            // (AutoMapper 13+ ctor also requires an ILoggerFactory — pass Null one.)
+            services.AddSingleton(cfg =>
+            {
+                var mapperConfig = new MapperConfiguration(
+                    mc => mc.AddMaps(typeof(Application.Common.Mappings.MappingProfile).Assembly),
+                    Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance);
+                return mapperConfig.CreateMapper();
+            });
             // Comment: Registers AutoMapper profiles from the current assembly (Application layer).
 
             // ------------------- ۲. رجیستر کردن FluentValidation -------------------

@@ -1,0 +1,236 @@
+name: Release
+
+# Builds, packages and publishes a new release whenever a tag like v1.2.3 is pushed:
+#   git tag v1.0.0 && git push origin v1.0.0
+#
+# Produces:
+#   * Cross-platform publish archives (linux-x64, win-x64, osx-arm64) attached to the GitHub Release
+#   * Docker image published to GitHub Container Registry (ghcr.io/<owner>/<repo>:<tag> and :latest)
+#   * Release notes assembled from commits since the previous tag
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to create/publish (e.g. v1.0.0)"
+        required: true
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  validate:
+    name: Validate & test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+          cache: true
+          cache-dependency-path: "**/*.csproj"
+
+      - name: Resolve version
+        id: version
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          if [[ "$TAG" != v* ]]; then echo "::error::Tag must look like v1.2.3 (got: $TAG)"; exit 1; fi
+          VERSION="${TAG#v}"
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Invalid semver: $VERSION"; exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Resolved release version: $VERSION"
+
+      - name: Restore & build
+        run: |
+          dotnet restore ForexTradingBot.sln
+          dotnet build ForexTradingBot.sln -c Release --no-restore -p:Version=${{ steps.version.outputs.version }}
+
+      - name: Test
+        run: dotnet test ForexTradingBot.sln -c Release --no-build
+
+      - name: Validate installer scripts
+        run: |
+          bash -n install.sh
+          echo "install.sh syntax OK"
+          test -f install.ps1 || { echo "::error::install.ps1 missing"; exit 1; }
+
+      - name: Validate compose file
+        run: |
+          cp .env.example .env
+          echo "POSTGRES_PASSWORD=release-check" >> .env
+          docker compose config --quiet
+          echo "docker-compose.yml OK"
+
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+
+  publish-archives:
+    name: Publish ${{ matrix.rid }}
+    runs-on: ubuntu-latest
+    needs: validate
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: linux-x64
+            ext: tar.gz
+          - rid: win-x64
+            ext: zip
+          - rid: osx-arm64
+            ext: tar.gz
+          - rid: osx-x64
+            ext: tar.gz
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Publish self-contained
+        run: |
+          dotnet publish WebAPI/WebAPI.csproj \
+            -c Release \
+            -r ${{ matrix.rid }} \
+            --self-contained true \
+            -p:PublishSingleFile=false \
+            -p:Version=${{ needs.validate.outputs.version }} \
+            -p:ErrorOnDuplicatePublishOutputFiles=false \
+            -o publish/${{ matrix.rid }}
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          NAME="ForexTradingBot-${{ needs.validate.outputs.version }}-${{ matrix.rid }}"
+          mkdir -p dist
+          cp install.sh install.ps1 README.md publish/${{ matrix.rid }}/ 2>/dev/null || true
+          if [ "${{ matrix.ext }}" = "zip" ]; then
+            cd publish && zip -qr "../dist/${NAME}.zip" "${{ matrix.rid }}" && cd ..
+          else
+            tar -czf "dist/${NAME}.tar.gz" -C publish "${{ matrix.rid }}"
+          fi
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ matrix.rid }}
+          path: dist/*
+          retention-days: 30
+
+  docker:
+    name: Docker image
+    runs-on: ubuntu-latest
+    needs: validate
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+
+      - name: Build & push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  github-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [validate, publish-archives, docker]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Gather notes
+        id: notes
+        run: |
+          TAG="${{ needs.validate.outputs.tag }}"
+          PREV=$(git tag --list 'v*' --sort=-v:refname | grep -v "^${TAG}$" | head -1 || true)
+          {
+            echo "body<<NOTES_EOF"
+            echo "## ForexTradingBot $TAG"
+            echo
+            echo "### Install (one command)"
+            echo
+            echo '```bash'
+            echo "# Docker (PostgreSQL + Redis + API, fully automated)"
+            echo "curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | bash"
+            echo '```'
+            echo
+            echo '```powershell'
+            echo "# Windows (PowerShell) — normal install, first startup asks for the database"
+            echo "irm https://raw.githubusercontent.com/${{ github.repository }}/main/install.ps1 | iex"
+            echo '```'
+            echo
+            if [ -n "$PREV" ]; then
+              echo "### Changes since $PREV"
+              echo
+              git log --pretty='- %s (%an)' "$PREV..$TAG"
+            else
+              echo "### Changes"
+              echo
+              git log --pretty='- %s (%an)' "$TAG"
+            fi
+            echo
+            echo "### Docker image"
+            echo
+            echo '```bash'
+            echo "docker pull ghcr.io/${{ github.repository }}:${{ needs.validate.outputs.version }}"
+            echo '```'
+            echo "NOTES_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.validate.outputs.tag }}
+          name: ForexTradingBot ${{ needs.validate.outputs.tag }}
+          body: ${{ steps.notes.outputs.body }}
+          files: dist/*
+          fail_on_unmatched_files: false
+          generate_release_notes: true

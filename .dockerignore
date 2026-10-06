@@ -1,0 +1,33 @@
+# Build artifacts — must never overwrite container restore output
+**/bin/
+**/obj/
+
+# VCS
+.git/
+.gitignore
+
+# Local environment secrets
+.env
+.env.*
+!.env.example
+
+# Docker files themselves
+Dockerfile
+Dockerfile.*
+docker-compose*.yml
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+
+# Node (if present)
+node_modules/
+
+# Docs & misc artifacts (not needed to build)
+docs/
+*.md
+!README.md
+.tmp.driveupload/
+artifacts/
+*.log

@@ -38,6 +38,13 @@ namespace TelegramPanel.Infrastructure
             User? me = null; // برای نگهداری اطلاعات ربات
 
             #region Bot Information Retrieval
+            if (string.IsNullOrWhiteSpace(_settings.BotToken))
+            {
+                _logger.LogWarning(
+                    "TelegramPanel:BotToken is not configured — skipping bot startup immediately (no network call). Set the token and restart to enable the panel.");
+                return;
+            }
+
             try
             {
                 _logger.LogInformation("Attempting to connect to Telegram and get bot information...");

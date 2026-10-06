@@ -59,9 +59,10 @@ services:
       - forexbot-network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d forexbotdb"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 12
+      start_period: 60s
     mem_limit: 2g
     mem_reservation: 512m
     cpus: 2.0

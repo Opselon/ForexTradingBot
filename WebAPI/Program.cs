@@ -14,8 +14,9 @@ using BackgroundTasks;                    // برای متد توسعه‌دهن
 using Hangfire;                             // برای پیکربندی‌های Hangfire مانند CompatibilityLevel, RecurringJob, Cron
 using Hangfire.Dashboard;                   // برای DashboardOptions, IDashboardAuthorizationFilter
 using Hangfire.MemoryStorage;             // برای UseMemoryStorage (Storage پیش‌فرض برای توسعه)
-// using Hangfire.SqlServer;              // اگر از SQL Server برای Hangfire استفاده می‌کنید
+using Hangfire.PostgreSql;                // PostgreSQL storage for Hangfire
 using Infrastructure;                     // برای متد توسعه‌دهنده AddInfrastructureServices
+using WebAPI.Setup;                        // Wizard اولین اجرا (FirstRunSetup)
 using Infrastructure.Services;
 using Infrastructure.Settings;
 using EFCore.AutomaticMigrations;
@@ -45,7 +46,29 @@ try
     Log.Information("--------------------------------------------------");
 
     var builder = WebApplication.CreateBuilder(args);
-       
+
+    #region First-Run Setup (Wizard انتخاب پایگاه داده)
+    // اگر DatabaseProvider/ConnectionString از قبل تنظیم نشده باشد (env یا appsettings.Local.json)،
+    // در اولین اجرا از کاربر پرسیده می‌شود و انتخاب در appsettings.Local.json ذخیره می‌گردد.
+    if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DatabaseProvider")))
+    {
+        builder.Configuration.AddLocalSettings(AppContext.BaseDirectory);
+    }
+
+    if (FirstRunSetup.NeedsSetup(builder.Configuration))
+    {
+        var (setupProvider, setupConnectionString) = FirstRunSetup.Run(builder.Configuration);
+        FirstRunSetup.Persist(setupProvider, setupConnectionString, AppContext.BaseDirectory);
+        builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["DatabaseProvider"] = setupProvider,
+            ["ConnectionStrings:DefaultConnection"] = setupConnectionString,
+        });
+        Log.Information(
+            "First-run setup completed. DatabaseProvider={Provider}, ConnectionString source={Source}.",
+            setupProvider, "interactive-or-default");
+    }
+    #endregion
 
     #region Configure Serilog Logging
     // ------------------- ۱. پیکربندی Serilog با تنظیمات از appsettings.json -------------------
@@ -200,13 +223,22 @@ try
 
     #region Configure Hangfire
     // ------------------- ۵. پیکربندی Hangfire برای اجرای کارهای پس‌زمینه -------------------
-    builder.Services.AddHangfire(config => config
-        .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
-        .UseSimpleAssemblyNameTypeSerializer()
-        .UseRecommendedSerializerSettings()
-        .UseSqlServerStorage(builder.Configuration.GetConnectionString("DefaultConnection")));
+    // Storage متناسب با پایگاه داده انتخاب می‌شود: SqlServer / Postgres / Sqlite
+    var dbProvider = Infrastructure.Data.DatabaseProviderConfigurator.Normalize(
+        builder.Configuration["DatabaseProvider"]);
+    var dbConnectionString = builder.Configuration.GetConnectionString("DefaultConnection")
+        ?? throw new InvalidOperationException("DefaultConnection is not configured.");
+
+    builder.Services.AddHangfire(config =>
+    {
+        config.SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+              .UseSimpleAssemblyNameTypeSerializer()
+              .UseRecommendedSerializerSettings();
+        Infrastructure.Data.DatabaseProviderConfigurator.ConfigureHangfireStorage(
+            config, dbProvider, dbConnectionString);
+    });
     builder.Services.AddHangfireServer();
-    Log.Information("Hangfire services (with SQL Server for production) added.");
+    Log.Information("Hangfire services added (storage: {StorageProvider}).", dbProvider);
     builder.Services.Configure<List<Infrastructure.Settings.ForwardingRule>>( // <<< Fully qualified
       builder.Configuration.GetSection("ForwardingRules"));
     builder.Services.AddScoped<IActualTelegramMessageActions, ActualTelegramMessageActions>();
@@ -311,11 +343,51 @@ try
     var urls = builder.Configuration["Urls"] ?? "https://localhost:5001;http://localhost:5000";
     var firstUrl = urls.Split(';')[0].Trim();
     
+    // ------------------- سلامت‌سنجی: /health (برای Docker healthcheck) -------------------
+    app.MapGet("/health", () => Results.Ok(new { status = "healthy", time = DateTime.UtcNow }));
+
     using (var scope = app.Services.CreateScope())
     {
-        var orchestrator = scope.ServiceProvider.GetRequiredService<UserApiForwardingOrchestrator>();
-        // Use orchestrator if needed
+        // اورکستریتورِ Forwarding اختیاری است: خطای راه‌اندازی آن (مثلاً تنظیمات
+        // ناقص تلگرام یا فایل session نامعتبر) نباید مانع بالا آمدن سرویس شود.
+        try
+        {
+            _ = scope.ServiceProvider.GetRequiredService<UserApiForwardingOrchestrator>();
+        }
+        catch (Exception orchEx)
+        {
+            programLogger.LogWarning(orchEx,
+                "Forwarding orchestrator could not be initialized (non-fatal). Telegram features may be disabled until configuration is fixed.");
+        }
     }
+
+    // ------------------- ساخت دیتابیس و اسکیما در صورت نبود (Multi-DB) -------------------
+    try
+    {
+        using (var scope = app.Services.CreateScope())
+        {
+            var cfg = scope.ServiceProvider.GetRequiredService<IConfiguration>();
+            var schemaProvider = Infrastructure.Data.DatabaseProviderConfigurator.Normalize(cfg["DatabaseProvider"]);
+            var schemaCs = cfg.GetConnectionString("DefaultConnection")
+                ?? throw new InvalidOperationException("DefaultConnection is not configured.");
+
+            await Infrastructure.Data.DatabaseProviderConfigurator.EnsureDatabaseExistsAsync(schemaProvider, schemaCs);
+
+            var dbContext = scope.ServiceProvider.GetRequiredService<Infrastructure.Data.AppDbContext>();
+            var created = await Infrastructure.Data.DatabaseProviderConfigurator.EnsureSchemaAsync(dbContext, schemaProvider);
+            programLogger.LogInformation(
+                created
+                    ? "Database schema created successfully for provider: {Provider}"
+                    : "Database schema already exists for provider: {Provider}",
+                schemaProvider);
+        }
+    }
+    catch (Exception dbEx)
+    {
+        programLogger.LogCritical(dbEx, "Database initialization failed. Application cannot continue safely.");
+        throw;
+    }
+
     app.Run(); //  شروع به گوش دادن به درخواست‌های HTTP و اجرای برنامه
     #endregion
 }

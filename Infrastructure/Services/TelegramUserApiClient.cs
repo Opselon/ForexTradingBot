@@ -64,7 +64,29 @@ namespace Infrastructure.Services
             };
 
             // Create new client instance
-            _client = new WTelegram.Client(ConfigProvider);
+            // نصب تازه‌ی end-user ممکن است api_hash نداشته باشد یا فایل session خراب/ناقص باشد:
+            // نباید کل برنامه را از کار بیندازد (Fail-Soft). سرویس تلگرام بعداً با تنظیم درست بالا می‌آید.
+            try
+            {
+                var sessionPath = Path.Combine(AppContext.BaseDirectory, _settings.SessionPath ?? "telegram_user.session");
+                if (File.Exists(sessionPath) && new FileInfo(sessionPath).Length == 0)
+                {
+                    File.Delete(sessionPath);
+                    _logger.LogWarning("[TELEGRAM_USER_API] Empty/corrupt session file was deleted: {Path}", sessionPath);
+                }
+
+                _client = new WTelegram.Client(ConfigProvider);
+            }
+            catch (Exception ex)
+            {
+                _client = null;
+                _logger.LogError(ex,
+                    "[TELEGRAM_USER_API] Telegram client could not be created (api_id/api_hash missing or invalid session). " +
+                    "Telegram features stay disabled until configured. Continuing without Telegram.");
+            }
+
+            if (_client == null) return;
+
             _client.OnUpdates += async updates =>
             {
                 _logger.LogCritical("[USER_API_ON_UPDATES_TRIGGERED] Raw updates object of type: {UpdateType} from WTelegram.Client", updates.GetType().FullName);

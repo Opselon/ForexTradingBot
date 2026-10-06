@@ -10,7 +10,7 @@ using Microsoft.EntityFrameworkCore;      // EF Core
 using Microsoft.Extensions.Configuration; // IConfiguration
 using Microsoft.Extensions.DependencyInjection; // IServiceCollection
 using Hangfire;
-using Hangfire.SqlServer;
+using Hangfire.PostgreSql;
 
 namespace Infrastructure
 {
@@ -40,54 +40,18 @@ namespace Infrastructure
                 ?? throw new InvalidOperationException(
                     "DefaultConnection is not configured.");
 
-            // 3. پیکربندی DbContext بر اساس Provider
-            switch (dbProvider)
-            {
-                case "sqlserver":
-                    services.AddDbContext<AppDbContext>(opts =>
-                        opts.UseSqlServer(connectionString, sql =>
-                        {
-                            // مشخص کردن اسمبلی حاوی Migrationها
-                            sql.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName);
-                            // فعال کردن retry برای افزایش پایداری
-                            sql.EnableRetryOnFailure(
-                                maxRetryCount: 5,
-                                maxRetryDelay: TimeSpan.FromSeconds(30),
-                                errorNumbersToAdd: null);
-                        }));
-                    break;
-
-                case "postgres":
-                case "postgresql":
-                    services.AddDbContext<AppDbContext>(opts =>
-                        opts.UseNpgsql(connectionString, npgsql =>
-                        {
-                            npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName);
-                            npgsql.EnableRetryOnFailure(
-                                maxRetryCount: 5,
-                                maxRetryDelay: TimeSpan.FromSeconds(30),
-                                errorCodesToAdd: null);
-                        }));
-                    break;
-
-                default:
-                    throw new NotSupportedException(
-                        $"Unsupported DatabaseProvider: '{dbProvider}'.");
-            }
+            // 3. پیکربندی DbContext بر اساس Provider (SqlServer / Postgres / Sqlite)
+            //     منطق انتخاب در DatabaseProviderConfigurator متمرکز و تست‌پذیر است.
+            var provider = DatabaseProviderConfigurator.Normalize(dbProvider);
+            services.AddDbContext<AppDbContext>(opts =>
+                DatabaseProviderConfigurator.ConfigureDbContext(opts, provider, connectionString));
 
             // 4. رجیستر IAppDbContext برای استفاده در لایه Application
             services.AddScoped<IAppDbContext>(
                 sp => sp.GetRequiredService<AppDbContext>());
 
-            // Add Hangfire services
-            services.AddHangfire(config => config
-                .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
-                .UseSimpleAssemblyNameTypeSerializer()
-                .UseRecommendedSerializerSettings()
-                .UseSqlServerStorage(connectionString));
-
-            // Add the processing server as IHostedService
-            services.AddHangfireServer();
+            // توجه: پیکربندی Hangfire (storage متناسب با Provider + HangfireServer)
+            // به‌صورت متمرکز در WebAPI/Program.cs انجام می‌شود تا از ثبت تکراری جلوگیری شود.
 
 
 

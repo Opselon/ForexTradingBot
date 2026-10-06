@@ -36,7 +36,13 @@ namespace TelegramPanel.Extensions
                 var settings = serviceProvider.GetRequiredService<IOptions<TelegramPanelSettings>>().Value;
                 if (string.IsNullOrWhiteSpace(settings.BotToken))
                 {
-                    throw new ArgumentNullException(nameof(settings.BotToken), "TelegramPanel: Bot Token is not configured.");
+                    // Fail-Soft: نصب تازه هنوز توکن ندارد؛ نباید کل سرویس را از کار بیندازد.
+                    // TelegramBotService با GetMe ناموفق، پنل ربات را غیرفعال می‌کند و بقیه‌ی سرویس‌ها بالا می‌مانند.
+                    var logger = serviceProvider.GetService<Microsoft.Extensions.Logging.ILoggerFactory>()
+                        ?.CreateLogger("TelegramPanel");
+                    Microsoft.Extensions.Logging.LoggerExtensions.LogWarning(logger,
+                        "TelegramPanel: Bot Token is not configured. The bot panel stays disabled until a token is provided (TelegramPanel:BotToken).");
+                    return new TelegramBotClient("0:000000000000000000000000000000000");
                 }
                 return new TelegramBotClient(settings.BotToken);
             });

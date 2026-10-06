@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+          cache: true
+          cache-dependency-path: "**/*.csproj"
+
+      - name: Restore
+        run: dotnet restore ForexTradingBot.sln
+
+      - name: Build
+        run: dotnet build ForexTradingBot.sln -c Release --no-restore
+
+      - name: Test
+        run: dotnet test ForexTradingBot.sln -c Release --no-build --logger "trx;LogFileName=test-results.trx" --results-directory TestResults
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: TestResults
+          retention-days: 14
+
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: build-and-test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: forexbot:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test — Postgres + Redis + API /health
+        run: |
+          set -euo pipefail
+          cat > .env <<'EOF'
+          POSTGRES_PASSWORD=ci-smoke-password
+          TELEGRAM_BOT_TOKEN=
+          EOF
+          docker compose up -d
+          echo "Waiting for API health..."
+          for i in $(seq 1 60); do
+            if curl -fsS -m 3 http://localhost:8080/health 2>/dev/null | grep -q healthy; then
+              echo "API healthy after ${i} checks"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::API never became healthy"
+          docker compose logs forex-api | tail -100
+          exit 1
+
+      - name: Smoke test — SQLite variant
+        if: always()
+        run: |
+          set -euo pipefail
+          docker compose down -v
+          docker run -d --name smoke-sqlite \
+            -e DatabaseProvider=Sqlite \
+            -e 'ConnectionStrings__DefaultConnection=Data Source=/tmp/forexbot.db' \
+            -p 8081:8080 forexbot:ci
+          for i in $(seq 1 40); do
+            if curl -fsS -m 3 http://localhost:8081/health 2>/dev/null | grep -q healthy; then
+              echo "SQLite variant healthy after ${i} checks"
+              docker rm -f smoke-sqlite
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::SQLite variant never became healthy"
+          docker logs smoke-sqlite | tail -100
+          docker rm -f smoke-sqlite || true
+          exit 1
+
+      - name: Cleanup
+        if: always()
+        run: docker compose down -v 2>/dev/null || true

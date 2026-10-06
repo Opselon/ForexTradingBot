@@ -158,7 +158,9 @@ jobs:
         run: dotnet restore ForexTradingBot.sln
       - name: Restore E2E project
         run: dotnet restore tests/e2e/ForexTradingBot.EndToEnd.csproj
-      - name: Build
+      - name: Build solution
+        run: dotnet build ForexTradingBot.sln -c Release --no-restore
+      - name: Build E2E project
         run: dotnet build tests/e2e/ForexTradingBot.EndToEnd.csproj -c Release --no-restore
       - name: CLI E2E
         run: dotnet test tests/e2e/ForexTradingBot.EndToEnd.csproj -c Release --no-build --no-restore --filter "Surface=CLI" --logger "console;verbosity=normal"

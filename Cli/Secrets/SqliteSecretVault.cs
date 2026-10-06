@@ -311,7 +311,36 @@ public sealed class SqliteSecretVault : ISecretVault
         if (string.IsNullOrWhiteSpace(profile))
             profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
-        return Path.Combine(profile, "ForexTradingBot");
+        var primary = Path.Combine(profile, "ForexTradingBot");
+
+        // In a container the content root (/app) is read-only at runtime, so the
+        // LocalApplicationData path (which resolves there) cannot hold the key file.
+        // Fall back to a directory the image marks as writable instead of crashing.
+        return IsWritable(primary) ? primary : ContainerVaultDirectory();
+    }
+
+    private static bool IsWritable(string path)
+    {
+        try
+        {
+            Directory.CreateDirectory(path);
+            var probe = Path.Combine(path, $".write-probe-{Guid.NewGuid():N}");
+            using (File.OpenWrite(probe)) { }
+            try { File.Delete(probe); } catch { /* probe cleanup is best-effort */ }
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string ContainerVaultDirectory()
+    {
+        // Matches the writable volume the Dockerfile provisions for runtime state.
+        var dataDir = Path.Combine(AppContext.BaseDirectory, "data");
+        try { Directory.CreateDirectory(dataDir); } catch { /* created lazily below */ }
+        return dataDir;
     }
 
     private string DecryptWithMigrationSupport(string ciphertext)

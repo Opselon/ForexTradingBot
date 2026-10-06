@@ -49,7 +49,7 @@ public sealed class SecretsController : ControllerBase
             return NotFound(new { error = $"No secret named '{key}' exists." });
         }
 
-        _logger.LogInformation("Secret '{Key}' revealed by {User} from {IP}", key, User.Identity?.Name ?? "unknown", HttpContext.Connection.RemoteIpAddress);
+        _logger.LogInformation("Secret reveal operation completed.");
         return Ok(new { key, value });
     }
 
@@ -62,7 +62,7 @@ public sealed class SecretsController : ControllerBase
         }
 
         _vault.Set(key, request.Value, request.Category, request.Description);
-        _logger.LogInformation("Secret '{Key}' stored/updated by {User}", key, User.Identity?.Name ?? "unknown");
+        _logger.LogInformation("Secret store/update operation completed.");
         return NoContent();
     }
 
@@ -70,7 +70,7 @@ public sealed class SecretsController : ControllerBase
     public IActionResult Delete(string key)
     {
         var removed = _vault.Delete(key);
-        _logger.LogInformation("Secret '{Key}' deleted by {User}", key, User.Identity?.Name ?? "unknown");
+        _logger.LogInformation("Secret delete operation completed.");
         return removed ? NoContent() : NotFound(new { error = $"No secret named '{key}' exists." });
     }
 
@@ -79,7 +79,7 @@ public sealed class SecretsController : ControllerBase
     public IActionResult Rotate()
     {
         _vault.Rotate();
-        _logger.LogInformation("Secret vault rotated by {User}", User.Identity?.Name ?? "unknown");
+        _logger.LogInformation("Secret vault rotation completed.");
         return Ok(new { rotated = _vault.List().Count });
     }
 

@@ -19,6 +19,7 @@
     <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="9.0.3" />
     <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="9.0.3" />
     <PackageReference Include="Npgsql" Version="9.0.2" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="9.0.20" />
   </ItemGroup>
 
 </Project>

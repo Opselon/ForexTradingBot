@@ -8,6 +8,34 @@ using Xunit;
 
 namespace ForexTradingBot.EndToEnd;
 
+public sealed class CrossPlatformRuntimeE2ETests
+{
+    [Fact]
+    [Trait("Category","EndToEnd")]
+    [Trait("Surface","CrossPlatform")]
+    public void Runtime_paths_and_environment_are_platform_safe()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), "forexbot-cross-platform-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(temp);
+        try
+        {
+            Assert.True(Path.IsPathFullyQualified(temp));
+            Assert.Equal(temp, Path.GetFullPath(temp));
+            var nested = Path.Combine(temp, "vault", "secrets");
+            Directory.CreateDirectory(nested);
+            File.WriteAllText(Path.Combine(nested, "marker.txt"), "ok");
+            Assert.Equal("ok", File.ReadAllText(Path.Combine(nested, "marker.txt")));
+            Assert.NotEqual(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            Assert.False(string.IsNullOrWhiteSpace(Environment.OSVersion.Platform.ToString()));
+            Assert.False(string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("PATH")));
+        }
+        finally
+        {
+            if (Directory.Exists(temp)) Directory.Delete(temp, true);
+        }
+    }
+}
+
 public sealed class EndUserE2ETests
 {
     private readonly string _root;

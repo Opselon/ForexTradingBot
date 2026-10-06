@@ -111,7 +111,7 @@ public sealed class EndUserE2ETests
             var wrongPasswordResponse = await PostJsonAsync(
                 wrongPasswordClient,
                 "/api/auth/login",
-                new { username = "admin", ["pass" + "word"] = "definitely-wrong-" + Guid.NewGuid().ToString("N") });
+                new Dictionary<string, string> { ["username"] = "admin", ["pass" + "word"] = "definitely-wrong-" + Guid.NewGuid().ToString("N") });
             Assert.Equal(HttpStatusCode.Unauthorized, wrongPasswordResponse.StatusCode);
 
             var loginResponse = await PostJsonAsync(client, "/api/auth/login", loginPayload);

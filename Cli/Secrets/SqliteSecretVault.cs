@@ -251,11 +251,33 @@ public sealed class SqliteSecretVault : ISecretVault
             }
 
             backupConnection.Close();
-            File.Move(temp, destination, overwrite: true);
+            MoveWithRetry(temp, destination);
         }
         finally
         {
             try { File.Delete(temp); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// Windows (and antivirus/indexing services) can hold a freshly closed file for a
+    /// moment, and File.Move fails with a sharing violation when that happens. Retry
+    /// briefly rather than surfacing a transient lock as a permanent backup failure.
+    /// </summary>
+    private static void MoveWithRetry(string source, string destination)
+    {
+        const int attempts = 10;
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                File.Move(source, destination, overwrite: true);
+                return;
+            }
+            catch (IOException) when (attempt < attempts - 1)
+            {
+                Thread.Sleep(100);
+            }
         }
     }
 

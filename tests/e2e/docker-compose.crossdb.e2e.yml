@@ -31,6 +31,8 @@ services:
       DatabaseSettings__DatabaseProvider: postgres
       ConnectionStrings__DefaultConnection: Host=postgres;Port=5432;Database=forexbotdb;Username=forexbot;Password=crossdb-password
       ConnectionStrings__Redis: redis:6379,abortConnect=false
+      Admin__Username: admin
+      Admin__Password: ""
       TelegramPanel__BotToken: ""
       CryptoPay__ApiToken: ""
     depends_on:
@@ -49,6 +51,8 @@ services:
       FOREXBOT_VAULT_DIRECTORY: /app/data/vault
       DatabaseSettings__DatabaseProvider: sqlite
       ConnectionStrings__DefaultConnection: Data Source=/app/data/crossdb.sqlite
+      Admin__Username: admin
+      Admin__Password: ""
       TelegramPanel__BotToken: ""
       CryptoPay__ApiToken: ""
     ports: ["18181:80"]

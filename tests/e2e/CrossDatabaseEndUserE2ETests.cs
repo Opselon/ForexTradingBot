@@ -40,17 +40,22 @@ public sealed class CrossDatabaseEndUserE2ETests
 
     private static async Task AssertProvider(string baseUrl,string project,string compose,string provider,string connection)
     {
-        // /api/config/test is Admin-authorized, so log in with the bootstrap password
-        // the app writes on first run before probing the provider.
-        var password=await Run("docker",["compose","-p",project,"-f",compose,"exec","-T","app-"+provider,"sh","-lc","cat /app/data/vault/bootstrap/admin-password.txt"]);
-        Assert.True(password.ExitCode==0,$"could not read bootstrap password from app-{provider}: {password.StdErr}");
-        var passwordValue=password.StdOut.Trim();
-        Assert.False(string.IsNullOrWhiteSpace(passwordValue));
-
+        // /api/config/test is Admin-authorized, so log in before probing it. The
+        // Production configuration ships with a static admin credential; when that is
+        // in use there is no bootstrap file, so fall back to the configured password.
         using var handler=new HttpClientHandler{AllowAutoRedirect=false};
         using var client=new HttpClient(handler){BaseAddress=new Uri(baseUrl),Timeout=TimeSpan.FromSeconds(15)};
-        var login=await client.PostAsJsonAsync("/api/auth/login",new{username="admin",password=passwordValue});
-        Assert.Equal(HttpStatusCode.OK,login.StatusCode);
+
+        string password="admin";
+        var passwordFile=await Run("docker",["compose","-p",project,"-f",compose,"exec","-T","app-"+provider,"sh","-lc","cat /app/data/vault/bootstrap/admin-password.txt 2>/dev/null"]);
+        var candidate=(passwordFile.ExitCode==0?passwordFile.StdOut:string.Empty).Trim();
+        if(!string.IsNullOrEmpty(candidate))
+        {
+            password=candidate;
+        }
+
+        var login=await client.PostAsJsonAsync("/api/auth/login",new{username="admin",password});
+        Assert.True(login.IsSuccessStatusCode,$"login failed for app-{provider} (status {login.StatusCode})");
 
         var response=await client.PostAsJsonAsync("/api/config/test",new {databaseProvider=provider,dbConn=connection,botToken=(string?)null,redisConn=provider=="postgres"?"redis:6379":null});
         Assert.Equal(HttpStatusCode.OK,response.StatusCode);

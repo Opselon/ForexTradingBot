@@ -36,6 +36,9 @@ services:
       ConnectionStrings__DefaultConnection: Host=postgres;Port=5432;Database=forexbotdb;Username=forexbot;Password=e2e-postgres-password
       ConnectionStrings__Redis: redis:6379,abortConnect=false
       Admin__Username: admin
+      # Force the fresh-install path: with no password configured the app generates a
+      # one-time bootstrap credential instead of using a static default.
+      Admin__Password: ""
       TelegramPanel__BotToken: ""
       TelegramPanel__AdminUserIds: ""
       CryptoPay__ApiToken: ""

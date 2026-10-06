@@ -98,7 +98,7 @@ public sealed class CliInteractiveEndUserE2ETests
             Assert.Equal(0, setExtra.ExitCode);
 
             var backup = await RunCliAsync(vault, ["backup", backupPath]);
-            Assert.Equal(0, backup.ExitCode);
+            AssertTrue(backup.ExitCode == 0, $"backup failed (exit {backup.ExitCode}): {backup.AllOutput}");
             Assert.True(File.Exists(backupPath));
             var backupBytes = await File.ReadAllBytesAsync(backupPath);
 
@@ -556,5 +556,18 @@ public sealed class CliInteractiveEndUserE2ETests
             "Could not locate ForexTradingBot.sln from the CLI E2E test output directory.");
     }
 
-    private sealed record ProcessResult(int ExitCode, string StdOut, string StdErr);
+    private sealed record ProcessResult(int ExitCode, string StdOut, string StdErr)
+    {
+        public string AllOutput => StdOut + Environment.NewLine + StdErr;
+    }
+
+    // Assert.True with no message makes CI failures unreadable — the CLI's own
+    // output is the only evidence of why it exited badly, so attach it.
+    private static void AssertTrue(bool condition, string message)
+    {
+        if (!condition)
+        {
+            throw new Xunit.Sdk.XunitException(message);
+        }
+    }
 }

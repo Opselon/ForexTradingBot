@@ -188,10 +188,10 @@ services:
       - forex-bot-network
     ports:
       # Optional: Expose the port to your Windows machine for tools like DBeaver or pgAdmin
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     healthcheck:
       # This command checks if the database is ready to accept connections
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-forexbot} -d ${POSTGRES_DB:-forexbotdb}"]
       interval: 10s
       timeout: 5s
       retries: 5

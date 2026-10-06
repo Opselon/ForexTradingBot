@@ -179,7 +179,18 @@ public sealed class SqliteSecretVault : ISecretVault
 
     public static string DefaultVaultDirectory()
     {
+        var configured = Environment.GetEnvironmentVariable("FOREXBOT_VAULT_DIRECTORY");
+        if (!string.IsNullOrWhiteSpace(configured))
+        {
+            return Path.GetFullPath(configured);
+        }
+
         var profile = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (string.IsNullOrWhiteSpace(profile))
+        {
+            profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        }
+
         return Path.Combine(profile, "ForexTradingBot");
     }
 

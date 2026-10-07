@@ -18,6 +18,7 @@ using Infrastructure.Configuration; // For DatabaseConfigurationSource/Provider
 using Infrastructure.Data;
 using Infrastructure.ExternalServices;
 using Infrastructure.Features.Forwarding.Extensions;
+using ForexTradingBot.Cli.Secrets;
 using Infrastructure.Security; // For SettingsProtectionService
 using Infrastructure.Services;
 using Microsoft.AspNetCore.Authentication.Cookies; // Added for Cookie Authentication
@@ -117,6 +118,11 @@ try
         Log.Warning(ex, "Failed to initialize EasySetupConfigStore. Wizard settings will not be persisted and defaults/env vars will be used.");
     }
 
+    // Persisted secrets are loaded from the encrypted local vault into memory.
+    // Vault failures are fatal so a broken/locked vault cannot silently downgrade
+    // to plaintext or unexpected environment defaults.
+    SecretVaultBootstrap.Apply(builder.Configuration);
+
     // 2) Detect smoke-test mode once and reuse this flag everywhere.
     string smokeTestFlag = builder.Configuration["IsSmokeTest"] ?? "false";
     bool isSmokeTest = "true".Equals(smokeTestFlag, StringComparison.OrdinalIgnoreCase);
@@ -155,12 +161,19 @@ try
     //    - In non-interactive mode: falls back to SQLite and requires BotToken from config/env.
     await EasySetupWizard.RunAsync(builder, easySetupStore, isSmokeTest);
 
+    // The wizard can generate the admin credential (and other secrets) and persist it
+    // to the encrypted local vault, which was applied to configuration above before
+    // the wizard ran. Re-apply so freshly generated values win over the appsettings
+    // defaults, otherwise the running app would keep authenticating against a static
+    // default password that was never installed.
+    SecretVaultBootstrap.Apply(builder.Configuration);
+
 
     // --- Custom Configuration Source Registration ---
-    // This needs to happen early. We use ConfigureAppConfiguration.
-    _ = builder.Host.ConfigureAppConfiguration((hostingContext, configAppBuilder) =>
+    // This needs to happen early. We use builder.Configuration directly (the modern
+    // equivalent of ConfigureAppConfiguration, which is what ASP0013 recommends).
     {
-        IConfigurationRoot tempInitialConfig = configAppBuilder.Build();
+        IConfigurationRoot tempInitialConfig = ((IConfigurationBuilder)builder.Configuration).Build();
 
         // AI-FRIENDLY FIX: Re-check for smoke test mode. If true, skip adding the
         // database configuration source entirely. This prevents a crash when the
@@ -190,7 +203,7 @@ try
                 ? tempServices.AddDbContext<AppDbContext>(options => options.UseSqlServer(defaultConnectionString), ServiceLifetime.Singleton)
                 : tempServices.AddDbContext<AppDbContext>(options => options.UseNpgsql(defaultConnectionString), ServiceLifetime.Singleton);
 
-        string keysFolderTemp = Path.Combine(hostingContext.HostingEnvironment.ContentRootPath, "keys");
+        string keysFolderTemp = Path.Combine(builder.Environment.ContentRootPath, "keys");
         _ = Directory.CreateDirectory(keysFolderTemp);
 
         _ = tempServices.AddDataProtection()
@@ -254,9 +267,9 @@ try
             Log.Information("All defined settings registered with DynamicConfigurationService (within ConfigureAppConfiguration).");
         }
 
-        _ = configAppBuilder.Add(new DatabaseConfigurationSource(tempServices, registerSettingsAction));
-        Log.Information("DatabaseConfigurationSource added via ConfigureAppConfiguration.");
-    });
+        _ = ((IConfigurationBuilder)builder.Configuration).Add(new DatabaseConfigurationSource(tempServices, registerSettingsAction));
+        Log.Information("DatabaseConfigurationSource added via builder.Configuration.");
+    }
     // --- End of Custom Configuration Source Registration ---
 
     _ = builder.WebHost.UseKestrel();
@@ -342,9 +355,11 @@ try
     {
         // 1) Determine / prepare connection string
         string? redisConnectionString = builder.Configuration.GetConnectionString("Redis");
+        bool usingEmbeddedRedis = false;
 
         if (string.IsNullOrWhiteSpace(redisConnectionString))
         {
+            usingEmbeddedRedis = true;
             Log.Warning("Redis connection string not found. Attempting to start embedded Redis server for this session.");
 
             // Embedded Redis به عنوان HostedService بالا می‌آید
@@ -365,38 +380,45 @@ try
 
         // 2) Prepare Redis options once (no network I/O here)
         ConfigurationOptions redisOptions = ConfigurationOptions.Parse(redisConnectionString);
-        redisOptions.AbortOnConnectFail = false;
+        redisOptions.AbortOnConnectFail = !usingEmbeddedRedis;
         redisOptions.ConnectTimeout = 10000;
         redisOptions.SyncTimeout = 10000;
 
-        // 3) Register a resilient singleton that either:
-        //    - returns a real ConnectionMultiplexer, OR
-        //    - transparently falls back to in-memory implementation on failure.
+        // 3) Register Redis as a required production dependency. A configured
+        // external Redis failure must stop startup rather than silently
+        // switching to an in-memory implementation and losing distributed state.
         _ = builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
         {
-            ILogger<Program> logger = sp.GetRequiredService<ILogger<Program>>();
+            EndPoint? endpoint = redisOptions.EndPoints.FirstOrDefault();
+            Log.Information("Creating Redis ConnectionMultiplexer for {Endpoint}...", endpoint);
 
             try
             {
-                EndPoint? endpoint = redisOptions.EndPoints.FirstOrDefault();
-                logger.LogInformation("Creating Redis ConnectionMultiplexer for {Endpoint}...", endpoint);
-
                 ConnectionMultiplexer mux = ConnectionMultiplexer.Connect(redisOptions);
+                if (!usingEmbeddedRedis && !mux.IsConnected)
+                {
+                    mux.Dispose();
+                    throw new RedisConnectionException(
+                        ConnectionFailureType.UnableToConnect,
+                        "Configured Redis did not establish a connected multiplexer.");
+                }
 
-                logger.LogInformation("Redis ConnectionMultiplexer successfully created for {Endpoint}.", endpoint);
+                Log.Information("Redis ConnectionMultiplexer successfully created for {Endpoint}.", endpoint);
                 return mux;
             }
             catch (Exception ex)
             {
-                logger.LogError(ex,
-                    "Failed to create Redis ConnectionMultiplexer. Falling back to in-memory Redis (FallbackRedisService).");
+                Log.Error(ex,
+                    "Failed to create required Redis ConnectionMultiplexer for {Endpoint}. Startup will fail closed.",
+                    endpoint);
 
-                ILogger<FallbackRedisService> fallbackLogger = sp.GetRequiredService<ILogger<Infrastructure.Services.FallbackRedisService>>();
-                return new Infrastructure.Services.FallbackRedisService(fallbackLogger);
+                throw new InvalidOperationException(
+                    "Redis is configured but unavailable. Fix the Redis endpoint/credentials and restart the application.",
+                    ex);
             }
         });
 
-        Log.Information("Redis services registered. Multiplexer (or fallback) will be created on first resolution.");
+        Log.Information("Redis services registered as a required production dependency.");
     }
 
     #endregion
@@ -407,7 +429,12 @@ try
     #endregion
 
     #region AutoMapper and LoggingSanitizer (region master)
-    _ = builder.Services.AddAutoMapper(typeof(Program));
+    _ = builder.Services.AddAutoMapper(cfg =>
+    {
+        var licenseKey = Environment.GetEnvironmentVariable("AUTOMAPPER_LICENSE_KEY");
+        if (!string.IsNullOrWhiteSpace(licenseKey))
+            cfg.LicenseKey = licenseKey;
+    }, typeof(Program));
     _ = builder.Services.AddSingleton<Application.Common.Interfaces.ILoggingSanitizer, Infrastructure.Security.PiiLoggingSanitizer>();
     _ = builder.Services.AddSingleton<Shared.Security.IExceptionSanitizer, Shared.Security.ExceptionSanitizer>();
     #endregion
@@ -424,6 +451,9 @@ try
         .AddControllers()
         .AddJsonOptions(options =>
         {
+            // Accept enum members as their string names ("Api") as well as numbers.
+            // Clients send category names, and without this the binder rejects them.
+            options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
             options.JsonSerializerOptions.Converters.Add(new IntToBoolJsonConverter());
             options.JsonSerializerOptions.Converters.Add(new FlexibleDateTimeJsonConverter());
         });
@@ -435,12 +465,31 @@ try
         .AddCookie(options =>
         {
             options.Cookie.HttpOnly = true;
-            options.Cookie.SecurePolicy = builder.Environment.IsDevelopment() ? CookieSecurePolicy.SameAsRequest : CookieSecurePolicy.Always;
+            // The Docker/end-user surface is intentionally HTTP-local. Secure cookies
+            // are emitted whenever the actual request is HTTPS, while local HTTP
+            // installs remain usable without requiring a TLS terminator.
+            options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
             options.Cookie.SameSite = SameSiteMode.Strict;
             options.LoginPath = "/login.html";
             options.LogoutPath = "/api/auth/logout";
             options.ExpireTimeSpan = TimeSpan.FromMinutes(60); // Adjust as needed
             options.SlidingExpiration = true;
+
+            // Reject any cookie whose embedded security stamp no longer matches the
+            // server's, which is how a logout invalidates cookies minted before it.
+            options.Events = new CookieAuthenticationEvents
+            {
+                OnValidatePrincipal = context =>
+                {
+                    var stampClaim = context.Principal?.FindFirst(WebAPI.Security.AuthSecurityStamp.Claim);
+                    if (!WebAPI.Security.AuthSecurityStamp.IsValid(stampClaim?.Value))
+                    {
+                        context.RejectPrincipal();
+                    }
+
+                    return Task.CompletedTask;
+                }
+            };
         });
 
     // Add CORS
@@ -564,6 +613,13 @@ try
     // Register custom dynamic configuration services
     _ = builder.Services.AddSingleton<ISettingsProtectionService, SettingsProtectionService>();
     _ = builder.Services.AddSingleton<IDynamicConfigurationService, DynamicConfigurationService>();
+
+    // Local secret vault (SQLite + machine-derived AES-GCM key). Singleton so the
+    // single connection is shared; the vault file lives under LocalApplicationData.
+    _ = builder.Services.AddSingleton<ISecretCipher>(_ =>
+        new SecretCipher(
+            SecretKeyStore.LoadOrCreateKey(SqliteSecretVault.DefaultVaultDirectory())));
+    _ = builder.Services.AddSingleton<ISecretVault, SqliteSecretVault>();
 
     // Register other core infrastructure services that might be missing
     // Assuming Scoped lifetime is appropriate as they often use DbContext or HttpClientFactory.
@@ -786,31 +842,6 @@ try
                     );
 
                     Log.Information("✅ Hangfire (PostgreSQL) storage configured.");
-                    break;
-
-                    // 2. Tune the BackgroundJobServer to the machine's CPU count:
-                    int cpuCount = Environment.ProcessorCount;
-                    BackgroundJobServerOptions serverOptions = new()
-                    {
-                        // Leave one core free for OS and other processes
-                        WorkerCount = Math.Max(cpuCount - 1, 1),
-
-                        // Check server health & heartbeat every 15 seconds
-                        ServerCheckInterval = TimeSpan.FromSeconds(15),
-
-                        // Define your queues in priority order
-                        Queues = new[] { "critical", "default", "low" },
-
-                        // Name each server instance for easier monitoring
-                        ServerName = $"hangfire-{Environment.MachineName}-{Guid.NewGuid():N}"
-                    };
-                    Log.Information(
-                        "✅ Hangfire (PostgreSQL) configured: " +
-                        $"Poll={TimeSpan.FromSeconds(5)}, " +
-                        $"LockLifetime={TimeSpan.FromMinutes(10)}, " +
-                        $"LockTimeout={TimeSpan.FromSeconds(30)}, " +
-                        $"Workers={serverOptions.WorkerCount}"
-                    );
                     break;
 
                 case "sqlserver":
@@ -1165,7 +1196,9 @@ try
         _ = app.UseHttpsRedirection();
     }
 
-    _ = app.UseStaticFiles(); // Serve static files early, especially for login page
+    // Protect admin static pages before static-file middleware can serve them.
+    _ = app.UseMiddleware<AuthRedirectMiddleware>();
+    _ = app.UseStaticFiles();
 
     _ = app.UseSerilogRequestLogging(); //  لاگ کردن تمام درخواست‌های HTTP ورودی با جزئیات (توسط Serilog)
 
@@ -1174,9 +1207,6 @@ try
     // IMPORTANT: Authentication must come before Authorization
     _ = app.UseAuthentication(); // Added for Admin Dashboard authentication
     _ = app.UseAuthorization();
-
-    // Custom middleware to redirect unauthenticated users trying to access protected admin pages
-    _ = app.UseMiddleware<AuthRedirectMiddleware>();
 
     // Explicitly map the root path to handle login/dashboard redirection
     _ = app.MapGet("/", (HttpContext context) =>
@@ -1364,6 +1394,13 @@ public static class ConfigurationHelper
         string? apiId = configuration["TelegramUserApi:ApiId"];
         string? apiHash = configuration["TelegramUserApi:ApiHash"];
 
+        if ((!Environment.UserInteractive || Console.IsInputRedirected) &&
+            (string.IsNullOrEmpty(apiId) || apiId == "0" || string.IsNullOrEmpty(apiHash)))
+        {
+            Log.Information("Telegram User API setup skipped in non-interactive mode.");
+            return;
+        }
+
         if (string.IsNullOrEmpty(apiId) || apiId == "0" || string.IsNullOrEmpty(apiHash))
         {
             Console.ForegroundColor = ConsoleColor.Yellow;
@@ -1414,7 +1451,14 @@ public static class ConfigurationHelper
     {
         string? botToken = configuration["TelegramPanel:BotToken"];
 
-        if (string.IsNullOrWhiteSpace(botToken) || botToken.Contains("REPLACE"))
+        if ((!Environment.UserInteractive || Console.IsInputRedirected) &&
+            (string.IsNullOrWhiteSpace(botToken) || botToken.Contains("REPLACE", StringComparison.OrdinalIgnoreCase)))
+        {
+            Log.Information("Telegram Bot setup skipped in non-interactive mode; integration remains disabled.");
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(botToken) || botToken.Contains("REPLACE", StringComparison.OrdinalIgnoreCase))
         {
             Console.ForegroundColor = ConsoleColor.Cyan;
             Console.WriteLine("\n--- Telegram Bot Setup ---");
@@ -1449,7 +1493,14 @@ public static class ConfigurationHelper
     {
         string? apiToken = configuration["CryptoPay:ApiToken"];
 
-        if (string.IsNullOrWhiteSpace(apiToken) || apiToken.Contains("REPLACE"))
+        if ((!Environment.UserInteractive || Console.IsInputRedirected) &&
+            (string.IsNullOrWhiteSpace(apiToken) || apiToken.Contains("REPLACE", StringComparison.OrdinalIgnoreCase)))
+        {
+            Log.Information("CryptoPay setup skipped in non-interactive mode; payment integration remains disabled.");
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(apiToken) || apiToken.Contains("REPLACE", StringComparison.OrdinalIgnoreCase))
         {
             Console.ForegroundColor = ConsoleColor.Magenta;
             Console.WriteLine("\n--- CryptoPay Setup (Optional) ---");
@@ -1512,18 +1563,23 @@ internal static class EasySetupWizard
         // Smoke tests: DB is handled separately; we don't do interactive prompts here.
         if (isSmokeTest)
         {
+            await Task.CompletedTask;
             return;
         }
 
-        bool isInteractive = Environment.UserInteractive;
+        bool isInteractive = Environment.UserInteractive && !Console.IsInputRedirected;
 
         // STEP 1: Ensure a database connection exists.
         EnsureDefaultConnection(config, store, isInteractive, builder);
 
-        // STEP 2: Ensure the main Telegram bot token exists (REQUIRED).
+        // STEP 2: Ensure the local admin account exists without shipping a
+        // default password in source control.
+        EnsureAdminCredentials(config, store, isInteractive);
+
+        // STEP 3: Ensure the main Telegram bot token exists (REQUIRED).
         EnsureTelegramPanelBotToken(config, store, isInteractive);
 
-        // STEP 3: Optional extras (only when interactive).
+        // STEP 4: Optional extras (only when interactive).
         if (isInteractive)
         {
             EnsureOptionalTelegramUserApi(config, store);
@@ -1549,22 +1605,10 @@ internal static class EasySetupWizard
 
         if (!isInteractive)
         {
-            // Non-interactive environment (Windows service, Docker without console):
-            // We cannot ask the user, so we fall back to a local SQLite db.
-            const string fallbackProvider = "sqlite";
-            const string fallbackConn = "Data Source=local_forex_bot.db";
-
-            config["DatabaseSettings:DatabaseProvider"] = fallbackProvider;
-            config["ConnectionStrings:DefaultConnection"] = fallbackConn;
-
-            store?.Save("DatabaseSettings:DatabaseProvider", fallbackProvider, isSensitive: false);
-            store?.Save("ConnectionStrings:DefaultConnection", fallbackConn, isSensitive: true);
-
-            Log.Warning(
-                "DefaultConnection was missing in non-interactive mode. Falling back to SQLite at '{ConnectionString}'.",
-                fallbackConn);
-
-            return;
+            throw new InvalidOperationException(
+                "Database configuration is missing in non-interactive mode. " +
+                "Configure DatabaseSettings:DatabaseProvider and the local secret DATABASE_CONNECTION " +
+                "(or ConnectionStrings:DefaultConnection) before starting the application.");
         }
 
         // Interactive: show menu once and persist the result.
@@ -1590,6 +1634,10 @@ internal static class EasySetupWizard
                 break;
 
             case "3":
+                SetupDatabaseWithSqlServer(config, store);
+                break;
+
+            case "4":
                 SetupDatabaseManually(config, store);
                 break;
 
@@ -1613,6 +1661,30 @@ internal static class EasySetupWizard
 
         store?.Save("DatabaseSettings:DatabaseProvider", provider, isSensitive: false);
         store?.Save("ConnectionStrings:DefaultConnection", conn, isSensitive: true);
+    }
+
+    private static void SetupDatabaseWithSqlServer(
+        IConfiguration config,
+        Infrastructure.Configuration.EasySetupConfigStore? store)
+    {
+        Console.WriteLine("\n--- SQL Server Setup ---");
+        Console.WriteLine("Enter a SQL Server connection string.");
+        Console.WriteLine("Example: Server=localhost;Database=ForexTradingBot;User Id=...;Password=...;TrustServerCertificate=True");
+
+        Console.Write("\nConnection string: ");
+        string? connectionString = Console.ReadLine()?.Trim();
+
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            throw new InvalidOperationException("SQL Server was selected, but no connection string was provided.");
+        }
+
+        config["DatabaseSettings:DatabaseProvider"] = "sqlserver";
+        config["ConnectionStrings:DefaultConnection"] = connectionString;
+        store?.Save("DatabaseSettings:DatabaseProvider", "sqlserver", isSensitive: false);
+        SecretVaultBootstrap.Set("DATABASE_CONNECTION", connectionString);
+
+        Console.WriteLine("SQL Server configured. The application will validate the connection during startup.");
     }
 
     private static void SetupDatabaseManually(
@@ -1713,7 +1785,7 @@ internal static class EasySetupWizard
         }
 
         store?.Save("DatabaseSettings:DatabaseProvider", provider, isSensitive: false);
-        store?.Save("ConnectionStrings:DefaultConnection", defaultConn, isSensitive: true);
+        SecretVaultBootstrap.Set("DATABASE_CONNECTION", defaultConn);
 
         if (!string.IsNullOrWhiteSpace(redisConn))
         {
@@ -1722,6 +1794,108 @@ internal static class EasySetupWizard
     }
 
     #endregion
+
+    private static void EnsureAdminCredentials(
+        IConfiguration config,
+        Infrastructure.Configuration.EasySetupConfigStore? store,
+        bool isInteractive)
+    {
+        string username = config["Admin:Username"]?.Trim() ?? "admin";
+        config["Admin:Username"] = username;
+
+        string? password = config["Admin:Password"];
+        if (!string.IsNullOrWhiteSpace(password) && !IsPlaceholder(password))
+        {
+            return;
+        }
+
+        if (!isInteractive)
+        {
+            // Docker/headless first-run: generate a one-time credential, persist it
+            // only in the encrypted local vault, and place it in a 0600 bootstrap
+            // file for the installer to display once and remove.
+            var bytes = System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
+            var generated = Convert.ToBase64String(bytes)
+                .Replace("+", "-", StringComparison.Ordinal)
+                .Replace("/", "_", StringComparison.Ordinal)
+                .TrimEnd('=');
+            System.Security.Cryptography.CryptographicOperations.ZeroMemory(bytes);
+
+            config["Admin:Password"] = generated;
+            SecretVaultBootstrap.Set("ADMIN_PASSWORD", generated);
+
+            // Persist it as a wizard setting too: the DatabaseConfigurationSource added
+            // later re-resolves this key against the appsettings default, and without a
+            // persisted value the generated credential would be discarded in favour of
+            // a static default that was never installed.
+            store?.Save("Admin:Password", generated, isSensitive: true);
+
+            var bootstrapDirectory = Path.Combine(
+                SqliteSecretVault.DefaultVaultDirectory(), "bootstrap");
+            Directory.CreateDirectory(bootstrapDirectory);
+            var bootstrapPath = Path.Combine(bootstrapDirectory, "admin-password.txt");
+            // UTF-8 without a BOM: installers and shells read this file raw, and a
+            // leading byte order mark becomes part of the password.
+            File.WriteAllText(bootstrapPath, generated, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+            if (!OperatingSystem.IsWindows())
+            {
+                try
+                {
+                    File.SetUnixFileMode(
+                        bootstrapPath,
+                        UnixFileMode.UserRead | UnixFileMode.UserWrite);
+                }
+                catch
+                {
+                    // Best effort on filesystems without Unix mode support.
+                }
+            }
+
+            Log.Information("Initial admin credential generated and stored in the local secret vault.");
+            return;
+        }
+
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine("\n--- Easy Setup Wizard :: Admin Account ---");
+        Console.ResetColor();
+        Console.WriteLine("The shipped application has no default admin password.");
+        Console.WriteLine("Choose a strong password for the local admin dashboard.");
+
+        while (true)
+        {
+            Console.Write("Admin password: ");
+            string? input = ReadSecretLine();
+
+            if (string.IsNullOrWhiteSpace(input) || input.Length < 12)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine("Password must be at least 12 characters.");
+                Console.ResetColor();
+                continue;
+            }
+
+            Console.Write("Confirm admin password: ");
+            string? confirmation = ReadSecretLine();
+
+            if (!string.Equals(input, confirmation, StringComparison.Ordinal))
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine("Passwords do not match.");
+                Console.ResetColor();
+                continue;
+            }
+
+            config["Admin:Password"] = input;
+            SecretVaultBootstrap.Set("ADMIN_PASSWORD", input);
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine("Admin credentials stored in the local encrypted secret vault.");
+            Console.ResetColor();
+            break;
+        }
+
+        store?.Save("Admin:Username", username, isSensitive: false);
+    }
 
     #region TelegramPanel Bot Token (REQUIRED)
 
@@ -1734,47 +1908,70 @@ internal static class EasySetupWizard
 
         if (!string.IsNullOrWhiteSpace(botToken) && !IsPlaceholder(botToken))
         {
-            // Already configured (from appsettings, env, or previous wizard run).
             return;
         }
 
-        if (!isInteractive)
-        {
-            // We cannot prompt the user. This is a hard failure.
-            const string errorMessage =
-                "TelegramPanel:BotToken is missing. " +
-                "In non-interactive environments (Windows service / Docker), " +
-                "you MUST provide it via configuration (appsettings or environment variables).";
-
-            Log.Fatal(errorMessage);
-            throw new InvalidOperationException(errorMessage);
-        }
-
-        // Interactive prompt (loop until a non-empty token is provided).
         Console.ForegroundColor = ConsoleColor.Cyan;
         Console.WriteLine("\n--- Easy Setup Wizard :: Telegram Panel Bot ---");
-        Console.WriteLine("The main Bot Token is REQUIRED. Without it, the application cannot start.");
-        Console.WriteLine("You can get this token from @BotFather on Telegram.");
+        Console.WriteLine("Telegram integration is optional during initial setup.");
+        Console.WriteLine("Press ENTER to skip it, or enter a token from @BotFather to enable it.");
         Console.ResetColor();
+
+        if (!isInteractive)
+        {
+            Log.Information("Telegram integration is disabled until a Bot Token is configured in the local secret vault.");
+            return;
+        }
 
         while (true)
         {
-            Console.Write("Enter your Telegram Bot Token: ");
+            Console.Write("Telegram Bot Token (or ENTER to skip): ");
             string? input = Console.ReadLine()?.Trim();
 
-            if (string.IsNullOrWhiteSpace(input))
+            if (string.IsNullOrWhiteSpace(input) || string.Equals(input, "skip", StringComparison.OrdinalIgnoreCase))
             {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine("Bot Token cannot be empty. Please try again.");
-                Console.ResetColor();
-                continue;
+                config["TelegramPanel:BotToken"] = null;
+                Log.Information("User skipped Telegram Bot Token setup. Telegram integration remains disabled.");
+                break;
             }
 
             config["TelegramPanel:BotToken"] = input;
-            store?.Save("TelegramPanel:BotToken", input, isSensitive: true);
-
-            Log.Information("TelegramPanel:BotToken was configured via Easy Setup Wizard.");
+            SecretVaultBootstrap.Set("TELEGRAM_BOT_TOKEN", input);
+            Log.Information("Telegram Bot Token configured via Easy Setup Wizard.");
             break;
+        }
+    }
+
+    private static string ReadSecretLine()
+    {
+        var buffer = new System.Text.StringBuilder();
+
+        while (true)
+        {
+            ConsoleKeyInfo key = Console.ReadKey(intercept: true);
+
+            if (key.Key == ConsoleKey.Enter)
+            {
+                Console.WriteLine();
+                return buffer.ToString();
+            }
+
+            if (key.Key == ConsoleKey.Backspace)
+            {
+                if (buffer.Length > 0)
+                {
+                    buffer.Length--;
+                    Console.Write("\b \b");
+                }
+
+                continue;
+            }
+
+            if (!char.IsControl(key.KeyChar))
+            {
+                buffer.Append(key.KeyChar);
+                Console.Write('*');
+            }
         }
     }
 
@@ -1932,73 +2129,19 @@ public class GuidTypeHandler : SqlMapper.TypeHandler<Guid>
 
     public override Guid Parse(object value)
     {
-        return Guid.Parse(value.ToString());
+        if (value is Guid guid)
+            return guid;
+
+        var text = Convert.ToString(value);
+        if (Guid.TryParse(text, out guid))
+            return guid;
+
+        throw new FormatException($"Value '{text}' is not a valid Guid.");
     }
 }
 #endregion
 
-#region IntToBoolJsonConverter
 
-/// <summary>
-/// A custom JSON converter for boolean values.
-/// </summary>
-public class IntToBoolJsonConverter : JsonConverter<bool>
-{
-    public override bool Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
-    {
-        return reader.TokenType == JsonTokenType.Number
-            ? reader.GetInt32() != 0
-            : reader.TokenType == JsonTokenType.True || (reader.TokenType == JsonTokenType.False ? false : throw new JsonException());
-    }
-
-    public override void Write(Utf8JsonWriter writer, bool value, JsonSerializerOptions options)
-    {
-        writer.WriteNumberValue(value ? 1 : 0);
-    }
-}
-#endregion
-
-#region FlexibleDateTimeJsonConverter
-
-/// <summary>
-/// A custom JSON converter for DateTime that supports different date-time formats.
-/// </summary>
-public class FlexibleDateTimeJsonConverter : JsonConverter<DateTime>
-{
-    private static readonly string[] Formats = new[]
-    {
-        "yyyy-MM-dd HH:mm:ss.FFFFFFF",
-        "yyyy-MM-dd HH:mm:ss",
-        "yyyy-MM-ddTHH:mm:ss.FFFFFFFK",
-        "yyyy-MM-ddTHH:mm:ss",
-        "yyyy-MM-ddTHH:mm:ssZ",
-        "yyyy-MM-ddTHH:mm:ss.fffZ"
-    };
-
-    public override DateTime Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
-    {
-        if (reader.TokenType == JsonTokenType.String)
-        {
-            string? str = reader.GetString();
-            return DateTime.TryParseExact(str, Formats, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal, out DateTime dt)
-                ? dt
-                : DateTime.TryParse(str, out dt) ? dt : throw new JsonException($"Could not parse DateTime: {str}");
-        }
-        return reader.GetDateTime();
-    }
-    /// <summary>
-    /// Writes a DateTime as a string in ISO 8601 format.
-    /// </summary>
-    /// <param name="writer"></param>
-    /// <param name="value"></param>
-    /// <param name="options"></param>
-    public override void Write(Utf8JsonWriter writer, DateTime value, JsonSerializerOptions options)
-    {
-        writer.WriteStringValue(value.ToString("O")); // ISO 8601
-    }
-}
-
-#endregion
 
 #region Cross-platform system info helper
 // Cross-platform system info helper
@@ -2031,6 +2174,9 @@ public static class SystemInfoHelper
                     UseShellExecute = false
                 };
                 using System.Diagnostics.Process? output = System.Diagnostics.Process.Start(psi);
+                if (output is null)
+                    return 2;
+
                 string result = output.StandardOutput.ReadToEnd();
                 output.WaitForExit();
                 if (long.TryParse(result.Trim(), out long bytes))

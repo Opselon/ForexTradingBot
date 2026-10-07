@@ -187,7 +187,7 @@ namespace TelegramPanel.Application.CommandHandlers.Admin
                 await _messageSender.EditMessageTextAsync(chatId, messageId, "🗜️ Finding and zipping log files, please wait...", cancellationToken: cancellationToken);
 
                 // This service call is the primary point of potential failure
-                (byte[] zipContents, string fileName, string errorMessage) = await _adminService.GetLogFilesAsZipAsync(cancellationToken);
+                (byte[]? zipContents, string fileName, string? errorMessage) = await _adminService.GetLogFilesAsZipAsync(cancellationToken);
 
                 // This block handles the expected outcomes (success or known failure)
                 if (zipContents != null && zipContents.Length > 0)
@@ -477,7 +477,7 @@ namespace TelegramPanel.Application.CommandHandlers.Admin
 
                     // --- Build Log Entry with Pro UI/UX ---
                     string levelEmoji = GetLevelEmoji(log.Level);
-                    _ = sb.AppendLine($"{levelEmoji} *{log.Level}* | `{EscapeMarkdownV1(log.Source)}`");
+                    _ = sb.AppendLine($"{levelEmoji} *{log.Level}* | `{EscapeMarkdownV1(log.Source ?? string.Empty)}`");
                     _ = sb.AppendLine($"`Message:` {EscapeMarkdownV1(log.Message)}");
                     _ = sb.AppendLine(); // Whitespace for readability
 

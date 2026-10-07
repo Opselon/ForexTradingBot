@@ -99,7 +99,7 @@ namespace TelegramPanel.Application.States
                     return Name;
                 }
 
-                (string responseText, InlineKeyboardMarkup responseKeyboard) = BuildResponseMessage(searchText, result.Data);
+                (string responseText, InlineKeyboardMarkup? responseKeyboard) = BuildResponseMessage(searchText, result.Data ?? new List<FredSeriesDto>());
 
                 await _messageSender.SendTextMessageAsync(chatId.Value, responseText, ParseMode.MarkdownV2, responseKeyboard, cancellationToken);
             }

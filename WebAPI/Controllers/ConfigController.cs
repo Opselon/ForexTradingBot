@@ -1,9 +1,14 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using ForexTradingBot.Cli.Secrets;
+using Infrastructure.Data;
+using Microsoft.Data.SqlClient;
+using Microsoft.Data.Sqlite;
 using Npgsql;
 using Shared.Security; // For SecureExceptionSanitizer
 using StackExchange.Redis;
 using System.ComponentModel.DataAnnotations;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 
 namespace WebAPI.Controllers
@@ -87,7 +92,9 @@ namespace WebAPI.Controllers
             }
         }
 
-        // Utility method to encrypt data using ProtectedData
+        // Utility method to encrypt data using ProtectedData (Windows-only; on other
+        // platforms ProtectedData.Protect throws, which the catch below handles).
+        [SuppressMessage("Interoperability", "CA1416:Validate platform compatibility", Justification = "Guarded by OperatingSystem.IsWindows(); the catch-all handles non-Windows platforms where the API throws.")]
         private static string EncryptData(string data)
         {
             if (string.IsNullOrEmpty(data))
@@ -97,6 +104,11 @@ namespace WebAPI.Controllers
 
             try
             {
+                if (!OperatingSystem.IsWindows())
+                {
+                    return "[ENCRYPTION_UNSUPPORTED_PLATFORM]";
+                }
+
                 byte[] bytes = System.Text.Encoding.UTF8.GetBytes(data);
                 byte[] encrypted = System.Security.Cryptography.ProtectedData.Protect(bytes, null, System.Security.Cryptography.DataProtectionScope.CurrentUser);
                 return System.Convert.ToBase64String(encrypted);
@@ -136,8 +148,9 @@ namespace WebAPI.Controllers
             [Required]
             public string DbConn { get; set; } = string.Empty;
 
-            [Required]
-            public string BotToken { get; set; } = string.Empty;
+            public string DatabaseProvider { get; set; } = "postgres";
+
+            public string? BotToken { get; set; }
 
             public string? RedisConn { get; set; } // Optional
         }
@@ -158,8 +171,9 @@ namespace WebAPI.Controllers
             [Required]
             public string DbConn { get; set; } = string.Empty;
 
-            [Required]
-            public string BotToken { get; set; } = string.Empty;
+            public string DatabaseProvider { get; set; } = "postgres";
+
+            public string? BotToken { get; set; }
 
             public string? RedisConn { get; set; }
         }
@@ -167,58 +181,54 @@ namespace WebAPI.Controllers
 
         #region Validation Methods
         /// <summary>
-        /// Validates and sanitizes database connection string.
+        /// Validates a database connection string using the selected provider dialect.
         /// </summary>
-        /// <param name="connectionString">The connection string to validate</param>
-        /// <returns>Validated connection string or null if invalid</returns>
-        private string? ValidateDatabaseConnectionString(string? connectionString)
+        private string? ValidateDatabaseConnectionString(string? connectionString, string? providerName)
         {
             if (string.IsNullOrWhiteSpace(connectionString))
-            {
                 return null;
-            }
 
             try
             {
-                // Use NpgsqlConnectionStringBuilder to parse and validate the connection string.
-                NpgsqlConnectionStringBuilder builder = new(connectionString);
-
-                if (string.IsNullOrWhiteSpace(builder.Host))
+                return NormalizeProvider(providerName) switch
                 {
-                    _logger.LogWarning("Database connection string validation failed: Missing host information. Input: {EncryptedInput}", RedactSensitiveData(connectionString));
-                    return null;
-                }
-
-                if (string.IsNullOrWhiteSpace(builder.Database))
-                {
-                    _logger.LogWarning("Database connection string validation failed: Missing database information. Input: {EncryptedInput}", RedactSensitiveData(connectionString));
-                    return null;
-                }
-
-                if (string.IsNullOrWhiteSpace(builder.Username))
-                {
-                    _logger.LogWarning("Database connection string validation failed: Missing username. Input: {EncryptedInput}", RedactSensitiveData(connectionString));
-                    return null;
-                }
-
-                _logger.LogInformation("Database connection string validation successful. Input: {EncryptedInput}", RedactSensitiveData(connectionString));
-                // Return the rebuilt, sanitized connection string from the builder.
-                return builder.ConnectionString;
+                    "postgres" => new NpgsqlConnectionStringBuilder(connectionString).ConnectionString,
+                    "sqlserver" => new SqlConnectionStringBuilder(connectionString).ConnectionString,
+                    "sqlite" => new SqliteConnectionStringBuilder(connectionString).ConnectionString,
+                    _ => null
+                };
             }
-            catch (ArgumentException ex) // Catch specific exceptions from the builder
+            catch (Exception ex) when (ex is ArgumentException or FormatException)
             {
-                string encryptedException = SecureExceptionSanitizer.SanitizeForDatabase(ex);
-                string encryptedInput = RedactSensitiveData(connectionString);
-                _logger.LogError("Database connection string validation failed due to invalid format. Input: {EncryptedInput}. Details: {EncryptedException}", encryptedInput, encryptedException);
+                _logger.LogWarning(
+                    "Database connection validation failed. ErrorId={ErrorId}",
+                    Guid.NewGuid().ToString("N")[..8]);
                 return null;
             }
-            catch (Exception ex)
+        }
+
+        private static string NormalizeProvider(string? providerName)
+        {
+            return providerName?.Trim().ToLowerInvariant() switch
             {
-                string encryptedException = SecureExceptionSanitizer.SanitizeForDatabase(ex);
-                string encryptedInput = RedactSensitiveData(connectionString);
-                _logger.LogError("Database connection string validation failed. Input: {EncryptedInput}. Details: {EncryptedException}", encryptedInput, encryptedException);
-                return null;
-            }
+                "postgres" or "postgresql" or "npgsql" => "postgres",
+                "sqlserver" or "mssql" or "sql" => "sqlserver",
+                "sqlite" or "sqlite3" => "sqlite",
+                _ => throw new NotSupportedException("Unsupported database provider.")
+            };
+        }
+
+        private static System.Data.Common.DbConnection CreateProbeConnection(
+            string providerName,
+            string connectionString)
+        {
+            return NormalizeProvider(providerName) switch
+            {
+                "postgres" => new NpgsqlConnection(connectionString),
+                "sqlserver" => new SqlConnection(connectionString),
+                "sqlite" => new SqliteConnection(connectionString),
+                _ => throw new NotSupportedException("Unsupported database provider.")
+            };
         }
 
         /// <summary>
@@ -275,7 +285,8 @@ namespace WebAPI.Controllers
             try
             {
                 // SECURITY: Validate and sanitize the connection string before use
-                string? validatedDbConn = ValidateDatabaseConnectionString(model.DbConn);
+                string provider = NormalizeProvider(model.DatabaseProvider);
+                string? validatedDbConn = ValidateDatabaseConnectionString(model.DbConn, provider);
                 if (validatedDbConn == null)
                 {
                     response.DatabaseStatus = "Error";
@@ -285,7 +296,7 @@ namespace WebAPI.Controllers
                 else
                 {
                     _logger.LogInformation("Testing validated database connection.");
-                    await using NpgsqlConnection connection = new(validatedDbConn);
+                    await using System.Data.Common.DbConnection connection = CreateProbeConnection(provider, validatedDbConn);
                     await connection.OpenAsync();
                     await connection.CloseAsync();
                     response.DatabaseStatus = "OK";
@@ -373,7 +384,7 @@ namespace WebAPI.Controllers
                             response.BotUsername = usernameElement.GetString();
                         }
                         response.TelegramStatus = "OK";
-                        string encryptedBotUsername = EncryptData(response.BotUsername);
+                        string encryptedBotUsername = EncryptData(response.BotUsername ?? string.Empty);
                         _logger.LogInformation("Telegram Bot Token test successful. Bot Username: {EncryptedBotUsername}", encryptedBotUsername);
                     }
                     else
@@ -411,8 +422,32 @@ namespace WebAPI.Controllers
             }
 
             // SECURITY: Validate all connection strings before any processing
-            string? validatedDbConn = ValidateDatabaseConnectionString(model.DbConn);
+            string provider;
+            try
+            {
+                provider = NormalizeProvider(model.DatabaseProvider);
+            }
+            catch (NotSupportedException)
+            {
+                return CreateSecureErrorResponse(StatusCodes.Status400BadRequest, "Unsupported database provider.");
+            }
+
+            string? validatedDbConn = ValidateDatabaseConnectionString(model.DbConn, provider);
             string? validatedRedisConn = ValidateRedisConnectionString(model.RedisConn);
+
+            if (!string.IsNullOrWhiteSpace(model.BotToken) && !model.BotToken.Contains(':'))
+            {
+                return CreateSecureErrorResponse(
+                    StatusCodes.Status400BadRequest,
+                    "Invalid bot token format.");
+            }
+
+            if (!string.IsNullOrWhiteSpace(model.RedisConn) && validatedRedisConn == null)
+            {
+                return CreateSecureErrorResponse(
+                    StatusCodes.Status400BadRequest,
+                    "Invalid Redis connection string format.");
+            }
 
             if (validatedDbConn == null)
             {
@@ -421,42 +456,42 @@ namespace WebAPI.Controllers
                     "Invalid database connection string format.");
             }
 
-            // CRITICAL SECURITY NOTE:
-            // In a real-world application, NEVER write sensitive configuration like Bot Tokens
-            // or Connection Strings directly to appsettings.json, especially in production.
-            // This endpoint is a PLACEHOLDER to simulate a save operation.
-            //
-            // Proper implementations should:
-            // 1. Store these configurations in secure, managed stores such as:
-            //    - Azure Key Vault
-            //    - HashiCorp Vault
-            //    - Kubernetes Secrets
-            //    - Environment Variables (configured securely on the host/platform)
-            // 2. The application should then read these configurations at startup from these secure sources.
-            // 3. If dynamic updates are needed (rare for such core settings), the application
-            //    should be designed to reload configuration from these secure stores,
-            //    potentially via a secure management API or a signaling mechanism (e.g., Azure App Configuration).
-            //
-            // This current logging is for demonstration purposes only for this project.
+            // Save secrets only to the local encrypted vault. The process
+            // configuration is updated immediately; database/provider changes
+            // require a restart because EF/Dapper services are initialized at boot.
+            _configuration["DatabaseSettings:DatabaseProvider"] = provider;
+            SecretVaultBootstrap.Set("DATABASE_PROVIDER", provider);
+            SecretVaultBootstrap.Set("DATABASE_CONNECTION", validatedDbConn);
 
-            // SECURITY: Encrypt all sensitive configuration data before logging.
-            string encryptedBotToken = EncryptData(model.BotToken);
-            string encryptedDbConn = EncryptData(validatedDbConn);
-            string encryptedRedisConn = EncryptData(validatedRedisConn);
+            if (!string.IsNullOrWhiteSpace(validatedRedisConn))
+            {
+                _configuration["ConnectionStrings:Redis"] = validatedRedisConn;
+                SecretVaultBootstrap.Set("REDIS_CONNECTION", validatedRedisConn);
+            }
 
-            _logger.LogWarning("Received configuration to save (PLACEHOLDER - NOT SAVING TO APPSETTINGS.JSON):");
-            _logger.LogWarning("BotToken: {EncryptedBotToken}", encryptedBotToken);
-            _logger.LogWarning("DbConn: {EncryptedDbConn}", encryptedDbConn);
-            _logger.LogWarning("RedisConn: {EncryptedRedisConn}", encryptedRedisConn);
+            if (!string.IsNullOrWhiteSpace(model.BotToken))
+            {
+                _configuration["TelegramPanel:BotToken"] = model.BotToken;
+                SecretVaultBootstrap.Set("TELEGRAM_BOT_TOKEN", model.BotToken);
+            }
 
-            // SECURITY: Return a secure response without exposing sensitive information
+            _logger.LogInformation(
+                "Local runtime configuration saved. Provider={Provider}, RedisConfigured={RedisConfigured}, TelegramConfigured={TelegramConfigured}.",
+                provider,
+                !string.IsNullOrWhiteSpace(validatedRedisConn),
+                !string.IsNullOrWhiteSpace(model.BotToken));
+
             return Ok(new
             {
-                Message = "Configuration received successfully. This is a placeholder implementation. In production, use secure configuration stores.",
-                Status = "Success",
+                Message = "Configuration saved to the local encrypted vault. Restart the application to apply database/provider changes.",
+                Status = "Saved",
+                DatabaseProvider = provider,
+                RedisConfigured = !string.IsNullOrWhiteSpace(validatedRedisConn),
+                TelegramConfigured = !string.IsNullOrWhiteSpace(model.BotToken),
                 Timestamp = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
             });
         }
+
         #endregion
     }
 }

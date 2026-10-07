@@ -36,9 +36,14 @@ COPY --from=build /app/publish .
 RUN adduser --system --group --disabled-password --gecos "" --home /app appuser
 
 # --- FIX: Ensure /app/keys exists and is writable by appuser ---
-RUN mkdir -p /app/keys && chown appuser:appuser /app/keys && chmod 700 /app/keys
+RUN mkdir -p /app/keys /app/data && chown -R appuser:appuser /app/keys /app/data && chmod 700 /app/keys /app/data
 
-USER appuser
+# The entrypoint runs as root to fix ownership of a host bind-mounted /app/data,
+# then drops to appuser before starting the app.
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod 755 /entrypoint.sh
+
+USER root
 
 # Set environment variables for the ASP.NET Core runtime.
 ENV ASPNETCORE_URLS=http://+:80
@@ -53,5 +58,6 @@ EXPOSE 80
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD curl -f http://localhost/healthz || exit 1
 
-# Define the entry point for the container.
-ENTRYPOINT ["dotnet", "WebAPI.dll"]
+# Define the entry point for the container. Runs as root to repair /app/data
+# ownership when it is a host bind mount, then execs the app as appuser.
+ENTRYPOINT ["/entrypoint.sh"]

@@ -589,7 +589,7 @@ namespace Infrastructure.Services
                     offsetAdjustment -= match.Length - content.Length;
 
                     // Create appropriate entity
-                    MessageEntity entity = pattern.EntityType switch
+                    MessageEntity? entity = pattern.EntityType switch
                     {
                         "bold" => new MessageEntityBold { Offset = startOffset, Length = length },
                         "italic" => new MessageEntityItalic { Offset = startOffset, Length = length },

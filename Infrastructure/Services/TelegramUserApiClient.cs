@@ -1787,7 +1787,7 @@ namespace Infrastructure.Services
 
                 try
                 {
-                    enhancedCaption = await _geminiService.EnhanceMessageAsync(extractedCaption, cancellationToken);
+                    enhancedCaption = await _geminiService.EnhanceMessageAsync(extractedCaption!, cancellationToken);
 
                     if (!string.IsNullOrWhiteSpace(enhancedCaption) && !enhancedCaption.StartsWith("Job enqueued"))
                     {
@@ -1801,7 +1801,7 @@ namespace Infrastructure.Services
                         string actualJobId = enhancedCaption.Replace("Job enqueued successfully. JobId: ", "");
                         _ = debugReport.AppendLine($"   - 🔄 AI enhancement job enqueued. JobId: {actualJobId}");
                         // For now, proceed with original caption and let the enhancement happen in background
-                        (currentCaption, currentEntities) = FormatFinalMessage(extractedCaption, extractedEntities, debugReport); // Format the original
+                        (currentCaption, currentEntities) = FormatFinalMessage(extractedCaption ?? string.Empty, extractedEntities, debugReport); // Format the original
                     }
                     else
                     {
@@ -1809,7 +1809,7 @@ namespace Infrastructure.Services
                         _ = string.IsNullOrWhiteSpace(extractedCaption)
                             ? debugReport.AppendLine($"   - 🚫 AI service returned no enhancement and original caption was empty (possibly due to DropMediaCaptions rule).")
                             : debugReport.AppendLine($"   - 🚫 AI service returned no enhancement. Using original caption.");
-                        (currentCaption, currentEntities) = FormatFinalMessage(extractedCaption, extractedEntities, debugReport); // Format the original
+                        (currentCaption, currentEntities) = FormatFinalMessage(extractedCaption ?? string.Empty, extractedEntities, debugReport); // Format the original
                     }
                 }
                 catch (Exception aiEx)
@@ -1912,7 +1912,7 @@ namespace Infrastructure.Services
                 {
                     // If we got a direct result (not a job ID), use it immediately
                     _ = debugReport.AppendLine($"   - Gemini Response: Received caption of length `{enhancedCaption.Length}`.");
-                    return (enhancedCaption, null); // Return raw enhanced caption; formatting happens later.
+                    return (enhancedCaption, null)!; // Return raw enhanced caption; formatting happens later.
                 }
                 else if (!string.IsNullOrWhiteSpace(enhancedCaption))
                 {
@@ -2158,7 +2158,7 @@ namespace Infrastructure.Services
             }
             if (peerId == 0)
             {
-                _logger.LogWarning("ResolvePeerAsync: PeerId is 0. Cannot resolve a peer with ID 0. Returning null.", peerId);
+                _logger.LogWarning("ResolvePeerAsync: PeerId is 0. Cannot resolve a peer with ID 0. Returning null.");
                 return null;
             }
 

@@ -56,19 +56,19 @@ namespace TelegramPanel.Infrastructure.Services
                     outagesTask, mitigationTask, tlsVersionTask, ipVersionTask, postQuantumTask, osTask, l3AttacksTask
                 );
 
-                (LocationWrapper locationData, _) = locationTask.Result;
-                (IqiSummaryPayloadWrapper iqiData, _) = iqiTask.Result;
-                (TopAttacksWrapper l7AttackData, _) = l7AttacksTask.Result;
-                (HttpProtocolApiResultPayload httpProtocolData, Meta httpMeta) = httpProtocolTask.Result;
-                (DeviceTypeApiResultPayload deviceTypeData, _) = deviceTypeTask.Result;
-                (BotTrafficApiResultPayload botHumanData, _) = botHumanTask.Result;
-                (OutagesWrapper outagesData, _) = outagesTask.Result;
-                (AttackMitigationPayload mitigationData, _) = mitigationTask.Result;
-                (TlsVersionPayload tlsData, _) = tlsVersionTask.Result;
-                (IpVersionPayload ipVersionData, _) = ipVersionTask.Result;
-                (PostQuantumPayload postQuantumData, _) = postQuantumTask.Result;
-                (OperatingSystemPayload osData, _) = osTask.Result;
-                (L3AttackProtocolPayload l3AttackData, _) = l3AttacksTask.Result;
+                (LocationWrapper? locationData, _) = locationTask.Result;
+                (IqiSummaryPayloadWrapper? iqiData, _) = iqiTask.Result;
+                (TopAttacksWrapper? l7AttackData, _) = l7AttacksTask.Result;
+                (HttpProtocolApiResultPayload? httpProtocolData, Meta? httpMeta) = httpProtocolTask.Result;
+                (DeviceTypeApiResultPayload? deviceTypeData, _) = deviceTypeTask.Result;
+                (BotTrafficApiResultPayload? botHumanData, _) = botHumanTask.Result;
+                (OutagesWrapper? outagesData, _) = outagesTask.Result;
+                (AttackMitigationPayload? mitigationData, _) = mitigationTask.Result;
+                (TlsVersionPayload? tlsData, _) = tlsVersionTask.Result;
+                (IpVersionPayload? ipVersionData, _) = ipVersionTask.Result;
+                (PostQuantumPayload? postQuantumData, _) = postQuantumTask.Result;
+                (OperatingSystemPayload? osData, _) = osTask.Result;
+                (L3AttackProtocolPayload? l3AttackData, _) = l3AttacksTask.Result;
 
                 // --- PARSE ALL THE DATA ---
                 AttackOriginPayload? topL7Attack = l7AttackData?.Top0.FirstOrDefault();

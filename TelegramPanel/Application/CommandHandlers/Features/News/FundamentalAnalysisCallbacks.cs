@@ -187,7 +187,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.News
             {
                 await _messageSender.AnswerCallbackQueryAsync(callbackQuery.Id, cancellationToken: cancellationToken);
 
-                string[] parts = callbackData.Split(':', 4);
+                string[] parts = (callbackData ?? string.Empty).Split(':', 4);
                 if (parts.Length < 2)
                 {
                     return;

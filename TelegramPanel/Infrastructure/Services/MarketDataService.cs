@@ -53,7 +53,7 @@ namespace TelegramPanel.Infrastructure.Services
             {
                 Symbol = normalizedSymbol,
                 CurrencyName = currencyInfo.Name,
-                Description = currencyInfo.Description,
+                Description = currencyInfo.Description ?? string.Empty,
                 Price = 0m,
                 Change24h = 0m,
                 High24h = 0m,
@@ -100,8 +100,8 @@ namespace TelegramPanel.Infrastructure.Services
                 if (cancellationToken.IsCancellationRequested) { marketData.Remarks.Add("Operation cancelled."); break; }
 
                 _logger.LogDebug("Trying API strategy #{Number} for {Symbol}", i + 1, normalizedSymbol);
-                (decimal? price, decimal? change24h, decimal? high24, decimal? low24, decimal? volume, string dataSource, JsonElement? rawResponse) =
-                    await fetchStrategy(client, normalizedSymbol, baseAsset, quoteAsset, currencyInfo, _logger, forceRefresh, cancellationToken);
+                (decimal? price, decimal? change24h, decimal? high24, decimal? low24, decimal? volume, string? dataSource, JsonElement? rawResponse) =
+                    await fetchStrategy(client, normalizedSymbol, baseAsset, quoteAsset, currencyInfo!, _logger, forceRefresh, cancellationToken);
 
                 if (price.HasValue && price.Value != 0) // CRITICAL: Ensure price is not zero
                 {

@@ -143,7 +143,11 @@ namespace Infrastructure.Data
                         ? "postgres"
                         : conn.Contains("Server=", StringComparison.OrdinalIgnoreCase)
                             ? "sqlserver"
-                            : conn.Contains("Data Source=", StringComparison.OrdinalIgnoreCase) ? "sqlite" : "sqlite";
+                            : conn.Contains("Data Source=", StringComparison.OrdinalIgnoreCase)
+                            ? "sqlite"
+                            : throw new NotSupportedException(
+                                "Database provider could not be inferred safely from the connection string. " +
+                                "Configure 'DatabaseSettings:DatabaseProvider' explicitly.");
 
                     Log.Information("Database provider auto-detected as: {Provider}", dbProvider);
                 }
@@ -164,7 +168,7 @@ namespace Infrastructure.Data
                     _ => throw new NotSupportedException($"Unsupported DatabaseProvider: '{dbProvider}'."),
                 };
 
-                // --- 2. Configure Hangfire with DB storage + safe fallback ---
+                // --- 2. Configure Hangfire with durable database storage ---
                 _ = services.AddHangfire(config =>
                 {
                     _ = config.UseSerializerSettings(new Newtonsoft.Json.JsonSerializerSettings
@@ -204,20 +208,19 @@ namespace Infrastructure.Data
                                 break;
 
                             default:
-                                Log.Warning(
-                                    "Unsupported Hangfire DB provider '{DbProvider}'. Falling back to in-memory storage.",
-                                    dbProvider);
-                                _ = config.UseMemoryStorage();
-                                break;
+                                throw new NotSupportedException(
+                                    $"Unsupported Hangfire DB provider: '{dbProvider}'.");
                         }
                     }
                     catch (Exception ex)
                     {
-                        Log.Error(ex,
-                            "FAILED to configure Hangfire with database storage. The database may be offline or the connection string is invalid. FALLING BACK TO IN-MEMORY STORAGE.");
-                        Log.Warning("Hangfire jobs will NOT be persisted and will be lost if the application restarts.");
+                        Log.Error(
+                            ex,
+                            "FAILED to configure Hangfire with database storage. The application will not start with a silently non-persistent Hangfire backend.");
 
-                        _ = config.UseMemoryStorage();
+                        throw new InvalidOperationException(
+                            $"Failed to configure Hangfire database storage for provider '{dbProvider}'.",
+                            ex);
                     }
                 });
             }

@@ -337,17 +337,17 @@ namespace Application.Services
 
                 // Add entities to repositories (marks them for insertion).
                 // The repository will use the IDs already present on the entities.
-                await _userRepository.AddAsync(userEntityToRegister, cancellationToken);
+                await _userRepository.AddAsync(userEntityToRegister!, cancellationToken);
 
                 // Explicitly add TokenWallet if User.AddAsync doesn't handle it via cascade or if it's managed separately.
-                if (userEntityToRegister.TokenWallet != null)
+                if (userEntityToRegister?.TokenWallet != null)
                 {
                     //     await _tokenWalletRepository.AddAsync(userEntityToRegister.TokenWallet, cancellationToken);
                 }
                 else
                 {
                     // This indicates a problem: a user was passed without a wallet.
-                    _logger.LogError("Critical: User entity {UserId} passed to RegisterUserAsync has no TokenWallet.", userEntityToRegister.Id);
+                    _logger.LogError("Critical: User entity {UserId} passed to RegisterUserAsync has no TokenWallet.", userEntityToRegister!.Id);
                     throw new InvalidOperationException("User registration failed: TokenWallet is missing.");
                 }
 

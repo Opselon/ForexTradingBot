@@ -337,7 +337,7 @@ namespace Infrastructure.Services
             return Task.FromResult(Array.Empty<IServer>());
         }
 
-        public void RegisterProfiler(Func<ProfilingSession> profilingSessionProvider)
+        public void RegisterProfiler(Func<ProfilingSession?> profilingSessionProvider)
         {
             // No-op in fallback mode
         }
@@ -488,7 +488,21 @@ namespace Infrastructure.Services
         public event EventHandler<EndPointEventArgs>? ConfigurationChanged;
         public event EventHandler<EndPointEventArgs>? ConfigurationChangedBroadcast;
         public event EventHandler<HashSlotMovedEventArgs>? HashSlotMoved;
-        public event EventHandler<ServerMaintenanceEvent> ServerMaintenanceEvent;
+        public event EventHandler<ServerMaintenanceEvent>? ServerMaintenanceEvent;
+
+        // CS8766: IConnectionMultiplexer re-declares ToString() as non-nullable; make our
+        // inherited implementation explicit so the nullability matches the interface.
+        string IConnectionMultiplexer.ToString() => base.ToString() ?? string.Empty;
+
+        // CS0067: these interface events are required by IConnectionMultiplexer but are never
+        // raised by this in-memory fallback stub. Referencing them here (guarded so it never
+        // runs at runtime) keeps the compiler quiet without raising fake events.
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1822:Mark members as static", Justification = "Must be instance to reference the events.")]
+        private void SuppressUnusedEventWarnings()
+        {
+            _ = (ErrorMessage, ConnectionFailed, InternalError, ConnectionRestored,
+                 ConfigurationChanged, ConfigurationChangedBroadcast, HashSlotMoved, ServerMaintenanceEvent);
+        }
     }
 
     /// <summary>
@@ -576,7 +590,7 @@ namespace Infrastructure.Services
         {
             lock (_lock)
             {
-                return _cache.Remove(key);
+                return _cache.Remove(key!);
             }
         }
 
@@ -694,7 +708,7 @@ namespace Infrastructure.Services
         {
             lock (_lock)
             {
-                return _cache.Remove(key);
+                return _cache.Remove(key!);
             }
         }
 
@@ -705,7 +719,7 @@ namespace Infrastructure.Services
                 long deleted = 0;
                 foreach (RedisKey key in keys)
                 {
-                    if (_cache.Remove(key))
+                    if (_cache.Remove(key!))
                     {
                         deleted++;
                     }
@@ -718,7 +732,7 @@ namespace Infrastructure.Services
         {
             lock (_lock)
             {
-                return _cache.ContainsKey(key);
+                return _cache.ContainsKey(key!);
             }
         }
 
@@ -726,7 +740,7 @@ namespace Infrastructure.Services
         {
             lock (_lock)
             {
-                return keys.Count(k => _cache.ContainsKey(k));
+                return keys.Count(k => _cache.ContainsKey(k!));
             }
         }
 
@@ -1149,7 +1163,7 @@ namespace Infrastructure.Services
         {
             lock (_lock)
             {
-                return _cache.TryGetValue(key, out object? value) ? value.ToString().Length : 0;
+                return _cache.TryGetValue(key!, out object? value) ? (value?.ToString()?.Length ?? 0) : 0;
             }
         }
 
@@ -1157,7 +1171,7 @@ namespace Infrastructure.Services
         {
             lock (_lock)
             {
-                _cache[key] = value;
+                _cache[key!] = value;
                 return true;
             }
         }
@@ -1168,7 +1182,7 @@ namespace Infrastructure.Services
             {
                 foreach (KeyValuePair<RedisKey, RedisValue> kvp in values)
                 {
-                    _cache[kvp.Key] = kvp.Value;
+                    _cache[kvp.Key!] = kvp.Value;
                 }
                 return true;
             }

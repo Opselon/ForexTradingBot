@@ -126,7 +126,7 @@ namespace WebAPI.Controllers
 
                         // Level 2: General warning for failure.
                         _logger.LogWarning("API Failure: Failed to process RSS feeds. Errors: {Errors}. Duration: {DurationMs}ms. CorrelationId: {CorrelationId}",
-                            string.Join("; ", result.Errors), stopwatch.ElapsedMilliseconds, requestCorrelationId);
+                            string.Join("; ", result.Errors ?? Enumerable.Empty<string>()), stopwatch.ElapsedMilliseconds, requestCorrelationId);
 
                         return BadRequest(problemDetails); // Level 3: Return BadRequest.
                     }

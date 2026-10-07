@@ -1,32 +1,29 @@
-namespace WebAPI.Middleware
+namespace WebAPI.Middleware;
+
+public sealed class AuthRedirectMiddleware
 {
-    public class AuthRedirectMiddleware
+    private static readonly HashSet<string> ProtectedPaths = new(StringComparer.OrdinalIgnoreCase)
     {
-        private readonly RequestDelegate _next;
-        private readonly string[] _protectedPaths = { "/", "/indexapp.html", "/config.html" };
-        private const string LoginPagePath = "/login.html";
+        "/",
+        "/indexapp.html",
+        "/config.html",
+        "/secrets.html",
+    };
 
-        public AuthRedirectMiddleware(RequestDelegate next)
+    private const string LoginPagePath = "/login.html";
+    private readonly RequestDelegate _next;
+
+    public AuthRedirectMiddleware(RequestDelegate next) => _next = next;
+
+    public async Task InvokeAsync(HttpContext context)
+    {
+        if (ProtectedPaths.Contains(context.Request.Path.Value ?? string.Empty) &&
+            !(context.User.Identity?.IsAuthenticated ?? false))
         {
-            _next = next;
+            context.Response.Redirect(LoginPagePath);
+            return;
         }
 
-        public async Task InvokeAsync(HttpContext context)
-        {
-            string? requestPath = context.Request.Path.Value;
-
-            // Check if the request path is one of the protected static HTML files
-            if (_protectedPaths.Contains(requestPath, StringComparer.OrdinalIgnoreCase))
-            {
-                // If the user is not authenticated, redirect to the login page
-                if (context.User.Identity == null || !context.User.Identity.IsAuthenticated)
-                {
-                    context.Response.Redirect(LoginPagePath);
-                    return; // Short-circuit the pipeline
-                }
-            }
-
-            await _next(context);
-        }
+        await _next(context);
     }
 }

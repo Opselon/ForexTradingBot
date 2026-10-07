@@ -10,7 +10,6 @@ using Domain.Enums; // For UserLevel enum (stored as string in DB)
 using Infrastructure.Data;
 using Infrastructure.Persistence.Configurations;
 using Microsoft.Data.Sqlite;
-using Microsoft.Extensions.Configuration; // To access connection strings
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging; // For logging
 using Polly; // For resilience policies
@@ -79,7 +78,6 @@ namespace Infrastructure.Repositories
     /// </summary>
     public class UserRepository : IUserRepository
     {
-        private readonly string _connectionString;
         private readonly ILogger<UserRepository> _logger;
         private readonly AsyncRetryPolicy _retryPolicy; // Polly policy for DB operations
         private readonly UserSqlProvider _sql;
@@ -296,7 +294,6 @@ namespace Infrastructure.Repositories
         private readonly ILoggingSanitizer _logSanitizer;
         // --- Constructor ---
         public UserRepository(IDbConnectionFactory dbConnectionFactory,
-        IConfiguration configuration,
         ILogger<UserRepository> logger,
         ILoggingSanitizer logSanitizer,
         DbProviderService dbProviderService, // <<< INJECTED: Provides the database provider context.
@@ -672,7 +669,7 @@ namespace Infrastructure.Repositories
             }
             catch (TimeoutRejectedException ex)
             {
-                _logger.LogError(ex, "UserRepository: Operation timed out while fetching user by ID {UserId}.", 30, id);
+                _logger.LogError(ex, "UserRepository: Operation timed out while fetching user by ID {UserId}.", id);
                 // Background error log
                 _ = Task.Run(async () =>
                 {

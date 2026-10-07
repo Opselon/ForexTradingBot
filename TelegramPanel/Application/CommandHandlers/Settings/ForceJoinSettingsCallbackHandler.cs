@@ -75,7 +75,7 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
             {
                 SetChannelCallback => _stateMachine.SetStateAsync(chatId, "WaitingForForceJoinChannel", update, cancellationToken),
                 SetMessageCallback => _stateMachine.SetStateAsync(chatId, "WaitingForForceJoinMessage", update, cancellationToken),
-                _ => HandleMenuActions(action, chatId, messageId, cancellationToken)
+                _ => HandleMenuActions(action!, chatId, messageId, cancellationToken)
             };
             await handlerTask;
         }
@@ -109,7 +109,7 @@ namespace TelegramPanel.Application.CommandHandlers.Settings
                     ChatFullInfo chatInfo = await _botClient.GetChat(settings.ChannelId, cancellationToken);
                     int memberCount = await _botClient.GetChatMemberCount(settings.ChannelId, cancellationToken);
 
-                    _ = text.AppendLine($"**Title:** {TelegramMessageFormatter.EscapeMarkdownV2(chatInfo.Title)}");
+                    _ = text.AppendLine($"**Title:** {TelegramMessageFormatter.EscapeMarkdownV2(chatInfo.Title ?? string.Empty)}");
                     _ = text.AppendLine($"**ID:** `{chatInfo.Id}`");
                     _ = text.AppendLine($"**Link:** {TelegramMessageFormatter.EscapeMarkdownV2(settings.ChannelLink)}");
                     _ = text.AppendLine($"**Members:** {memberCount:N0}");

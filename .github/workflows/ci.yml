@@ -1,0 +1,269 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: "9.0.x"
+          cache: true
+          cache-dependency-path: "**/*.csproj"
+
+      - name: Restore
+        run: dotnet restore ForexTradingBot.sln
+
+      - name: Dependency vulnerability gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          report="$RUNNER_TEMP/vulnerable-packages.txt"
+          dotnet list ForexTradingBot.sln package --vulnerable --include-transitive 2>&1 | tee "$report"
+          if grep -Eqi 'has (the following )?vulnerabilit|severity:[[:space:]]*(critical|high|moderate|low)' "$report"; then
+            echo "::error::Known vulnerable NuGet package detected. Release is blocked."
+            exit 1
+          fi
+      - name: Build
+        run: dotnet build ForexTradingBot.sln -c Release --no-restore
+
+      - name: Test
+        run: >
+          dotnet test ForexTradingBot.sln -c Release --no-build
+          --logger "trx;LogFileName=test-results.trx"
+          --results-directory TestResults
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results
+          path: TestResults
+          retention-days: 14
+
+  e2e-end-user:
+    name: End-user E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs:
+      - build-and-test
+      - docker
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Restore solution
+        run: dotnet restore ForexTradingBot.sln
+
+      - name: Restore E2E test project
+        run: dotnet restore tests/e2e/ForexTradingBot.EndToEnd.csproj
+
+      - name: Build solution
+        run: dotnet build ForexTradingBot.sln -c Release --no-restore
+
+      - name: Build E2E test project
+        run: dotnet build tests/e2e/ForexTradingBot.EndToEnd.csproj -c Release --no-restore
+
+      - name: Run end-user E2E
+        run: dotnet test tests/e2e/ForexTradingBot.EndToEnd.csproj -c Release --no-build --no-restore --logger "console;verbosity=normal"
+
+      - name: Upload E2E logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: end-user-e2e-logs
+          path: tests/e2e/.last.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  e2e-windows-cli:
+    name: Windows CLI E2E
+    runs-on: windows-latest
+    timeout-minutes: 20
+    needs: build-and-test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Restore solution
+        shell: pwsh
+        run: dotnet restore ForexTradingBot.sln
+
+      - name: Restore E2E test project
+        shell: pwsh
+        run: dotnet restore tests/e2e/ForexTradingBot.EndToEnd.csproj
+
+      - name: Build solution
+        shell: pwsh
+        run: dotnet build ForexTradingBot.sln -c Release --no-restore
+
+      - name: Build E2E test project
+        shell: pwsh
+        run: dotnet build tests/e2e/ForexTradingBot.EndToEnd.csproj -c Release --no-restore
+
+      - name: Run CLI E2E
+        shell: pwsh
+        run: dotnet test tests/e2e/ForexTradingBot.EndToEnd.csproj -c Release --no-build --no-restore --filter "Surface=CLI" --logger "console;verbosity=normal"
+
+  e2e-cli-platform-matrix:
+    name: CLI E2E (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    needs: build-and-test
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: "9.0.x"
+      - name: Restore
+        run: dotnet restore ForexTradingBot.sln
+      - name: Restore E2E project
+        run: dotnet restore tests/e2e/ForexTradingBot.EndToEnd.csproj
+      - name: Build solution
+        run: dotnet build ForexTradingBot.sln -c Release --no-restore
+      - name: Build E2E project
+        run: dotnet build tests/e2e/ForexTradingBot.EndToEnd.csproj -c Release --no-restore
+      - name: CLI E2E
+        run: dotnet test tests/e2e/ForexTradingBot.EndToEnd.csproj -c Release --no-build --no-restore --filter "Surface=CLI" --logger "console;verbosity=normal"
+
+  docker:
+    name: Docker build & smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: build-and-test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build image (load into local daemon)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: false
+          load: true
+          tags: forexbot:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test — real Postgres + Redis, API against them, /healthz = 200
+        run: |
+          set -euo pipefail
+          docker network create smokenet
+          docker run -d --name smoke-pg --network smokenet \
+            -e POSTGRES_USER=forexbot -e POSTGRES_PASSWORD=ci-smoke-password -e POSTGRES_DB=forexbotdb \
+            --health-cmd "pg_isready -U forexbot -d forexbotdb" \
+            --health-interval 5s --health-timeout 5s --health-retries 20 \
+            postgres:15-alpine
+          docker run -d --name smoke-redis --network smokenet redis:7-alpine
+          echo "Waiting for Postgres health..."
+          pg_ok=0
+          for i in $(seq 1 30); do
+            st=$(docker inspect -f '{{.State.Health.Status}}' smoke-pg 2>/dev/null || echo starting)
+            if [ "$st" = "healthy" ]; then echo "Postgres healthy after ${i} checks"; pg_ok=1; break; fi
+            sleep 5
+          done
+          if [ "$pg_ok" != "1" ]; then echo "::error::Postgres never became healthy"; docker logs smoke-pg | tail -50; docker rm -f smoke-api smoke-pg smoke-redis 2>/dev/null || true; docker network rm smokenet 2>/dev/null || true; exit 1; fi
+
+          # CI=true puts the app in smoke mode (wizard bypass + forced SQLite).
+          # To validate the REAL Postgres path we clear CI and set IsSmokeTest=false,
+          # so the app runs the same configuration a production container would.
+          docker rm -f smoke-api 2>/dev/null || true
+          docker run -d --name smoke-api --network smokenet \
+            -e CI=false \
+            -e IsSmokeTest=false \
+            -e DatabaseSettings__DatabaseProvider=postgres \
+            -e 'ConnectionStrings__DefaultConnection=Host=smoke-pg;Port=5432;Database=forexbotdb;Username=forexbot;Password=ci-smoke-password;Include Error Detail=true' \
+            -e ConnectionStrings__Redis=smoke-redis:6379,abortConnect=false \
+            -e TelegramPanel__BotToken= \
+            -e CryptoPay__ApiToken= \
+            -e ASPNETCORE_URLS=http://+:8080 \
+            -p 8080:8080 \
+            forexbot:ci
+          ok=0
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -m 3 http://localhost:8080/healthz || true)
+            if [ "$code" = "200" ]; then
+              echo "API /healthz returned 200 after ${i} checks"
+              ok=1; break
+            fi
+            sleep 5
+          done
+          if [ "$ok" != "1" ]; then
+            echo "::error::API /healthz never returned 200"
+            docker logs smoke-api | tail -100
+            docker rm -f smoke-api smoke-pg smoke-redis || true
+            docker network rm smokenet || true
+            exit 1
+          fi
+          docker rm -f smoke-api smoke-pg smoke-redis || true
+          docker network rm smokenet || true
+
+      - name: Smoke test — SQLite variant
+        if: always()
+        run: |
+          set -euo pipefail
+          docker rm -f smoke-sqlite 2>/dev/null || true
+          docker run -d --name smoke-sqlite \
+            -e CI=false \
+            -e IsSmokeTest=false \
+            -e DatabaseSettings__DatabaseProvider=sqlite \
+            -e 'ConnectionStrings__DefaultConnection=Data Source=/tmp/forexbot.db' \
+            -e TelegramPanel__BotToken= \
+            -e CryptoPay__ApiToken= \
+            -e ASPNETCORE_URLS=http://+:8080 \
+            -p 8081:8080 \
+            forexbot:ci
+          ok=0
+          for i in $(seq 1 40); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -m 3 http://localhost:8081/healthz || true)
+            if [ "$code" = "200" ]; then
+              echo "SQLite variant /healthz returned 200 after ${i} checks"
+              ok=1; break
+            fi
+            sleep 5
+          done
+          docker logs smoke-sqlite | tail -60 || true
+          docker rm -f smoke-sqlite || true
+          [ "$ok" = "1" ] || { echo "::error::SQLite variant never became healthy"; exit 1; }

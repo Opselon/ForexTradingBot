@@ -1,0 +1,64 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: forexbot
+      POSTGRES_PASSWORD: crossdb-password
+      POSTGRES_DB: forexbotdb
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U forexbot -d forexbotdb"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    networks: [crossdb]
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    networks: [crossdb]
+  app-postgres:
+    build: { context: ../.., dockerfile: Dockerfile }
+    environment:
+      ASPNETCORE_URLS: http://+:80
+      ASPNETCORE_ENVIRONMENT: Production
+      DOTNET_ENVIRONMENT: Production
+      CI: "false"
+      IsSmokeTest: "false"
+      FOREXBOT_VAULT_DIRECTORY: /app/data/vault
+      DatabaseSettings__DatabaseProvider: postgres
+      ConnectionStrings__DefaultConnection: Host=postgres;Port=5432;Database=forexbotdb;Username=forexbot;Password=crossdb-password
+      ConnectionStrings__Redis: redis:6379,abortConnect=false
+      Admin__Username: admin
+      Admin__Password: ""
+      TelegramPanel__BotToken: ""
+      CryptoPay__ApiToken: ""
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    ports: ["18180:80"]
+    networks: [crossdb]
+  app-sqlite:
+    build: { context: ../.., dockerfile: Dockerfile }
+    environment:
+      ASPNETCORE_URLS: http://+:80
+      ASPNETCORE_ENVIRONMENT: Production
+      DOTNET_ENVIRONMENT: Production
+      CI: "false"
+      IsSmokeTest: "false"
+      FOREXBOT_VAULT_DIRECTORY: /app/data/vault
+      DatabaseSettings__DatabaseProvider: sqlite
+      ConnectionStrings__DefaultConnection: Data Source=/app/data/crossdb.sqlite
+      Admin__Username: admin
+      Admin__Password: ""
+      TelegramPanel__BotToken: ""
+      CryptoPay__ApiToken: ""
+    ports: ["18181:80"]
+    volumes: [sqlite_data:/app/data]
+    networks: [crossdb]
+networks:
+  crossdb:
+volumes:
+  sqlite_data:

@@ -101,7 +101,7 @@ namespace TelegramPanel.Application.CommandHandlers.Features.CoinGecko
                 try
                 {
                     // Only edit if the cached UI is different from the current message
-                    if (cachedUi.Text != currentMessageText || !cachedUi.Keyboard.Equals(currentMessageMarkup))
+                    if (cachedUi!.Text != currentMessageText || !cachedUi.Keyboard.Equals(currentMessageMarkup))
                     {
                         await _messageSender.EditMessageTextAsync(
                            chatId,

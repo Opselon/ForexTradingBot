@@ -1134,7 +1134,7 @@ namespace Infrastructure.Services
             {
                 try
                 {
-                    IDatabase redisDb = _redis.GetDatabase();
+                    IDatabase redisDb = _redis!.GetDatabase();
                     if (redisDb.SetContains(RedisProcessedImageUrlsSetKey, imageUrl))
                     {
                         _logger.LogInformation("Filtered: Image URL already processed (Redis). SourceItemId: {SourceItemId}, ImageUrl: {ImageUrl}", itemSourceId.Truncate(50), imageUrl.Truncate(100));
@@ -1368,7 +1368,7 @@ namespace Infrastructure.Services
                 _logger.LogInformation("Registering image URLs in Redis for global deduplication.");
                 try
                 {
-                    IDatabase redisDb = _redis.GetDatabase();
+                    IDatabase redisDb = _redis!.GetDatabase();
                     RedisValue[] imageUrlsToAdd = itemsToDispatch
                         .Select(item => !string.IsNullOrWhiteSpace(item.ImageUrl) ? item.ImageUrl : DEFAULT_NEWS_IMAGE_URL)
                         .Where(url => !string.IsNullOrWhiteSpace(url))
@@ -1996,7 +1996,7 @@ namespace Infrastructure.Services
 
                 // Look for <meta property="og:image" content="...">
                 HtmlNode? metaNode = doc.DocumentNode.SelectSingleNode("//meta[@property='og:image' and @content]");
-                string? src = metaNode?.GetAttributeValue("content", null);
+                string? src = metaNode?.GetAttributeValue("content", string.Empty);
 
                 if (!string.IsNullOrWhiteSpace(src))
                 {
@@ -2032,11 +2032,11 @@ namespace Infrastructure.Services
                 {
                     foreach (HtmlNode imgNode in imgNodes)
                     {
-                        string src = imgNode.GetAttributeValue("src", null) ??
-                                  imgNode.GetAttributeValue("data-src", null) ??
-                                  imgNode.GetAttributeValue("data-original", null) ??
-                                  imgNode.GetAttributeValue("data-src-original", null) ??
-                                  imgNode.GetAttributeValue("data-lazy-src", null);
+                        string src = imgNode.GetAttributeValue("src", string.Empty) ??
+                                  imgNode.GetAttributeValue("data-src", string.Empty) ??
+                                  imgNode.GetAttributeValue("data-original", string.Empty) ??
+                                  imgNode.GetAttributeValue("data-src-original", string.Empty) ??
+                                  imgNode.GetAttributeValue("data-lazy-src", string.Empty);
 
                         if (!string.IsNullOrWhiteSpace(src) && !src.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
                         {
@@ -2161,7 +2161,7 @@ namespace Infrastructure.Services
                 using HttpRequestMessage request = new(HttpMethod.Head, imageUrl);
                 request.Headers.UserAgent.ParseAdd(_settings.UserAgent);
                 using HttpResponseMessage response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-                if (!response.IsSuccessStatusCode || response.Content.Headers.ContentType == null || !response.Content.Headers.ContentType.MediaType.StartsWith("image/"))
+                if (!response.IsSuccessStatusCode || response.Content.Headers.ContentType == null || (response.Content.Headers.ContentType.MediaType?.StartsWith("image/") != true))
                 {
                     _logger.LogError(
                         "Image URL check failed: \"{ImageUrl}\" returned status {StatusCode} for news item \"{NewsTitle}\" (Source: {SourceName}, SourceId: {SourceId}) in {MethodName}",

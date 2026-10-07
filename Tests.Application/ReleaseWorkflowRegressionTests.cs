@@ -120,6 +120,21 @@ public sealed class ReleaseWorkflowRegressionTests
         Assert.DoesNotContain("actions/setup-dotnet@v4", source, StringComparison.Ordinal);
         Assert.DoesNotContain("actions/upload-artifact@v4", source, StringComparison.Ordinal);
     }
+    [Fact]
+    public void Release_final_collection_flattens_artifact_directories()
+    {
+        // download-artifact nests each artifact in its own subdirectory; the release
+        // upload glob only matches a flat layout, so a flatten step is mandatory.
+        var job = LoadWorkflow().RootElement.GetProperty("jobs")
+            .GetProperty("job_17_final_cleanup_artifacts");
+
+        Assert.Contains(job.GetProperty("steps").EnumerateArray(), s =>
+            s.TryGetProperty("shell", out var shell) &&
+            shell.GetString() == "bash" &&
+            s.TryGetProperty("run", out var run) &&
+            run.GetString()!.Contains("Flatten", StringComparison.OrdinalIgnoreCase));
+    }
+
     private static JsonDocument LoadWorkflow()
     {
         var root = FindRoot();

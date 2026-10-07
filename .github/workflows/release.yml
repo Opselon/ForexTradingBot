@@ -480,6 +480,11 @@
           }
         },
         {
+          "name": "🪜 Flatten artifact directories",
+          "shell": "bash",
+          "run": "set -euo pipefail\n# download-artifact places each artifact in its own subdirectory\n# (release-assets/<artifact-name>/...). Flatten everything to a single level so\n# the release upload glob matches the archives directly.\nmkdir -p ./flat\nfind ./release-assets -type f -print0 | while IFS= read -r -d '' f; do\n  base=$(basename \"$f\")\n  # collisions are not expected: each artifact name is unique\n  cp -- \"$f\" \"./flat/$base\"\ndone\nrm -rf ./release-assets\nmv ./flat ./release-assets\nls -la ./release-assets\n"
+        },
+        {
           "name": "🔐 Generate SHA-256 checksums",
           "shell": "bash",
           "run": "set -euo pipefail\nfind ./release-assets -type f -not -name 'SHA256SUMS.txt' -print0 | sort -z | xargs -0 sha256sum > ./release-assets/SHA256SUMS.txt\ncat ./release-assets/SHA256SUMS.txt"

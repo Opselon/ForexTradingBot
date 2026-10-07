@@ -83,27 +83,88 @@ clone_or_update() {
 }
 
 # ---------- Docker path ----------
-docker_install() {
+
+# Best-effort automatic installation of Docker Engine + Compose plugin.
+# Only touches apt-based Linux. On other systems we fall back to instructions.
+docker_autoinstall() {
   step "Docker environment"
-  if ! command_exists docker; then
+  if command_exists docker && docker info >/dev/null 2>&1; then
+    ok "Docker already installed and running"
+    return 0
+  fi
+
+  if [ "$(uname)" != "Linux" ]; then
     err "Docker is not installed."
     info "Install Docker:"
     info "  Linux  : https://docs.docker.com/engine/install/"
     info "  macOS  : brew install --cask docker"
+    info "  Windows: Docker Desktop (https://www.docker.com/products/docker-desktop)"
     exit 1
   fi
+
+  if ! command_exists apt-get; then
+    err "Docker is not installed and this Linux distro is not apt-based."
+    info "Install Docker manually: https://docs.docker.com/engine/install/"
+    exit 1
+  fi
+
+  warn "Docker is missing. Attempting automatic installation (requires sudo)..."
+
+  # 'curl | bash' one-liner works on Debian/Ubuntu/RHEL/CentOS and is idempotent.
+  if command_exists curl; then
+    if sh -c 'curl -fsSL https://get.docker.com -o /tmp/get-docker.sh && sh /tmp/get-docker.sh'; then
+      ok "Docker Engine installed"
+    else
+      err "Automatic Docker installation failed."
+      info "Install it manually: https://docs.docker.com/engine/install/"
+      exit 1
+    fi
+  else
+    err "curl is required for the automatic Docker install."
+    exit 1
+  fi
+
+  # Start the daemon now if it isn't running.
   if ! docker info >/dev/null 2>&1; then
-    err "Docker daemon is not running (or needs sudo)."
+    if command_exists systemctl; then
+      sudo systemctl enable --now docker 2>/dev/null || sudo systemctl start docker 2>/dev/null || true
+    elif command_exists service; then
+      sudo service docker start 2>/dev/null || true
+    fi
+  fi
+
+  # Add the current user to the docker group so no sudo is needed afterwards.
+  if getent group docker >/dev/null 2>&1; then
+    sudo usermod -aG docker "$USER" 2>/dev/null || true
+    warn "Added '$USER' to the 'docker' group. You may need to log out/in once, or run: newgrp docker"
+  fi
+
+  if ! docker info >/dev/null 2>&1; then
+    err "Docker daemon still not reachable after install."
     info "Start Docker, then re-run this script."
     exit 1
   fi
+  ok "Docker is up"
+}
+
+docker_install() {
+  docker_autoinstall
+
   if docker compose version >/dev/null 2>&1; then
     COMPOSE="docker compose"
   elif command_exists docker-compose; then
     COMPOSE="docker-compose"
   else
-    err "Docker Compose not found. Install the 'docker-compose-plugin'."
-    exit 1
+    warn "Docker Compose not found. Installing the compose plugin..."
+    if command_exists apt-get; then
+      sudo apt-get update -qq && sudo apt-get install -y docker-compose-plugin
+    fi
+    if docker compose version >/dev/null 2>&1; then
+      COMPOSE="docker compose"
+    else
+      err "Docker Compose still not available. Install the 'docker-compose-plugin'."
+      exit 1
+    fi
   fi
   ok "Docker + Compose ready"
 

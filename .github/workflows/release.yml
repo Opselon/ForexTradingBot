@@ -207,7 +207,7 @@
         }
       ]
     },
-"job_07_test_smoke_linux": {
+    "job_07_test_smoke_linux": {
       "name": "💨 07 Run Linux Smoke Test",
       "needs": "job_06_test_integration_redis",
       "runs-on": "ubuntu-latest",
@@ -293,12 +293,42 @@
         "fail-fast": false,
         "matrix": {
           "include": [
-            { "rid": "linux-x64",   "runner": "ubuntu-latest",  "archive": "tar.gz", "dotnet_rid": "linux-x64"   },
-            { "rid": "linux-arm64", "runner": "ubuntu-latest",  "archive": "tar.gz", "dotnet_rid": "linux-arm64" },
-            { "rid": "win-x64",     "runner": "windows-latest", "archive": "zip",    "dotnet_rid": "win-x64"     },
-            { "rid": "win-arm64",   "runner": "windows-latest", "archive": "zip",    "dotnet_rid": "win-arm64"   },
-            { "rid": "osx-x64",     "runner": "macos-latest",   "archive": "tar.gz", "dotnet_rid": "osx-x64"     },
-            { "rid": "osx-arm64",   "runner": "macos-latest",   "archive": "tar.gz", "dotnet_rid": "osx-arm64"   }
+            {
+              "rid": "linux-x64",
+              "runner": "ubuntu-latest",
+              "archive": "tar.gz",
+              "dotnet_rid": "linux-x64"
+            },
+            {
+              "rid": "linux-arm64",
+              "runner": "ubuntu-latest",
+              "archive": "tar.gz",
+              "dotnet_rid": "linux-arm64"
+            },
+            {
+              "rid": "win-x64",
+              "runner": "windows-latest",
+              "archive": "zip",
+              "dotnet_rid": "win-x64"
+            },
+            {
+              "rid": "win-arm64",
+              "runner": "windows-latest",
+              "archive": "zip",
+              "dotnet_rid": "win-arm64"
+            },
+            {
+              "rid": "osx-x64",
+              "runner": "macos-latest",
+              "archive": "tar.gz",
+              "dotnet_rid": "osx-x64"
+            },
+            {
+              "rid": "osx-arm64",
+              "runner": "macos-latest",
+              "archive": "tar.gz",
+              "dotnet_rid": "osx-arm64"
+            }
           ]
         }
       },
@@ -416,7 +446,7 @@
         }
       ]
     },
-   "job_12_docker_push": {
+    "job_12_docker_push": {
       "name": "⬆️ 12 Docker Push Image",
       "needs": [
         "job_10_docker_build_test",
@@ -459,7 +489,7 @@
             "labels": "${{ needs.job_09_docker_meta.outputs.labels }}",
             "cache-from": "type=gha",
             "cache-to": "type=gha,mode=max",
-            "provenance": false 
+            "provenance": false
           }
         }
       ]
@@ -488,6 +518,15 @@
           "name": "🔐 Generate SHA-256 checksums",
           "shell": "bash",
           "run": "set -euo pipefail\nfind ./release-assets -type f -not -name 'SHA256SUMS.txt' -print0 | sort -z | xargs -0 sha256sum > ./release-assets/SHA256SUMS.txt\ncat ./release-assets/SHA256SUMS.txt"
+        },
+        {
+          "name": "📤 Publish flattened release bundle",
+          "uses": "actions/upload-artifact@v7",
+          "with": {
+            "name": "final-release-assets",
+            "path": "./release-assets/*",
+            "retention-days": 1
+          }
         }
       ]
     },
@@ -501,10 +540,18 @@
       },
       "steps": [
         {
+          "name": "📥 Download flattened release bundle",
+          "uses": "actions/download-artifact@v8",
+          "with": {
+            "name": "final-release-assets",
+            "path": "./release-assets"
+          }
+        },
+        {
           "name": "Create GitHub Release",
           "uses": "softprops/action-gh-release@v3",
           "with": {
-            "files": "./release-assets/**/*",
+            "files": "./release-assets/ForexTradingBot-*-linux-x64.tar.gz\n./release-assets/ForexTradingBot-*-linux-arm64.tar.gz\n./release-assets/ForexTradingBot-*-win-x64.zip\n./release-assets/ForexTradingBot-*-win-arm64.zip\n./release-assets/ForexTradingBot-*-osx-x64.tar.gz\n./release-assets/ForexTradingBot-*-osx-arm64.tar.gz\n./release-assets/SHA256SUMS.txt",
             "name": "Release ${{ github.ref_name }}",
             "body": "## ForexTradingBot ${{ github.ref_name }}\n\nSelf-contained single-file builds for all supported platforms (no .NET runtime required):\n\n- Linux: linux-x64, linux-arm64\n- Windows: win-x64, win-arm64\n- macOS: osx-x64 (Intel), osx-arm64 (Apple Silicon)\n\nEach archive contains:\n- The **WebAPI** server\n- The **CLI** tool (`forexbot`) under `cli/`\n- One-command installers: `install.sh` (Linux/macOS) and `install.ps1` (Windows)\n- `docker-compose.yml` + `Dockerfile` for the Docker path (PostgreSQL + Redis included)\n\n### Quick start\n\n**Linux / macOS**\n\n```bash\ncurl -fsSL https://raw.githubusercontent.com/Opselon/ForexTradingBot/master/install.sh | bash\n```\n\n**Windows (PowerShell)**\n\n```powershell\niwr -UseBasicParsing https://raw.githubusercontent.com/Opselon/ForexTradingBot/master/install.ps1 | iex\n```\n\nThe installer installs Docker / PostgreSQL / Redis if missing, or runs natively with the .NET 9 SDK.\n\n### Docker\n\n```bash\ndocker pull ghcr.io/opselon/forextradingbot:${{ github.ref_name }}\n```\n\nSHA-256 checksums: see `SHA256SUMS.txt`.",
             "draft": false,

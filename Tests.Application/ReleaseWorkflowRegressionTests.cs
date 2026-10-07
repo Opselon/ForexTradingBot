@@ -121,7 +121,7 @@ public sealed class ReleaseWorkflowRegressionTests
         Assert.DoesNotContain("actions/upload-artifact@v4", source, StringComparison.Ordinal);
     }
     [Fact]
-    public void Release_final_collection_flattens_artifact_directories()
+    public void Release_final_collection_flattens_and_forwards_artifacts()
     {
         // download-artifact nests each artifact in its own subdirectory; the release
         // upload glob only matches a flat layout, so a flatten step is mandatory.
@@ -133,6 +133,20 @@ public sealed class ReleaseWorkflowRegressionTests
             shell.GetString() == "bash" &&
             s.TryGetProperty("run", out var run) &&
             run.GetString()!.Contains("Flatten", StringComparison.OrdinalIgnoreCase));
+
+        // Each GitHub Actions job runs on a fresh runner, so the flattened bundle must
+        // be re-published as an artifact and re-downloaded by the release job,
+        // otherwise the upload finds no files.
+        Assert.Contains(job.GetProperty("steps").EnumerateArray(), s =>
+            s.TryGetProperty("uses", out var uses) &&
+            uses.GetString()!.StartsWith("actions/upload-artifact", StringComparison.Ordinal));
+
+        var releaseJob = LoadWorkflow().RootElement.GetProperty("jobs")
+            .GetProperty("job_18_create_release");
+
+        Assert.Contains(releaseJob.GetProperty("steps").EnumerateArray(), s =>
+            s.TryGetProperty("uses", out var uses) &&
+            uses.GetString()!.StartsWith("actions/download-artifact", StringComparison.Ordinal));
     }
 
     private static JsonDocument LoadWorkflow()

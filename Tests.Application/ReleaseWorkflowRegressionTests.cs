@@ -169,6 +169,29 @@ public sealed class ReleaseWorkflowRegressionTests
         Assert.Contains("QUICKSTART.md", run, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Release_and_deploy_workflows_do_not_run_on_plain_branch_pushes()
+    {
+        // Running the full publish pipeline on every commit to master alongside CI,
+        // CodeQL and deploy duplicated ~17 minutes of build/push work per push. Release
+        // and deploy must be gated behind a tag / a published release or a manual run.
+        var root = FindRoot();
+
+        var releaseOn = JsonTriggers(Path.Combine(root, ".github", "workflows", "release.yml"));
+        Assert.False(releaseOn.Contains("master", StringComparison.OrdinalIgnoreCase),
+            "release.yml must not trigger on branch pushes");
+
+        var deployOn = JsonTriggers(Path.Combine(root, ".github", "workflows", "deploy.yml"));
+        Assert.False(deployOn.Contains("master", StringComparison.OrdinalIgnoreCase),
+            "deploy.yml must not trigger on branch pushes");
+    }
+
+    private static string JsonTriggers(string path)
+    {
+        using var doc = JsonDocument.Parse(File.ReadAllText(path));
+        return JsonSerializer.Serialize(doc.RootElement.GetProperty("on"));
+    }
+
     private static JsonDocument LoadWorkflow()
     {
         var root = FindRoot();

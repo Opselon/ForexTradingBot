@@ -1,9 +1,9 @@
 {
   "name": "🚀 [PROD] Full-Scale Deployment Operation",
   "on": {
-    "push": {
-      "branches": [
-        "master"
+    "release": {
+      "types": [
+        "published"
       ]
     },
     "workflow_dispatch": {}
@@ -183,7 +183,7 @@
             "host": "${{ secrets.PROD_SERVER_IP }}",
             "username": "${{ secrets.PROD_SERVER_USERNAME }}",
             "password": "${{ secrets.PROD_SERVER_PASSWORD }}",
-            "script": "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"\n  $key = [Convert]::FromBase64String(\'${{ secrets.LOG_ENCRYPTION_KEY }}\');\n  $log = Get-ChildItem -Path '${{ env.REMOTE_TEMP_PATH }}' -Filter '01-Clean-Log-*.txt' | Sort-Object LastWriteTime -Descending | Select-Object -First 1;\n  if ($log) {\n    $aes = [System.Security.Cryptography.Aes]::Create();\n    $aes.Key = $key;\n    $aes.GenerateIV();\n    $iv = $aes.IV;\n    $encryptor = $aes.CreateEncryptor();\n    $plain = [System.IO.File]::ReadAllBytes($log.FullName);\n    $cipher = $encryptor.TransformFinalBlock($plain, 0, $plain.Length);\n    [System.IO.File]::WriteAllBytes(\"$($log.FullName).enc\", $iv + $cipher);\n    Remove-Item $log.FullName;\n  }\n\""
+            "script": "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"\n  $key = [Convert]::FromBase64String('${{ secrets.LOG_ENCRYPTION_KEY }}');\n  $log = Get-ChildItem -Path '${{ env.REMOTE_TEMP_PATH }}' -Filter '01-Clean-Log-*.txt' | Sort-Object LastWriteTime -Descending | Select-Object -First 1;\n  if ($log) {\n    $aes = [System.Security.Cryptography.Aes]::Create();\n    $aes.Key = $key;\n    $aes.GenerateIV();\n    $iv = $aes.IV;\n    $encryptor = $aes.CreateEncryptor();\n    $plain = [System.IO.File]::ReadAllBytes($log.FullName);\n    $cipher = $encryptor.TransformFinalBlock($plain, 0, $plain.Length);\n    [System.IO.File]::WriteAllBytes(\"$($log.FullName).enc\", $iv + $cipher);\n    Remove-Item $log.FullName;\n  }\n\""
           }
         },
         {

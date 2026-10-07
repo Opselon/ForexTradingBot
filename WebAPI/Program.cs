@@ -178,13 +178,13 @@ try
         // AI-FRIENDLY FIX: Re-check for smoke test mode. If true, skip adding the
         // database configuration source entirely. This prevents a crash when the
         // database file doesn't exist yet during the initial build phase.
+        //
+        // NOTE: this block runs in the top-level statement body, so `return` here
+        // would exit the whole program and the app would shut down before listening.
+        // Skip by guard instead.
         bool isSmokeTestInDelegate = "true".Equals(tempInitialConfig["IsSmokeTest"], StringComparison.OrdinalIgnoreCase);
-        if (isSmokeTestInDelegate)
+        if (!isSmokeTestInDelegate)
         {
-            Log.Information("[SmokeTest] Skipping DatabaseConfigurationSource to prevent startup crash.");
-            return;
-        }
-
         ServiceCollection tempServices = new();
         _ = tempServices.AddSingleton<IConfiguration>(tempInitialConfig);
 
@@ -269,6 +269,11 @@ try
 
         _ = ((IConfigurationBuilder)builder.Configuration).Add(new DatabaseConfigurationSource(tempServices, registerSettingsAction));
         Log.Information("DatabaseConfigurationSource added via builder.Configuration.");
+        }
+        else
+        {
+            Log.Information("[SmokeTest] Skipping DatabaseConfigurationSource to prevent startup crash.");
+        }
     }
     // --- End of Custom Configuration Source Registration ---
 

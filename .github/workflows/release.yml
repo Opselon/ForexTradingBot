@@ -282,13 +282,26 @@
         }
       ]
     },
-    "job_08_publish_linux_artifact": {
-      "name": "🐧 08 Publish Linux Artifact",
+    "job_08_publish_artifacts": {
+      "name": "📦 08 Publish ${{ matrix.rid }}",
       "needs": [
         "job_07_test_smoke_linux",
         "job_07b_end_user_e2e"
       ],
-      "runs-on": "ubuntu-latest",
+      "runs-on": "${{ matrix.runner }}",
+      "strategy": {
+        "fail-fast": false,
+        "matrix": {
+          "include": [
+            { "rid": "linux-x64",   "runner": "ubuntu-latest",  "archive": "tar.gz", "dotnet_rid": "linux-x64"   },
+            { "rid": "linux-arm64", "runner": "ubuntu-latest",  "archive": "tar.gz", "dotnet_rid": "linux-arm64" },
+            { "rid": "win-x64",     "runner": "windows-latest", "archive": "zip",    "dotnet_rid": "win-x64"     },
+            { "rid": "win-arm64",   "runner": "windows-latest", "archive": "zip",    "dotnet_rid": "win-arm64"   },
+            { "rid": "osx-x64",     "runner": "macos-latest",   "archive": "tar.gz", "dotnet_rid": "osx-x64"     },
+            { "rid": "osx-arm64",   "runner": "macos-latest",   "archive": "tar.gz", "dotnet_rid": "osx-arm64"   }
+          ]
+        }
+      },
       "steps": [
         {
           "name": "💾 Checkout repository",
@@ -306,24 +319,34 @@
           "run": "dotnet restore"
         },
         {
-          "name": "📦 Publish application",
-          "run": "dotnet publish WebAPI/WebAPI.csproj -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true -o ./publish"
+          "name": "📦 Publish WebAPI (self-contained single-file)",
+          "run": "dotnet publish WebAPI/WebAPI.csproj -c Release -r ${{ matrix.dotnet_rid }} --self-contained true -p:PublishSingleFile=true -o ./publish/api"
+        },
+        {
+          "name": "📦 Publish CLI (self-contained single-file)",
+          "run": "dotnet publish Cli/ForexTradingBot.Cli.csproj -c Release -r ${{ matrix.dotnet_rid }} --self-contained true -p:PublishSingleFile=true -o ./publish/cli"
+        },
+        {
+          "name": "📋 Bundle CLI next to API + setup files",
+          "shell": "bash",
+          "run": "mkdir -p ./publish/bundle\ncp -R ./publish/api/. ./publish/bundle/\nmkdir -p ./publish/bundle/cli\ncp -R ./publish/cli/. ./publish/bundle/cli/\ncp install.sh install.ps1 ./publish/bundle/ 2>/dev/null || true\ncp README.md ./publish/bundle/ 2>/dev/null || true\ncp docker-compose.yml ./publish/bundle/ 2>/dev/null || true\ncp Dockerfile ./publish/bundle/ 2>/dev/null || true\ncp entrypoint.sh ./publish/bundle/ 2>/dev/null || true\n"
         },
         {
           "name": "🏷️ Determine Artifact Name",
           "id": "artifact_name",
           "shell": "bash",
-          "run": "if [[ \"${{ github.ref_type }}\" == \"tag\" ]]; then\n  ARTIFACT_FILENAME=\"ForexTradingBot-${{ github.ref_name }}-linux-x64.tar.gz\"\nelse\n  SHORT_SHA=$(echo \"${{ github.sha }}\" | cut -c1-7)\n  ARTIFACT_FILENAME=\"ForexTradingBot-${SHORT_SHA}-linux-x64.tar.gz\"\nfi\necho \"ARTIFACT_FILENAME=${ARTIFACT_FILENAME}\" >> $GITHUB_ENV\n"
+          "run": "if [[ \"${{ github.ref_type }}\" == \"tag\" ]]; then\n  ARTIFACT_FILENAME=\"ForexTradingBot-${{ github.ref_name }}-${{ matrix.rid }}.${{ matrix.archive }}\"\nelse\n  SHORT_SHA=$(echo \"${{ github.sha }}\" | cut -c1-7)\n  ARTIFACT_FILENAME=\"ForexTradingBot-${SHORT_SHA}-${{ matrix.rid }}.${{ matrix.archive }}\"\nfi\necho \"ARTIFACT_FILENAME=${ARTIFACT_FILENAME}\" >> $GITHUB_ENV\n"
         },
         {
-          "name": "Compress Artifact",
-          "run": "tar -czvf \"${{ env.ARTIFACT_FILENAME }}\" -C ./publish ."
+          "name": "🧱 Compress Artifact",
+          "shell": "bash",
+          "run": "if [[ \"${{ matrix.archive }}\" == \"zip\" ]]; then\n  7z a -tzip \"${{ env.ARTIFACT_FILENAME }}\" ./publish/bundle/*\nelse\n  tar -czvf \"${{ env.ARTIFACT_FILENAME }}\" -C ./publish/bundle .\nfi\n"
         },
         {
           "name": "⬆️ Upload Build Artifact",
           "uses": "actions/upload-artifact@v7",
           "with": {
-            "name": "release-asset-linux-x64",
+            "name": "release-asset-${{ matrix.rid }}",
             "path": "${{ env.ARTIFACT_FILENAME }}"
           }
         }
@@ -441,157 +464,11 @@
         }
       ]
     },
-"job_13_build_win_package": {
-      "name": "🪟 13 Windows Build, Test, & Package",
-      "needs": [
-        "job_02_restore_dependencies",
-        "job_07b_end_user_e2e"
-      ],
-      "runs-on": "windows-latest",
-      "steps": [
-        {
-          "name": "💾 Checkout repository",
-          "uses": "actions/checkout@v5"
-        },
-        {
-          "name": "⚙️ Setup .NET SDK",
-          "uses": "actions/setup-dotnet@v6",
-          "with": {
-            "global-json-file": "global.json"
-          }
-        },
-        {
-          "name": "📦 Publish application (Self-Contained)",
-          "run": "dotnet publish WebAPI/WebAPI.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o ./publish"
-        },
-        {
-          "name": "🧪 Run Unit & Integration Tests (Lightweight)",
-          "run": "dotnet test Application.Tests/Application.Tests.csproj --configuration Release --verbosity normal",
-          "env": {
-            "ConnectionStrings__DefaultConnection": "Data Source=lightweight_test.db",
-            "TelegramPanel__BotToken": "123456:ABC-DEF1234567890",
-            "TEST_ENVIRONMENT": "Lightweight",
-            "ASPNETCORE_ENVIRONMENT": "Development"
-          }
-        },
-        {
-          "name": "🏷️ Determine Artifact Name",
-          "id": "artifact_name",
-          "shell": "bash",
-          "run": "if [[ \"${{ github.ref_type }}\" == \"tag\" ]]; then\n  ARTIFACT_FILENAME=\"ForexTradingBot-${{ github.ref_name }}-win-x64.zip\"\nelse\n  SHORT_SHA=$(echo \"${{ github.sha }}\" | cut -c1-7)\n  ARTIFACT_FILENAME=\"ForexTradingBot-${SHORT_SHA}-win-x64.zip\"\nfi\necho \"ARTIFACT_FILENAME=${ARTIFACT_FILENAME}\" >> $GITHUB_ENV\n"
-        },
-        {
-          "name": "Compress Artifact",
-          "shell": "pwsh",
-          "run": "Compress-Archive -Path ./publish/* -DestinationPath \"${{ env.ARTIFACT_FILENAME }}\""
-        },
-        {
-          "name": "⬆️ Upload Build Artifact",
-          "uses": "actions/upload-artifact@v7",
-          "with": {
-            "name": "release-asset-win-x64",
-            "path": "${{ env.ARTIFACT_FILENAME }}"
-          }
-        }
-      ]
-    },
-    "job_14_package_win_artifact": {
-      "name": "⬆️ 14 Skip (Merged with 13)",
-      "needs": "job_13_build_win_package",
-      "runs-on": "ubuntu-latest",
-      "steps": [
-        {
-          "name": "Placeholder for Merged Step",
-          "run": "echo \"Step 14 merged into Step 13. Proceeding to next step.\""
-        }
-      ]
-    },
-    "job_15_build_macos_package": {
-      "name": "🍎 15 macOS Build, Test, & Package",
-      "needs": [
-        "job_02_restore_dependencies",
-        "job_07b_end_user_e2e"
-      ],
-      "runs-on": "macos-latest",
-      "steps": [
-        {
-          "name": "💾 Checkout repository",
-          "uses": "actions/checkout@v5"
-        },
-        {
-          "name": "⚙️ Setup .NET SDK",
-          "uses": "actions/setup-dotnet@v6",
-          "with": {
-            "global-json-file": "global.json"
-          }
-        },
-        {
-          "name": "✅ Run Restore",
-          "run": "dotnet restore"
-        },
-        {
-          "name": "🧪 Run Unit & Integration Tests (Lightweight)",
-          "run": "dotnet test Application.Tests/Application.Tests.csproj --configuration Release --verbosity normal",
-          "env": {
-            "ConnectionStrings__DefaultConnection": "Data Source=lightweight_test.db",
-            "TelegramPanel__BotToken": "123456:ABC-DEF1234567890",
-            "TEST_ENVIRONMENT": "Lightweight",
-            "ASPNETCORE_ENVIRONMENT": "Development"
-          }
-        },
-        {
-          "name": "💨 Run Smoke Test (macOS)",
-          "shell": "bash",
-          "run": "echo \"Starting application in the background for smoke test...\"\ndotnet run --project WebAPI/WebAPI.csproj --no-launch-profile --urls \"http://localhost:5000\" > app_output.log 2>&1 &\nAPP_PID=$!\n\necho \"Waiting for application to start (polling http://localhost:5000/healthz)...\"\n\nfor i in {1..30}; do\n  if curl -s --fail http://localhost:5000/healthz > /dev/null; then\n    echo \"✅ Health check passed!\"\n    kill \"$APP_PID\" || true\n    exit 0\n  fi\n  if ! kill -0 \"$APP_PID\" 2>/dev/null; then\n    echo \"❌ Application crashed immediately!\"\n    cat app_output.log\n    exit 1\n  fi\n  echo \"Health check failed. Retrying in 1 second...\"\n  sleep 1\ndone\n\necho \"❌ Health check failed after 30 seconds.\"\ncat app_output.log\nkill \"$APP_PID\" || true\nexit 1\n",
-          "env": {
-            "IsSmokeTest": "true",
-            "ASPNETCORE_ENVIRONMENT": "Development",
-            "ConnectionStrings__DefaultConnection": "Data Source=smoke_test.db",
-            "TelegramPanel__BotToken": "123456:ABC-DEF1234567890"
-          }
-        },
-        {
-          "name": "📦 Publish application",
-          "run": "dotnet publish WebAPI/WebAPI.csproj -c Release -r osx-x64 --self-contained true -p:PublishSingleFile=true -o ./publish"
-        },
-        {
-          "name": "🏷️ Determine Artifact Name",
-          "id": "artifact_name",
-          "shell": "bash",
-          "run": "if [[ \"${{ github.ref_type }}\" == \"tag\" ]]; then\n  ARTIFACT_FILENAME=\"ForexTradingBot-${{ github.ref_name }}-osx-x64.tar.gz\"\nelse\n  SHORT_SHA=$(echo \"${{ github.sha }}\" | cut -c1-7)\n  ARTIFACT_FILENAME=\"ForexTradingBot-${SHORT_SHA}-osx-x64.tar.gz\"\nfi\necho \"ARTIFACT_FILENAME=${ARTIFACT_FILENAME}\" >> $GITHUB_ENV\n"
-        },
-        {
-          "name": "Compress Artifact",
-          "run": "tar -czvf \"${{ env.ARTIFACT_FILENAME }}\" -C ./publish ."
-        },
-        {
-          "name": "⬆️ Upload Build Artifact",
-          "uses": "actions/upload-artifact@v7",
-          "with": {
-            "name": "release-asset-osx-x64",
-            "path": "${{ env.ARTIFACT_FILENAME }}"
-          }
-        }
-      ]
-    },
-    "job_16_package_macos_artifact": {
-      "name": "⬆️ 16 Skip (Merged with 15)",
-      "needs": "job_15_build_macos_package",
-      "runs-on": "ubuntu-latest",
-      "steps": [
-        {
-          "name": "Placeholder for Merged Step",
-          "run": "echo \"Step 16 merged into Step 15. Proceeding to next step.\""
-        }
-      ]
-    },
     "job_17_final_cleanup_artifacts": {
       "name": "⬇️ 17 Final Artifact Collection",
       "needs": [
-        "job_08_publish_linux_artifact",
-        "job_12_docker_push",
-        "job_14_package_win_artifact",
-        "job_16_package_macos_artifact"
+        "job_08_publish_artifacts",
+        "job_12_docker_push"
       ],
       "runs-on": "ubuntu-latest",
       "steps": [
@@ -624,7 +501,7 @@
           "with": {
             "files": "./release-assets/**/*",
             "name": "Release ${{ github.ref_name }}",
-            "body": "Automatic release of version ${{ github.ref_name }}. Docker image is available via GHCR.",
+            "body": "## ForexTradingBot ${{ github.ref_name }}\n\nSelf-contained single-file builds for all supported platforms (no .NET runtime required):\n\n- Linux: linux-x64, linux-arm64\n- Windows: win-x64, win-arm64\n- macOS: osx-x64 (Intel), osx-arm64 (Apple Silicon)\n\nEach archive contains:\n- The **WebAPI** server\n- The **CLI** tool (`forexbot`) under `cli/`\n- One-command installers: `install.sh` (Linux/macOS) and `install.ps1` (Windows)\n- `docker-compose.yml` + `Dockerfile` for the Docker path (PostgreSQL + Redis included)\n\n### Quick start\n\n**Linux / macOS**\n\n```bash\ncurl -fsSL https://raw.githubusercontent.com/Opselon/ForexTradingBot/master/install.sh | bash\n```\n\n**Windows (PowerShell)**\n\n```powershell\niwr -UseBasicParsing https://raw.githubusercontent.com/Opselon/ForexTradingBot/master/install.ps1 | iex\n```\n\nThe installer installs Docker / PostgreSQL / Redis if missing, or runs natively with the .NET 9 SDK.\n\n### Docker\n\n```bash\ndocker pull ghcr.io/opselon/forextradingbot:${{ github.ref_name }}\n```\n\nSHA-256 checksums: see `SHA256SUMS.txt`.",
             "draft": false,
             "prerelease": false
           },

@@ -419,13 +419,18 @@ try
             }
             catch (Exception ex)
             {
+                // Fail open, not closed: when Redis cannot be reached the app still serves
+                // requests with the in-memory fallback queue. Losing distributed features is
+                // recoverable; crashing on startup (the previous behaviour) is not — it left
+                // SQLite users unable to run the app at all when no Redis was installed.
                 Log.Error(ex,
-                    "Failed to create required Redis ConnectionMultiplexer for {Endpoint}. Startup will fail closed.",
+                    "Could not create the Redis ConnectionMultiplexer for {Endpoint}. " +
+                    "The application will continue with the in-memory fallback queue. " +
+                    "Distributed features (shared cache, image deduplication) are disabled until Redis is reachable.",
                     endpoint);
 
-                throw new InvalidOperationException(
-                    "Redis is configured but unavailable. Fix the Redis endpoint/credentials and restart the application.",
-                    ex);
+                return new Infrastructure.Services.FallbackRedisService(
+                    sp.GetRequiredService<ILogger<Infrastructure.Services.FallbackRedisService>>());
             }
         });
 
@@ -861,8 +866,11 @@ try
                     break;
 
                 case "sqlite":
-                    _ = config.UseSQLiteStorage(connectionString);
-                    Log.Information("✅ Hangfire successfully configured with SQLite storage.");
+                    // Hangfire.Storage.SQLite takes a FILE PATH, not a connection string.
+                    // Extracting DataSource keeps it working for both styles.
+                    string sqlitePath = HangfireSqlitePath(connectionString);
+                    _ = config.UseSQLiteStorage(sqlitePath);
+                    Log.Information("✅ Hangfire successfully configured with SQLite storage at {Path}.", sqlitePath);
                     break;
 
                 default:
@@ -881,6 +889,33 @@ try
             _ = config.UseMemoryStorage();
         }
     });
+
+    /// <summary>
+    /// Hangfire.Storage.SQLite expects a bare file path, but the rest of the app passes
+    /// a full connection string ("Data Source=/path/app.db"). Extract the DataSource.
+    /// </summary>
+    static string HangfireSqlitePath(string connectionString)
+    {
+        // Accept "Data Source=X", "DataSource=X", or a plain path.
+        foreach (string part in connectionString.Split(';', StringSplitOptions.RemoveEmptyEntries))
+        {
+            int eq = part.IndexOf('=');
+            if (eq <= 0)
+            {
+                continue;
+            }
+
+            string key = part[..eq].Trim();
+            if (key.Equals("Data Source", StringComparison.OrdinalIgnoreCase)
+                || key.Equals("DataSource", StringComparison.OrdinalIgnoreCase))
+            {
+                return part[(eq + 1)..].Trim().Trim('"', '\'');
+            }
+        }
+
+        // Already a plain path.
+        return connectionString.Trim();
+    }
 
 
     // 3. خواندن تعداد Workerها از appsettings.json یا Fall‑Back به CPU/RAM

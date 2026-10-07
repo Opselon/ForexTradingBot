@@ -274,12 +274,15 @@ namespace Infrastructure.Data
                 }
                 catch (RedisConnectionException ex)
                 {
-                    Console.ForegroundColor = ConsoleColor.Red;
+                    // Fail open: keep the app startable without a running Redis. The
+                    // distributed features degrade to in-memory; crashing here meant an
+                    // app that could not start at all on a Redis-less machine.
+                    Console.ForegroundColor = ConsoleColor.Yellow;
                     Console.WriteLine(
-                        $"FATAL ERROR: Could not connect to Redis using the provided connection string. " +
-                        $"Please check the server and configuration. Error: {ex.Message}");
+                        $"⚠️ Could not connect to Redis ({ex.Message.Split('\n')[0]}). " +
+                        "Caching falls back to in-memory and non-persistent. " +
+                        "Distributed features like global image deduplication are disabled until Redis is reachable.");
                     Console.ResetColor();
-                    throw;
                 }
             }
             else

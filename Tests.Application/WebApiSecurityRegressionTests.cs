@@ -447,14 +447,17 @@ public sealed class RepositorySecurityRegressionTests
 
 
     [Fact]
-    public void Configured_production_Redis_must_not_fallback_to_in_memory_service()
+    public void Production_Redis_failure_degrades_to_in_memory_without_crashing()
     {
         var root = FindRepositoryRoot();
         var source = File.ReadAllText(
             Path.Combine(root, "WebAPI", "Program.cs"));
 
+        // A configured Redis that cannot be reached must NOT crash startup. Crashing left
+        // SQLite users unable to run the app at all when no Redis was installed; failing
+        // open to the in-memory queue is the correct, recoverable behaviour.
         Assert.DoesNotContain(
-            "Falling back to in-memory Redis",
+            "Startup will fail closed",
             source,
             StringComparison.OrdinalIgnoreCase);
 
@@ -462,10 +465,21 @@ public sealed class RepositorySecurityRegressionTests
             .Split("new Infrastructure.Services.FallbackRedisService", StringSplitOptions.None)
             .Length - 1;
 
-        // The explicit smoke-test branch is allowed exactly one fallback.
-        Assert.Equal(1, fallbackRegistrations);
-        Assert.Contains(
-            "Startup will fail closed",
+        // 1) the explicit smoke-test branch, 2) the connection failure branch.
+        Assert.Equal(2, fallbackRegistrations);
+    }
+
+    [Fact]
+    public void Redis_connection_failures_do_not_terminate_the_application()
+    {
+        var root = FindRepositoryRoot();
+        var source = File.ReadAllText(
+            Path.Combine(root, "Infrastructure", "Data", "ServiceCollectionExtensions.cs"));
+
+        // Previously this threw ("FATAL ERROR ..."), which made the whole app unstartable
+        // whenever Redis was not running.
+        Assert.DoesNotContain(
+            "FATAL ERROR: Could not connect to Redis",
             source,
             StringComparison.OrdinalIgnoreCase);
     }

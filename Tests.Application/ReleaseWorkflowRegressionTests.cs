@@ -29,21 +29,49 @@ public sealed class ReleaseWorkflowRegressionTests
         var e2e = jobs.GetProperty("job_07b_end_user_e2e");
         Assert.Equal("job_06_test_integration_redis", e2e.GetProperty("needs").GetString());
 
-        foreach (var jobName in new[]
-        {
-            "job_08_publish_linux_artifact",
-            "job_09_docker_meta",
-            "job_13_build_win_package",
-            "job_15_build_macos_package"
-        })
-        {
-            var needs = jobs.GetProperty(jobName).GetProperty("needs");
-            var values = needs.ValueKind == JsonValueKind.Array
-                ? needs.EnumerateArray().Select(x => x.GetString()).ToArray()
-                : [needs.GetString()];
+        // The multi-arch publish matrix is the single artifact producer; it must be
+        // gated on the end-user E2E suite, otherwise broken releases can be published.
+        var publish = jobs.GetProperty("job_08_publish_artifacts");
+        var needs = publish.GetProperty("needs");
+        var values = needs.ValueKind == JsonValueKind.Array
+            ? needs.EnumerateArray().Select(x => x.GetString()).ToArray()
+            : [needs.GetString()];
 
-            Assert.Contains("job_07b_end_user_e2e", values);
+        Assert.Contains("job_07b_end_user_e2e", values);
+    }
+
+    [Fact]
+    public void Release_publish_matrix_covers_all_supported_architectures()
+    {
+        var job = LoadWorkflow().RootElement.GetProperty("jobs")
+            .GetProperty("job_08_publish_artifacts");
+
+        var includes = job.GetProperty("strategy")
+            .GetProperty("matrix")
+            .GetProperty("include")
+            .EnumerateArray()
+            .Select(entry => entry.GetProperty("rid").GetString())
+            .ToArray();
+
+        Assert.Equal(
+            new[] { "linux-x64", "linux-arm64", "win-x64", "win-arm64", "osx-x64", "osx-arm64" },
+            includes);
+
+        // Artifacts must be self-contained single-file bundles so end users need no
+        // .NET runtime, and the CLI must be published alongside the API.
+        var steps = job.GetProperty("steps");
+        foreach (var project in new[] { "WebAPI/WebAPI.csproj", "Cli/ForexTradingBot.Cli.csproj" })
+        {
+            Assert.Contains(steps.EnumerateArray(), s =>
+                s.TryGetProperty("run", out var run) &&
+                run.GetString()!.Contains(project, StringComparison.Ordinal) &&
+                run.GetString()!.Contains("--self-contained true", StringComparison.Ordinal));
         }
+
+        // The end-user setup files must be bundled into every archive.
+        Assert.Contains(steps.EnumerateArray(), s =>
+            s.TryGetProperty("run", out var run) &&
+            run.GetString()!.Contains("install.sh", StringComparison.Ordinal));
     }
 
     [Fact]

@@ -359,7 +359,7 @@
         {
           "name": "📋 Bundle CLI next to API + setup files",
           "shell": "bash",
-          "run": "mkdir -p ./publish/bundle\ncp -R ./publish/api/. ./publish/bundle/\nmkdir -p ./publish/bundle/cli\ncp -R ./publish/cli/. ./publish/bundle/cli/\ncp install.sh install.ps1 ./publish/bundle/ 2>/dev/null || true\ncp README.md ./publish/bundle/ 2>/dev/null || true\ncp docker-compose.yml ./publish/bundle/ 2>/dev/null || true\ncp Dockerfile ./publish/bundle/ 2>/dev/null || true\ncp entrypoint.sh ./publish/bundle/ 2>/dev/null || true\n"
+          "run": "mkdir -p ./publish/bundle\ncp -R ./publish/api/. ./publish/bundle/\nmkdir -p ./publish/bundle/cli\ncp -R ./publish/cli/. ./publish/bundle/cli/\n# Setup scripts must stay executable in the archive.\ncp install.sh install.ps1 ./publish/bundle/ 2>/dev/null || true\ncp .env.example ./publish/bundle/ 2>/dev/null || true\ncp README.md ./publish/bundle/ 2>/dev/null || true\ncp QUICKSTART.md ./publish/bundle/ 2>/dev/null || true\ncp docker-compose.yml ./publish/bundle/ 2>/dev/null || true\ncp Dockerfile ./publish/bundle/ 2>/dev/null || true\ncp entrypoint.sh ./publish/bundle/ 2>/dev/null || true\nchmod 755 ./publish/bundle/install.sh ./publish/bundle/entrypoint.sh 2>/dev/null || true\nls -la ./publish/bundle | head -30\n"
         },
         {
           "name": "🏷️ Determine Artifact Name",

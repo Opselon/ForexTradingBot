@@ -149,6 +149,26 @@ public sealed class ReleaseWorkflowRegressionTests
             uses.GetString()!.StartsWith("actions/download-artifact", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void Release_bundle_keeps_setup_files_executable_and_ships_env_example()
+    {
+        var job = LoadWorkflow().RootElement.GetProperty("jobs")
+            .GetProperty("job_08_publish_artifacts");
+
+        var bundleStep = job.GetProperty("steps").EnumerateArray()
+            .Single(s => (s.TryGetProperty("name", out var n) &&
+                          n.GetString()?.Contains("Bundle", StringComparison.OrdinalIgnoreCase) == true));
+        var run = bundleStep.GetProperty("run").GetString()!;
+
+        // The scripts must stay executable inside the archive, otherwise end users
+        // hit "Permission denied" right after extracting.
+        Assert.Contains("chmod 755", run, StringComparison.Ordinal);
+        Assert.Contains("install.sh", run, StringComparison.Ordinal);
+        // docker-compose reads .env; shipping the example is required for the one-command path.
+        Assert.Contains(".env.example", run, StringComparison.Ordinal);
+        Assert.Contains("QUICKSTART.md", run, StringComparison.Ordinal);
+    }
+
     private static JsonDocument LoadWorkflow()
     {
         var root = FindRoot();

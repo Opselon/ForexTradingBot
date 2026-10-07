@@ -138,10 +138,16 @@ try
     // 3) In smoke-test mode, ensure a quick SQLite DB so EF/Hangfire don't break.
     if (isSmokeTest)
     {
-        // A) FIX: Bind to 0.0.0.0:5000. 
+        // A) FIX: Bind to 0.0.0.0:5000 ONLY when the caller did not request a specific URL.
         //    - "0.0.0.0" ensures it's reachable from outside the Docker container.
         //    - "5000" is a non-privileged port, safe for Linux/Windows runners without sudo/admin.
-        builder.Configuration["Urls"] = "http://0.0.0.0:5000";
+        //    - Respecting an explicit ASPNETCORE_URLS / Urls value keeps the app controllable
+        //      for operators who run smoke mode manually (e.g. ./WebAPI on a custom port).
+        string? existingUrls = builder.Configuration["Urls"];
+        if (string.IsNullOrWhiteSpace(existingUrls))
+        {
+            builder.Configuration["Urls"] = "http://0.0.0.0:5000";
+        }
 
         // B) Force a quick SQLite DB, overriding any other settings to ensure isolation.
         const string smokeConn = "Data Source=smoketest.db";

@@ -18,7 +18,20 @@
 set -Eeuo pipefail
 
 REPO="https://github.com/Opselon/ForexTradingBot.git"
-DIR="${FOREXBOT_DIR:-$HOME/ForexTradingBot}"
+# When the script lives inside an extracted release bundle (no .git, but the
+# runtime/compose files are next to it), default the install dir to that folder
+# instead of ~/ForexTradingBot so "cd bundle && ./install.sh" just works.
+_detect_script_dir() {
+  local d
+  d="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [ -f "$d/docker-compose.yml" ] && [ -f "$d/Dockerfile" ] && [ ! -d "$d/.git" ]; then
+    printf '%s' "$d"
+    return 0
+  fi
+  return 1
+}
+_default_dir="$(_detect_script_dir || printf '%s' "$HOME/ForexTradingBot")"
+DIR="${FOREXBOT_DIR:-$_default_dir}"
 MIN_DOTNET_MAJOR=9
 HEALTH_URL_DOCKER="http://localhost:8080/healthz"
 HEALTH_URL_NATIVE="http://localhost:5000/healthz"
@@ -70,6 +83,14 @@ need_cmd() {
 
 clone_or_update() {
   step "Source code"
+  # Running from an extracted release archive: no git metadata, but the source
+  # (docker-compose.yml, Dockerfile, entrypoint.sh ...) is right here. Use it as-is
+  # instead of forcing a network clone.
+  if [ ! -d "$DIR/.git" ] && [ -f "$DIR/docker-compose.yml" ] && [ -f "$DIR/Dockerfile" ]; then
+    ok "Using the extracted release bundle at $DIR (no clone needed)"
+    return 0
+  fi
+
   if [ -d "$DIR/.git" ]; then
     info "Existing clone found at $DIR — updating..."
     git -C "$DIR" fetch --all --prune >/dev/null 2>&1 || warn "fetch failed (offline?) — using local copy"
@@ -266,6 +287,32 @@ native_install() {
   export DOTNET_NOLOGO=1
 
   cd "$DIR"
+
+  # A release bundle ships a self-contained WebAPI executable next to this script;
+  # prefer it — no SDK, no build step, no source tree needed.
+  if [ -x "./WebAPI" ]; then
+    ok "Found the self-contained WebAPI executable — starting directly"
+    step "Starting the application"
+    cat <<EOF
+
+${C_BOLD}┌──────────────────────────────────────────────────────────┐${C_RESET}
+${C_BOLD}│  First startup — choose your database                    │${C_RESET}
+${C_BOLD}│                                                          │${C_RESET}
+${C_BOLD}│  The app will now ask:                                   │${C_RESET}
+${C_BOLD}│    1) SQLite       (zero setup, single file)             │${C_RESET}
+${C_BOLD}│    2) PostgreSQL   (server, recommended for production)  │${C_RESET}
+${C_BOLD}│    3) SQL Server                                 │${C_RESET}
+${C_BOLD}│                                                          │${C_RESET}
+${C_BOLD}│  Your choice is saved by the Easy Setup wizard          │${C_RESET}
+${C_BOLD}└──────────────────────────────────────────────────────────┘${C_RESET}
+
+EOF
+
+    info "Starting in the foreground — press Ctrl+C to stop."
+    info "Health check: $HEALTH_URL_NATIVE"
+    echo
+    exec ./WebAPI
+  fi
 
   step "Building (Release)"
   dotnet build -c Release --nologo

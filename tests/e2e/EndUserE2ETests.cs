@@ -133,12 +133,15 @@ public sealed class EndUserE2ETests
                 "test -e /app/data/vault/bootstrap/admin-password.txt");
             Assert.NotEqual(0, bootstrapCheck.ExitCode);
 
-            using var client = CreateClient(allowRedirect: true);
+            // One shared container backs the interactive client and the post-logout probe,
+            // so the probe presents the exact cookie that was issued before logout.
+            var logoutCookieContainer = new CookieContainer();
+            using var client = CreateClient(allowRedirect: true, cookies: logoutCookieContainer);
 
             var loginPayload = new
             {
                 username = "admin",
-                password = bootstrapPassword.StdOut.Trim()
+                password = CleanBootstrapPassword(bootstrapPassword.StdOut)
             };
 
             using var wrongPasswordClient = CreateClient(allowRedirect: false);
@@ -306,7 +309,13 @@ public sealed class EndUserE2ETests
             var logout = await client.PostAsync("/api/auth/logout", content: null);
             Assert.Equal(HttpStatusCode.OK, logout.StatusCode);
 
-            var postLogoutSecrets = await client.GetAsync("/api/secrets");
+            // The client above follows redirects, so probe the post-logout state with a
+            // client that does not: an invalidated session must come back as a redirect
+            // to the login page rather than the protected payload. Both clients share
+            // the cookie container so the probe carries the exact cookie that was issued
+            // before the logout rotated the server-side stamp.
+            using var postLogoutProbe = CreateClient(allowRedirect: false, cookies: logoutCookieContainer);
+            var postLogoutSecrets = await postLogoutProbe.GetAsync("/api/secrets");
             Assert.Equal(HttpStatusCode.Redirect, postLogoutSecrets.StatusCode);
 
             var logs = await ComposeAsync("logs", "--no-color", "app");
@@ -408,13 +417,13 @@ public sealed class EndUserE2ETests
             });
     }
 
-    private HttpClient CreateClient(bool allowRedirect)
+    private HttpClient CreateClient(bool allowRedirect, CookieContainer? cookies = null)
     {
         var handler = new HttpClientHandler
         {
             AllowAutoRedirect = allowRedirect,
             UseCookies = true,
-            CookieContainer = new CookieContainer()
+            CookieContainer = cookies ?? new CookieContainer()
         };
 
         return new HttpClient(handler)
@@ -422,6 +431,20 @@ public sealed class EndUserE2ETests
             BaseAddress = new Uri(_baseUrl),
             Timeout = TimeSpan.FromSeconds(30)
         };
+    }
+
+    // The bootstrap file may carry a UTF-8 BOM depending on how it was written, and
+    // sh/curl pass those bytes through verbatim, so strip any leading BOM as well as
+    // surrounding whitespace before using the value as a password.
+    private static string CleanBootstrapPassword(string raw)
+    {
+        var value = raw.AsSpan().Trim().ToString();
+        if (value.StartsWith("\uFEFF", StringComparison.Ordinal))
+        {
+            value = value[1..];
+        }
+
+        return value;
     }
 
     // The login redirect may be emitted as a relative path ("/login.html") or as an

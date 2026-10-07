@@ -161,6 +161,13 @@ try
     //    - In non-interactive mode: falls back to SQLite and requires BotToken from config/env.
     await EasySetupWizard.RunAsync(builder, easySetupStore, isSmokeTest);
 
+    // The wizard can generate the admin credential (and other secrets) and persist it
+    // to the encrypted local vault, which was applied to configuration above before
+    // the wizard ran. Re-apply so freshly generated values win over the appsettings
+    // defaults, otherwise the running app would keep authenticating against a static
+    // default password that was never installed.
+    SecretVaultBootstrap.Apply(builder.Configuration);
+
 
     // --- Custom Configuration Source Registration ---
     // This needs to happen early. We use builder.Configuration directly (the modern
@@ -1817,11 +1824,19 @@ internal static class EasySetupWizard
             config["Admin:Password"] = generated;
             SecretVaultBootstrap.Set("ADMIN_PASSWORD", generated);
 
+            // Persist it as a wizard setting too: the DatabaseConfigurationSource added
+            // later re-resolves this key against the appsettings default, and without a
+            // persisted value the generated credential would be discarded in favour of
+            // a static default that was never installed.
+            store?.Save("Admin:Password", generated, isSensitive: true);
+
             var bootstrapDirectory = Path.Combine(
                 SqliteSecretVault.DefaultVaultDirectory(), "bootstrap");
             Directory.CreateDirectory(bootstrapDirectory);
             var bootstrapPath = Path.Combine(bootstrapDirectory, "admin-password.txt");
-            File.WriteAllText(bootstrapPath, generated, System.Text.Encoding.UTF8);
+            // UTF-8 without a BOM: installers and shells read this file raw, and a
+            // leading byte order mark becomes part of the password.
+            File.WriteAllText(bootstrapPath, generated, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
             if (!OperatingSystem.IsWindows())
             {

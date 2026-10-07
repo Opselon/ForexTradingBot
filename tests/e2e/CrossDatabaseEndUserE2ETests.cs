@@ -48,7 +48,12 @@ public sealed class CrossDatabaseEndUserE2ETests
 
         string password="admin";
         var passwordFile=await Run("docker",["compose","-p",project,"-f",compose,"exec","-T","app-"+provider,"sh","-lc","cat /app/data/vault/bootstrap/admin-password.txt 2>/dev/null"]);
-        var candidate=(passwordFile.ExitCode==0?passwordFile.StdOut:string.Empty).Trim();
+        var candidate=(passwordFile.ExitCode==0?passwordFile.StdOut:string.Empty);
+        candidate=candidate.AsSpan().Trim().ToString();
+        if(candidate.StartsWith("\uFEFF",StringComparison.Ordinal))
+        {
+            candidate=candidate[1..];
+        }
         if(!string.IsNullOrEmpty(candidate))
         {
             password=candidate;

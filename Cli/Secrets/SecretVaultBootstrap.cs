@@ -45,6 +45,22 @@ public static class SecretVaultBootstrap
         vault.Set(key, value);
     }
 
+    /// <summary>Reads a single persisted value, or null if it is not stored.</summary>
+    public static string? LoadValue(string key)
+    {
+        try
+        {
+            using var vault = Open();
+            return vault.Get(key);
+        }
+        catch
+        {
+            // A missing or unreadable vault is not fatal to authentication; it just
+            // means no persisted credential is available.
+            return null;
+        }
+    }
+
     private static ISecretVault Open()
     {
         var directory = SqliteSecretVault.DefaultVaultDirectory();

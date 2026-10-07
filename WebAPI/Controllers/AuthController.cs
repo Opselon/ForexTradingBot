@@ -42,6 +42,13 @@ namespace WebAPI.Controllers
             string? adminUsername = _configuration["Admin:Username"];
             string? adminPassword = _configuration["Admin:Password"];
 
+            // The encrypted local vault is the authoritative store for the admin
+            // credential: the first-run bootstrap writes it there, but a configuration
+            // source registered later can shadow the generated value with a stale
+            // default. Fall back to the vault before treating the password as unset.
+            adminPassword ??= ForexTradingBot.Cli.Secrets.SecretVaultBootstrap
+                .LoadValue("ADMIN_PASSWORD");
+
             if (string.IsNullOrEmpty(adminUsername) || string.IsNullOrEmpty(adminPassword))
             {
                 // This indicates a server configuration issue

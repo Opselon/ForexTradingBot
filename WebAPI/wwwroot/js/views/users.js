@@ -66,16 +66,19 @@
       const levelBadge = u.level === 2 ? badge("VIP", "success") : u.level === 1 ? badge("Premium", "info") : badge("Free", "secondary");
       const created = u.createdAt ? new Date(u.createdAt).toLocaleDateString() : "—";
       const balance = typeof u.tokenBalance === "number" ? u.tokenBalance.toFixed(2) : "0.00";
+      const levelName = typeof u.level === "string" ? u.level : (["Free","Bronze","Silver","Gold","Platinum"][u.level] || u.level);
 
       return `
         <tr>
           <td><strong>${esc(u.username || "Anonymous")}</strong></td>
           <td><code>${esc(u.telegramId)}</code></td>
-          <td>${levelBadge}</td>
+          <td>${levelBadge} <small class="muted">${esc(String(levelName))}</small></td>
           <td>${esc(balance)}</td>
           <td>${esc(created)}</td>
           <td class="table-actions">
             <button class="btn btn-sm btn-outline view-detail-btn" data-tg="${esc(u.telegramId)}">Details</button>
+            <button class="btn btn-sm btn-outline level-btn" data-id="${esc(u.id)}" data-level="${esc(String(levelName))}">Level</button>
+            <button class="btn btn-sm btn-outline subs-btn" data-id="${esc(u.id)}" data-user="${esc(u.username || u.telegramId)}">Subs</button>
             <button class="btn btn-sm btn-outline text-warning mark-unreachable-btn" data-tg="${esc(u.telegramId)}">Unreachable</button>
             <button class="btn btn-sm btn-outline text-danger delete-user-btn" data-id="${esc(u.id)}" data-user="${esc(u.username || u.telegramId)}">Delete</button>
           </td>
@@ -92,6 +95,20 @@
           <div class="header-actions">
             <input type="text" id="userSearch" class="form-control" placeholder="Search by name, ID or email..." value="${esc(state.filter)}" style="width:260px;" />
             <button id="refreshUsersBtn" class="btn btn-outline">Refresh</button>
+            <button id="registerUserBtn" class="btn btn-primary">+ Register user</button>
+          </div>
+        </div>
+
+        <div id="registerForm" style="display:none;" class="card" style="margin-bottom:1rem;">
+          <h3>Register new user</h3>
+          <div class="form-grid">
+            <div><label>Username</label><input id="reg-username" class="form-control" placeholder="johndoe123" /></div>
+            <div><label>Telegram ID</label><input id="reg-tgid" class="form-control" placeholder="123456789" /></div>
+            <div><label>Email</label><input id="reg-email" class="form-control" placeholder="john@example.com" /></div>
+          </div>
+          <div style="margin-top:0.75rem;display:flex;gap:0.5rem;">
+            <button id="regSave" class="btn btn-primary">Create</button>
+            <button id="regCancel" class="btn btn-outline">Cancel</button>
           </div>
         </div>
 
@@ -145,6 +162,105 @@
     if (refreshBtn) {
       refreshBtn.addEventListener("click", () => load(container));
     }
+
+    const regBtn = container.querySelector("#registerUserBtn");
+    const regForm = container.querySelector("#registerForm");
+    if (regBtn && regForm) {
+      regBtn.addEventListener("click", () => {
+        regForm.style.display = regForm.style.display === "none" ? "block" : "none";
+      });
+    }
+    const regCancel = container.querySelector("#regCancel");
+    if (regCancel && regForm) {
+      regCancel.addEventListener("click", () => { regForm.style.display = "none"; });
+    }
+    const regSave = container.querySelector("#regSave");
+    if (regSave) {
+      regSave.addEventListener("click", async () => {
+        const username = container.querySelector("#reg-username").value.trim();
+        const telegramId = container.querySelector("#reg-tgid").value.trim();
+        const email = container.querySelector("#reg-email").value.trim();
+        if (!username || !telegramId || !email) {
+          toast("All three fields are required", "error");
+          return;
+        }
+        try {
+          await call(ENDPOINTS.users.register({ username, telegramId, email }));
+          toast(`User "${username}" registered`, "success");
+          load(container);
+        } catch (err) {
+          toast(err.message || "Registration failed", "error");
+        }
+      });
+    }
+
+    container.querySelectorAll(".level-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = btn.getAttribute("data-id");
+        const current = btn.getAttribute("data-level") || "Free";
+        const next = prompt(
+          "Access level — Free, Bronze, Silver, Gold, Platinum, Admin:",
+          current
+        );
+        if (!next) return;
+        try {
+          await call(ENDPOINTS.users.setLevel(id, next.trim()));
+          toast(`Level changed to ${next.trim()}`, "success");
+          load(container);
+        } catch (err) {
+          toast(err.message || "Level change failed", "error");
+        }
+      });
+    });
+
+    container.querySelectorAll(".subs-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = btn.getAttribute("data-id");
+        const name = btn.getAttribute("data-user");
+        if (!modal || !modalBody) return;
+        modal.style.display = "flex";
+        modalBody.innerHTML = skeleton(3);
+        try {
+          const res = await call(ENDPOINTS.users.subscriptions(id));
+          const subs = Array.isArray(res.data) ? res.data : [];
+          modalBody.innerHTML = `
+            <div><strong>Subscriptions for ${esc(name)}</strong></div>
+            ${subs.length === 0 ? "<p class='muted'>No subscriptions.</p>" :
+              `<ul class="detail-list">${subs.map((s) =>
+                `<li>${esc(s.planName || "Plan")} — ${new Date(s.startDate).toLocaleDateString()} → ${new Date(s.endDate).toLocaleDateString()} (${s.isActive ? "Active" : "Expired"})
+                 <button class="btn btn-sm btn-outline text-danger del-sub-btn" data-sub="${esc(s.id)}">Delete</button></li>`).join("")}</ul>`}
+            <h4 style="margin-top:1rem;">New subscription (30 days)</h4>
+            <div style="display:flex;gap:0.5rem;margin-top:0.5rem;">
+              <button id="newSub30" class="btn btn-primary btn-sm">Create 30-day subscription</button>
+            </div>`;
+          const newBtn = modalBody.querySelector("#newSub30");
+          if (newBtn) newBtn.addEventListener("click", async () => {
+            try {
+              const now = new Date();
+              const end = new Date(now.getTime() + 30 * 864e5);
+              await call(ENDPOINTS.users.createSubscription(id, { startDate: now.toISOString(), endDate: end.toISOString() }));
+              toast("Subscription created", "success");
+              modal.style.display = "none";
+              load(container);
+            } catch (err) { toast(err.message || "Create failed", "error"); }
+          });
+          modalBody.querySelectorAll(".del-sub-btn").forEach((d) => {
+            d.addEventListener("click", async () => {
+              const subId = d.getAttribute("data-sub");
+              if (!await confirmDialog("Delete this subscription?")) return;
+              try {
+                await call(ENDPOINTS.users.deleteSubscription(subId));
+                toast("Subscription deleted", "success");
+                modal.style.display = "none";
+                load(container);
+              } catch (err) { toast(err.message || "Delete failed", "error"); }
+            });
+          });
+        } catch (err) {
+          modalBody.innerHTML = errorState("Failed to load subscriptions: " + err.message);
+        }
+      });
+    });
 
     const modal = container.querySelector("#userDetailModal");
     const modalBody = container.querySelector("#userDetailBody");

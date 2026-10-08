@@ -57,6 +57,12 @@ namespace Application.Interfaces // ✅ Namespace صحیح برای اینترف
         Task UpdateUserAsync(Guid userId, UpdateUserDto updateDto, CancellationToken cancellationToken = default);
 
         /// <summary>
+        /// Changes a user's access level (Free/Bronze/Silver/Gold/Platinum/Admin).
+        /// Admin-only operation, exposed as PATCH /api/users/{id}/level.
+        /// </summary>
+        Task<UserDto> SetLevelAsync(Guid userId, Domain.Enums.UserLevel level, CancellationToken cancellationToken = default);
+
+        /// <summary>
         /// یک کاربر را بر اساس شناسه آن حذف می‌کند.
         /// </summary>
         /// <param name="id">شناسه کاربری که باید حذف شود.</param>

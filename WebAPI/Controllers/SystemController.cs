@@ -85,6 +85,83 @@ public sealed class SystemController : ControllerBase
     }
 
     /// <summary>
+    /// Checks the latest GitHub release against the running version without
+    /// downloading anything. The panel uses this to render "update available"
+    /// honestly instead of guessing.
+    /// </summary>
+    [HttpGet("update/check")]
+    [ProducesResponseType(typeof(UpdateCheckResult), StatusCodes.Status200OK)]
+    public async Task<ActionResult<UpdateCheckResult>> CheckUpdate(CancellationToken cancellationToken)
+    {
+        Assembly asm = Assembly.GetEntryAssembly() ?? Assembly.GetExecutingAssembly();
+        string current = asm.GetName().Version?.ToString(3) ?? "0.0.0";
+
+        const string repo = "Opselon/ForexTradingBot";
+        using HttpClient http = new() { Timeout = TimeSpan.FromSeconds(20) };
+        http.DefaultRequestHeaders.UserAgent.ParseAdd("ForexTradingBot-UpdateCheck/1.0");
+
+        try
+        {
+            using HttpResponseMessage resp = await http.GetAsync(
+                $"https://api.github.com/repos/{repo}/releases/latest",
+                HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken);
+
+            if (!resp.IsSuccessStatusCode)
+            {
+                return Ok(new UpdateCheckResult(
+                    CurrentVersion: current,
+                    LatestVersion: null,
+                    UpdateAvailable: false,
+                    ReleaseUrl: $"https://github.com/{repo}/releases",
+                    ReleaseNotes: null,
+                    CheckedAt: DateTime.UtcNow,
+                    Error: $"GitHub API returned HTTP {(int)resp.StatusCode}."));
+            }
+
+            await using Stream stream = await resp.Content.ReadAsStreamAsync(cancellationToken);
+            GitHubRelease? release = await System.Text.Json.JsonSerializer
+                .DeserializeAsync<GitHubRelease>(stream, cancellationToken: cancellationToken);
+
+            // tag_name looks like "v1.2.3" — strip the leading v to compare numerically.
+            string? tag = release?.TagName;
+            string? latest = null;
+            if (!string.IsNullOrWhiteSpace(tag))
+            {
+                latest = tag.TrimStart('v', 'V');
+            }
+
+            bool available = !string.IsNullOrEmpty(latest)
+                && Version.TryParse(latest, out Version? latestVer)
+                && Version.TryParse(current, out Version? currentVer)
+                && latestVer > currentVer;
+
+            return Ok(new UpdateCheckResult(
+                CurrentVersion: current,
+                LatestVersion: latest,
+                UpdateAvailable: available,
+                ReleaseUrl: release?.HtmlUrl ?? $"https://github.com/{repo}/releases",
+                ReleaseNotes: string.IsNullOrWhiteSpace(release?.Body) ? null : release.Body,
+                CheckedAt: DateTime.UtcNow,
+                Error: null));
+        }
+        catch (Exception ex)
+        {
+            // A transient network failure is not a 500 for the panel — it is a
+            // "could not check" state the UI can show.
+            _logger.LogWarning(ex, "Update check failed.");
+            return Ok(new UpdateCheckResult(
+                CurrentVersion: current,
+                LatestVersion: null,
+                UpdateAvailable: false,
+                ReleaseUrl: $"https://github.com/{repo}/releases",
+                ReleaseNotes: null,
+                CheckedAt: DateTime.UtcNow,
+                Error: "Could not reach GitHub to check for updates."));
+        }
+    }
+
+    /// <summary>
     /// Pulls the newest published release and restarts. Only meaningful when the app
     /// is installed via the release bundle and the update script is present.
     /// </summary>
@@ -111,7 +188,7 @@ public sealed class SystemController : ControllerBase
         if (script is null)
         {
             return BadRequest(new UpdateResult(false, [],
-                "No update script found next to the application. Update this installation manually.",
+                "No update script found next to the application. This works on a release-bundle install (extracted archive); from source, pull git and rebuild manually.",
                 "https://github.com/Opselon/ForexTradingBot/releases"));
         }
 
@@ -172,3 +249,35 @@ public sealed record SystemInfoDto(
 public sealed record RestartResult(bool Success, string ProcessId, string Message);
 
 public sealed record UpdateResult(bool Success, IReadOnlyList<string> Output, string Message, string? ReleasesUrl);
+
+/// <summary>Result of GET /api/system/update/check — a read-only version comparison.</summary>
+public sealed record UpdateCheckResult(
+    string CurrentVersion,
+    string? LatestVersion,
+    bool UpdateAvailable,
+    string ReleaseUrl,
+    string? ReleaseNotes,
+    DateTime CheckedAt,
+    string? Error);
+
+/// <summary>Subset of the GitHub releases/latest payload we actually read.</summary>
+public sealed class GitHubRelease
+{
+    [System.Text.Json.Serialization.JsonPropertyName("tag_name")]
+    public string? TagName { get; set; }
+
+    [System.Text.Json.Serialization.JsonPropertyName("name")]
+    public string? Name { get; set; }
+
+    [System.Text.Json.Serialization.JsonPropertyName("html_url")]
+    public string? HtmlUrl { get; set; }
+
+    [System.Text.Json.Serialization.JsonPropertyName("body")]
+    public string? Body { get; set; }
+
+    [System.Text.Json.Serialization.JsonPropertyName("prerelease")]
+    public bool Prerelease { get; set; }
+
+    [System.Text.Json.Serialization.JsonPropertyName("published_at")]
+    public DateTime? PublishedAt { get; set; }
+}

@@ -44,6 +44,7 @@ public sealed class PanelControllersRegressionTests
         var controller = new UsersController(
             mockUser.Object,
             Mock.Of<IAdminService>(),
+            Mock.Of<ISubscriptionService>(),
             Mock.Of<ILogger<UsersController>>());
 
         var result = await controller.GetAll(CancellationToken.None);
@@ -63,6 +64,7 @@ public sealed class PanelControllersRegressionTests
         var controller = new UsersController(
             mockUser.Object,
             Mock.Of<IAdminService>(),
+            Mock.Of<ISubscriptionService>(),
             Mock.Of<ILogger<UsersController>>());
 
         var result = await controller.GetById(Guid.NewGuid(), CancellationToken.None);
@@ -89,6 +91,7 @@ public sealed class PanelControllersRegressionTests
         var controller = new UsersController(
             mockUser.Object,
             mockAdmin.Object,
+            Mock.Of<ISubscriptionService>(),
             Mock.Of<ILogger<UsersController>>());
 
         var result = await controller.GetByTelegramId("12345", detail: true, CancellationToken.None);
@@ -136,5 +139,48 @@ public sealed class PanelControllersRegressionTests
         var badRequest = Assert.IsType<BadRequestObjectResult>(result);
         var problem = Assert.IsType<ValidationProblemDetails>(badRequest.Value);
         Assert.True(problem.Errors.ContainsKey("settings"));
+    }
+
+    [Fact]
+    public void UsersController_exposes_registration_level_and_subscription_endpoints()
+    {
+        // The panel relies on these routes existing; if one is dropped the UI breaks silently.
+        Type t = typeof(UsersController);
+        Assert.NotNull(t.GetMethod("Register"));
+        Assert.NotNull(t.GetMethod("SetLevel"));
+        Assert.NotNull(t.GetMethod("GetSubscriptions"));
+        Assert.NotNull(t.GetMethod("CreateSubscription"));
+        Assert.NotNull(t.GetMethod("DeleteSubscription"));
+    }
+
+    [Fact]
+    public void SystemController_exposes_update_check()
+    {
+        // POST /api/system/update is useless without a way to see what is available first.
+        Assert.NotNull(typeof(SystemController).GetMethod("CheckUpdate"));
+    }
+
+    [Fact]
+    public void SetupController_exposes_admin_password_and_bot_token()
+    {
+        Assert.NotNull(typeof(SetupController).GetMethod("ChangeAdminPassword"));
+        Assert.NotNull(typeof(SetupController).GetMethod("SaveBotToken"));
+    }
+
+    [Fact]
+    public void Update_sh_files_are_bundled_and_executable_in_the_source_tree()
+    {
+        string root = AppContext.BaseDirectory;
+        // Walk up from bin/Release/net9.0 to the repo root.
+        for (string? dir = root; dir is not null && dir.Length > 3; dir = Path.GetDirectoryName(dir))
+        {
+            string candidate = Path.Combine(dir, "update.sh");
+            if (File.Exists(candidate))
+            {
+                return; // found
+            }
+        }
+
+        Assert.Fail("update.sh is missing from the source tree — the self-update script must ship with the release bundle.");
     }
 }

@@ -270,6 +270,7 @@ const ENDPOINTS = {
     health: () => ["GET", "/healthz"],
     restart: (delay) => ["POST", "/api/system/restart", { query: { delaySeconds: delay ?? 2 } }],
     update: () => ["POST", "/api/system/update"],
+    updateCheck: () => ["GET", "/api/system/update/check"],
   },
 
   diagnostics: {
@@ -318,6 +319,15 @@ const ENDPOINTS = {
     rotate: () => ["POST", "/api/secrets/rotate"],
   },
 
+  setup: {
+    status: () => ["GET", "/api/setup/status"],
+    database: (data) => ["POST", "/api/setup/database", { json: data }],
+    testRedis: () => ["POST", "/api/setup/redis/test"],
+    testTelegram: () => ["POST", "/api/setup/telegram/test"],
+    changePassword: (data) => ["POST", "/api/setup/admin/password", { json: data }],
+    saveToken: (data) => ["POST", "/api/setup/telegram/token", { json: data }],
+  },
+
   settings: {
     all: () => ["GET", "/api/settings/all", { ttl: 30000 }],
     update: () => ["POST", "/api/settings/update"],
@@ -349,9 +359,14 @@ const ENDPOINTS = {
     list: () => ["GET", "/api/users"],
     get: (id) => ["GET", `/api/users/${encodeURIComponent(id)}`],
     getByTelegram: (tgId, detail = false) => ["GET", `/api/users/telegram/${encodeURIComponent(tgId)}?detail=${detail}`],
+    register: (data) => ["POST", "/api/users", { json: data }],
     update: (id, data) => ["PUT", `/api/users/${encodeURIComponent(id)}`, { json: data }],
+    setLevel: (id, level) => ["PATCH", `/api/users/${encodeURIComponent(id)}/level`, { json: { level } }],
     delete: (id) => ["DELETE", `/api/users/${encodeURIComponent(id)}`],
     markUnreachable: (tgId, reason) => ["POST", `/api/users/unreachable?telegramId=${encodeURIComponent(tgId)}&reason=${encodeURIComponent(reason || "")}`],
+    subscriptions: (id) => ["GET", `/api/users/${encodeURIComponent(id)}/subscriptions`],
+    createSubscription: (id, data) => ["POST", `/api/users/${encodeURIComponent(id)}/subscriptions`, { json: data }],
+    deleteSubscription: (subId) => ["DELETE", `/api/users/subscriptions/${encodeURIComponent(subId)}`],
   },
 
   gemini: {

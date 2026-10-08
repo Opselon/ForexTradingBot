@@ -315,6 +315,30 @@ async function viewSetup() {
   </div>
 
   <div class="card">
+    <h3 class="card-title">Admin account &amp; bot token</h3>
+    <p class="card-sub">Set the panel password and the Telegram bot token without editing config files. Both are stored in the encrypted local vault.</p>
+    <div class="grid grid-2" style="margin-top:14px">
+      <div>
+        <h4 style="margin:0 0 8px;font-size:.95rem">Change admin password</h4>
+        <div class="field"><label class="lab">New password (min 12 chars)</label>
+          <input type="password" id="su-pw1" placeholder="••••••••••••" autocomplete="new-password" /></div>
+        <div class="field" style="margin-top:8px"><label class="lab">Confirm</label>
+          <input type="password" id="su-pw2" placeholder="••••••••••••" autocomplete="new-password" /></div>
+        <button class="btn btn-primary btn-sm" style="margin-top:10px" data-act="save-password">Save password</button>
+        <div class="hint">All open panel sessions are logged out immediately after this.</div>
+      </div>
+      <div>
+        <h4 style="margin:0 0 8px;font-size:.95rem">Telegram bot token</h4>
+        <div class="field"><label class="lab">Bot token from @BotFather</label>
+          <input type="password" id="su-token" placeholder="123456789:ABC-DEF…" autocomplete="off" /></div>
+        <button class="btn btn-primary btn-sm" style="margin-top:10px" data-act="save-token">Save token</button>
+        <button class="btn btn-ghost btn-sm" style="margin-top:10px" data-act="test-telegram">Test connection</button>
+        <div class="hint">The bot client reconnects with the new token after a restart.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
     <h3 class="card-title">Install Redis &amp; PostgreSQL in one command</h3>
     <p class="card-sub">If your server does not have them yet, this is the fastest path.</p>
     <pre class="code"><span class="c-com"># Redis + PostgreSQL via Docker (recommended)</span>
@@ -798,6 +822,35 @@ async function handleAction(el, e) {
     if (!r) return;
     if (r.success) toast("Telegram OK", `Connected as @${r.botUserName} (id ${r.botId})`, "ok");
     else toast("Telegram failed", (r.errors || []).join(" ") || r.message, "err");
+    return;
+  }
+
+  if (act === "save-password") {
+    const pw1 = $("#su-pw1")?.value || "";
+    const pw2 = $("#su-pw2")?.value || "";
+    if (!pw1 || !pw2) { toast("Missing input", "Fill in both password fields.", "err"); return; }
+    if (pw1.length < 12) { toast("Too short", "The password must be at least 12 characters.", "err"); return; }
+    if (pw1 !== pw2) { toast("Mismatch", "The two passwords do not match.", "err"); return; }
+    const r = await apiSafe("/api/setup/admin/password", {
+      method: "POST",
+      body: { newPassword: pw1, confirmPassword: pw2 },
+    });
+    if (r === null) return; // apiSafe already reported the error
+    toast("Password changed", "The vault was updated. You will be logged out — log in with the new password.", "warn");
+    setTimeout(() => { location.href = "/login.html"; }, 2500);
+    return;
+  }
+
+  if (act === "save-token") {
+    const token = $("#su-token")?.value || "";
+    if (!token) { toast("Missing token", "Paste the bot token from @BotFather.", "err"); return; }
+    if (!token.includes(":")) { toast("Bad format", "A bot token contains a colon, e.g. 123456789:ABC…", "err"); return; }
+    const r = await apiSafe("/api/setup/telegram/token", {
+      method: "POST",
+      body: { botToken: token },
+    });
+    if (r === null) return;
+    toast("Token saved", r.message || "Saved. Restart the core so the bot reconnects.", "ok");
     return;
   }
 

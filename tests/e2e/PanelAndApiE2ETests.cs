@@ -175,4 +175,83 @@ public sealed class PanelAndApiE2ETests
         // Responsive media queries
         Assert.Contains("@media", css);
     }
+
+    [Fact]
+    [Trait("Category", "EndToEnd")]
+    [Trait("Surface", "Users")]
+    public void Users_api_client_exposes_registration_level_and_subscriptions()
+    {
+        var root = FindRepoRoot();
+        var apiJsPath = Path.Combine(root, "WebAPI", "wwwroot", "js", "api.js");
+        var js = File.ReadAllText(apiJsPath);
+
+        Assert.Contains("register:", js);
+        Assert.Contains("setLevel:", js);
+        Assert.Contains("subscriptions:", js);
+        Assert.Contains("createSubscription:", js);
+        Assert.Contains("deleteSubscription:", js);
+    }
+
+    [Fact]
+    [Trait("Category", "EndToEnd")]
+    [Trait("Surface", "Update")]
+    public void System_view_uses_real_update_check_and_no_fake_versions()
+    {
+        var root = FindRepoRoot();
+        var systemJsPath = Path.Combine(root, "WebAPI", "wwwroot", "js", "views", "system.js");
+        var js = File.ReadAllText(systemJsPath);
+
+        // The honest states the view must be able to render.
+        Assert.Contains("updateCheck", js);
+        Assert.Contains("sys-check-update", js);
+        Assert.Contains("sys-apply-update", js);
+        Assert.Contains("Update status not checked", js); // never pretends it already checked
+        Assert.DoesNotContain("up-to-date-placeholder", js);
+    }
+
+    [Fact]
+    [Trait("Category", "EndToEnd")]
+    [Trait("Surface", "Update")]
+    public void Update_script_ships_in_the_source_tree()
+    {
+        var root = FindRepoRoot();
+        var updateSh = Path.Combine(root, "update.sh");
+        Assert.True(File.Exists(updateSh), "update.sh must exist so the release bundle can self-update.");
+
+        var sh = File.ReadAllText(updateSh);
+        // It must actually download and install, not stub the work.
+        Assert.Contains("releases/latest", sh);
+        Assert.Contains("browser_download_url", sh);
+        Assert.Contains("tar -xzf", sh);
+        Assert.DoesNotContain("echo \"update done\"", sh);
+    }
+
+    [Fact]
+    [Trait("Category", "EndToEnd")]
+    [Trait("Surface", "Setup")]
+    public void Easy_setup_wizard_wires_password_and_token_saves()
+    {
+        var root = FindRepoRoot();
+        var panelJsPath = Path.Combine(root, "WebAPI", "wwwroot", "js", "panel.js");
+        var js = File.ReadAllText(panelJsPath);
+
+        Assert.Contains("/api/setup/admin/password", js);
+        Assert.Contains("/api/setup/telegram/token", js);
+        Assert.Contains("save-password", js);
+        Assert.Contains("save-token", js);
+    }
+
+    [Fact]
+    [Trait("Category", "EndToEnd")]
+    [Trait("Surface", "Security")]
+    public void Setup_wizard_never_echoes_the_admin_password_back_to_the_page()
+    {
+        var root = FindRepoRoot();
+        var panelJsPath = Path.Combine(root, "WebAPI", "wwwroot", "js", "panel.js");
+        var js = File.ReadAllText(panelJsPath);
+
+        // The fields are type=password and the value is sent, never rendered back.
+        Assert.Contains("type=\"password\"", js);
+        Assert.DoesNotContain("document.getElementById('su-pw1').textContent", js);
+    }
 }

@@ -13,6 +13,7 @@ const U = window.FtbUi;
 const T = window.FtbPanel ? window.FtbPanel.toast : () => {};
 
 let info = null;
+let updateCheck = null;
 let phase = U.PHASES.CHECKING;
 let pollTimer = null;
 let restartDeadline = null;
@@ -50,12 +51,55 @@ function controlCard() {
           ${U.icon("restart")} Restart core
         </button>
         <button class="btn" data-act="sys-update" ${restarting || busy ? "disabled" : ""}>
-          ${U.icon("update")} Check for updates
+          ${U.icon("update")} Update
         </button>
         <button class="btn" data-act="sys-refresh" ${busy ? "disabled" : ""}>
           ${U.icon("refresh")} Refresh status
         </button>
       </div>
+    </div>
+  </div>`;
+}
+
+function updateCard() {
+  // No fake "up to date": until the check resolves, this says "not checked yet".
+  const c = updateCheck;
+  let statusHtml;
+  if (!c) {
+    statusHtml = `<div class="state"><div class="state-art">◌</div>
+      <h3>Update status not checked</h3>
+      <p>Click "Check for updates" to compare this install with the latest GitHub release.</p></div>`;
+  } else if (c.error) {
+    statusHtml = `<div class="state warn"><div class="state-art">⚠</div>
+      <h3>Could not check for updates</h3><p>${esc(c.error)}</p></div>`;
+  } else if (c.updateAvailable) {
+    statusHtml = `<div class="state ok"><div class="state-art">↑</div>
+      <h3>Update available — v${esc(c.latestVersion)}</h3>
+      <p>You are running <strong>v${esc(c.currentVersion)}</strong>.</p>
+      <div class="row" style="margin-top:12px">
+        <button class="btn btn-primary" data-act="sys-apply-update" ${busy ? "disabled" : ""}>
+          Download &amp; install v${esc(c.latestVersion)}
+        </button>
+        <a class="btn" href="${esc(c.releaseUrl)}" target="_blank" rel="noopener">Release notes</a>
+      </div></div>`;
+  } else {
+    statusHtml = `<div class="state"><div class="state-art">✓</div>
+      <h3>Up to date — v${esc(c.currentVersion)}</h3>
+      <p>This is the latest published release${c.latestVersion ? ` (v${esc(c.latestVersion)})` : ""}.</p></div>`;
+  }
+
+  return `<div class="card">
+    <div class="card-head"><h3 style="flex:1">Software update</h3>
+      ${c && !c.error && c.updateAvailable ? U.pill("UPDATE_AVAILABLE") : ""}</div>
+    <div class="card-body stack">
+      ${statusHtml}
+      <div class="row">
+        <button class="btn" data-act="sys-check-update" ${busy ? "disabled" : ""}>
+          ${U.icon("refresh")} Check for updates
+        </button>
+      </div>
+      ${c && c.releaseNotes ? `<details style="margin-top:8px"><summary>Release notes</summary>
+        <div style="white-space:pre-wrap;font-size:0.9em;max-height:220px;overflow:auto">${esc(c.releaseNotes.slice(0, 3000))}</div></details>` : ""}
     </div>
   </div>`;
 }
@@ -101,8 +145,9 @@ function render() {
     </div>
     <div class="grid grid-2">
       ${controlCard()}
-      ${infoCard()}
+      ${updateCard()}
     </div>
+    <div style="margin-top:16px">${infoCard()}</div>
     <div style="margin-top:16px">${healthCard()}</div>
   </div>`;
 }
@@ -143,8 +188,39 @@ async function restart() {
 }
 
 async function update() {
+  // "Update" now means: check first, then let the panel show what it found.
+  await checkUpdate();
+  if (updateCheck && updateCheck.updateAvailable) {
+    if (!confirm(`Download and install v${updateCheck.latestVersion}? The app restarts when it finishes.`)) return;
+    await applyUpdate();
+  }
+  return;
+}
+
+async function checkUpdate() {
   if (busy) return;
-  if (!confirm("Pull the newest published release and restart? Only works when an update script ships with this install.")) return;
+  busy = true;
+  render();
+  const api = window.FtbApi;
+  const r = await api.call(api.ENDPOINTS.system.updateCheck());
+  busy = false;
+  if (r.ok && r.data) {
+    updateCheck = r.data;
+    if (updateCheck.updateAvailable) {
+      T("ok", "Update available", `v${updateCheck.currentVersion} → v${updateCheck.latestVersion}`);
+    } else if (!updateCheck.error) {
+      T("ok", "Up to date", `Running v${updateCheck.currentVersion}`);
+    } else {
+      T("warn", "Check failed", String(updateCheck.error).slice(0, 160));
+    }
+  } else {
+    T("err", "Check failed", (r.error || `HTTP ${r.status}`).slice(0, 160));
+  }
+  render();
+}
+
+async function applyUpdate() {
+  if (busy) return;
   busy = true;
   phase = U.PHASES.UPDATING;
   render();
@@ -156,7 +232,7 @@ async function update() {
   if (!r.ok) {
     phase = U.PHASES.ERROR;
     render();
-    const url = r.data && r.data.releaseUrl ? r.data.releaseUrl : null;
+    const url = r.data && r.data.releasesUrl ? r.data.releasesUrl : null;
     T("err", "Update unavailable", (r.error || `HTTP ${r.status}`).slice(0, 200));
     if (url) window.open(url, "_blank");
     return;
@@ -185,6 +261,8 @@ window.FtbViews.system = {
   mount, unmount,
   "sys-restart": restart,
   "sys-update": update,
+  "sys-check-update": checkUpdate,
+  "sys-apply-update": applyUpdate,
   "sys-refresh": () => { phase = U.PHASES.CHECKING; render(); refreshInfo(); },
 };
 })();

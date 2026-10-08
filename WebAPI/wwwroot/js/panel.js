@@ -18,6 +18,16 @@ const state = {
   status: null,
   health: "checking",
   loading: true,
+  mounted: null,   // the view module currently mounted
+};
+
+/* ----------------------------- panel exports ----------------------------- */
+/* Views call FtbPanel.toast so notifications stay consistent, and
+   FtbPanel.go when they need to navigate. */
+window.FtbPanel = {
+  go: (r) => go(r),
+  toast: (kind, title, msg) => toast(title, msg, kind),
+  state,
 };
 
 /* ----------------------------- toast ----------------------------- */
@@ -73,17 +83,30 @@ try { applyTheme(localStorage.getItem("fb-theme") || "dark"); } catch { applyThe
 /* ----------------------------- router ----------------------------- */
 const TITLES = {
   dashboard:  "Dashboard",
+  users:      "Users",
   setup:      "Easy Setup",
-  forwarding: "Forwarding Rules",
-  rss:        "RSS Sites",
-  ai:         "AI Analysis Settings",
+  forwarding: "Auto-Forward",
+  rss:        "RSS Sources",
+  ai:         "AI & Prompts",
   forcejoin:  "Force Join",
   tglogin:    "Telegram Login",
   channels:   "Channels & Private Chats",
   settings:   "Settings",
-  secrets:    "Secrets Vault",
+  secrets:    "Secrets & Tokens",
+  console:    "Console",
+  system:     "Core",
   logs:       "Logs",
   deploy:     "Deploy & Ports",
+};
+
+/* Routes served by the modular view system in js/views/*. Each module
+   exposes mount()/unmount() and its own action handlers. */
+const MODULE_ROUTES = ["dashboard", "rss", "ai", "forwarding", "secrets",
+  "console", "system", "settings", "forcejoin"];
+
+const LEGACY_VIEWS = {
+  setup: "viewSetup", channels: "viewChannels", tglogin: "viewTgLogin",
+  deploy: "viewDeploy",
 };
 
 function go(route) {
@@ -92,8 +115,70 @@ function go(route) {
   $$(".nav-item").forEach((a) => a.classList.toggle("active", a.dataset.route === route));
   $("#pageTitle").textContent = TITLES[route];
   document.body.classList.remove("nav-open");
-  render();
-  try { history.replaceState(null, "", "#/" + route); } catch {}
+  mountView(route);
+  try { history.replaceState(null, "", "#" + route); } catch {}
+}
+
+function skeletonShell(title) {
+  return `<div class="view">
+    <div class="view-head"><div><h2>${esc(title)}</h2><p>Loading…</p></div></div>
+    <div class="card skel-card">
+      <div class="skel skel-line" style="width:46%"></div>
+      <div class="skel skel-line" style="width:72%"></div>
+      <div class="skel skel-line" style="width:58%"></div>
+    </div></div>`;
+}
+
+/* Mounts one view, unmounting the previous one first so polling
+   timers and in-flight requests are always released. */
+function mountView(route) {
+  unmountCurrent();
+
+  const views = window.FtbViews || {};
+  const title = $("#pageTitle").textContent;
+
+  if (MODULE_ROUTES.includes(route) && views[route] && views[route].mount) {
+    state.mounted = views[route];
+    // The module renders its own markup into #viewRoot, including its
+    // loading state, so no placeholder is needed here.
+    Promise.resolve(views[route].mount()).catch((e) => renderShellError(e, route));
+    return;
+  }
+
+  const legacy = LEGACY_VIEWS[route];
+  if (legacy && typeof window[legacy] === "function") {
+    const host = $("#viewRoot");
+    if (host) host.innerHTML = skeletonShell(title);
+    Promise.resolve(window[legacy]()).then((html) => {
+      const h = $("#viewRoot");
+      if (h) { h.innerHTML = html || ""; bindAll(); }
+    }).catch((e) => renderShellError(e, route));
+    return;
+  }
+
+  renderShellError(new Error("This view is not available yet."), route);
+}
+
+function unmountCurrent() {
+  const m = state.mounted;
+  if (m && typeof m.unmount === "function") {
+    try { m.unmount(); } catch { /* cleanup must never block routing */ }
+  }
+  state.mounted = null;
+}
+
+function renderShellError(e, route) {
+  const h = $("#viewRoot");
+  if (!h) return;
+  h.innerHTML = `<div class="view">
+    <div class="view-head"><div><h2>${esc(TITLES[route] || route)}</h2></div></div>
+    <div class="card"><div class="state err">
+      <div class="state-art">⚠</div>
+      <h3>Could not open this section</h3>
+      <p>${esc(String(e && e.message ? e.message : e)).slice(0, 220)}</p>
+      <button class="btn" data-act="__retry">Try again</button>
+    </div></div></div>`;
+  bindAll();
 }
 
 $$(".nav-item").forEach((a) => a.addEventListener("click", (e) => {
@@ -642,24 +727,28 @@ bot.example.com {
 }
 
 /* ----------------------------- render ----------------------------- */
-const VIEWS = {
-  dashboard: viewDashboard, setup: viewSetup, forwarding: viewForwarding,
-  rss: viewRss, ai: viewAi, forcejoin: viewForceJoin,
-  tglogin: viewTgLogin, channels: viewChannels, settings: viewSettings,
-  secrets: viewSecrets, logs: viewLogs, deploy: viewDeploy,
-};
+/* Legacy inline views are still mounted through this helper for routes
+   that have not been ported to the module system. */
+function bindAll() {
+  $$("#viewRoot [data-act]").forEach(bindActions);
+}
 
 function render() {
-  const host = $("#view");
-  host.innerHTML = `<div class="card" style="text-align:center;color:var(--text-3)"><div class="skel" style="height:18px;width:32%;margin:22px auto"></div></div>`;
+  const host = $("#viewRoot");
+  if (!host) return;
+  host.innerHTML = skeletonShell($("#pageTitle").textContent);
 
-  const view = VIEWS[state.route] || viewDashboard;
+  const legacy = {
+    setup: viewSetup, channels: viewChannels, tglogin: viewTgLogin,
+    deploy: viewDeploy, dashboard: viewDashboard,
+  };
+  const view = legacy[state.route];
+  if (!view) { bindAll(); return; }
+
   Promise.resolve(view()).then((html) => {
-    host.innerHTML = html;
-    $$("#view [data-act]").forEach(bindActions);
-  }).catch((e) => {
-    host.innerHTML = `<div class="card"><div class="empty"><span class="ico">⚠</span>${esc(e.message)}</div></div>`;
-  });
+    host.innerHTML = html || "";
+    bindAll();
+  }).catch((e) => renderShellError(e, state.route));
 }
 
 /* ----------------------------- actions ----------------------------- */
@@ -1064,6 +1153,9 @@ ${domain ? "  caddy-data:\n  caddy-config:\n" : ""}`;
 refreshHealth();
 setInterval(refreshHealth, 20000);
 
-const hash = (location.hash || "").replace("#/", "");
-go(TITLES[hash] ? hash : "dashboard");
+try {
+  const raw = (location.hash || "").replace("#", "");
+  const hash = raw.startsWith("/") ? raw.slice(1) : raw;
+  go(TITLES[hash] ? hash : "dashboard");
+} catch { go("dashboard"); }
 })();

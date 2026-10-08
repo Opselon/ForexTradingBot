@@ -35,9 +35,14 @@ namespace WebAPI.Controllers
             {
                 IEnumerable<IDynamicSetting> settings = await _dynamicConfigService.GetAllSettingsAsync(cancellationToken);
                 // Convert to concrete DTO if necessary for serialization, though IEnumerable<IDynamicSetting> should work if DynamicSettingDto implements it.
+                // SECURITY: never serialize the raw value of a sensitive setting to the
+                // client. The DTO contract includes both `value` and `displayValue` in
+                // the JSON, so passing s.Value through here leaks secrets (the admin
+                // password was observed in a live response). Sensitive keys get only
+                // the masked display string; the raw value stays server-side.
                 List<DynamicSettingDto> settingsDto = settings.Select(s => new DynamicSettingDto(
                     s.Key,
-                    s.Value, // Raw value from service (might be encrypted if from DB)
+                    s.IsSensitive ? null : s.Value,
                     s.DisplayValue, // Masked/display value from service
                     s.IsSensitive,
                     s.Description,

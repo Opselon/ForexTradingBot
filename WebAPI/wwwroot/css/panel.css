@@ -332,3 +332,158 @@ pre.code .c-com { color: var(--text-3); }
   .grid-4 { grid-template-columns: 1fr; }
   .stat-value { font-size: 20px; }
 }
+
+/* ============================================================
+   v2 additions — composed entirely from the tokens above.
+   No color/radius/spacing is hard-coded here.
+   ============================================================ */
+
+/* Runtime phase dots for status pills. */
+.pill .dot.pulse { animation: pulse 1.6s infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: .35; transform: scale(.7); } }
+
+.pill.muted { color: var(--text-3); }
+
+/* Rich empty / error states (not fake data). */
+.state {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  text-align: center; gap: 10px; padding: 48px 24px;
+}
+.state-art { font-size: 30px; opacity: .5; margin-bottom: 2px; }
+.state h3 { margin: 0; font-size: 15px; font-weight: 700; }
+.state p { margin: 0; color: var(--text-2); max-width: 46ch; font-size: 12.5px; }
+.state.err .state-art { color: var(--err); opacity: .75; }
+.state.auth .state-art { color: var(--warn); }
+
+/* Skeleton loaders sized like the real content. */
+.skel-line { height: 11px; margin-bottom: 12px; border-radius: 6px; }
+.skel-card { min-height: 118px; padding: 18px; }
+
+/* Dense table rows for long lists. */
+table.dense thead th { padding: 8px 12px; }
+table.dense tbody td { padding: 8px 12px; }
+.cell-title { font-weight: 650; color: var(--text); }
+.cell-sub { color: var(--text-3); font-size: 11.5px; }
+.row-actions { display: flex; gap: 4px; justify-content: flex-end; flex-wrap: wrap; }
+
+/* Secret fields: never autocomplete, never cached in DOM longer than needed. */
+input.secret {
+  font-family: var(--mono); letter-spacing: .09em; font-size: 12.5px;
+  autocomplete: off; spellcheck: false;
+}
+.secret-mask {
+  font-family: var(--mono); letter-spacing: .16em; color: var(--text-3);
+  user-select: none; font-size: 12.5px;
+}
+
+/* Switch toggle primitive. */
+.switch { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; user-select: none; }
+.switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+.switch-track {
+  width: 36px; height: 20px; border-radius: 999px; flex: none;
+  background: var(--surface-3); border: 1px solid var(--border);
+  position: relative; transition: background .16s, border-color .16s;
+}
+.switch-track::after {
+  content: ""; position: absolute; top: 2px; left: 2px;
+  width: 14px; height: 14px; border-radius: 50%; background: var(--text-3);
+  transition: transform .16s cubic-bezier(.32,.72,.35,1), background .16s;
+}
+.switch input:checked + .switch-track { background: var(--brand); border-color: var(--brand); }
+.switch input:checked + .switch-track::after { transform: translateX(16px); background: #fff; }
+.switch input:focus-visible + .switch-track { outline: 2px solid var(--brand); outline-offset: 2px; }
+.switch-label { font-size: 12.5px; color: var(--text-2); }
+
+/* Console / log stream. */
+.console {
+  font-family: var(--mono); font-size: 11.5px; line-height: 1.7;
+  background: var(--bg-2); border: 1px solid var(--border-soft);
+  border-radius: var(--radius); padding: 14px;
+  height: clamp(320px, 56vh, 620px); overflow-y: auto;
+  white-space: pre-wrap; word-break: break-word;
+}
+.log-line { display: flex; gap: 12px; padding: 1px 0; }
+.log-line .lt { color: var(--text-3); flex: none; }
+.log-line .lv { flex: none; width: 46px; font-weight: 700; }
+.log-line .lm { color: var(--text-2); white-space: pre-wrap; }
+.log-line.err .lv, .log-line.err .lm { color: var(--err); }
+.log-line.warn .lv, .log-line.warn .lm { color: var(--warn); }
+.log-line.dbg { opacity: .5; }
+.log-line .lm .hl { background: var(--warn-soft); border-radius: 3px; padding: 0 1px; color: var(--warn); }
+.console-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 10px 14px; border-bottom: 1px solid var(--border-soft);
+}
+.console-bar input[type="search"] { width: auto; min-width: 190px; padding: 6px 10px; font-size: 12px; }
+.seg { display: inline-flex; gap: 2px; background: var(--surface-2); border: 1px solid var(--border-soft); border-radius: 9px; padding: 2px; }
+.seg button {
+  border: 0; background: transparent; color: var(--text-3);
+  padding: 4px 10px; border-radius: 7px; font-size: 11.5px; font-weight: 600; cursor: pointer;
+}
+.seg button.on { background: var(--surface-3); color: var(--text); }
+
+/* Inline note banners. */
+.note {
+  display: flex; gap: 10px; align-items: flex-start;
+  padding: 10px 14px; border-radius: var(--radius-sm); font-size: 12.5px;
+  background: var(--warn-soft); color: var(--warn);
+  border: 1px solid color-mix(in srgb, var(--warn) 32%, transparent);
+}
+.note.info { background: var(--brand-soft); color: var(--brand-2); border-color: color-mix(in srgb, var(--brand) 30%, transparent); }
+.note.ok { background: var(--ok-soft); color: var(--ok); border-color: color-mix(in srgb, var(--ok) 32%, transparent); }
+.note.err { background: var(--err-soft); color: var(--err); border-color: color-mix(in srgb, var(--err) 32%, transparent); }
+
+/* Modal. */
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 150;
+  background: rgba(3,5,9,.6); backdrop-filter: blur(3px);
+  display: grid; place-items: center; padding: 20px;
+}
+.modal {
+  width: min(580px, 100%); max-height: 88vh; overflow: auto;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+}
+.modal-head { display: flex; align-items: center; gap: 12px; padding: 18px; border-bottom: 1px solid var(--border-soft); }
+.modal-head h3 { flex: 1; margin: 0; font-size: 15px; }
+.modal-body { padding: 18px; }
+.modal-foot { padding: 14px 18px; border-top: 1px solid var(--border-soft); display: flex; justify-content: flex-end; gap: 8px; }
+
+/* Compact metrics strip. */
+.metric { padding: 16px 18px; }
+.metric-label { display: flex; align-items: center; gap: 7px; color: var(--text-3); font-size: 11.5px; text-transform: uppercase; letter-spacing: .7px; font-weight: 600; }
+.metric-value { font-size: 23px; font-weight: 800; letter-spacing: -.5px; margin-top: 5px; font-variant-numeric: tabular-nums; }
+.metric-hint { color: var(--text-3); font-size: 11.5px; margin-top: 2px; }
+.metric-value.ok { color: var(--ok); }
+.metric-value.warn { color: var(--warn); }
+.metric-value.err { color: var(--err); }
+
+/* View transition. */
+.view { animation: viewIn .16s cubic-bezier(.32,.72,.35,1); }
+@keyframes viewIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+/* Service-row list used by the dashboard health grid. */
+.svc { display: flex; align-items: center; gap: 12px; padding: 11px 0; border-bottom: 1px dashed var(--border-soft); }
+.svc:last-child { border-bottom: 0; }
+.svc-name { font-weight: 600; font-size: 13px; }
+.svc-sub { color: var(--text-3); font-size: 11.5px; }
+.svc .spacer { flex: 1; }
+
+/* Section headings inside a view. */
+.view-head { display: flex; align-items: flex-end; gap: 14px; margin-bottom: 18px; flex-wrap: wrap; }
+.view-head h2 { margin: 0; font-size: 21px; letter-spacing: -.3px; }
+.view-head p { margin: 2px 0 0; color: var(--text-2); font-size: 12.5px; }
+.view-head .spacer { flex: 1; }
+
+/* Definition list used by runtime info cards. */
+dl.kvs { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 7px 16px; font-size: 12.5px; }
+dl.kvs dt { color: var(--text-3); }
+dl.kvs dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+
+.hidden { display: none !important; }
+.spin { display: inline-block; animation: spin .9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+}

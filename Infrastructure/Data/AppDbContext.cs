@@ -126,6 +126,29 @@ namespace Infrastructure.Data
             // This line will now find and apply all your IEntityTypeConfiguration files,
             // including the ForwardingRuleConfiguration.
             _ = modelBuilder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);
+
+            // The per-entity configurations declare HasDefaultValueSql("NOW()"), which is a
+            // PostgreSQL-only function. On SQLite/SQL Server EnsureCreated() copies that SQL
+            // verbatim into the table definition, so every INSERT omitting those columns dies
+            // with "unknown function: NOW()" — reported as "SQLite does not start" and as 500s
+            // on the AI/RSS/transaction panel endpoints. Rewrite the default per provider.
+            string? providerName = Database.ProviderName ?? string.Empty;
+            string timestampDefault = providerName.Contains("Sqlite", StringComparison.OrdinalIgnoreCase)
+                ? "datetime('now')"
+                : providerName.Contains("SqlServer", StringComparison.OrdinalIgnoreCase)
+                    ? "GETUTCDATE()"
+                    : "NOW()";
+
+            if (!timestampDefault.Equals("NOW()", StringComparison.Ordinal))
+            {
+                foreach (Microsoft.EntityFrameworkCore.Metadata.IMutableProperty property in modelBuilder.Model
+                    .GetEntityTypes()
+                    .SelectMany(e => e.GetProperties())
+                    .Where(p => string.Equals(p.GetDefaultValueSql(), "NOW()", StringComparison.OrdinalIgnoreCase)))
+                {
+                    property.SetDefaultValueSql(timestampDefault);
+                }
+            }
         }
     }
 }

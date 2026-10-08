@@ -16,11 +16,13 @@ namespace WebAPI.Controllers;
 public sealed class RssSourcesController : ControllerBase
 {
     private readonly IRssSourceRepository _repository;
+    private readonly IAppDbContext _dbContext;
     private readonly ILogger<RssSourcesController> _logger;
 
-    public RssSourcesController(IRssSourceRepository repository, ILogger<RssSourcesController> logger)
+    public RssSourcesController(IRssSourceRepository repository, IAppDbContext dbContext, ILogger<RssSourcesController> logger)
     {
         _repository = repository;
+        _dbContext = dbContext;
         _logger = logger;
     }
 
@@ -84,6 +86,7 @@ public sealed class RssSourcesController : ControllerBase
         };
 
         await _repository.AddAsync(entity, cancellationToken);
+        await _dbContext.SaveChangesAsync(cancellationToken);
         _logger.LogInformation("Panel: added RSS source {Name} ({Url})", entity.SourceName, entity.Url);
 
         return CreatedAtAction(nameof(GetById), new { id = entity.Id }, Map(entity));
@@ -124,6 +127,7 @@ public sealed class RssSourcesController : ControllerBase
         existing.UpdatedAt = DateTime.UtcNow;
 
         await _repository.UpdateAsync(existing, cancellationToken);
+        await _dbContext.SaveChangesAsync(cancellationToken);
         _logger.LogInformation("Panel: updated RSS source {Name}", existing.SourceName);
 
         return NoContent();
@@ -140,6 +144,7 @@ public sealed class RssSourcesController : ControllerBase
             return NotFound();
         }
 
+        await _dbContext.SaveChangesAsync(cancellationToken);
         _logger.LogInformation("Panel: deleted RSS source {Id}", id);
         return NoContent();
     }
@@ -158,6 +163,7 @@ public sealed class RssSourcesController : ControllerBase
         existing.IsActive = active;
         existing.UpdatedAt = DateTime.UtcNow;
         await _repository.UpdateAsync(existing, cancellationToken);
+        await _dbContext.SaveChangesAsync(cancellationToken);
 
         _logger.LogInformation("Panel: RSS source {Name} is now {State}", existing.SourceName, active ? "active" : "paused");
         return NoContent();

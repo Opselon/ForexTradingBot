@@ -34,18 +34,21 @@ namespace Infrastructure.Services
 {
     public class DiagnosticsService : IDiagnosticsService
     {
-        private readonly IConfiguration _configuration; // To get connection string & DB provider type
+        private readonly IConfiguration _configuration; // To get connection string
+        private readonly Data.DbProviderService _providerService; // Canonical provider resolution
         private readonly ISettingsService _settingsService;
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly ILogger<DiagnosticsService> _logger;
 
         public DiagnosticsService(
             IConfiguration configuration,
+            Data.DbProviderService providerService,
             ISettingsService settingsService,
             IHttpClientFactory httpClientFactory,
             ILogger<DiagnosticsService> logger)
         {
             _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
+            _providerService = providerService ?? throw new ArgumentNullException(nameof(providerService));
             _settingsService = settingsService ?? throw new ArgumentNullException(nameof(settingsService));
             _httpClientFactory = httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -55,11 +58,14 @@ namespace Infrastructure.Services
         {
             var status = new ConnectivityStatusDto();
 
-            // 1. Check Database Connectivity
-            status.DatabaseProvider = _configuration.GetValue<string>("DatabaseProvider"); // e.g., "PostgreSQL" or "SQLite" from appsettings
-            if (string.IsNullOrEmpty(status.DatabaseProvider))
+            // 1. Check Database Connectivity. The provider lives under
+            // DatabaseSettings:DatabaseProvider (see DbProviderService) — the old code read
+            // the bare "DatabaseProvider" key, which never exists, so the check reported
+            // "Unknown" and then probed with NpgsqlConnection regardless of provider.
+            status.DatabaseProvider = _providerService.Provider.ToString();
+            if (_providerService.Provider == Data.DatabaseProvider.Unsupported)
             {
-                status.DatabaseProvider = "Unknown (Not configured in appsettings:DatabaseProvider)";
+                status.DatabaseProvider = "Unknown (Not configured in DatabaseSettings:DatabaseProvider)";
             }
 
             try
@@ -72,9 +78,13 @@ namespace Infrastructure.Services
                 }
                 else
                 {
-                    // Using NpgsqlConnection for a direct test for PostgreSQL.
-                    // Adjust if using a different provider or an existing IDbConnectionFactory.
-                    await using var connection = new Npgsql.NpgsqlConnection(connectionString);
+                    await using System.Data.Common.DbConnection connection = _providerService.Provider switch
+                    {
+                        Data.DatabaseProvider.Postgres => new Npgsql.NpgsqlConnection(connectionString),
+                        Data.DatabaseProvider.SQLite => new Microsoft.Data.Sqlite.SqliteConnection(connectionString),
+                        Data.DatabaseProvider.SqlServer => new Microsoft.Data.SqlClient.SqlConnection(connectionString),
+                        _ => throw new NotSupportedException($"Database provider '{_providerService.Provider}' is not supported by the connectivity check.")
+                    };
                     await connection.OpenAsync(cancellationToken);
                     status.CanConnectToDatabase = connection.State == System.Data.ConnectionState.Open;
                     if (status.CanConnectToDatabase)

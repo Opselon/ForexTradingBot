@@ -1,6 +1,7 @@
 ﻿using Application.Common.Interfaces;
 using Dapper;
 using Domain.Entities;
+using Infrastructure.Data;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Npgsql;
@@ -11,33 +12,42 @@ using System.Data.Common;
 namespace Infrastructure.Repositories // Ensure namespace matches your project structure
 {
     /// <summary>
-    /// Implements IAiApiConfigurationRepository using Dapper for efficient PostgreSQL data access.
-    /// This implementation mirrors the architectural pattern of NewsItemRepository, using direct IConfiguration
-    /// injection and a private connection creation method.
+    /// Implements IAiApiConfigurationRepository using Dapper for data access.
     /// </summary>
+    /// <remarks>
+    /// Provider-agnostic: originally hard-coded NpgsqlConnection and the PostgreSQL-only
+    /// <c>public."Table"</c> schema prefix, which 500'd every call on SQLite/SQL Server.
+    /// Connections and identifier quoting now derive from <see cref="DbProviderService"/>,
+    /// mirroring <see cref="SettingsDbHelper"/>.
+    /// </remarks>
     public class AiApiConfigurationRepository : IAiApiConfigurationRepository
     {
         private readonly string _connectionString;
+        private readonly DatabaseProvider _provider;
         private readonly ILogger<AiApiConfigurationRepository> _logger;
         private readonly AsyncRetryPolicy _retryPolicy;
         private const int CommandTimeoutSeconds = 30;
 
         private const string TableName = "\"AiApiConfigurations\"";
         // --- FIX: Added "ApiKeyName" to the SELECT statement ---
-        private const string BaseSelectSql = $@"
+        // NOTE: kept as a computed property rather than a field initializer so it can read
+        // the provider-aware Table helper (which is an instance member).
+        private string BaseSelectSql => $@"
             SELECT
                 ""Id"", ""ProviderName"", ""IsEnabled"", ""ApiKey"", ""ModelName"", ""PromptTemplate"",
                 ""Description"", ""CreatedAt"", ""LastUpdatedAt"", ""ApiKeyName""
-            FROM public.{TableName}";
+            FROM {Table}";
 
         /// <summary>
         /// Initializes a new instance of the AiApiConfigurationRepository class.
         /// </summary>
         /// <param name="configuration">The application's configuration, used to retrieve the database connection string.</param>
+        /// <param name="providerService">The resolved database provider (PostgreSQL / SQLite / SQL Server).</param>
         /// <param name="logger">The logger instance for recording operational events and errors.</param>
-        public AiApiConfigurationRepository(IConfiguration configuration, ILogger<AiApiConfigurationRepository> logger)
+        public AiApiConfigurationRepository(IConfiguration configuration, DbProviderService providerService, ILogger<AiApiConfigurationRepository> logger)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _provider = providerService.Provider;
             _connectionString = configuration.GetConnectionString("DefaultConnection")
                                 ?? throw new InvalidOperationException("DefaultConnection string not found in configuration.");
 
@@ -57,12 +67,28 @@ namespace Infrastructure.Repositories // Ensure namespace matches your project s
         }
 
         /// <summary>
-        /// Creates and returns a new instance of DbConnection using the configured connection string.
+        /// Creates and returns a new instance of DbConnection for the configured provider.
         /// </summary>
-        private DbConnection CreateConnection()
+        private DbConnection CreateConnection() => _provider switch
         {
-            return new NpgsqlConnection(_connectionString);
-        }
+            DatabaseProvider.Postgres => new NpgsqlConnection(_connectionString),
+            DatabaseProvider.SQLite => new Microsoft.Data.Sqlite.SqliteConnection(_connectionString),
+            DatabaseProvider.SqlServer => new Microsoft.Data.SqlClient.SqlConnection(_connectionString),
+            _ => throw new NotSupportedException($"Database provider '{_provider}' is not supported for AI configuration.")
+        };
+
+        /// <summary>Table reference without the PostgreSQL-only schema prefix.</summary>
+        private string Table => _provider == DatabaseProvider.Postgres
+            ? $"public.{TableName}"
+            : TableName;
+
+        /// <summary>Provider-correct "current UTC timestamp" literal (NOW() is Postgres-only).</summary>
+        private string CurrentTimestamp => _provider switch
+        {
+            DatabaseProvider.SQLite => "datetime('now')",
+            DatabaseProvider.SqlServer => "GETUTCDATE()",
+            _ => "NOW()"
+        };
 
         public async Task<AiApiConfiguration?> GetByProviderAndStatusAsync(string providerName, bool isEnabled, CancellationToken cancellationToken)
         {
@@ -216,10 +242,17 @@ namespace Infrastructure.Repositories // Ensure namespace matches your project s
         {
             ArgumentNullException.ThrowIfNull(configuration);
             // --- FIX: Added "ApiKeyName" to the INSERT statement ---
+            // RETURNING * is Postgres-only; SQLite also supports RETURNING (3.35+), but SQL
+            // Server needs OUTPUT INSERTED.*, so emit the clause per provider.
+            string returning = _provider switch
+            {
+                DatabaseProvider.SqlServer => "OUTPUT INSERTED.*",
+                _ => "RETURNING *"
+            };
             string sql = $@"
-                INSERT INTO public.{TableName} (""ProviderName"", ""IsEnabled"", ""ApiKey"", ""ModelName"", ""PromptTemplate"", ""Description"", ""ApiKeyName"")
+                INSERT INTO {Table} (""ProviderName"", ""IsEnabled"", ""ApiKey"", ""ModelName"", ""PromptTemplate"", ""Description"", ""ApiKeyName"")
                 VALUES (@ProviderName, @IsEnabled, @ApiKey, @ModelName, @PromptTemplate, @Description, @ApiKeyName)
-                RETURNING *;";
+                {returning};";
 
             try
             {
@@ -252,9 +285,9 @@ namespace Infrastructure.Repositories // Ensure namespace matches your project s
             ArgumentNullException.ThrowIfNull(configuration);
             // --- FIX: Added "ApiKeyName" to the UPDATE statement ---
             string sql = $@"
-                UPDATE public.{TableName}
+                UPDATE {Table}
                 SET ""ProviderName"" = @ProviderName, ""IsEnabled"" = @IsEnabled, ""ApiKey"" = @ApiKey, ""ModelName"" = @ModelName,
-                    ""PromptTemplate"" = @PromptTemplate, ""Description"" = @Description, ""ApiKeyName"" = @ApiKeyName, ""LastUpdatedAt"" = NOW()
+                    ""PromptTemplate"" = @PromptTemplate, ""Description"" = @Description, ""ApiKeyName"" = @ApiKeyName, ""LastUpdatedAt"" = {CurrentTimestamp}
                 WHERE ""Id"" = @Id;";
 
             try
@@ -283,7 +316,7 @@ namespace Infrastructure.Repositories // Ensure namespace matches your project s
 
         public async Task DeleteAsync(int id, CancellationToken cancellationToken)
         {
-            string sql = $"DELETE FROM public.{TableName} WHERE \"Id\" = @Id;";
+            string sql = $"DELETE FROM {Table} WHERE \"Id\" = @Id;";
             try
             {
                 int rowsAffected = await _retryPolicy.ExecuteAsync(async () =>
@@ -315,7 +348,7 @@ namespace Infrastructure.Repositories // Ensure namespace matches your project s
                 return false;
             }
 
-            string sql = $"SELECT COUNT(1) FROM public.{TableName} WHERE \"ProviderName\" = @ProviderName;";
+            string sql = $"SELECT COUNT(1) FROM {Table} WHERE \"ProviderName\" = @ProviderName;";
 
             try
             {

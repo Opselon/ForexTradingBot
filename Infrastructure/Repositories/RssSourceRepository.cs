@@ -69,12 +69,15 @@ namespace Infrastructure.Repositories
             }
 
             string normalizedUrl = NormalizeUrlForComparison(url);
-            _logger.LogTrace("RssSourceRepository: Fetching RssSource by Normalized URL: {NormalizedUrl} (Original: {OriginalUrl})", normalizedUrl, url);
+            string safeUrl = (url ?? string.Empty).Replace("\r", string.Empty).Replace("\n", string.Empty);
+            string safeNormalizedUrl = (normalizedUrl ?? string.Empty).Replace("\r", string.Empty).Replace("\n", string.Empty);
+            _logger.LogTrace("RssSourceRepository: Fetching RssSource by Normalized URL: {NormalizedUrl} (Original: {OriginalUrl})", safeNormalizedUrl, safeUrl);
 
             return await _dbRetryPolicy.ExecuteAsync(async () => // ✅ Polly applied
             {
+                string trimmed = safeUrl.Trim();
                 return await _context.RssSources
-                    .FirstOrDefaultAsync(rs => rs.Url == normalizedUrl || rs.Url == url.Trim(), cancellationToken);
+                    .FirstOrDefaultAsync(rs => rs.Url == safeNormalizedUrl || rs.Url == trimmed, cancellationToken);
             });
         }
 
@@ -203,7 +206,8 @@ namespace Infrastructure.Repositories
 
             string normalizedUrl = NormalizeUrlForComparison(url);
             string safeUrl = (url ?? string.Empty).Replace("\r", string.Empty).Replace("\n", string.Empty);
-            _logger.LogTrace("RssSourceRepository: Checking existence by Normalized URL: {NormalizedUrl} (Original: {OriginalUrl}), ExcludeID: {ExcludeId}", normalizedUrl, safeUrl, excludeId);
+            string safeNormalizedUrl = (normalizedUrl ?? string.Empty).Replace("\r", string.Empty).Replace("\n", string.Empty);
+            _logger.LogTrace("RssSourceRepository: Checking existence by Normalized URL: {NormalizedUrl} (Original: {OriginalUrl}), ExcludeID: {ExcludeId}", safeNormalizedUrl, safeUrl, excludeId);
 
             return await _dbRetryPolicy.ExecuteAsync(async () => // ✅ Polly applied
             {
@@ -247,15 +251,16 @@ namespace Infrastructure.Repositories
         {
             if (string.IsNullOrWhiteSpace(url)) { _logger.LogWarning("RssSourceRepository: URL provided for sanitization was null or empty. Returning empty string."); return string.Empty; }
             string trimmedUrl = url.Trim();
+            string safeTrimmedUrl = trimmedUrl.Replace("\r", string.Empty).Replace("\n", string.Empty);
             try
             {
                 UriBuilder uriBuilder = new(trimmedUrl);
-                if (string.IsNullOrWhiteSpace(uriBuilder.Scheme)) { uriBuilder.Scheme = "https"; uriBuilder.Port = -1; _logger.LogInformation("RssSourceRepository: URL '{OriginalUrl}' had no scheme, defaulted to https. New URL: '{NewUrl}'", trimmedUrl, uriBuilder.Uri.AbsoluteUri); }
+                if (string.IsNullOrWhiteSpace(uriBuilder.Scheme)) { uriBuilder.Scheme = "https"; uriBuilder.Port = -1; _logger.LogInformation("RssSourceRepository: URL '{OriginalUrl}' had no scheme, defaulted to https. New URL: '{NewUrl}'", safeTrimmedUrl, uriBuilder.Uri.AbsoluteUri); }
                 return NormalizeUrlForComparison(uriBuilder.Uri.AbsoluteUri);
             }
             catch (UriFormatException ex)
             {
-                _logger.LogWarning(ex, "RssSourceRepository: Invalid URL format for '{Url}'. Cannot sanitize/normalize. Returning original trimmed URL.", trimmedUrl);
+                _logger.LogWarning(ex, "RssSourceRepository: Invalid URL format for '{Url}'. Cannot sanitize/normalize. Returning original trimmed URL.", safeTrimmedUrl);
                 return trimmedUrl;
             }
         }

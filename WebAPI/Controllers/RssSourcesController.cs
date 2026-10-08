@@ -87,7 +87,9 @@ public sealed class RssSourcesController : ControllerBase
 
         await _repository.AddAsync(entity, cancellationToken);
         await _dbContext.SaveChangesAsync(cancellationToken);
-        _logger.LogInformation("Panel: added RSS source {Name} ({Url})", entity.SourceName, entity.Url);
+        string safeName = (entity.SourceName ?? string.Empty).Replace("\r", string.Empty).Replace("\n", string.Empty);
+        string safeUrl = (entity.Url ?? string.Empty).Replace("\r", string.Empty).Replace("\n", string.Empty);
+        _logger.LogInformation("Panel: added RSS source {Name} ({Url})", safeName, safeUrl);
 
         return CreatedAtAction(nameof(GetById), new { id = entity.Id }, Map(entity));
     }
@@ -128,7 +130,8 @@ public sealed class RssSourcesController : ControllerBase
 
         await _repository.UpdateAsync(existing, cancellationToken);
         await _dbContext.SaveChangesAsync(cancellationToken);
-        _logger.LogInformation("Panel: updated RSS source {Name}", existing.SourceName);
+        string safeName = (existing.SourceName ?? string.Empty).Replace("\r", string.Empty).Replace("\n", string.Empty);
+        _logger.LogInformation("Panel: updated RSS source {Name}", safeName);
 
         return NoContent();
     }

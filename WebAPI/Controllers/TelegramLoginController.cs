@@ -36,8 +36,8 @@ public sealed class TelegramLoginController : ControllerBase
         [FromBody] StartLoginRequest request,
         CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Panel: starting Telegram user login for phone ending in {Suffix}",
-            request.PhoneNumber.Length >= 4 ? request.PhoneNumber[^4..] : "****");
+        string suffix = (request.PhoneNumber.Length >= 4 ? request.PhoneNumber[^4..] : "****").Replace("\r", string.Empty).Replace("\n", string.Empty);
+        _logger.LogInformation("Panel: starting Telegram user login for phone ending in {Suffix}", suffix);
 
         StartLoginResult result = await _loginService.StartLoginAsync(request, cancellationToken);
         return result.Success ? Ok(result) : BadRequest(result);

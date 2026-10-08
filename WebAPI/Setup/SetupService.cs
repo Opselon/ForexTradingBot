@@ -77,17 +77,18 @@ public sealed class SetupService
         }
 
         string provider = request.DatabaseProvider.Trim().ToLowerInvariant();
-        _logger.LogInformation("Setup wizard: applying migrations for provider {Provider}", provider);
+        string sanitizedProvider = provider.Replace("\r", "").Replace("\n", "");
+        _logger.LogInformation("Setup wizard: applying migrations for provider {Provider}", sanitizedProvider);
 
         // The panel can switch provider on the fly by pointing the wizard at a
         // different connection string; build a throwaway context for that provider.
         using IServiceScope scope = _services.CreateScope();
-        AppDbContext context = await BuildContextForProviderAsync(scope, provider, request.ConnectionString, cancellationToken);
+        AppDbContext context = BuildContextForProvider(scope, provider, request.ConnectionString);
 
         try
         {
             // PostgreSQL/SQL Server need the database to exist before EF can migrate it.
-            await EnsureDatabaseExistsAsync(context, provider, request.ConnectionString, cancellationToken);
+            EnsureDatabaseExists(context, provider, request.ConnectionString);
 
             IReadOnlyList<string> pending = [.. (await context.Database.GetPendingMigrationsAsync(cancellationToken))];
             string applied = string.Join(", ", await context.Database.GetAppliedMigrationsAsync(cancellationToken));
@@ -117,7 +118,7 @@ public sealed class SetupService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Setup wizard: database setup failed for provider {Provider}", provider);
+            _logger.LogError(ex, "Setup wizard: database setup failed for provider {Provider}", sanitizedProvider);
             errors.Add(ex.Message);
             return new ApplyDatabaseResult(false, provider, string.Empty, 0, 0, [.. errors], "Database setup failed.");
         }
@@ -217,8 +218,8 @@ public sealed class SetupService
         return string.IsNullOrWhiteSpace(raw) ? "postgres" : raw.Trim().ToLowerInvariant();
     }
 
-    private async Task<AppDbContext> BuildContextForProviderAsync(
-        IServiceScope scope, string provider, string connectionString, CancellationToken cancellationToken)
+    private AppDbContext BuildContextForProvider(
+        IServiceScope scope, string provider, string connectionString)
     {
         DbContextOptionsBuilder<AppDbContext> builder = new();
         string conn = string.IsNullOrWhiteSpace(connectionString)
@@ -247,7 +248,7 @@ public sealed class SetupService
         return matches ? registered : new AppDbContext(builder.Options);
     }
 
-    private static async Task EnsureDatabaseExistsAsync(AppDbContext context, string provider, string connectionString, CancellationToken cancellationToken)
+    private static void EnsureDatabaseExists(AppDbContext context, string provider, string connectionString)
     {
         // EF's relational creators create the database themselves for SQLite/SQL Server.
         // For Npgsql we also let EF handle it — creating it by hand used to race with EF
@@ -453,8 +454,8 @@ public sealed class SetupService
             || (urls?.Contains("https://", StringComparison.OrdinalIgnoreCase) ?? false);
     }
 
-    private static string Truncate(string text, int max) =>
-        text.Length <= max ? text : $"{text[..(max - 1)]}…";
+    private static string Truncate(string? text, int max) =>
+        string.IsNullOrEmpty(text) ? string.Empty : (text.Length <= max ? text : $"{text[..(max - 1)]}…");
 
     private static string? ExtractJsonField(string json, string fieldName)
     {

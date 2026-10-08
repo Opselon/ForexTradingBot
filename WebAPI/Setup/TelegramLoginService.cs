@@ -111,7 +111,10 @@ public sealed class TelegramLoginService
         using CancellationTokenSource cts = new(TimeSpan.FromSeconds(30));
         try
         {
-            await pending.LoginTask.WaitAsync(cts.Token);
+            if (pending.LoginTask is not null)
+            {
+                await pending.LoginTask.WaitAsync(cts.Token);
+            }
         }
         catch (TimeoutException)
         {

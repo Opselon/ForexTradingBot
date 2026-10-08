@@ -202,12 +202,14 @@ namespace Infrastructure.Repositories
             }
 
             string normalizedUrl = NormalizeUrlForComparison(url);
-            _logger.LogTrace("RssSourceRepository: Checking existence by Normalized URL: {NormalizedUrl} (Original: {OriginalUrl}), ExcludeID: {ExcludeId}", normalizedUrl, url, excludeId);
+            string safeUrl = (url ?? string.Empty).Replace("\r", string.Empty).Replace("\n", string.Empty);
+            _logger.LogTrace("RssSourceRepository: Checking existence by Normalized URL: {NormalizedUrl} (Original: {OriginalUrl}), ExcludeID: {ExcludeId}", normalizedUrl, safeUrl, excludeId);
 
             return await _dbRetryPolicy.ExecuteAsync(async () => // ✅ Polly applied
             {
+                string trimmedUrl = safeUrl.Trim();
                 IQueryable<RssSource> query = _context.RssSources
-                    .Where(rs => rs.Url == normalizedUrl || rs.Url == url.Trim());
+                    .Where(rs => rs.Url == normalizedUrl || rs.Url == trimmedUrl);
 
                 if (excludeId.HasValue)
                 {

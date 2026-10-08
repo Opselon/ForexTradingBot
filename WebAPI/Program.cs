@@ -897,10 +897,8 @@ try
         }
     });
 
-    /// <summary>
-    /// Hangfire.Storage.SQLite expects a bare file path, but the rest of the app passes
-    /// a full connection string ("Data Source=/path/app.db"). Extract the DataSource.
-    /// </summary>
+    // Hangfire.Storage.SQLite expects a bare file path, but the rest of the app passes
+    // a full connection string ("Data Source=/path/app.db"). Extract the DataSource.
     static string HangfireSqlitePath(string connectionString)
     {
         // Accept "Data Source=X", "DataSource=X", or a plain path.

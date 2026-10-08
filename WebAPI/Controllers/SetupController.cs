@@ -51,7 +51,8 @@ public sealed class SetupController : ControllerBase
         [FromBody] ApplyDatabaseRequest request,
         CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Panel requested database setup for provider {Provider}", request.DatabaseProvider);
+        string safeProvider = (request.DatabaseProvider ?? string.Empty).Replace("\r", string.Empty).Replace("\n", string.Empty);
+        _logger.LogInformation("Panel requested database setup for provider {Provider}", safeProvider);
 
         ApplyDatabaseResult result = await _setupService.ApplyDatabaseAsync(request, cancellationToken);
         return result.Success ? Ok(result) : BadRequest(result);

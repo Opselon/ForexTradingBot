@@ -88,7 +88,9 @@ public sealed class AiConfigController : ControllerBase
         };
 
         _ = await _repository.AddAsync(entity, cancellationToken);
-        _logger.LogInformation("Panel: created AI provider {Provider} (model {Model})", entity.ProviderName, entity.ModelName);
+        string safeProvider = (entity.ProviderName ?? string.Empty).Replace("\r", string.Empty).Replace("\n", string.Empty);
+        string safeModel = (entity.ModelName ?? string.Empty).Replace("\r", string.Empty).Replace("\n", string.Empty);
+        _logger.LogInformation("Panel: created AI provider {Provider} (model {Model})", safeProvider, safeModel);
 
         return CreatedAtAction(nameof(GetById), new { id = entity.Id }, Map(entity));
     }
@@ -132,7 +134,8 @@ public sealed class AiConfigController : ControllerBase
         existing.LastUpdatedAt = DateTime.UtcNow;
 
         await _repository.UpdateAsync(existing, cancellationToken);
-        _logger.LogInformation("Panel: updated AI provider {Provider} (id {Id})", existing.ProviderName, id);
+        string safeProvider = (existing.ProviderName ?? string.Empty).Replace("\r", string.Empty).Replace("\n", string.Empty);
+        _logger.LogInformation("Panel: updated AI provider {Provider} (id {Id})", safeProvider, id);
 
         return NoContent();
     }

@@ -254,6 +254,7 @@ namespace Infrastructure.Repositories // Ensure namespace matches your project s
                 VALUES (@ProviderName, @IsEnabled, @ApiKey, @ModelName, @PromptTemplate, @Description, @ApiKeyName)
                 {returning};";
 
+            string safeProvider = (configuration.ProviderName ?? string.Empty).Replace("\r", string.Empty).Replace("\n", string.Empty);
             try
             {
                 AiApiConfiguration addedConfig = await _retryPolicy.ExecuteAsync(async () =>
@@ -270,13 +271,13 @@ namespace Infrastructure.Repositories // Ensure namespace matches your project s
             }
             catch (PostgresException pEx) when (pEx.SqlState == "23505") // Assuming unique constraint on ProviderName or a similar field
             {
-                _logger.LogError(pEx, "Failed to add AiApiConfiguration for Provider '{ProviderName}'. A configuration with this provider name already exists.", configuration.ProviderName);
-                throw new RepositoryException($"A configuration for provider '{configuration.ProviderName}' already exists.", pEx);
+                _logger.LogError(pEx, "Failed to add AiApiConfiguration for Provider '{ProviderName}'. A configuration with this provider name already exists.", safeProvider);
+                throw new RepositoryException($"A configuration for provider '{safeProvider}' already exists.", pEx);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to add AiApiConfiguration for Provider '{ProviderName}'.", configuration.ProviderName);
-                throw new RepositoryException($"Failed to add configuration for provider '{configuration.ProviderName}'.", ex);
+                _logger.LogError(ex, "Failed to add AiApiConfiguration for Provider '{ProviderName}'.", safeProvider);
+                throw new RepositoryException($"Failed to add configuration for provider '{safeProvider}'.", ex);
             }
         }
 
@@ -350,6 +351,7 @@ namespace Infrastructure.Repositories // Ensure namespace matches your project s
 
             string sql = $"SELECT COUNT(1) FROM {Table} WHERE \"ProviderName\" = @ProviderName;";
 
+            string safeProvider = (providerName ?? string.Empty).Replace("\r", string.Empty).Replace("\n", string.Empty);
             try
             {
                 return await _retryPolicy.ExecuteAsync(async () =>
@@ -364,8 +366,8 @@ namespace Infrastructure.Repositories // Ensure namespace matches your project s
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to check existence of AiApiConfiguration for Provider '{ProviderName}'.", providerName);
-                throw new RepositoryException($"Failed to check existence for provider '{providerName}'.", ex);
+                _logger.LogError(ex, "Failed to check existence of AiApiConfiguration for Provider '{ProviderName}'.", safeProvider);
+                throw new RepositoryException($"Failed to check existence for provider '{safeProvider}'.", ex);
             }
         }
     }

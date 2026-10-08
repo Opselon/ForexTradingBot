@@ -733,7 +733,8 @@ namespace Infrastructure.Repositories
                 return null;
             }
 
-            _logger.LogTrace("UserRepository: Fetching user by TelegramID: {TelegramId}", telegramId);
+            string safeTelegramId = (telegramId ?? string.Empty).Replace("\r", string.Empty).Replace("\n", string.Empty);
+            _logger.LogTrace("UserRepository: Fetching user by TelegramID: {TelegramId}", safeTelegramId);
 
             // --- MODIFIED LINE ---
             // The SQL is now fetched from the provider, which returns the correct dialect.
@@ -755,7 +756,7 @@ namespace Infrastructure.Repositories
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to get user by TelegramID {TelegramId}", telegramId);
+                _logger.LogError(ex, "Failed to get user by TelegramID {TelegramId}", safeTelegramId);
                 // Background error log
                 _ = Task.Run(async () =>
                 {

@@ -39,6 +39,7 @@ using TelegramPanel.Extensions;
 using TelegramPanel.Infrastructure.Logging;
 using TelegramPanel.Infrastructure.Services;
 using WebAPI.Middleware; // Added for AuthRedirectMiddleware
+using WebAPI.Setup;      // For SetupService (Easy Setup wizard)
 // ✅ NEW USINGS FOR HEALTH CHECKS
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
@@ -703,6 +704,12 @@ try
             // Register the DISABLED implementation. This satisfies the DI container
             // for any service that requires ITelegramUserApiClient, preventing a crash.
             _ = builder.Services.AddSingleton<ITelegramUserApiClient, DisabledTelegramUserApiClient>();
+
+            // Rules must still be manageable from the panel before Telegram user-API
+            // credentials exist — otherwise the setup wizard's last step is a 500.
+            // Only the message-processing path needs the real client; CRUD does not.
+            _ = builder.Services.AddForwardingInfrastructure();
+            _ = builder.Services.AddForwardingServices();
         }
 
 
@@ -890,10 +897,8 @@ try
         }
     });
 
-    /// <summary>
-    /// Hangfire.Storage.SQLite expects a bare file path, but the rest of the app passes
-    /// a full connection string ("Data Source=/path/app.db"). Extract the DataSource.
-    /// </summary>
+    // Hangfire.Storage.SQLite expects a bare file path, but the rest of the app passes
+    // a full connection string ("Data Source=/path/app.db"). Extract the DataSource.
     static string HangfireSqlitePath(string connectionString)
     {
         // Accept "Data Source=X", "DataSource=X", or a plain path.
@@ -948,6 +953,15 @@ try
     _ = builder.Services.AddSingleton<IGeminiService, GeminiService>();
     // FIX FOR: Unable to resolve 'IBotCommandSetupService'
     _ = builder.Services.AddTransient<IBotCommandSetupService, BotCommandSetupService>();
+
+    // The "Easy Setup" wizard API used by the admin panel. Registered as a singleton
+    // because it only reads configuration and probes external dependencies.
+    _ = builder.Services.AddSingleton<SetupService>();
+
+    // The panel's Telegram login flow: bridges WTelegram.Client's console-oriented
+    // Config callback to a web request/response cycle so codes and 2FA passwords can
+    // be entered from the browser.
+    _ = builder.Services.AddSingleton<TelegramLoginService>();
     _ = builder.Services.AddTransient<Infrastructure.Services.IHangfireCleaner, Infrastructure.Services.HangfireCleaner>();
 
     Log.Information("Final manual service registrations complete.");
@@ -1257,12 +1271,12 @@ try
     // Explicitly map the root path to handle login/dashboard redirection
     _ = app.MapGet("/", (HttpContext context) =>
     {
+        // Authenticated users land on the new control panel; the legacy shell stays
+        // reachable at /indexapp.html so existing bookmarks do not break.
         if (context.User?.Identity?.IsAuthenticated ?? false)
         {
-            // User is authenticated, redirect to the main dashboard page
-            return Results.Redirect("/indexapp.html", permanent: false);
+            return Results.Redirect("/panel.html", permanent: false);
         }
-        // User is not authenticated, redirect to the login page
         return Results.Redirect("/login.html", permanent: false);
     });
 

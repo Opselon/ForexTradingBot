@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="dark light" />
+<title>ForexTradingBot — Control Panel</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/css/panel.css" />
+</head>
+<body>
+<div id="app">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <span class="brand-logo">◈</span>
+      <span class="brand-text">ForexTradingBot</span>
+    </div>
+
+    <nav class="nav" id="nav">
+      <div class="nav-label">Operate</div>
+      <a class="nav-item" data-route="dashboard"><span class="nav-ico">◧</span> Dashboard</a>
+      <a class="nav-item" data-route="users"><span class="nav-ico">👥</span> Users</a>
+      <a class="nav-item" data-route="console"><span class="nav-ico">≣</span> Console</a>
+      <a class="nav-item" data-route="system"><span class="nav-ico">◫</span> Core</a>
+
+      <div class="nav-label">Configure</div>
+      <a class="nav-item" data-route="rss"><span class="nav-ico">❖</span> RSS Sources</a>
+      <a class="nav-item" data-route="ai"><span class="nav-ico">✦</span> AI &amp; Prompts</a>
+      <a class="nav-item" data-route="forwarding"><span class="nav-ico">⇄</span> Auto-Forward</a>
+      <a class="nav-item" data-route="forcejoin"><span class="nav-ico">⛓</span> Force Join</a>
+      <a class="nav-item" data-route="settings"><span class="nav-ico">⚙</span> Settings</a>
+
+      <div class="nav-label">Security</div>
+      <a class="nav-item" data-route="secrets"><span class="nav-ico">⚿</span> Secrets &amp; Tokens</a>
+
+      <div class="nav-label">Setup</div>
+      <a class="nav-item" data-route="setup"><span class="nav-ico">⚒</span> Easy Setup</a>
+      <a class="nav-item" data-route="channels"><span class="nav-ico">▣</span> Channels &amp; PVs</a>
+      <a class="nav-item" data-route="tglogin"><span class="nav-ico">✆</span> Telegram Login</a>
+      <a class="nav-item" data-route="deploy"><span class="nav-ico">⌁</span> Deploy</a>
+    </nav>
+
+    <div class="sidebar-foot">
+      <button class="btn btn-ghost btn-sm" id="themeBtn" title="Toggle theme">◐ Theme</button>
+      <div class="version" id="versionTag">v—</div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <button class="hamburger" id="hamburger" aria-label="Menu">☰</button>
+      <h1 class="page-title" id="pageTitle">Dashboard</h1>
+      <div class="topbar-right">
+        <button class="btn btn-sm" data-act="sys-restart" title="Restart the app to apply config changes">⟳ Restart</button>
+        <button class="btn btn-sm" data-act="sys-update" title="Pull the newest release">⬆ Update</button>
+        <span class="pill" id="healthPill"><span class="dot"></span> checking…</span>
+      </div>
+    </header>
+
+    <section class="content" id="viewRoot"></section>
+  </main>
+</div>
+
+<div class="toast-stack" id="toasts"></div>
+
+<script src="/js/api.js"></script>
+<script src="/js/ui.js"></script>
+<script src="/js/views/dashboard.js"></script>
+<script src="/js/views/users.js"></script>
+<script src="/js/views/rss.js"></script>
+<script src="/js/views/ai.js"></script>
+<script src="/js/views/forwarding.js"></script>
+<script src="/js/views/secrets.js"></script>
+<script src="/js/views/console.js"></script>
+<script src="/js/views/system.js"></script>
+<script src="/js/views/settings.js"></script>
+<script src="/js/views/forcejoin.js"></script>
+<script src="/js/panel.js"></script>
+</body>
+</html>

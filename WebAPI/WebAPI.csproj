@@ -7,6 +7,12 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);1591</NoWarn>
     <UserSecretsId>9a1d9ab6-8382-4eb4-a48e-efd3a3841916</UserSecretsId>
+    <!-- App version surfaced by GET /api/system/info and compared against the
+         latest GitHub release by GET /api/system/update/check. Keep this in
+         sync with the git tag on release. -->
+    <AssemblyVersion>1.6.0.0</AssemblyVersion>
+    <FileVersion>1.6.0.0</FileVersion>
+    <Version>1.6.0</Version>
     <!-- این خط را حذف کردم چون در ItemGroup تعریفش میکنیم -->
     <!-- <DocumentationFile>bin\$(Configuration)\$(TargetFramework)\$(AssemblyName).xml</DocumentationFile> -->
   </PropertyGroup>

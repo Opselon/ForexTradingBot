@@ -68,7 +68,8 @@ namespace Application.Services
                 return null;
             }
 
-            string cacheKey = $"user:telegram_id:{telegramId}";
+            string safeTelegramId = (telegramId ?? string.Empty).Replace("\r", string.Empty).Replace("\n", string.Empty);
+            string cacheKey = $"user:telegram_id:{safeTelegramId}";
 
             // --- STRATEGY 1: ATTEMPT TO USE CACHE ---
             try
@@ -76,10 +77,10 @@ namespace Application.Services
                 UserDto? cachedUserDto = await _cacheService.GetAsync<UserDto>(cacheKey);
                 if (cachedUserDto != null)
                 {
-                    _logger.LogInformation("CACHE HIT: User with Telegram ID {TelegramId} found in cache.", telegramId);
+                    _logger.LogInformation("CACHE HIT: User with Telegram ID {TelegramId} found in cache.", safeTelegramId);
                     return cachedUserDto;
                 }
-                _logger.LogTrace("CACHE MISS: User with Telegram ID {TelegramId} not found in cache.", telegramId);
+                _logger.LogTrace("CACHE MISS: User with Telegram ID {TelegramId} not found in cache.", safeTelegramId);
             }
             catch (Exception ex)
             {
@@ -90,12 +91,12 @@ namespace Application.Services
             // --- STRATEGY 2: FALLBACK TO DATABASE ---
             try
             {
-                _logger.LogInformation("DATABASE FETCH: Getting user by Telegram ID {TelegramId} from database.", telegramId);
-                User? user = await _userRepository.GetByTelegramIdAsync(telegramId, cancellationToken);
+                _logger.LogInformation("DATABASE FETCH: Getting user by Telegram ID {TelegramId} from database.", safeTelegramId);
+                User? user = await _userRepository.GetByTelegramIdAsync(safeTelegramId, cancellationToken);
 
                 if (user == null)
                 {
-                    _logger.LogWarning("User with Telegram ID {TelegramId} not found in database.", telegramId);
+                    _logger.LogWarning("User with Telegram ID {TelegramId} not found in database.", safeTelegramId);
                     return null; // User not found, this is a valid outcome.
                 }
 
@@ -111,15 +112,15 @@ namespace Application.Services
 
                 // --- ATTEMPT TO WRITE TO CACHE ---
                 await _cacheService.SetAsync(cacheKey, userDto, TimeSpan.FromHours(1)); // Cache for 1 hour
-                _logger.LogInformation("CACHE WRITE: User {TelegramId} DTO set into cache.", telegramId);
+                _logger.LogInformation("CACHE WRITE: User {TelegramId} DTO set into cache.", safeTelegramId);
 
                 return userDto;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "An unexpected database or mapping error occurred while fetching user with Telegram ID {TelegramId}.", telegramId);
+                _logger.LogError(ex, "An unexpected database or mapping error occurred while fetching user with Telegram ID {TelegramId}.", safeTelegramId);
                 // Wrap and re-throw as an ApplicationException to indicate a critical failure.
-                throw new ApplicationException($"An error occurred while retrieving user {telegramId}.", ex);
+                throw new ApplicationException($"An error occurred while retrieving user {safeTelegramId}.", ex);
             }
         }
 
@@ -262,14 +263,17 @@ namespace Application.Services
                 return;
             }
 
+            string safeTelegramId = (telegramId ?? string.Empty).Replace("\r", string.Empty).Replace("\n", string.Empty);
+            string safeReason = (reason ?? string.Empty).Replace("\r", string.Empty).Replace("\n", string.Empty);
+
             try
             {
-                _logger.LogInformation("Marking user {TelegramId} as unreachable. Reason: {Reason}", telegramId, reason);
+                _logger.LogInformation("Marking user {TelegramId} as unreachable. Reason: {Reason}", safeTelegramId, safeReason);
 
-                User? user = await _userRepository.GetByTelegramIdAsync(telegramId, cancellationToken);
+                User? user = await _userRepository.GetByTelegramIdAsync(safeTelegramId, cancellationToken);
                 if (user == null)
                 {
-                    _logger.LogWarning("Could not mark user as unreachable: User with Telegram ID {TelegramId} not found.", telegramId);
+                    _logger.LogWarning("Could not mark user as unreachable: User with Telegram ID {TelegramId} not found.", safeTelegramId);
                     return;
                 }
 
@@ -282,15 +286,15 @@ namespace Application.Services
                 await _userRepository.UpdateAsync(user, cancellationToken);
 
                 // Invalidate the user's cache.
-                string cacheKey = $"user:telegram_id:{telegramId}";
+                string cacheKey = $"user:telegram_id:{safeTelegramId}";
                 _ = await _cacheService.RemoveAsync(cacheKey);
 
-                _logger.LogInformation("Successfully marked user {TelegramId} as unreachable and invalidated cache.", telegramId);
+                _logger.LogInformation("Successfully marked user {TelegramId} as unreachable and invalidated cache.", safeTelegramId);
             }
             catch (Exception ex)
             {
                 // This is a background, non-critical operation. Log the error but don't propagate it.
-                _logger.LogError(ex, "An error occurred while trying to mark user {TelegramId} as unreachable.", telegramId);
+                _logger.LogError(ex, "An error occurred while trying to mark user {TelegramId} as unreachable.", safeTelegramId);
             }
         }
 
@@ -326,14 +330,36 @@ namespace Application.Services
                 throw new InvalidOperationException($"A user with email '{sanitizedEmail}' already exists.");
             }
 
+            // Panel path guard: bot handlers check this upstream, the panel does not.
+            if (await _userRepository.ExistsByTelegramIdAsync(registerDto.TelegramId, cancellationToken))
+            {
+                throw new InvalidOperationException($"A user with Telegram ID '{sanitizedTelegramId}' already exists.");
+            }
+
             try
             {
-                // --- Business validation is now done BEFORE calling this service method in StartCommandHandler ---
-                // The StartCommandHandler checks for existence first.
-                // We can add a redundant check here for safety, but it might be redundant if the pipeline is guaranteed.
-
-                // --- Ensure consistency: Use the User entity provided by the caller ---
-                // The userEntityToRegister is assumed to be fully constructed, including its TokenWallet with a unique Guid.
+                // Panel/API path: no pre-built entity (bot handlers pass one).
+                // Build it from the DTO so POST /api/users works standalone.
+                Domain.Entities.User entity = userEntityToRegister ?? new Domain.Entities.User
+                {
+                    Id = Guid.NewGuid(),
+                    Username = registerDto.Username,
+                    TelegramId = registerDto.TelegramId,
+                    Email = registerDto.Email,
+                    Level = Domain.Enums.UserLevel.Free,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow,
+                    EnableGeneralNotifications = true,
+                    EnableVipSignalNotifications = false,
+                    EnableRssNewsNotifications = true,
+                    PreferredLanguage = "en",
+                };
+                if (entity.TokenWallet == null)
+                {
+                    entity.TokenWallet = new Domain.Entities.TokenWallet(
+                        Guid.NewGuid(), entity.Id, 0.0m, true, DateTime.UtcNow, DateTime.UtcNow);
+                }
+                userEntityToRegister = entity;
 
                 // Add entities to repositories (marks them for insertion).
                 // The repository will use the IDs already present on the entities.
@@ -447,6 +473,35 @@ namespace Application.Services
                 _logger.LogError(ex, "An error occurred during user update for UserID {UserId}.", userId);
                 throw new ApplicationException($"An error occurred during user update.", ex);
             }
+        }
+
+        /// <summary>
+        /// Changes a user's access level. Admin-only, called from PATCH /api/users/{id}/level.
+        /// </summary>
+        public async Task<UserDto> SetLevelAsync(Guid userId, Domain.Enums.UserLevel level, CancellationToken cancellationToken = default)
+        {
+            if (!Enum.IsDefined(typeof(Domain.Enums.UserLevel), level))
+            {
+                throw new ArgumentException($"Unknown user level: {(int)level}.", nameof(level));
+            }
+
+            User? user = await _userRepository.GetByIdAsync(userId, cancellationToken);
+            if (user == null)
+            {
+                throw new InvalidOperationException($"User with ID {userId} not found.");
+            }
+
+            user.Level = level;
+            user.UpdatedAt = DateTime.UtcNow;
+
+            await _userRepository.UpdateAsync(user, cancellationToken);
+            _ = await _context.SaveChangesAsync(cancellationToken);
+
+            _ = await _cacheService.RemoveAsync($"user:telegram_id:{user.TelegramId}");
+            _ = await _cacheService.RemoveAsync($"user:id:{user.Id}");
+
+            _logger.LogInformation("User {UserId} level changed to {Level}.", userId, level);
+            return MapToUserDto(user);
         }
 
 

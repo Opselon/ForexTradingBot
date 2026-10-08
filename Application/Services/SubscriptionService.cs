@@ -322,5 +322,24 @@ namespace Application.Services
                 throw new ApplicationException($"An error occurred while retrieving subscription {subscriptionId}.", ex);
             }
         }
+
+        /// <summary>
+        /// Deletes a subscription. Returns false when it does not exist.
+        /// </summary>
+        public async Task<bool> DeleteSubscriptionAsync(Guid subscriptionId, CancellationToken cancellationToken = default)
+        {
+            Domain.Entities.Subscription? subscription =
+                await _subscriptionRepository.GetByIdAsync(subscriptionId, cancellationToken);
+            if (subscription == null)
+            {
+                _logger.LogWarning("Subscription with ID {SubscriptionId} not found for deletion.", subscriptionId);
+                return false;
+            }
+
+            await _subscriptionRepository.DeleteAsync(subscription, cancellationToken);
+            _ = await _context.SaveChangesAsync(cancellationToken);
+            _logger.LogInformation("Subscription {SubscriptionId} deleted.", subscriptionId);
+            return true;
+        }
     }
 }

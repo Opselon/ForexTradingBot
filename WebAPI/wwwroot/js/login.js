@@ -34,7 +34,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (typeof toastr !== 'undefined') {
                         toastr.success('Login successful! Redirecting...');
                     }
-                    window.location.href = '/indexapp.html'; // Redirect to dashboard
+                    window.location.href = '/panel.html'; // Redirect to the control panel
                 } else {
                     const errorData = await response.json().catch(() => null);
                     const message = errorData?.message || `Login failed. Status: ${response.status}`;

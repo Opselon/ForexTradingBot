@@ -261,6 +261,13 @@ namespace Infrastructure.Data
             _ = services.AddMemoryCache();
             _ = services.AddSingleton(typeof(IMemoryCacheService<>), typeof(MemoryCacheService<>));
 
+            // The default CacheService requires IConnectionMultiplexer. When Redis is not
+            // reachable the multiplexer is never registered above, and resolving
+            // ICacheService would throw — taking the whole app down on startup. Register
+            // the in-memory fallback first, then let the Redis-backed one replace it when
+            // a multiplexer is available.
+            _ = services.AddSingleton<ICacheService, InMemoryCacheService>();
+
             string? redisConnectionString = configuration.GetConnectionString("Redis");
 
             if (!string.IsNullOrWhiteSpace(redisConnectionString))
@@ -269,6 +276,9 @@ namespace Infrastructure.Data
                 {
                     _ = services.AddSingleton<IConnectionMultiplexer>(
                         ConnectionMultiplexer.Connect(redisConnectionString));
+
+                    // Redis is live, so swap the in-memory fallback for the distributed one.
+                    _ = services.AddSingleton<ICacheService, CacheService>();
 
                     Console.WriteLine("✅ Redis is configured and will be used for distributed caching and features.");
                 }

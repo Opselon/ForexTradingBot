@@ -38,7 +38,7 @@ namespace Infrastructure.Services
             _settings = settings.Value;
 
             // Try multiple possible paths for the Redis server executable
-            string[] possiblePaths = new[]
+            List<string> possiblePaths = new()
             {
                 // Path relative to WebAPI project (most likely)
                 Path.Combine(AppContext.BaseDirectory, "..", "WebAPI", _settings.ServerExecutablePath),
@@ -49,6 +49,14 @@ namespace Infrastructure.Services
                 // Fallback to just the executable name (if it's in PATH)
                 _settings.ServerExecutablePath
             };
+
+            // The bundled binaries are Windows .exe files. Launching them on Linux/macOS
+            // fails with a Permission/format error, so on those platforms prefer a
+            // redis-server found in PATH before falling back to the bundled name.
+            if (!OperatingSystem.IsWindows())
+            {
+                possiblePaths.InsertRange(0, new[] { "redis-server", "/usr/bin/redis-server", "/usr/local/bin/redis-server" });
+            }
 
             _redisServerFullPath = possiblePaths.FirstOrDefault(File.Exists) ?? possiblePaths[0];
 

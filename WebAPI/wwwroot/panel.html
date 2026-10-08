@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ForexTradingBot — Control Panel</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/css/panel.css" />
+</head>
+<body>
+<div id="app">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <span class="brand-logo">◈</span>
+      <span class="brand-text">ForexTradingBot</span>
+    </div>
+
+    <nav class="nav" id="nav">
+      <a class="nav-item" data-route="dashboard"><span class="nav-ico">◧</span> Dashboard</a>
+      <a class="nav-item" data-route="setup"><span class="nav-ico">⚙</span> Easy Setup</a>
+      <a class="nav-item" data-route="forwarding"><span class="nav-ico">⇄</span> Auto-Forward</a>
+      <a class="nav-item" data-route="rss"><span class="nav-ico">❖</span> RSS Sites</a>
+      <a class="nav-item" data-route="ai"><span class="nav-ico">✦</span> AI Analysis</a>
+      <a class="nav-item" data-route="forcejoin"><span class="nav-ico">⛓</span> Force Join</a>
+      <a class="nav-item" data-route="tglogin"><span class="nav-ico">✆</span> Telegram Login</a>
+      <a class="nav-item" data-route="channels"><span class="nav-ico">▣</span> Channels &amp; PVs</a>
+      <a class="nav-item" data-route="secrets"><span class="nav-ico">⚿</span> Secrets</a>
+      <a class="nav-item" data-route="logs"><span class="nav-ico">≣</span> Logs</a>
+      <a class="nav-item" data-route="deploy"><span class="nav-ico">⌁</span> Deploy</a>
+    </nav>
+
+    <div class="sidebar-foot">
+      <button class="btn-ghost" id="themeBtn" title="Toggle theme">◐ Theme</button>
+      <div class="version" id="versionTag">v—</div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <button class="hamburger" id="hamburger" aria-label="Menu">☰</button>
+      <h1 class="page-title" id="pageTitle">Dashboard</h1>
+      <div class="topbar-right">
+        <button class="btn btn-sm" data-act="sys-restart" title="Restart the app to apply config changes">⟳ Restart</button>
+        <button class="btn btn-sm" data-act="sys-update" title="Pull the newest release">⬆ Update</button>
+        <span class="pill" id="healthPill"><span class="dot"></span> checking…</span>
+      </div>
+    </header>
+
+    <section class="content" id="view"></section>
+  </main>
+</div>
+
+<div class="toast-stack" id="toasts"></div>
+
+<script src="/js/panel.js"></script>
+</body>
+</html>

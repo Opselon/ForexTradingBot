@@ -89,7 +89,10 @@ namespace Application // ✅ Namespace ریشه پروژه Application
             // Singleton برای سرویس‌هایی که در طول عمر برنامه فقط یک نمونه از آن‌ها کافی است و thread-safe هستند.
             _ = services.AddScoped<IFmpService, FmpService>();
 
-            _ = services.AddSingleton<ICacheService, CacheService>();
+            // ICacheService is registered in Infrastructure (Redis when reachable,
+            // otherwise the InMemoryCacheService fallback). Registering it here as
+            // well pointed at CacheService unconditionally, so resolving it before the
+            // multiplexer existed threw during startup.
             _ = services.AddScoped<INotificationDispatchService, NotificationDispatchService>();
             // سرویس مدیریت کاربران
             _ = services.AddScoped<IUserService, UserService>();

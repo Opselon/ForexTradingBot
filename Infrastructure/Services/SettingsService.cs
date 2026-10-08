@@ -1,10 +1,12 @@
-﻿using Application.DTOs.Settings;
+﻿using Application.Common.Interfaces;
+using Application.DTOs.Settings;
 using Application.DTOs.Telegram; // Added for new DTOs
 using Application.Interfaces;
 using Dapper;
+using Infrastructure.Data;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using Npgsql;
+using System.Data;
 using System.Text.Json;
 
 namespace Infrastructure.Services
@@ -19,12 +21,17 @@ namespace Infrastructure.Services
         private const string TelegramBotSettingsKey = "settings:telegram_bot";
         private const string TelegramClientSettingsKey = "settings:telegram_client";
         private readonly TimeSpan _defaultCacheDuration = TimeSpan.FromMinutes(5);
+        private readonly Application.Common.Interfaces.IDbConnectionFactory _connectionFactory;
+        private readonly DbProviderService _providerService;
 
-        public SettingsService(ICacheService cacheService, IConfiguration configuration, ILogger<SettingsService> logger)
+        public SettingsService(ICacheService cacheService, IConfiguration configuration, ILogger<SettingsService> logger,
+            Application.Common.Interfaces.IDbConnectionFactory connectionFactory, DbProviderService providerService)
         {
             _cacheService = cacheService ?? throw new ArgumentNullException(nameof(cacheService));
             _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _connectionFactory = connectionFactory ?? throw new ArgumentNullException(nameof(connectionFactory));
+            _providerService = providerService ?? throw new ArgumentNullException(nameof(providerService));
         }
 
         public async Task<ForceJoinSettingsDto> GetForceJoinSettingsAsync(CancellationToken cancellationToken = default)
@@ -121,50 +128,16 @@ namespace Infrastructure.Services
         // Helper method to get settings from DB
         private async Task<T> GetSettingFromDbAsync<T>(string key, Func<T> defaultFactory, CancellationToken cancellationToken) where T : class
         {
-            await using NpgsqlConnection connection = new(_configuration.GetConnectionString("DefaultConnection"));
-            const string sql = @"SELECT ""Value"" FROM public.""Settings"" WHERE ""Key"" = @Key;";
-
-            string? jsonValue = await connection.QuerySingleOrDefaultAsync<string>(
-                new CommandDefinition(sql, new { Key = key }, cancellationToken: cancellationToken));
-
-            if (string.IsNullOrEmpty(jsonValue))
-            {
-                _logger.LogWarning("No setting found in DB for key {DbKey}. Returning default.", key);
-                return defaultFactory();
-            }
-
-            try
-            {
-                T? setting = JsonSerializer.Deserialize<T>(jsonValue);
-                if (setting == null)
-                {
-                    _logger.LogError("Failed to deserialize setting for key {DbKey} from JSON: {JsonValue}. Returning default.", key, jsonValue);
-                    return defaultFactory();
-                }
-                return setting;
-            }
-            catch (JsonException ex)
-            {
-                _logger.LogError(ex, "JSON deserialization error for key {DbKey} with value {JsonValue}. Returning default.", key, jsonValue);
-                return defaultFactory();
-            }
+            await using System.Data.Common.DbConnection connection = (System.Data.Common.DbConnection)_connectionFactory.CreateConnection();
+            T? setting = await SettingsDbHelper.GetAsync<T>(connection, key, defaultFactory, _logger, cancellationToken);
+            return setting ?? defaultFactory();
         }
 
         // Helper method to update settings in DB
         private async Task UpdateSettingInDbAsync<T>(string key, T settings, CancellationToken cancellationToken) where T : class
         {
-            string jsonValue = JsonSerializer.Serialize(settings);
-
-            await using NpgsqlConnection connection = new(_configuration.GetConnectionString("DefaultConnection"));
-            const string sql = @"
-                INSERT INTO public.""Settings"" (""Key"", ""Value"")
-                VALUES (@Key, @JsonValue::jsonb)
-                ON CONFLICT (""Key"") DO UPDATE
-                SET ""Value"" = @JsonValue::jsonb;";
-
-            _ = await connection.ExecuteAsync(
-                new CommandDefinition(sql, new { Key = key, JsonValue = jsonValue }, cancellationToken: cancellationToken));
-            _logger.LogInformation("Setting for key {DbKey} updated in database.", key);
+            await using System.Data.Common.DbConnection connection = (System.Data.Common.DbConnection)_connectionFactory.CreateConnection();
+            await SettingsDbHelper.SetAsync(connection, _providerService.Provider, key, settings, _logger, cancellationToken);
         }
     }
 }

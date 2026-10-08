@@ -7,11 +7,13 @@ using Application.DTOs.Settings;
 using Application.Interfaces;
 using Dapper;
 using Domain.Entities;
+using Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using Shared.Security; // For SecureExceptionSanitizer
+using System.Data;
 using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
@@ -28,6 +30,8 @@ namespace Infrastructure.Services.Admin
         private const int CommandTimeoutSeconds = 180; // Increased timeout for admin queries
         private readonly ICacheService _cacheService;
         private readonly IUserRepository _userRepository;
+        private readonly Application.Common.Interfaces.IDbConnectionFactory _connectionFactory;
+        private readonly DbProviderService _providerService;
         private readonly ISignalRepository _signalRepository;
         private readonly IProMonitoringLogRepository _proMonitoringLogRepository;
 
@@ -37,7 +41,9 @@ namespace Infrastructure.Services.Admin
             ICacheService cacheService,
             IUserRepository userRepository,
             ISignalRepository signalRepository,
-            IProMonitoringLogRepository proMonitoringLogRepository)
+            IProMonitoringLogRepository proMonitoringLogRepository,
+            Application.Common.Interfaces.IDbConnectionFactory connectionFactory,
+            DbProviderService providerService)
         {
             _connectionString = configuration.GetConnectionString("DefaultConnection")
                                 ?? throw new InvalidOperationException("DefaultConnection string is not found in configuration.");
@@ -46,6 +52,8 @@ namespace Infrastructure.Services.Admin
             _userRepository = userRepository;
             _signalRepository = signalRepository;
             _proMonitoringLogRepository = proMonitoringLogRepository;
+            _connectionFactory = connectionFactory;
+            _providerService = providerService;
         }
         #endregion
 
@@ -123,9 +131,25 @@ namespace Infrastructure.Services.Admin
         #endregion
 
         #region Database Connection
+        /// <summary>
+        /// A raw connection for the handful of admin queries that are still written in
+        /// Postgres-specific SQL (the <c>public.</c> schema and <c>jsonb</c> casts).
+        /// </summary>
+        /// <exception cref="NotSupportedException">
+        /// Thrown on SQLite/SQL Server — those queries have not been translated yet, so
+        /// failing loudly is better than handing them a connection that blows up with
+        /// an unhelpful cast mid-query.
+        /// </exception>
         private NpgsqlConnection CreateConnection()
         {
-            return new(_connectionString);
+            if (_providerService.Provider is not DatabaseProvider.Postgres)
+            {
+                throw new NotSupportedException(
+                    $"This admin query is written for PostgreSQL and is not yet available on {_providerService.Provider}. " +
+                    "Use the EF Core path (AppDbContext) or translate the statement.");
+            }
+
+            return (NpgsqlConnection)_connectionFactory.CreateConnection();
         }
         #endregion
 
@@ -375,16 +399,8 @@ namespace Infrastructure.Services.Admin
         }
         public async Task UpdateForceJoinSettingsAsync(ForceJoinSettingsDto settings, CancellationToken cancellationToken = default)
         {
-            await using NpgsqlConnection connection = CreateConnection();
-            string jsonValue = JsonSerializer.Serialize(settings);
-
-            const string sql = @"
-        INSERT INTO public.""Settings"" (""Key"", ""Value"")
-        VALUES (@Key, @Value::jsonb)
-        ON CONFLICT (""Key"") DO UPDATE
-        SET ""Value"" = EXCLUDED.""Value"";
-    ";
-            _ = await connection.ExecuteAsync(new CommandDefinition(sql, new { Key = ForceJoinSettingsKey, Value = jsonValue }, cancellationToken: cancellationToken));
+            await using System.Data.Common.DbConnection connection = (System.Data.Common.DbConnection)_connectionFactory.CreateConnection();
+            await SettingsDbHelper.SetAsync(connection, _providerService.Provider, ForceJoinSettingsKey, settings, _logger, cancellationToken);
             _logger.LogInformation("Force join settings have been updated in the database.");
 
             // CRITICAL: Invalidate the cache so the application picks up the new setting immediately.
